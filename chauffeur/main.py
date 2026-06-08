@@ -326,6 +326,91 @@ def get_schedule():
         import traceback
         return {"error_debug": str(e), "traceback": traceback.format_exc()}
 
+@app.get("/api/ha_sensors")
+def get_ha_sensors():
+    try:
+        cache = storage.get_cached_schedule()
+        if not cache:
+            cache = refresh_schedule_logic()
+            
+        import urllib.parse
+        from datetime import datetime
+        
+        # 1. Unassigned Events
+        unassigned_ids = cache.get("unassigned", [])
+        no_loc_ids = cache.get("no_location", [])
+        all_unassigned_ids = list(set(unassigned_ids + no_loc_ids))
+        
+        events_map = {e["id"]: e for e in cache.get("events", [])}
+        unassigned_events = [events_map[eid] for eid in all_unassigned_ids if eid in events_map]
+        
+        # 2. Suggested Routes (Ghost Drivers)
+        ghost_drivers = cache.get("ghost_drivers", [])
+        ghost_assignments = cache.get("ghost_assignments", {})
+        
+        suggested_routes = []
+        for g in ghost_drivers:
+            g_events = [events_map[eid] for eid, gid in ghost_assignments.items() if gid == g["id"] and eid in events_map]
+            g_events.sort(key=lambda x: x["start"])
+            suggested_routes.append({
+                "route_name": g["name"],
+                "events": g_events
+            })
+            
+        # 3. Driver Routes (Maps Links)
+        assignments = cache.get("assignments", {})
+        drivers_data = storage.get_all_drivers()
+        driver_events_map = cache.get("driver_events", {})
+        
+        driver_routes = []
+        for d in drivers_data:
+            if d.get("is_disabled"): continue
+            
+            d_id = d["id"]
+            # Events assigned to this driver
+            assigned_evs = [events_map[eid] for eid, did in assignments.items() if did == d_id and eid in events_map]
+            # Events where the driver is a passenger
+            personal_evs = [events_map[eid] for eid in driver_events_map.get(d_id, []) if eid in events_map]
+            
+            all_d_events = assigned_evs + personal_evs
+            # Filter distinct by id
+            unique_d_events = {e["id"]: e for e in all_d_events}.values()
+            
+            # Filter for today/tomorrow only for the map link (to avoid massive URLs)
+            today_date = datetime.now().date()
+            daily_events = [e for e in unique_d_events if datetime.fromisoformat(e["start"].replace('Z', '+00:00')).date() == today_date]
+            daily_events.sort(key=lambda x: x["start"])
+            
+            # Generate Maps Link
+            locations = [e["location"] for e in daily_events if e.get("location")]
+            maps_url = ""
+            if len(locations) == 1:
+                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(locations[0])}"
+            elif len(locations) > 1:
+                origin = urllib.parse.quote(locations[0])
+                destination = urllib.parse.quote(locations[-1])
+                waypoints = "|".join([urllib.parse.quote(loc) for loc in locations[1:-1]])
+                maps_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+                if waypoints:
+                    maps_url += f"&waypoints={waypoints}"
+                    
+            driver_routes.append({
+                "driver_name": d["name"],
+                "event_count": len(daily_events),
+                "maps_url": maps_url
+            })
+
+        return {
+            "unassigned_count": len(all_unassigned_ids),
+            "unassigned_events": unassigned_events,
+            "suggested_routes_count": len(ghost_drivers),
+            "suggested_routes": suggested_routes,
+            "driver_routes": driver_routes
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @app.post("/api/schedule/refresh")
 def force_refresh_schedule():
     return refresh_schedule_logic()
