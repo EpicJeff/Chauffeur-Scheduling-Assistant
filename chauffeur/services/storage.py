@@ -2,8 +2,11 @@ from tinydb import TinyDB, Query
 from typing import List, Optional
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'db.json')
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+if os.path.exists('/data/options.json'):
+    DB_PATH = '/data/chauffeur_db.json'
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'db.json')
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 db = TinyDB(DB_PATH)
 drivers_table = db.table('drivers')
