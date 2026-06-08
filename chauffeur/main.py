@@ -51,7 +51,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # --- UI Routes ---
 @app.get("/")
 def root_redirect():
-    return RedirectResponse(url="/dashboard")
+    return RedirectResponse(url="dashboard")
 
 @app.get("/dashboard")
 def dashboard(request: Request):

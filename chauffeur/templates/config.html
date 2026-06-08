@@ -11,7 +11,7 @@
 <body class="p-8 max-w-5xl mx-auto">
     <div class="flex justify-between items-center mb-10 border-b border-gray-700 pb-5">
         <h1 class="text-4xl font-extrabold text-blue-200">System Configuration</h1>
-        <a href="/dashboard" class="bg-blue-600 hover:bg-blue-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-lg">Go to Dashboard &rarr;</a>
+        <a href="dashboard" class="bg-blue-600 hover:bg-blue-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-lg">Go to Dashboard &rarr;</a>
     </div>
 
     <div x-data="configApp()" x-init="init()">
@@ -289,7 +289,7 @@
                 async fetchCalendarMetadata(ids) {
                     if (!ids || ids.length === 0) return;
                     try {
-                        const res = await fetch('/api/calendars/metadata', {
+                        const res = await fetch('api/calendars/metadata', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify(ids)
@@ -304,7 +304,7 @@
                 },
 
                 async loadSettings() {
-                    const res = await fetch('/api/settings');
+                    const res = await fetch('api/settings');
                     const data = await res.json();
                     this.calendarIds = data.calendar_ids || [];
                     this.googleMapsApiKey = data.google_maps_api_key || '';
@@ -326,7 +326,7 @@
                         calendar_ids: this.calendarIds,
                         google_maps_api_key: this.googleMapsApiKey.trim() || null
                     };
-                    await fetch('/api/settings', {
+                    await fetch('api/settings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -335,7 +335,7 @@
                 },
 
                 async loadDrivers() {
-                    const res = await fetch('/api/drivers');
+                    const res = await fetch('api/drivers');
                     this.drivers = await res.json();
                     let allDriverCals = [];
                     this.drivers.forEach(d => {
@@ -359,10 +359,10 @@
                     };
                     
                     if (this.editDriverId) {
-                        await fetch(`/api/drivers/${this.editDriverId}`, { method: 'DELETE' });
+                        await fetch(`api/drivers/${this.editDriverId}`, { method: 'DELETE' });
                     }
                     
-                    await fetch('/api/drivers', {
+                    await fetch('api/drivers', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -402,12 +402,12 @@
                     this.newDriverCalendarInput = '';
                 },
                 async deleteDriver(doc_id) {
-                    await fetch(`/api/drivers/${doc_id}`, { method: 'DELETE' });
+                    await fetch(`api/drivers/${doc_id}`, { method: 'DELETE' });
                     await this.loadDrivers();
                 },
 
                 async loadRules() {
-                    const res = await fetch('/api/rules');
+                    const res = await fetch('api/rules');
                     this.rules = await res.json();
                 },
                 editRule(rule) {
@@ -421,14 +421,14 @@
                 async submitRule() {
                     if (!this.newRule.driver_id || !this.newRule.event_keyword) return;
                     if (this.editRuleId) {
-                        await fetch(`/api/rules/${this.editRuleId}`, {
+                        await fetch(`api/rules/${this.editRuleId}`, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.newRule)
                         });
                         this.editRuleId = null;
                     } else {
-                        await fetch('/api/rules', {
+                        await fetch('api/rules', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.newRule)
@@ -438,12 +438,12 @@
                     await this.loadRules();
                 },
                 async deleteRule(doc_id) {
-                    await fetch(`/api/rules/${doc_id}`, { method: 'DELETE' });
+                    await fetch(`api/rules/${doc_id}`, { method: 'DELETE' });
                     await this.loadRules();
                 },
 
                 async loadPriorityRules() {
-                    const res = await fetch('/api/priority_rules');
+                    const res = await fetch('api/priority_rules');
                     this.priorityRules = await res.json();
                 },
                 editPriorityRule(rule) {
@@ -459,14 +459,14 @@
                     this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
                     
                     if (this.editPriorityRuleId) {
-                        await fetch(`/api/priority_rules/${this.editPriorityRuleId}`, {
+                        await fetch(`api/priority_rules/${this.editPriorityRuleId}`, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.newPriorityRule)
                         });
                         this.editPriorityRuleId = null;
                     } else {
-                        await fetch('/api/priority_rules', {
+                        await fetch('api/priority_rules', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(this.newPriorityRule)
@@ -476,7 +476,7 @@
                     await this.loadPriorityRules();
                 },
                 async deletePriorityRule(doc_id) {
-                    await fetch(`/api/priority_rules/${doc_id}`, { method: 'DELETE' });
+                    await fetch(`api/priority_rules/${doc_id}`, { method: 'DELETE' });
                     await this.loadPriorityRules();
                 },
 
