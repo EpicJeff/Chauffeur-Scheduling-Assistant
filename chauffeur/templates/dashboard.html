@@ -570,9 +570,6 @@
             const sortedDates = Object.keys(scheduleByDate).sort((a,b) => new Date(a) - new Date(b));
 
             sortedDates.forEach(date => {
-                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
-                scheduleContainer.innerHTML += dateHtml;
-
                 const colsObj = scheduleByDate[date];
 
                 // Step 1: Compute min/max passenger event times for filtering driver-only events
@@ -614,8 +611,15 @@
                 });
                 
                 if (isReadOnly) {
-                    colIds = colIds.filter(id => !id.startsWith('g'));
+                    colIds = colIds.filter(id => !id.startsWith('g') && colsObj[id] && colsObj[id].length > 0);
                 }
+                
+                if (colIds.length === 0) {
+                    return; // Skip rendering this entire date block if there are no columns
+                }
+                
+                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
+                scheduleContainer.innerHTML += dateHtml;
                 
                 // --- Timeline Constants & Logic ---
                 const PIXELS_PER_MINUTE = 1.3; 
