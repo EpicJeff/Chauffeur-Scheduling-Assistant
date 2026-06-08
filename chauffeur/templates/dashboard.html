@@ -164,7 +164,6 @@
     </div>
 
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
         const isReadOnly = urlParams.get('readonly') === 'true' || urlParams.get('kiosk') === 'true';
         if (isReadOnly) {
             document.getElementById('header-buttons').classList.add('hidden');
