@@ -558,8 +558,8 @@
                 });
                 
                 // --- Timeline Constants & Logic ---
-                const PIXELS_PER_MINUTE = 1.0; // 1 hour = 90px
-                const GAP_HEIGHT = 20; // 40px height for the "..." condensed gap
+                const PIXELS_PER_MINUTE = 0.8; 
+                const GAP_HEIGHT = 15; // 40px height for the "..." condensed gap
 
                 // Helper: floor to hour
                 function floorToHour(dateStr) {
@@ -652,7 +652,7 @@
                             
                             absoluteOverlays += `
                                 <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none" style="top: ${y}px; transform: translateY(-50%);">
-                                    <div class="text-[9px] text-gray-500 absolute -top-2 left-1 bg-gray-900/80 px-1 rounded font-mono border border-gray-700/50 shadow-sm z-20">${timeLabel}</div>
+                                    <div class="text-[10px] text-gray-400 absolute -top-2 left-1 bg-gray-900/80 px-1 rounded font-mono border border-gray-700/50 shadow-sm z-20">${timeLabel}</div>
                                     <div class="w-full border-t border-gray-700/60"></div>
                                 </div>
                             `;
@@ -720,11 +720,11 @@
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
                                             ${colorDots}
-                                            <div class="text-[8px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'max-w-[40px]' : ''}" style="color: ${evColor}">${summaries}</div>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'max-w-[40px]' : ''}" style="color: ${evColor}">${summaries}</div>
                                             ${overriddenEventsList.includes(ev.id) ? '<span class="ml-1 text-yellow-500"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v5.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L9 8.586V3a1 1 0 011-1z" /></svg></span>' : ''}
                                         </div>
-                                        <div class="font-bold text-[11px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
-                                        <div class="text-gray-400 text-[9px] font-medium truncate pointer-events-none shrink-0">${isShort ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
+                                        <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
+                                        <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${isShort ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
                                     </div>
                                 </div>
                             `;
@@ -775,7 +775,7 @@
 
                     const dropAttr = isReadOnly ? '' : `${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}`;
                     const driverHtml = `
-                        <div class="flex-1 min-w-[160px] max-w-[300px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700/50 flex flex-col" ${dropAttr}>
+                        <div class="flex-1 min-w-[200px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700/50 flex flex-col" ${dropAttr}>
                             <div class="px-2 py-1.5 font-black text-sm text-white shadow-md flex justify-center items-center bg-gray-800 border-b-4" style="border-bottom-color: ${colInfo.color_code}">
                                 <div class="w-2.5 h-2.5 rounded-full mr-2 shadow-[0_0_8px_currentColor]" style="background-color: ${colInfo.color_code}; color: ${colInfo.color_code}"></div>
                                 ${colInfo.name}
