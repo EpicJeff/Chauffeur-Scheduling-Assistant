@@ -157,7 +157,9 @@ def delete_override_by_event(event_id: str):
 # --- Settings API ---
 @app.get("/api/settings")
 def get_settings():
-    return storage.get_settings()
+    settings = storage.get_settings()
+    settings['is_home_assistant'] = os.path.exists('/data/options.json')
+    return settings
 
 @app.post("/api/settings")
 def update_settings(settings: Settings):
