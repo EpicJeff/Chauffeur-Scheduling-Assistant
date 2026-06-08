@@ -16,34 +16,37 @@
             theme: {
                 extend: {
                     colors: isHaTheme ? (isLight ? {
+                        // Home Assistant Default Light Theme
                         gray: {
-                            900: 'rgba(0, 0, 0, 0.15)', 
-                            800: 'rgba(0, 0, 0, 0.08)',
-                            700: 'rgba(0, 0, 0, 0.12)',
-                            600: 'rgba(0, 0, 0, 0.25)',
-                            500: 'rgba(0, 0, 0, 0.4)',
-                            400: 'rgba(0, 0, 0, 0.6)',
-                            300: 'rgba(0, 0, 0, 0.7)',
-                            200: 'rgba(0, 0, 0, 0.8)',
-                            100: '#000000',
+                            900: '#ffffff', // Card backgrounds
+                            800: '#f0f0f0', // Slightly darker backgrounds (headers)
+                            700: '#e0e0e0', // Borders
+                            600: '#bdbdbd',
+                            500: '#9e9e9e',
+                            400: '#757575', // Secondary text
+                            300: '#616161',
+                            200: '#424242',
+                            100: '#212121', // Primary text
                         },
-                        white: '#212121',
+                        white: '#212121', // Re-map text-white to dark text
                         blue: {
                             100: '#1e3a8a',
                             200: '#1d4ed8',
                         }
                     } : {
+                        // Home Assistant Default Dark Theme
                         gray: {
-                            900: 'rgba(0, 0, 0, 0.25)', 
-                            800: 'rgba(255, 255, 255, 0.04)',
-                            700: 'rgba(255, 255, 255, 0.08)',
-                            600: 'rgba(255, 255, 255, 0.15)',
-                            500: 'rgba(255, 255, 255, 0.3)',
-                            400: 'rgba(255, 255, 255, 0.5)',
-                            300: 'rgba(255, 255, 255, 0.7)',
-                            200: 'rgba(255, 255, 255, 0.9)',
-                            100: '#ffffff',
-                        }
+                            900: '#1c1c1c', // Card backgrounds
+                            800: '#2b2b2b', // Slightly lighter backgrounds (headers)
+                            700: '#444444', // Borders
+                            600: '#666666',
+                            500: '#888888',
+                            400: '#9e9e9e', // Secondary text
+                            300: '#b0b0b0',
+                            200: '#cccccc',
+                            100: '#e1e1e1', // Primary text
+                        },
+                        white: '#e1e1e1',
                     }) : {}
                 }
             }
@@ -51,16 +54,15 @@
     </script>
     <style>
         body { background-color: #1a202c; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-        body.ha-theme {
-            background-color: transparent !important;
-        }
+        body.ha-theme-light { background-color: #fafafa !important; color: #212121 !important; }
+        body.ha-theme-dark { background-color: #111111 !important; color: #e1e1e1 !important; }
         /* Hide scrollbar for a clean kiosk look */
         ::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body class="p-2 md:p-4">
     <script>
-        if (isHaTheme) document.body.classList.add('ha-theme');
+        if (isHaTheme) document.body.classList.add(isLight ? 'ha-theme-light' : 'ha-theme-dark');
     </script>
     <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
