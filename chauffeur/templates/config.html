@@ -44,7 +44,6 @@
                     </template>
                 </div>
             </div>
-            <button @click="saveSettings()" class="bg-green-600 hover:bg-green-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-md">Save Settings</button>
         </div>
 
         <!-- Drivers -->
@@ -311,11 +310,13 @@
                     if (val && !this.calendarIds.includes(val)) {
                         this.calendarIds.push(val);
                         await this.fetchCalendarMetadata([val]);
+                        await this.saveSettings();
                     }
                     this.newCalendarIdInput = '';
                 },
-                removeCalendarId(index) {
+                async removeCalendarId(index) {
                     this.calendarIds.splice(index, 1);
+                    await this.saveSettings();
                 },
                 async saveSettings() {
                     const payload = { 
@@ -326,7 +327,6 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    alert("Settings saved successfully!");
                 },
 
                 async loadDrivers() {
