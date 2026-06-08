@@ -14,14 +14,43 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str]) -
     if origin.lower() == destination.lower():
         return 0
     
-    # MOCK implementation: 15 minutes travel time between any two different locations
-    return 15
+    # MOCK fallback implementation
+    MOCK_TIME = 15
+    
+    # 1. Check cache first
+    cached = storage.get_cached_travel_time(origin.lower(), destination.lower())
+    if cached is not None:
+        return cached
+        
+    # 2. If not cached, try calling Google Maps API
+    api_key = get_api_key()
+    if api_key:
+        url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+        params = {
+            "origins": origin,
+            "destinations": destination,
+            "key": api_key,
+            "units": "imperial"
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            data = resp.json()
+            if data.get("status") == "OK":
+                elements = data.get("rows", [{}])[0].get("elements", [{}])
+                element = elements[0]
+                if element.get("status") == "OK":
+                    duration_seconds = element.get("duration", {}).get("value", MOCK_TIME * 60)
+                    minutes = max(1, duration_seconds // 60)
+                    storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
+                    return minutes
+        except Exception as ex:
+            print(f"Distance Matrix API error: {ex}")
+            
+    # 3. Cache and return fallback if API fails or no key
+    storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
+    return MOCK_TIME
 
-def autocomplete_location(input_text: str) -> list[dict]:
-    """
-    Calls the Google Maps Places Autocomplete API.
-    Returns a list of dicts: {"description": "123 Main St..."}
-    """
+def get_api_key() -> Optional[str]:
     api_key = None
     
     # 1. Try to load from Home Assistant Add-on options
@@ -47,6 +76,15 @@ def autocomplete_location(input_text: str) -> list[dict]:
             with open(api_key_file, 'r') as f:
                 api_key = f.read().strip()
                 
+    return api_key
+
+def autocomplete_location(input_text: str) -> list[dict]:
+    """
+    Calls the Google Maps Places Autocomplete API.
+    Returns a list of dicts: {"description": "123 Main St..."}
+    """
+    api_key = get_api_key()
+    
     if not api_key:
         return []
         

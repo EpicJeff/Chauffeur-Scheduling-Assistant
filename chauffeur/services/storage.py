@@ -15,6 +15,20 @@ priority_rules_table = db.table('priority_rules')
 overrides_table = db.table('overrides')
 cache_table = db.table('schedule_cache')
 settings_table = db.table('settings')
+distance_cache_table = db.table('distance_cache')
+
+def get_cached_travel_time(origin: str, destination: str) -> Optional[int]:
+    QueryObj = Query()
+    result = distance_cache_table.search((QueryObj.origin == origin) & (QueryObj.destination == destination))
+    if result:
+        return result[0]['minutes']
+    return None
+
+def set_cached_travel_time(origin: str, destination: str, minutes: int):
+    # Overwrite if exists
+    QueryObj = Query()
+    distance_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
+    distance_cache_table.insert({'origin': origin, 'destination': destination, 'minutes': minutes})
 
 # Driver CRUD
 def get_all_drivers() -> List[dict]:
