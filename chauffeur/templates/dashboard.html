@@ -552,7 +552,7 @@
             const sortedDates = Object.keys(scheduleByDate).sort((a,b) => new Date(a) - new Date(b));
 
             sortedDates.forEach(date => {
-                const dateHtml = `<div class="bg-gray-800/80 border-t border-gray-700/50 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
+                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
                 scheduleContainer.innerHTML += dateHtml;
 
                 const colsObj = scheduleByDate[date];
@@ -690,8 +690,8 @@
                             
                             absoluteOverlays += `
                                 <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none" style="top: ${y}px; transform: translateY(-50%);">
-                                    <div class="text-[10px] text-gray-400 absolute -top-2 left-1 bg-gray-900/80 px-1 rounded font-mono border border-gray-700/50 shadow-sm z-20">${timeLabel}</div>
-                                    <div class="w-full border-t border-gray-700/60"></div>
+                                    <div class="text-[10px] text-gray-400 absolute -top-2 left-1 bg-gray-800 px-1 rounded font-mono border border-gray-700 shadow-sm z-20">${timeLabel}</div>
+                                    <div class="w-full border-t border-gray-700"></div>
                                 </div>
                             `;
                             t += 3600000; // +1 hour
@@ -700,7 +700,7 @@
                         if (index < blocks.length - 1) {
                             const gapY = b.endY;
                             absoluteOverlays += `
-                                <div class="absolute left-0 w-full flex items-center justify-center z-0 pointer-events-none bg-gray-800/30" style="top: ${gapY}px; height: ${GAP_HEIGHT}px;">
+                                <div class="absolute left-0 w-full flex items-center justify-center z-0 pointer-events-none bg-gray-700" style="top: ${gapY}px; height: ${GAP_HEIGHT}px;">
                                     <div class="text-gray-500 font-bold tracking-widest text-lg leading-none -mt-2">...</div>
                                 </div>
                             `;
@@ -740,20 +740,20 @@
 
                         if (isDriverOnly) {
                             colEventsHtml += `
-                                <div class="absolute right-1 rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-800/40 transition-colors flex flex-col z-10 opacity-70"
+                                <div class="absolute right-1 rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-700 transition-colors flex flex-col z-10 opacity-70"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; min-height: 20px;">
                                     <div class="px-1 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col justify-center items-center text-center" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.3) 10px, rgba(0,0,0,0.3) 20px);">
-                                        <div class="font-bold text-[9px] text-gray-400 uppercase tracking-widest mb-0.5 bg-gray-900/80 px-1 rounded">🚫 Unavailable</div>
-                                        <div class="text-[8px] text-gray-500 truncate w-full bg-gray-900/80 px-1 rounded">${ev.title}</div>
+                                        <div class="font-bold text-[9px] text-gray-400 uppercase tracking-widest mb-0.5 bg-gray-800 px-1 rounded">🚫 Unavailable</div>
+                                        <div class="text-[8px] text-gray-500 truncate w-full bg-gray-800 px-1 rounded">${ev.title}</div>
                                     </div>
                                 </div>
                             `;
                         } else {
                             const isShort = height <= 45;
-                            const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700/90';
+                            const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr}
-                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800/90 transition-colors group flex z-10 ${cursorClass}"
+                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-color: ${evColor}; min-height: 24px;">
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
@@ -813,7 +813,7 @@
 
                     const dropAttr = isReadOnly ? '' : `${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}`;
                     const driverHtml = `
-                        <div class="flex-1 min-w-[200px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700/50 flex flex-col" ${dropAttr}>
+                        <div class="flex-1 min-w-[200px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700 flex flex-col" ${dropAttr}>
                             <div class="px-2 py-1.5 font-black text-sm text-white shadow-md flex justify-center items-center bg-gray-800 border-b-4" style="border-bottom-color: ${colInfo.color_code}">
                                 <div class="w-2.5 h-2.5 rounded-full mr-2 shadow-[0_0_8px_currentColor]" style="background-color: ${colInfo.color_code}; color: ${colInfo.color_code}"></div>
                                 ${colInfo.name}
@@ -838,7 +838,7 @@
                     if (!colsObj[c_id] || colsObj[c_id].length === 0) {
                         if (c_id === 'unassigned') {
                             sidebarHtml += `
-                                <div class="bg-gray-800 rounded-lg border border-dashed border-gray-600 p-3 flex flex-row items-center justify-center text-gray-500 font-bold transition-colors hover:bg-gray-700/50 text-sm"
+                                <div class="bg-gray-800 rounded-lg border border-dashed border-gray-600 p-3 flex flex-row items-center justify-center text-gray-500 font-bold transition-colors hover:bg-gray-700 text-sm"
                                      ${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}>
                                     <svg class="w-4 h-4 mr-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                     Drop here to Unassign
@@ -871,7 +871,7 @@
                     });
                     
                     sidebarHtml += `
-                        <div class="bg-gray-800 rounded-lg border border-gray-700/50 flex flex-col shadow-lg" ${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}>
+                        <div class="bg-gray-800 rounded-lg border border-gray-700 flex flex-col shadow-lg" ${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}>
                             <div class="px-3 py-1.5 font-black text-sm text-white bg-gray-900 border-b-2 rounded-t-lg" style="border-bottom-color: ${colInfo.color_code}">
                                 ${colInfo.name}
                             </div>
