@@ -7,13 +7,32 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const isHaTheme = urlParams.get('theme') === 'ha';
+        const themeParam = urlParams.get('theme');
+        const isHaTheme = themeParam && themeParam.startsWith('ha');
+        const isLight = themeParam === 'ha-light' || (themeParam === 'ha' && window.matchMedia && !window.matchMedia('(prefers-color-scheme: dark)').matches);
 
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
-                    colors: isHaTheme ? {
+                    colors: isHaTheme ? (isLight ? {
+                        gray: {
+                            900: 'rgba(0, 0, 0, 0.15)', 
+                            800: 'rgba(0, 0, 0, 0.08)',
+                            700: 'rgba(0, 0, 0, 0.12)',
+                            600: 'rgba(0, 0, 0, 0.25)',
+                            500: 'rgba(0, 0, 0, 0.4)',
+                            400: 'rgba(0, 0, 0, 0.6)',
+                            300: 'rgba(0, 0, 0, 0.7)',
+                            200: 'rgba(0, 0, 0, 0.8)',
+                            100: '#000000',
+                        },
+                        white: '#212121',
+                        blue: {
+                            100: '#1e3a8a',
+                            200: '#1d4ed8',
+                        }
+                    } : {
                         gray: {
                             900: 'rgba(0, 0, 0, 0.25)', 
                             800: 'rgba(255, 255, 255, 0.04)',
@@ -25,7 +44,7 @@
                             200: 'rgba(255, 255, 255, 0.9)',
                             100: '#ffffff',
                         }
-                    } : {}
+                    }) : {}
                 }
             }
         }
