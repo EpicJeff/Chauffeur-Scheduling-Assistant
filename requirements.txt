@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+networkx
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+googlemaps
+tinydb
+jinja2
+ortools

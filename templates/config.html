@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule Config</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>body { background-color: #1a202c; color: #e2e8f0; font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="p-8 max-w-5xl mx-auto">
+    <div class="flex justify-between items-center mb-10 border-b border-gray-700 pb-5">
+        <h1 class="text-4xl font-extrabold text-blue-200">System Configuration</h1>
+        <a href="/dashboard" class="bg-blue-600 hover:bg-blue-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-lg">Go to Dashboard &rarr;</a>
+    </div>
+
+    <div x-data="configApp()" x-init="init()">
+        
+        <!-- Settings -->
+        <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-blue-300">Calendars</h2>
+            <div class="mb-6">
+                <label class="block text-gray-400 mb-2 font-semibold">Google Calendar IDs</label>
+                <div class="flex gap-2 mb-3">
+                    <input type="text" x-model="newCalendarIdInput" @keydown.enter="addCalendarId()" placeholder="e.g. family@group.calendar.google.com" class="flex-1 bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white text-lg font-mono">
+                    <button @click="addCalendarId()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-lg transition-colors flex items-center shadow-md">
+                        <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Add
+                    </button>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="(calId, index) in calendarIds" :key="index">
+                        <div class="flex items-center text-blue-200 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm border border-gray-600"
+                             :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
+                            <div class="w-3 h-3 rounded-full mr-2 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                            <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-2"></span>
+                            <button @click="removeCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                    </template>
+                    <template x-if="calendarIds.length === 0">
+                        <div class="text-gray-500 italic text-sm">No calendars added yet.</div>
+                    </template>
+                </div>
+            </div>
+            <div class="mb-6">
+                <label class="block text-gray-400 mb-2 font-semibold">Google Maps API Key (for location search)</label>
+                <input type="text" x-model="googleMapsApiKey" placeholder="AIzaSy..." class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white text-lg font-mono">
+            </div>
+            <button @click="saveSettings()" class="bg-green-600 hover:bg-green-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-md">Save Settings</button>
+        </div>
+
+        <!-- Drivers -->
+        <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                <template x-for="driver in drivers" :key="driver.doc_id">
+                    <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="`border-color: ${driver.color_code}`">
+                        <div class="w-full">
+                            <div class="flex justify-between items-center mb-2">
+                                <div class="font-bold text-xl text-white flex items-center gap-2">
+                                    <span x-text="driver.name"></span>
+                                    <template x-if="driver.is_disabled">
+                                        <span class="px-2 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-800 font-bold uppercase tracking-wider">Disabled</span>
+                                    </template>
+                                </div>
+                                <div class="flex space-x-2">
+                                    <button @click="editDriverItem(driver)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                    </button>
+                                    <button @click="deleteDriver(driver.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="text-gray-500 text-sm font-mono" x-text="driver.id"></div>
+                            <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                                <span class="px-2 py-1 bg-gray-800 rounded text-gray-300" x-text="'Group: ' + driver.group"></span>
+                                <span class="px-2 py-1 bg-gray-800 rounded text-gray-300" x-text="'Priority: ' + driver.priority_index"></span>
+                                <template x-if="driver.preferred_start || driver.preferred_end">
+                                    <span class="px-2 py-1 bg-gray-800 rounded text-gray-300" x-text="'Hours: ' + (driver.preferred_start || 'Any') + ' - ' + (driver.preferred_end || 'Any')"></span>
+                                </template>
+                            </div>
+                            <template x-if="driver.calendar_ids && driver.calendar_ids.length > 0">
+                                <div class="mt-2 text-xs text-gray-400 truncate w-full" x-text="'Calendars: ' + driver.calendar_ids.length"></div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="flex flex-col gap-4 bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
+                <div class="flex gap-4 items-end flex-wrap">
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">ID</label>
+                        <input type="text" x-model="newDriver.id" placeholder="e.g. d1" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white" :disabled="editDriverId !== null">
+                    </div>
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                        <input type="text" x-model="newDriver.name" placeholder="e.g. Mom" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:w-32">
+                        <label class="block text-gray-400 mb-1 text-sm">Group</label>
+                        <select x-model="newDriver.group" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="primary">Primary</option>
+                            <option value="secondary">Secondary</option>
+                        </select>
+                    </div>
+                    <div class="w-full lg:w-24">
+                        <label class="block text-gray-400 mb-1 text-sm">Priority</label>
+                        <input type="number" x-model="newDriver.priority_index" min="1" max="10" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-sm">Color</label>
+                        <input type="color" x-model="newDriver.color_code" class="w-14 h-12 bg-gray-900 rounded p-1 cursor-pointer border border-gray-600">
+                    </div>
+                </div>
+                <div class="flex gap-4 items-end flex-wrap">
+                    <div class="w-full lg:w-48">
+                        <label class="block text-gray-400 mb-1 text-sm">Pref Start Time</label>
+                        <input type="time" x-model="newDriver.preferred_start" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:w-48">
+                        <label class="block text-gray-400 mb-1 text-sm">Pref End Time</label>
+                        <input type="time" x-model="newDriver.preferred_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Personal Calendar IDs</label>
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" x-model="newDriverCalendarInput" @keydown.enter="addDriverCalendarId()" placeholder="e.g. personal@gmail.com" class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
+                            <button @click="addDriverCalendarId()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="(calId, index) in newDriver.calendarIds" :key="index">
+                                <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
+                                     :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
+                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                                    <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-1"></span>
+                                    <button @click="removeDriverCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="w-full mt-2 flex items-center space-x-3">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="newDriver.is_disabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                            <span class="ml-3 text-sm font-medium text-gray-300">Disable Driver</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="flex gap-4 mt-2">
+                    <button @click="submitDriver()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" x-text="editDriverId ? 'Save Driver' : 'Add Driver'"></button>
+                    <button x-show="editDriverId" @click="cancelEditDriver()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rules -->
+        <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-blue-300">Routing Rules</h2>
+            <div class="space-y-4 mb-8">
+                <template x-for="rule in rules" :key="rule.doc_id">
+                    <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-center shadow-sm">
+                        <div class="text-lg">
+                            Driver <span class="font-extrabold text-blue-400 px-2 py-1 bg-blue-900/30 rounded" x-text="getDriverName(rule.driver_id)"></span> 
+                            is <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded mx-1" x-text="rule.constraint_type"></span> 
+                            for events containing "<span class="italic text-yellow-300" x-text="rule.event_keyword"></span>"
+                        </div>
+                        <div class="flex space-x-2">
+                            <button @click="editRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click="deleteRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <div class="flex gap-4 items-end bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed flex-wrap lg:flex-nowrap">
+                <div class="w-full lg:flex-1">
+                    <label class="block text-gray-400 mb-1 text-sm">Driver</label>
+                    <select x-model="newRule.driver_id" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                        <option value="">Select Driver</option>
+                        <template x-for="driver in drivers">
+                            <option :value="driver.id" x-text="driver.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="w-full lg:w-48">
+                    <label class="block text-gray-400 mb-1 text-sm">Constraint</label>
+                    <select x-model="newRule.constraint_type" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                        <option value="required">Required</option>
+                        <option value="preferred">Preferred</option>
+                        <option value="unavailable">Unavailable</option>
+                    </select>
+                </div>
+                <div class="w-full lg:flex-1">
+                    <label class="block text-gray-400 mb-1 text-sm">Event Keyword</label>
+                    <input type="text" x-model="newRule.event_keyword" placeholder="e.g. Soccer" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                </div>
+                <button @click="submitRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" x-text="editRuleId ? 'Save Rule' : 'Add Rule'"></button>
+                <button x-show="editRuleId" @click="cancelEditRule()" class="bg-gray-600 hover:bg-gray-500 w-full lg:w-auto px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center mt-2 lg:mt-0">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Priority Rules -->
+        <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-blue-300">Event Priorities</h2>
+            <p class="text-gray-400 mb-6">Define priority rules to help the solver resolve conflicts. When events overlap, the event with the highest total priority is favored.</p>
+            
+            <div class="space-y-4 mb-8">
+                <template x-for="rule in priorityRules" :key="rule.doc_id">
+                    <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-center shadow-sm">
+                        <div class="text-lg">
+                            Rule: <span class="font-extrabold text-blue-400 px-2 py-1 bg-blue-900/30 rounded" x-text="rule.id"></span><br>
+                            If <span class="font-bold text-yellow-300" x-text="rule.match_type"></span> matches "<span class="italic text-yellow-300" x-text="rule.match_value"></span>", 
+                            adjust priority by <span class="font-extrabold text-green-400 px-2 py-1 bg-green-900/30 rounded mx-1" x-text="rule.weight_modifier > 0 ? '+' + rule.weight_modifier : rule.weight_modifier"></span>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button @click="editPriorityRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click="deletePriorityRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <div class="flex gap-4 items-end bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed flex-wrap lg:flex-nowrap">
+                <div class="w-full lg:w-48">
+                    <label class="block text-gray-400 mb-1 text-sm">Match Type</label>
+                    <select x-model="newPriorityRule.match_type" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                        <option value="keyword">Keyword</option>
+                        <option value="calendar">Calendar ID</option>
+                    </select>
+                </div>
+                <div class="w-full lg:flex-1">
+                    <label class="block text-gray-400 mb-1 text-sm">Match Value</label>
+                    <input type="text" x-model="newPriorityRule.match_value" placeholder="e.g. Doctor, or primary" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                </div>
+                <div class="w-full lg:w-48">
+                    <label class="block text-gray-400 mb-1 text-sm">Priority Level</label>
+                    <select x-model="newPriorityRule.weight_modifier" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                        <option value="500">Critical (+500)</option>
+                        <option value="100">High (+100)</option>
+                        <option value="-100">Low (-100)</option>
+                        <option value="-1000">Ignore (-1000)</option>
+                    </select>
+                </div>
+                <button @click="submitPriorityRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" x-text="editPriorityRuleId ? 'Save Priority' : 'Add Priority'"></button>
+                <button x-show="editPriorityRuleId" @click="cancelEditPriorityRule()" class="bg-gray-600 hover:bg-gray-500 w-full lg:w-auto px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center mt-2 lg:mt-0">Cancel</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        function configApp() {
+            return {
+                calendarIds: [],
+                newCalendarIdInput: '',
+                calendarMetadata: {},
+                googleMapsApiKey: '',
+                drivers: [],
+                rules: [],
+                priorityRules: [],
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false },
+                newDriverCalendarInput: '',
+                newRule: { driver_id: '', constraint_type: 'required', event_keyword: '' },
+                newPriorityRule: { match_type: 'keyword', match_value: '', weight_modifier: 100 },
+                editDriverId: null,
+                editRuleId: null,
+                editPriorityRuleId: null,
+
+                async init() {
+                    await this.loadSettings();
+                    await this.loadDrivers();
+                    await this.loadRules();
+                    await this.loadPriorityRules();
+                },
+
+                async fetchCalendarMetadata(ids) {
+                    if (!ids || ids.length === 0) return;
+                    try {
+                        const res = await fetch('/api/calendars/metadata', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(ids)
+                        });
+                        const metadata = await res.json();
+                        for (const id of Object.keys(metadata)) {
+                            this.calendarMetadata[id] = metadata[id];
+                        }
+                    } catch (e) {
+                        console.error("Failed to fetch calendar metadata", e);
+                    }
+                },
+
+                async loadSettings() {
+                    const res = await fetch('/api/settings');
+                    const data = await res.json();
+                    this.calendarIds = data.calendar_ids || [];
+                    this.googleMapsApiKey = data.google_maps_api_key || '';
+                    await this.fetchCalendarMetadata(this.calendarIds);
+                },
+                async addCalendarId() {
+                    const val = this.newCalendarIdInput.trim();
+                    if (val && !this.calendarIds.includes(val)) {
+                        this.calendarIds.push(val);
+                        await this.fetchCalendarMetadata([val]);
+                    }
+                    this.newCalendarIdInput = '';
+                },
+                removeCalendarId(index) {
+                    this.calendarIds.splice(index, 1);
+                },
+                async saveSettings() {
+                    const payload = { 
+                        calendar_ids: this.calendarIds,
+                        google_maps_api_key: this.googleMapsApiKey.trim() || null
+                    };
+                    await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    alert("Settings saved successfully!");
+                },
+
+                async loadDrivers() {
+                    const res = await fetch('/api/drivers');
+                    this.drivers = await res.json();
+                    let allDriverCals = [];
+                    this.drivers.forEach(d => {
+                        if (d.calendar_ids) allDriverCals.push(...d.calendar_ids);
+                    });
+                    await this.fetchCalendarMetadata(allDriverCals);
+                },
+                async submitDriver() {
+                    if (!this.newDriver.id || !this.newDriver.name) return;
+                    
+                    const payload = {
+                        id: this.newDriver.id,
+                        name: this.newDriver.name,
+                        color_code: this.newDriver.color_code,
+                        group: this.newDriver.group,
+                        priority_index: parseInt(this.newDriver.priority_index),
+                        preferred_start: this.newDriver.preferred_start || null,
+                        preferred_end: this.newDriver.preferred_end || null,
+                        is_disabled: this.newDriver.is_disabled,
+                        calendar_ids: this.newDriver.calendarIds
+                    };
+                    
+                    if (this.editDriverId) {
+                        await fetch(`/api/drivers/${this.editDriverId}`, { method: 'DELETE' });
+                    }
+                    
+                    await fetch('/api/drivers', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    this.cancelEditDriver();
+                    await this.loadDrivers();
+                },
+                async addDriverCalendarId() {
+                    const val = this.newDriverCalendarInput.trim();
+                    if (val && !this.newDriver.calendarIds.includes(val)) {
+                        this.newDriver.calendarIds.push(val);
+                        await this.fetchCalendarMetadata([val]);
+                    }
+                    this.newDriverCalendarInput = '';
+                },
+                removeDriverCalendarId(index) {
+                    this.newDriver.calendarIds.splice(index, 1);
+                },
+                editDriverItem(d) {
+                    this.editDriverId = d.doc_id;
+                    this.newDriver = {
+                        id: d.id,
+                        name: d.name,
+                        color_code: d.color_code,
+                        group: d.group || 'primary',
+                        priority_index: d.priority_index || 1,
+                        preferred_start: d.preferred_start || '',
+                        preferred_end: d.preferred_end || '',
+                        is_disabled: d.is_disabled || false,
+                        calendarIds: d.calendar_ids || []
+                    };
+                    this.newDriverCalendarInput = '';
+                },
+                cancelEditDriver() {
+                    this.editDriverId = null;
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false };
+                    this.newDriverCalendarInput = '';
+                },
+                async deleteDriver(doc_id) {
+                    await fetch(`/api/drivers/${doc_id}`, { method: 'DELETE' });
+                    await this.loadDrivers();
+                },
+
+                async loadRules() {
+                    const res = await fetch('/api/rules');
+                    this.rules = await res.json();
+                },
+                editRule(rule) {
+                    this.editRuleId = rule.doc_id;
+                    this.newRule = { driver_id: rule.driver_id, constraint_type: rule.constraint_type, event_keyword: rule.event_keyword };
+                },
+                cancelEditRule() {
+                    this.editRuleId = null;
+                    this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
+                },
+                async submitRule() {
+                    if (!this.newRule.driver_id || !this.newRule.event_keyword) return;
+                    if (this.editRuleId) {
+                        await fetch(`/api/rules/${this.editRuleId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newRule)
+                        });
+                        this.editRuleId = null;
+                    } else {
+                        await fetch('/api/rules', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newRule)
+                        });
+                    }
+                    this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
+                    await this.loadRules();
+                },
+                async deleteRule(doc_id) {
+                    await fetch(`/api/rules/${doc_id}`, { method: 'DELETE' });
+                    await this.loadRules();
+                },
+
+                async loadPriorityRules() {
+                    const res = await fetch('/api/priority_rules');
+                    this.priorityRules = await res.json();
+                },
+                editPriorityRule(rule) {
+                    this.editPriorityRuleId = rule.doc_id;
+                    this.newPriorityRule = { match_type: rule.match_type, match_value: rule.match_value, weight_modifier: rule.weight_modifier };
+                },
+                cancelEditPriorityRule() {
+                    this.editPriorityRuleId = null;
+                    this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
+                },
+                async submitPriorityRule() {
+                    if (!this.newPriorityRule.match_value) return;
+                    this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
+                    
+                    if (this.editPriorityRuleId) {
+                        await fetch(`/api/priority_rules/${this.editPriorityRuleId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newPriorityRule)
+                        });
+                        this.editPriorityRuleId = null;
+                    } else {
+                        await fetch('/api/priority_rules', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newPriorityRule)
+                        });
+                    }
+                    this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
+                    await this.loadPriorityRules();
+                },
+                async deletePriorityRule(doc_id) {
+                    await fetch(`/api/priority_rules/${doc_id}`, { method: 'DELETE' });
+                    await this.loadPriorityRules();
+                },
+
+                getDriverName(id) {
+                    const d = this.drivers.find(x => x.id === id);
+                    return d ? d.name : id;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
