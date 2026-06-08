@@ -381,7 +381,17 @@ def get_ha_sensors():
             daily_events = [e for e in unique_d_events if datetime.fromisoformat(e["start"].replace('Z', '+00:00')).date() == today_date]
             daily_events.sort(key=lambda x: x["start"])
             
-            # Generate Maps Link
+            # Generate Individual Event Data
+            enriched_events = []
+            for ev in daily_events:
+                ev_copy = ev.copy()
+                if ev.get("location"):
+                    ev_copy["map_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(ev['location'])}"
+                else:
+                    ev_copy["map_url"] = ""
+                enriched_events.append(ev_copy)
+            
+            # Generate Multi-stop Maps Link
             locations = [e["location"] for e in daily_events if e.get("location")]
             maps_url = ""
             if len(locations) == 1:
@@ -397,7 +407,8 @@ def get_ha_sensors():
             driver_routes.append({
                 "driver_name": d["name"],
                 "event_count": len(daily_events),
-                "maps_url": maps_url
+                "maps_url": maps_url,
+                "events": enriched_events
             })
 
         return {
