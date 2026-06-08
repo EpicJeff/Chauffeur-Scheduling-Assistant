@@ -25,7 +25,7 @@
     </style>
 </head>
 <body class="p-2 md:p-4">
-    <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+    <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
         <div id="header-buttons" class="flex space-x-4">
             <button onclick="forceSync()" id="sync-btn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
@@ -150,6 +150,8 @@
         const isReadOnly = urlParams.get('readonly') === 'true' || urlParams.get('kiosk') === 'true';
         if (isReadOnly) {
             document.getElementById('header-buttons').classList.add('hidden');
+            const pageHeader = document.getElementById('page-header');
+            if (pageHeader) pageHeader.classList.add('hidden');
         }
 
         let routeEdges = {};
@@ -514,7 +516,7 @@
             const sortedDates = Object.keys(scheduleByDate).sort((a,b) => new Date(a) - new Date(b));
 
             sortedDates.forEach(date => {
-                const dateHtml = `<h2 class="text-xl font-extrabold text-blue-200 mt-4 mb-3 bg-blue-900/40 p-2 rounded-lg inline-block border border-blue-800 shadow-sm">${date}</h2>`;
+                const dateHtml = `<div class="bg-gray-800/80 border-t border-gray-700/50 py-1.5 px-3 mt-4 mb-0 shadow-sm rounded-t-lg"><h2 class="text-lg font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
                 scheduleContainer.innerHTML += dateHtml;
 
                 const colsObj = scheduleByDate[date];
@@ -632,7 +634,7 @@
 
                 // Build HTML
                 const mainWrapper = document.createElement('div');
-                mainWrapper.className = "flex flex-col xl:flex-row gap-4 mt-2";
+                mainWrapper.className = "flex flex-col xl:flex-row gap-4 mt-0";
 
                 const wrapper = document.createElement('div');
                 wrapper.className = "flex-1 flex flex-wrap gap-3";
