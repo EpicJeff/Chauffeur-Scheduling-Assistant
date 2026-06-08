@@ -357,66 +357,88 @@ def get_ha_sensors():
                 "events": g_events
             })
             
-        # 3. Driver Routes (Maps Links)
+        # 3. Schedule By Date (Maps Links)
         assignments = cache.get("assignments", {})
         drivers_data = storage.get_all_drivers()
         driver_events_map = cache.get("driver_events", {})
         
-        driver_routes = []
+        # Collect all unique dates across all drivers
+        all_unique_events = []
         for d in drivers_data:
             if d.get("is_disabled"): continue
-            
             d_id = d["id"]
-            # Events assigned to this driver
             assigned_evs = [events_map[eid] for eid, did in assignments.items() if did == d_id and eid in events_map]
-            # Events where the driver is a passenger
             personal_evs = [events_map[eid] for eid in driver_events_map.get(d_id, []) if eid in events_map]
+            all_unique_events.extend(assigned_evs + personal_evs)
             
-            all_d_events = assigned_evs + personal_evs
-            # Filter distinct by id
-            unique_d_events = {e["id"]: e for e in all_d_events}.values()
-            
-            # Filter for today/tomorrow only for the map link (to avoid massive URLs)
-            today_date = datetime.now().date()
-            daily_events = [e for e in unique_d_events if datetime.fromisoformat(e["start"].replace('Z', '+00:00')).date() == today_date]
-            daily_events.sort(key=lambda x: x["start"])
-            
-            # Generate Individual Event Data
-            enriched_events = []
-            for ev in daily_events:
-                ev_copy = ev.copy()
-                if ev.get("location"):
-                    ev_copy["map_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(ev['location'])}"
-                else:
-                    ev_copy["map_url"] = ""
-                enriched_events.append(ev_copy)
-            
-            # Generate Multi-stop Maps Link
-            locations = [e["location"] for e in daily_events if e.get("location")]
-            maps_url = ""
-            if len(locations) == 1:
-                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(locations[0])}"
-            elif len(locations) > 1:
-                origin = urllib.parse.quote(locations[0])
-                destination = urllib.parse.quote(locations[-1])
-                waypoints = "|".join([urllib.parse.quote(loc) for loc in locations[1:-1]])
-                maps_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
-                if waypoints:
-                    maps_url += f"&waypoints={waypoints}"
-                    
-            driver_routes.append({
-                "driver_name": d["name"],
-                "event_count": len(daily_events),
-                "maps_url": maps_url,
-                "events": enriched_events
-            })
+        unique_dates = set(datetime.fromisoformat(e["start"].replace('Z', '+00:00')).date() for e in all_unique_events)
+        sorted_dates = sorted(list(unique_dates))
+        
+        schedule_by_date = []
+        for target_date in sorted_dates:
+            driver_routes = []
+            for d in drivers_data:
+                if d.get("is_disabled"): continue
+                
+                d_id = d["id"]
+                # Events assigned to this driver
+                assigned_evs = [events_map[eid] for eid, did in assignments.items() if did == d_id and eid in events_map]
+                # Events where the driver is a passenger
+                personal_evs = [events_map[eid] for eid in driver_events_map.get(d_id, []) if eid in events_map]
+                
+                all_d_events = assigned_evs + personal_evs
+                # Filter distinct by id
+                unique_d_events = {e["id"]: e for e in all_d_events}.values()
+                
+                # Filter for target_date
+                daily_events = [e for e in unique_d_events if datetime.fromisoformat(e["start"].replace('Z', '+00:00')).date() == target_date]
+                daily_events.sort(key=lambda x: x["start"])
+                
+                if len(daily_events) == 0:
+                    continue
+                
+                # Generate Individual Event Data
+                enriched_events = []
+                for ev in daily_events:
+                    ev_copy = ev.copy()
+                    if ev.get("location"):
+                        ev_copy["map_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(ev['location'])}"
+                    else:
+                        ev_copy["map_url"] = ""
+                    enriched_events.append(ev_copy)
+                
+                # Generate Multi-stop Maps Link
+                locations = [e["location"] for e in daily_events if e.get("location")]
+                maps_url = ""
+                if len(locations) == 1:
+                    maps_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(locations[0])}"
+                elif len(locations) > 1:
+                    origin = urllib.parse.quote(locations[0])
+                    destination = urllib.parse.quote(locations[-1])
+                    waypoints = "|".join([urllib.parse.quote(loc) for loc in locations[1:-1]])
+                    maps_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+                    if waypoints:
+                        maps_url += f"&waypoints={waypoints}"
+                        
+                driver_routes.append({
+                    "driver_name": d["name"],
+                    "event_count": len(daily_events),
+                    "maps_url": maps_url,
+                    "events": enriched_events
+                })
+                
+            if driver_routes:
+                schedule_by_date.append({
+                    "date": str(target_date),
+                    "driver_routes": driver_routes
+                })
 
         return {
             "unassigned_count": len(all_unassigned_ids),
             "unassigned_events": unassigned_events,
             "suggested_routes_count": len(ghost_drivers),
             "suggested_routes": suggested_routes,
-            "driver_routes": driver_routes
+            "schedule_by_date": schedule_by_date
         }
     except Exception as e:
         import traceback
