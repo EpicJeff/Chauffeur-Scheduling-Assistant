@@ -24,10 +24,10 @@
         ::-webkit-scrollbar { display: none; }
     </style>
 </head>
-<body class="p-6">
-    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-        <h1 class="text-4xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
-        <div class="flex space-x-4">
+<body class="p-2 md:p-4">
+    <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+        <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
+        <div id="header-buttons" class="flex space-x-4">
             <button onclick="forceSync()" id="sync-btn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
                 <svg id="sync-icon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                 <span id="sync-text">Sync Now</span>
@@ -146,6 +146,12 @@
     </div>
 
     <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const isReadOnly = urlParams.get('readonly') === 'true' || urlParams.get('kiosk') === 'true';
+        if (isReadOnly) {
+            document.getElementById('header-buttons').classList.add('hidden');
+        }
+
         let routeEdges = {};
         let conflictsMap = {};
         let assignmentsMap = {};
@@ -508,7 +514,7 @@
             const sortedDates = Object.keys(scheduleByDate).sort((a,b) => new Date(a) - new Date(b));
 
             sortedDates.forEach(date => {
-                const dateHtml = `<h2 class="text-3xl font-extrabold text-blue-200 mt-10 mb-6 bg-blue-900/40 p-3 rounded-lg inline-block border border-blue-800 shadow-sm">${date}</h2>`;
+                const dateHtml = `<h2 class="text-xl font-extrabold text-blue-200 mt-4 mb-3 bg-blue-900/40 p-2 rounded-lg inline-block border border-blue-800 shadow-sm">${date}</h2>`;
                 scheduleContainer.innerHTML += dateHtml;
 
                 const colsObj = scheduleByDate[date];
@@ -552,8 +558,8 @@
                 });
                 
                 // --- Timeline Constants & Logic ---
-                const PIXELS_PER_MINUTE = 1.5; // 1 hour = 90px
-                const GAP_HEIGHT = 40; // 40px height for the "..." condensed gap
+                const PIXELS_PER_MINUTE = 1.0; // 1 hour = 90px
+                const GAP_HEIGHT = 20; // 40px height for the "..." condensed gap
 
                 // Helper: floor to hour
                 function floorToHour(dateStr) {
@@ -626,85 +632,57 @@
 
                 // Build HTML
                 const mainWrapper = document.createElement('div');
-                mainWrapper.className = "flex flex-col lg:flex-row gap-6 mt-6";
+                mainWrapper.className = "flex flex-col xl:flex-row gap-4 mt-2";
 
                 const wrapper = document.createElement('div');
-                wrapper.className = "flex-1 relative rounded-2xl bg-gray-900 border border-gray-700/50 shadow-2xl p-4 overflow-x-auto";
-                
-                let headersHtml = `<div class="grid gap-x-0 min-w-[600px] mb-4 sticky top-0 z-40 bg-gray-900 pb-2 border-b border-gray-700/50 shadow-sm" style="grid-template-columns: 80px repeat(${colIds.length}, minmax(180px, 1fr))">`;
-                headersHtml += `<div class="text-gray-500 font-bold uppercase tracking-wider text-sm flex items-end justify-end pr-3 pb-2">Time</div>`;
+                wrapper.className = "flex-1 flex flex-wrap gap-3";
                 
                 colIds.forEach(c_id => {
                     let colInfo = { name: "Unknown", color_code: "#4a5568" };
                     if (driversMap[c_id]) colInfo = driversMap[c_id];
                     
-                    headersHtml += `
-                        <div class="px-5 py-3 font-black text-xl text-white shadow-md flex items-center rounded-t-lg mx-2 border-b-4 bg-gray-800" style="border-bottom-color: ${colInfo.color_code}">
-                            <div class="w-4 h-4 rounded-full mr-3 shadow-[0_0_8px_currentColor]" style="background-color: ${colInfo.color_code}; color: ${colInfo.color_code}"></div>
-                            ${colInfo.name}
-                        </div>
-                    `;
-                });
-                headersHtml += `</div>`;
-                
-                let gridHtml = `<div class="grid gap-x-0 min-w-[600px] relative" style="grid-template-columns: 80px repeat(${colIds.length}, minmax(180px, 1fr)); height: ${totalHeight}px;">`;
-                
-                // Build absolute overlays
-                let absoluteOverlays = '';
-                blocks.forEach((b, index) => {
-                    let t = b.start;
-                    while (t <= b.end) {
-                        const y = b.startY + ((t - b.start) / 60000) * PIXELS_PER_MINUTE;
-                        const d = new Date(t);
-                        const timeLabel = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    // Build absolute overlays for Time Lines inside THIS specific driver block!
+                    let absoluteOverlays = '';
+                    blocks.forEach((b, index) => {
+                        let t = b.start;
+                        while (t <= b.end) {
+                            const y = b.startY + ((t - b.start) / 60000) * PIXELS_PER_MINUTE;
+                            const d = new Date(t);
+                            const timeLabel = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                            
+                            absoluteOverlays += `
+                                <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none" style="top: ${y}px; transform: translateY(-50%);">
+                                    <div class="text-[9px] text-gray-500 absolute -top-2 left-1 bg-gray-900/80 px-1 rounded font-mono border border-gray-700/50 shadow-sm z-20">${timeLabel}</div>
+                                    <div class="w-full border-t border-gray-700/60"></div>
+                                </div>
+                            `;
+                            t += 3600000; // +1 hour
+                        }
                         
-                        absoluteOverlays += `
-                            <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none" style="top: ${y}px; transform: translateY(-50%);">
-                                <div class="w-[80px] text-right pr-3 text-[11px] font-mono text-gray-500">${timeLabel}</div>
-                                <div class="flex-1 border-t border-gray-700/60"></div>
-                            </div>
-                        `;
-                        t += 3600000; // +1 hour
-                    }
-                    
-                    if (index < blocks.length - 1) {
-                        const gapY = b.endY;
-                        absoluteOverlays += `
-                            <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none bg-gray-800/30" style="top: ${gapY}px; height: ${GAP_HEIGHT}px;">
-                                <div class="w-[80px] flex items-center justify-end pr-3">
+                        if (index < blocks.length - 1) {
+                            const gapY = b.endY;
+                            absoluteOverlays += `
+                                <div class="absolute left-0 w-full flex items-center justify-center z-0 pointer-events-none bg-gray-800/30" style="top: ${gapY}px; height: ${GAP_HEIGHT}px;">
                                     <div class="text-gray-500 font-bold tracking-widest text-lg leading-none -mt-2">...</div>
                                 </div>
-                            </div>
-                        `;
-                    }
-                });
-                
-                gridHtml += absoluteOverlays;
-                
-                // Time Ruler Column (Empty)
-                gridHtml += `<div class="border-r border-gray-800"></div>`;
-                
-                // Render Events
-                colIds.forEach((c_id) => {
+                            `;
+                        }
+                    });
+
                     const colEvents = (colsObj[c_id] || []).sort((a,b) => new Date(a.start) - new Date(b.start));
-                    
-                        // Deduplicate events in case logic above added them twice
                     const uniqueColEventsMap = {};
                     colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
                     const uniqueColEvents = Object.values(uniqueColEventsMap);
                     
                     let colEventsHtml = '';
-                    
                     uniqueColEvents.forEach((ev, index) => {
                         const startY = getTimeY(ev.start);
                         const endY = getTimeY(ev.end);
-                        // Min height ensures tiny events remain clickable
                         const height = Math.max(endY - startY, 20);
                         
                         const isAssignedToThisColumn = (assignments && assignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
                         const isDriverOnly = !isAssignedToThisColumn;
                         
-                        // Calculate visual overlap offset
                         let overlapIndex = 0;
                         for(let i=0; i<index; i++) {
                             const otherEv = uniqueColEvents[i];
@@ -712,43 +690,47 @@
                                 overlapIndex++;
                             }
                         }
-                        const leftOffset = 8 + (overlapIndex * 24);
+                        const leftOffset = 28 + (overlapIndex * 15); // leave room for time labels
                         
                         const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
                         const evColor = calMetas[0].backgroundColor;
                         const colorDots = calMetas.map(m => `<div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" style="background-color: ${m.backgroundColor};"></div>`).join('');
                         const summaries = calMetas.map(m => m.summary).join(' + ');
 
+                        const dragAttr = isReadOnly ? '' : `draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')"`;
+                        const clickAttr = isReadOnly ? '' : `onclick="openEventModal('${ev.id}')"`;
+
                         if (isDriverOnly) {
                             colEventsHtml += `
-                                <div class="absolute right-2 rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-800/40 transition-colors flex flex-col z-10 opacity-70"
+                                <div class="absolute right-1 rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-800/40 transition-colors flex flex-col z-10 opacity-70"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; min-height: 20px;">
-                                    <div class="px-2 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col justify-center items-center text-center" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.3) 10px, rgba(0,0,0,0.3) 20px);">
-                                        <div class="font-bold text-[10px] text-gray-400 uppercase tracking-widest mb-0.5 bg-gray-900/80 px-1 rounded">🚫 Unavailable</div>
-                                        <div class="text-[9px] text-gray-500 truncate w-full bg-gray-900/80 px-1 rounded">${ev.title}</div>
+                                    <div class="px-1 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col justify-center items-center text-center" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.3) 10px, rgba(0,0,0,0.3) 20px);">
+                                        <div class="font-bold text-[9px] text-gray-400 uppercase tracking-widest mb-0.5 bg-gray-900/80 px-1 rounded">🚫 Unavailable</div>
+                                        <div class="text-[8px] text-gray-500 truncate w-full bg-gray-900/80 px-1 rounded">${ev.title}</div>
                                     </div>
                                 </div>
                             `;
                         } else {
                             const isShort = height <= 45;
+                            const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700/90';
                             colEventsHtml += `
-                                <div draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
-                                     class="absolute right-2 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800/90 hover:bg-gray-700/90 transition-colors cursor-pointer group flex z-10"
+                                <div ${dragAttr} ${clickAttr}
+                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800/90 transition-colors group flex z-10 ${cursorClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-color: ${evColor}; min-height: 24px;">
-                                    <div class="px-2 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-2' : 'flex flex-col'}">
+                                    <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
                                             ${colorDots}
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-1 truncate ${isShort ? 'max-w-[50px]' : ''}" style="color: ${evColor}">${summaries}</div>
+                                            <div class="text-[8px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'max-w-[40px]' : ''}" style="color: ${evColor}">${summaries}</div>
                                             ${overriddenEventsList.includes(ev.id) ? '<span class="ml-1 text-yellow-500"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v5.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L9 8.586V3a1 1 0 011-1z" /></svg></span>' : ''}
                                         </div>
-                                        <div class="font-bold text-[13px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
-                                        <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${isShort ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
+                                        <div class="font-bold text-[11px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
+                                        <div class="text-gray-400 text-[9px] font-medium truncate pointer-events-none shrink-0">${isShort ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
                                     </div>
                                 </div>
                             `;
                         }
                         
-                        // Render routing pill (skip for driver-only events)
+                        // Routing pill
                         if (!isDriverOnly && index < uniqueColEvents.length - 1 && routeEdges[ev.id]) {
                             const edge = routeEdges[ev.id];
                             const nextEv = uniqueColEvents[index + 1];
@@ -766,14 +748,14 @@
                                     let downStr = '';
                                     if (h > 0) downStr += `${h}H `;
                                     if (m > 0 || h === 0) downStr += `${m}M`;
-                                    pillText += ` <span class="text-gray-500 ml-1 text-[8px] font-bold">(⏳ ${downStr.trim()})</span>`;
+                                    pillText += ` <span class="text-gray-500 ml-1 text-[7px] font-bold">(⏳ ${downStr.trim()})</span>`;
                                 }
                                 
                                 colEventsHtml += `
                                     <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none" 
                                          style="top: ${endY}px; height: ${distance}px;">
                                         <div class="w-px h-full bg-blue-500/30 absolute"></div>
-                                        <span class="bg-gray-900 border border-gray-600 text-[9px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase z-10 relative flex items-center">
+                                        <span class="bg-gray-900 border border-gray-600 text-[8px] px-1.5 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase z-10 relative flex items-center">
                                             ${pillText}
                                         </span>
                                     </div>
@@ -782,7 +764,7 @@
                                 colEventsHtml += `
                                     <div class="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20 pointer-events-none" 
                                          style="top: ${endY}px;">
-                                        <span class="bg-gray-900 border border-gray-600 text-[9px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase">
+                                        <span class="bg-gray-900 border border-gray-600 text-[8px] px-1.5 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase">
                                             🚗 ${edge.travel_mins}m
                                         </span>
                                     </div>
@@ -790,17 +772,24 @@
                             }
                         }
                     });
-                    
-                    // Column container with drop zone
-                    gridHtml += `
-                        <div class="relative border-r border-gray-800" ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')">
-                            ${colEventsHtml}
+
+                    const dropAttr = isReadOnly ? '' : `${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}`;
+                    const driverHtml = `
+                        <div class="flex-1 min-w-[160px] max-w-[300px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700/50 flex flex-col" ${dropAttr}>
+                            <div class="px-2 py-1.5 font-black text-sm text-white shadow-md flex justify-center items-center bg-gray-800 border-b-4" style="border-bottom-color: ${colInfo.color_code}">
+                                <div class="w-2.5 h-2.5 rounded-full mr-2 shadow-[0_0_8px_currentColor]" style="background-color: ${colInfo.color_code}; color: ${colInfo.color_code}"></div>
+                                ${colInfo.name}
+                            </div>
+                            <div class="relative w-full overflow-hidden" style="height: ${totalHeight}px;">
+                                ${absoluteOverlays}
+                                ${colEventsHtml}
+                            </div>
                         </div>
                     `;
+                    wrapper.innerHTML += driverHtml;
                 });
-                
-                gridHtml += `</div>`;
-                wrapper.innerHTML = headersHtml + gridHtml;
+
+                // (headersHtml + gridHtml removed)
                 
                 // --- Sidebar for Unassigned / No Location ---
                 const sidebar = document.createElement('div');
@@ -812,7 +801,7 @@
                         if (c_id === 'unassigned') {
                             sidebarHtml += `
                                 <div class="bg-gray-800 rounded-xl border-2 border-dashed border-gray-600 p-6 flex flex-col items-center justify-center text-gray-500 font-bold transition-colors hover:bg-gray-700/50"
-                                     ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')">
+                                     ${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}>
                                     <svg class="w-8 h-8 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                     Drop here to Unassign
                                 </div>
@@ -831,7 +820,7 @@
                         const summaries = calMetas.map(m => m.summary).join(' + ');
 
                         colEventsHtml += `
-                            <div draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
+                            <div ${isReadOnly ? '' : `draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')"`} 
                                  class="mb-3 px-3 py-2 border-l-4 rounded-r-lg bg-gray-900 hover:bg-gray-800 transition-colors cursor-pointer group shadow-sm"
                                  style="border-color: ${evColor}">
                                 <div class="text-[10px] uppercase tracking-wider font-bold opacity-70 mb-0.5 truncate" style="color: ${evColor}">${summaries}</div>
@@ -842,7 +831,7 @@
                     });
                     
                     sidebarHtml += `
-                        <div class="bg-gray-800 rounded-xl border border-gray-700/50 flex flex-col shadow-xl" ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')">
+                        <div class="bg-gray-800 rounded-xl border border-gray-700/50 flex flex-col shadow-xl" ${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}>
                             <div class="px-4 py-3 font-black text-lg text-white bg-gray-900 border-b-4 rounded-t-xl" style="border-bottom-color: ${colInfo.color_code}">
                                 ${colInfo.name}
                             </div>

@@ -226,8 +226,10 @@ def refresh_schedule_logic():
                 
     all_cals_to_fetch = list(set(calendar_ids) | driver_calendar_ids)
     
+    days_to_show = settings.get("days_to_show", 7)
+    
     try:
-        all_fetched_events = calendar.fetch_upcoming_events(all_cals_to_fetch)
+        all_fetched_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_show)
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
         

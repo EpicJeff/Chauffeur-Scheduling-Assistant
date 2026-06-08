@@ -43,7 +43,15 @@
                         <div class="text-gray-500 italic text-sm">No calendars added yet.</div>
                     </template>
                 </div>
+            <!-- Days to show -->
+            <div class="mb-6">
+                <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Days to Show in Dashboard</label>
+                <div class="flex items-center space-x-4">
+                    <input type="number" min="1" max="14" x-model="daysToShow" @change="saveSettings()" class="bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono w-24">
+                    <span class="text-gray-400 text-sm">Number of days into the future to schedule (1-14)</span>
+                </div>
             </div>
+            
         </div>
 
         <!-- Drivers -->
@@ -259,6 +267,7 @@
     <script>
         function configApp() {
             return {
+                daysToShow: 7,
                 calendarIds: [],
                 newCalendarIdInput: '',
                 calendarMetadata: {},
@@ -301,6 +310,7 @@
                 async loadSettings() {
                     const res = await fetch('api/settings');
                     const data = await res.json();
+                    this.daysToShow = data.days_to_show || 7;
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -320,7 +330,8 @@
                 },
                 async saveSettings() {
                     const payload = { 
-                        calendar_ids: this.calendarIds
+                        calendar_ids: this.calendarIds,
+                        days_to_show: parseInt(this.daysToShow) || 7
                     };
                     await fetch('api/settings', {
                         method: 'POST',
@@ -352,7 +363,6 @@
                         is_disabled: this.newDriver.is_disabled,
                         calendar_ids: this.newDriver.calendarIds
                     };
-                    
                     if (this.editDriverId) {
                         await fetch(`api/drivers/${this.editDriverId}`, { method: 'DELETE' });
                     }
