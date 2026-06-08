@@ -36,11 +36,17 @@ def autocomplete_location(input_text: str) -> list[dict]:
         except Exception:
             pass
 
-    # 2. Fall back to local DB settings
+    # 2. Try to load from environment variable
     if not api_key:
-        settings = storage.get_settings()
-        api_key = settings.get("google_maps_api_key")
-        
+        api_key = os.environ.get('GOOGLE_MAPS_API_KEY')
+
+    # 3. Try to load from local file
+    if not api_key:
+        api_key_file = os.path.join(os.path.dirname(__file__), '..', 'maps_api_key.txt')
+        if os.path.exists(api_key_file):
+            with open(api_key_file, 'r') as f:
+                api_key = f.read().strip()
+                
     if not api_key:
         return []
         

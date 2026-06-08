@@ -45,4 +45,3 @@ class ManualOverride(BaseModel):
 
 class Settings(BaseModel):
     calendar_ids: List[str]
-    google_maps_api_key: Optional[str] = None

@@ -44,17 +44,6 @@
                     </template>
                 </div>
             </div>
-            <div class="mb-6" x-show="!isHomeAssistant">
-                <label class="block text-gray-400 mb-2 font-semibold">Google Maps API Key (for location search)</label>
-                <input type="text" x-model="googleMapsApiKey" placeholder="AIzaSy..." class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white text-lg font-mono">
-            </div>
-            <div class="mb-6" x-show="isHomeAssistant" style="display: none;">
-                <label class="block text-gray-400 mb-2 font-semibold">Google Maps API Key (for location search)</label>
-                <div class="bg-gray-900 border border-gray-600 rounded-lg p-3 text-gray-500 text-lg font-mono flex items-center shadow-inner">
-                    <svg class="w-5 h-5 mr-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                    Configured via Home Assistant Add-on
-                </div>
-            </div>
             <button @click="saveSettings()" class="bg-green-600 hover:bg-green-500 transition-colors text-white font-bold px-6 py-3 rounded-lg shadow-md">Save Settings</button>
         </div>
 
@@ -274,7 +263,6 @@
                 calendarIds: [],
                 newCalendarIdInput: '',
                 calendarMetadata: {},
-                googleMapsApiKey: '',
                 isHomeAssistant: false,
                 drivers: [],
                 rules: [],
@@ -315,7 +303,6 @@
                     const res = await fetch('api/settings');
                     const data = await res.json();
                     this.calendarIds = data.calendar_ids || [];
-                    this.googleMapsApiKey = data.google_maps_api_key || '';
                     this.isHomeAssistant = data.is_home_assistant || false;
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
@@ -332,8 +319,7 @@
                 },
                 async saveSettings() {
                     const payload = { 
-                        calendar_ids: this.calendarIds,
-                        google_maps_api_key: this.googleMapsApiKey.trim() || null
+                        calendar_ids: this.calendarIds
                     };
                     await fetch('api/settings', {
                         method: 'POST',
