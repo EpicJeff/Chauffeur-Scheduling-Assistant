@@ -253,7 +253,35 @@ def solve_schedule(
         
     return assignments, unassigned, lateness_warnings
 
-def solve_ghost_routes(events: List[Event]) -> Tuple[Dict[str, str], List[dict]]:
+def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None) -> Tuple[Dict[str, str], List[dict]]:
+    if not events:
+        return {}, []
+        
+    if assigned_events is None:
+        assigned_events = []
+    
+    valid_events = []
+    for e in events:
+        is_impossible = False
+        for ae in assigned_events:
+            shares_calendar = bool(set(e.calendar_ids).intersection(set(ae.calendar_ids)))
+            if shares_calendar:
+                travel_time_mins = get_travel_time_minutes(e.location, ae.location)
+                total_needed_seconds = (travel_time_mins + 5) * 60
+                
+                if e.start <= ae.start:
+                    first, second = e, ae
+                else:
+                    first, second = ae, e
+                    
+                if (second.start - first.end).total_seconds() < total_needed_seconds:
+                    is_impossible = True
+                    break
+        if not is_impossible:
+            valid_events.append(e)
+            
+    events = valid_events
+    
     if not events:
         return {}, []
     
@@ -269,7 +297,7 @@ def solve_ghost_routes(events: List[Event]) -> Tuple[Dict[str, str], List[dict]]
             
     for e in events:
         model.AddExactlyOne(assign_vars[(e.id, g_id)] for g_id in ghost_ids)
-        
+                        
     sorted_events = sorted(events, key=lambda x: x.start)
     for i in range(len(sorted_events)):
         for j in range(i + 1, len(sorted_events)):

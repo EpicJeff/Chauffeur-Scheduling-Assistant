@@ -276,7 +276,10 @@ def refresh_schedule_logic():
     
     # Ghost Routes
     unassigned_events = [e for e in events_to_solve if e.id in unassigned]
-    ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events)
+    
+    # Pass the events that were successfully assigned to real drivers
+    assigned_events = [e for e in events_to_solve if e.id in assignments]
+    ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events)
     
     # Route Edges
     all_assignments = {**assignments, **ghost_assignments}
