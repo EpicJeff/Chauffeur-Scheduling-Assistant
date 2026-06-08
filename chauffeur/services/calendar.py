@@ -37,9 +37,13 @@ def get_calendar_service():
 
 def fetch_upcoming_events(calendar_ids: list[str], days=7) -> list[Event]:
     service = get_calendar_service()
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    time_min = now_utc.isoformat()
-    time_max = (now_utc + datetime.timedelta(days=days)).isoformat()
+    now_local = datetime.datetime.now().astimezone()
+    time_min = now_local.isoformat()
+    
+    # Target day is today + (days - 1). End of day is 23:59:59.
+    target_date = now_local + datetime.timedelta(days=days-1)
+    end_of_target_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    time_max = end_of_target_day.isoformat()
     # Group events by (title, start, end, location)
     grouped_events = {}
     
