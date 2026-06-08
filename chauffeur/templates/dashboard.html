@@ -6,25 +6,43 @@
     <title>Family Driver Schedule</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const isHaTheme = urlParams.get('theme') === 'ha';
+
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
-                    colors: {
-                        darkbg: '#1a202c',
-                        cardbg: '#2d3748'
-                    }
+                    colors: isHaTheme ? {
+                        gray: {
+                            900: 'rgba(0, 0, 0, 0.25)', 
+                            800: 'rgba(255, 255, 255, 0.04)',
+                            700: 'rgba(255, 255, 255, 0.08)',
+                            600: 'rgba(255, 255, 255, 0.15)',
+                            500: 'rgba(255, 255, 255, 0.3)',
+                            400: 'rgba(255, 255, 255, 0.5)',
+                            300: 'rgba(255, 255, 255, 0.7)',
+                            200: 'rgba(255, 255, 255, 0.9)',
+                            100: '#ffffff',
+                        }
+                    } : {}
                 }
             }
         }
     </script>
     <style>
         body { background-color: #1a202c; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+        body.ha-theme {
+            background-color: transparent !important;
+        }
         /* Hide scrollbar for a clean kiosk look */
         ::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body class="p-2 md:p-4">
+    <script>
+        if (isHaTheme) document.body.classList.add('ha-theme');
+    </script>
     <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
         <div id="header-buttons" class="flex space-x-4">
