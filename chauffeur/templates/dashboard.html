@@ -136,7 +136,7 @@
                         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         Remove Override
                     </button>
-                    <button onclick="switchToEditMode()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
+                    <button id="edit-details-btn" onclick="switchToEditMode()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
                         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                         Edit Details
                     </button>
@@ -327,7 +327,7 @@
                 conflictsList.innerHTML = conflicts.map(c => `
                     <div class="bg-gray-900 border border-red-900 p-4 rounded-lg flex justify-between items-center">
                         <span class="font-bold text-white">${c.title}</span>
-                        <button onclick="forceSwap('${c.event_id}', '${currentDriverId}')" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded shadow-sm text-sm font-bold transition-colors">Force Swap</button>
+                        ${isReadOnly ? '' : `<button onclick="forceSwap('${c.event_id}', '${currentDriverId}')" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded shadow-sm text-sm font-bold transition-colors">Force Swap</button>`}
                     </div>
                 `).join('');
                 conflictsSection.classList.remove('hidden');
@@ -336,10 +336,17 @@
             }
 
             const removeOverrideBtn = document.getElementById('remove-override-btn');
-            if (currentData.overridden_events && currentData.overridden_events.includes(eventId)) {
+            if (currentData.overridden_events && currentData.overridden_events.includes(eventId) && !isReadOnly) {
                 removeOverrideBtn.classList.remove('hidden');
             } else {
                 removeOverrideBtn.classList.add('hidden');
+            }
+            
+            const editDetailsBtn = document.getElementById('edit-details-btn');
+            if (isReadOnly) {
+                editDetailsBtn.classList.add('hidden');
+            } else {
+                editDetailsBtn.classList.remove('hidden');
             }
 
             switchToViewMode();
@@ -762,7 +769,7 @@
                         const summaries = calMetas.map(m => m.summary).join(' + ');
 
                         const dragAttr = isReadOnly ? '' : `draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')"`;
-                        const clickAttr = isReadOnly ? '' : `onclick="openEventModal('${ev.id}')"`;
+                        const clickAttr = `onclick="openEventModal('${ev.id}')"`;
 
                         if (isDriverOnly) {
                             colEventsHtml += `
