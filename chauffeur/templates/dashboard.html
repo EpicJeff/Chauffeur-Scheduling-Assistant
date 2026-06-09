@@ -690,7 +690,7 @@
             if (driverId === 'unassigned') {
                 const elem = ev.target.closest('.bg-cardbg');
                 if (elem) elem.style.opacity = '0.5';
-                await removeOverride(eventId);
+                await forceSwap(eventId, 'unassigned');
             } else if (driverId !== 'no_location' && !driverId.startsWith('g')) {
                 // Change UI to reflect loading instantly
                 const elem = ev.target.closest('.bg-cardbg');

@@ -187,16 +187,20 @@ def solve_schedule(
     import time
     base_time = time.time()
     for o in overrides:
-        if any(e.id == o.event_id for e in events) and any(d.id == o.driver_id for d in drivers):
-            # Calculate weight: Base 1,000,000 + seconds since override was created
-            # This ensures newer overrides always win over older ones if they conflict
-            try:
-                # If created_at is not present (old overrides), default to 0
-                created_at = getattr(o, 'created_at', 0)
-                time_weight = int(created_at) if created_at else 0
-            except:
-                time_weight = 0
-            objective_terms.append(assign_vars[(o.event_id, o.driver_id)] * (1000000 + time_weight))
+        if any(e.id == o.event_id for e in events):
+            if o.driver_id == 'unassigned':
+                for d in drivers:
+                    model.Add(assign_vars[(o.event_id, d.id)] == 0)
+            elif any(d.id == o.driver_id for d in drivers):
+                # Calculate weight: Base 1,000,000 + seconds since override was created
+                # This ensures newer overrides always win over older ones if they conflict
+                try:
+                    # If created_at is not present (old overrides), default to 0
+                    created_at = getattr(o, 'created_at', 0)
+                    time_weight = int(created_at) if created_at else 0
+                except:
+                    time_weight = 0
+                objective_terms.append(assign_vars[(o.event_id, o.driver_id)] * (1000000 + time_weight))
             
     # Maximize total score
     model.Maximize(sum(objective_terms))
