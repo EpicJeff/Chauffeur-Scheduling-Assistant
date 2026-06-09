@@ -398,46 +398,53 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
     for d_id, evs in driver_events.items():
         evs.sort(key=lambda x: x.start)
         
-        if home_location and home_location.strip() != "":
-            first_ev = evs[0]
-            travel, delay = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
-            initial_edges[d_id] = {
-                "to_event": first_ev.id,
-                "travel_mins": travel,
-                "delay_mins": delay
-            }
-            
-        for i in range(len(evs) - 1):
-            e1 = evs[i]
-            e2 = evs[i+1]
-            shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
-            
-            pickup_waypoint = None
-            if shares_calendar:
-                travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
-                next_origin = e1.location
-                drive_to_pickup = 0
-                drive_from_pickup = travel
-            else:
-                travel = get_switch_travel_time(e1, e2, events)
-                delay = 0
-                pickup_event = get_passenger_pickup_event(e2, events)
-                if pickup_event:
-                    next_origin = pickup_event.location
-                    drive_to_pickup = get_travel_time_minutes(e1.location, pickup_event.location)
-                    drive_from_pickup = get_travel_time_minutes(pickup_event.location, e2.location)
-                    pickup_waypoint = {
-                        "to_pickup_mins": drive_to_pickup,
-                        "from_pickup_mins": drive_from_pickup,
-                        "pickup_location": pickup_event.location,
-                        "pickup_event_title": pickup_event.title
-                    }
-                else:
+        # Group events by date to correctly compute initial edges per day and prevent cross-day routing
+        from itertools import groupby
+        for date_obj, date_evs_iter in groupby(evs, key=lambda x: x.start.date()):
+            date_evs = list(date_evs_iter)
+            if not date_evs:
+                continue
+                
+            if home_location and home_location.strip() != "":
+                first_ev = date_evs[0]
+                travel, delay = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                initial_edges[first_ev.id] = {
+                    "to_event": first_ev.id,
+                    "travel_mins": travel,
+                    "delay_mins": delay
+                }
+                
+            for i in range(len(date_evs) - 1):
+                e1 = date_evs[i]
+                e2 = date_evs[i+1]
+                shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+                
+                pickup_waypoint = None
+                if shares_calendar:
+                    travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
                     next_origin = e1.location
                     drive_to_pickup = 0
                     drive_from_pickup = travel
-                
-            wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
+                else:
+                    travel = get_switch_travel_time(e1, e2, events)
+                    delay = 0
+                    pickup_event = get_passenger_pickup_event(e2, events)
+                    if pickup_event:
+                        next_origin = pickup_event.location
+                        drive_to_pickup = get_travel_time_minutes(e1.location, pickup_event.location)
+                        drive_from_pickup = get_travel_time_minutes(pickup_event.location, e2.location)
+                        pickup_waypoint = {
+                            "to_pickup_mins": drive_to_pickup,
+                            "from_pickup_mins": drive_from_pickup,
+                            "pickup_location": pickup_event.location,
+                            "pickup_event_title": pickup_event.title
+                        }
+                    else:
+                        next_origin = e1.location
+                        drive_to_pickup = 0
+                        drive_from_pickup = travel
+                    
+                wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
             
             home_waypoint = None
             if home_location and home_location.strip() != "":

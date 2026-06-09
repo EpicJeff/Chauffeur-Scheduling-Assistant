@@ -830,8 +830,8 @@
                 });
 
                 // Extend timeline backward for initial travel from home
-                colIds.forEach(cId => {
-                    const initEdge = initialEdges[cId];
+                allEventsForDate.forEach(ev => {
+                    const initEdge = initialEdges[ev.id];
                     if (initEdge && initEdge.travel_mins > 0) {
                         const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
                         if (targetEvent) {
@@ -998,7 +998,7 @@
 
                         // Initial travel pill from home (before first event)
                         if (index === 0 && !isDriverOnly) {
-                            const initEdge = initialEdges[c_id];
+                            const initEdge = initialEdges[ev.id];
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const bufferMins = 5; // Add a 5 minute buffer to all departures
                                 const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
