@@ -434,6 +434,11 @@ def get_ha_sensors():
                     ev_copy["suggested_notification_time"] = suggested_notification_time.isoformat() if suggested_notification_time else None
                     ev_copy["travel_mins"] = travel_mins
                     
+                    if travel_mins >= 60:
+                        ev_copy["travel_time_formatted"] = f"{travel_mins // 60}h {travel_mins % 60}m"
+                    else:
+                        ev_copy["travel_time_formatted"] = f"{travel_mins}m"
+                    
                     # Maps URL for single event
                     if ev.get("location"):
                         if d.get("preferred_maps_provider") == "apple":
