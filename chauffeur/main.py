@@ -522,7 +522,14 @@ def test_polyline(origin: str, destination: str):
         "destination": {
             "address": destination
         },
-        "travelMode": "DRIVE"
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "computeAlternativeRoutes": "true",
+        "routeModifiers": {
+            "avoidTolls": "true",
+            "avoidHighways": "false",
+            "avoidFerries": "true"
+        }
     }
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=5)
