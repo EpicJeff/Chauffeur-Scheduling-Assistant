@@ -24,6 +24,7 @@ class Driver(BaseModel):
     preferred_end: Optional[str] = None
     is_disabled: bool = False
     calendar_ids: List[str] = Field(default_factory=list)
+    preferred_maps_provider: str = 'google'
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

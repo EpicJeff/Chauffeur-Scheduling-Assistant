@@ -132,3 +132,33 @@ def autocomplete_location(input_text: str) -> list[dict]:
     except Exception as ex:
         print(f"Places API error: {ex}")
         return []
+
+def get_google_maps_url(locations: list[str]) -> str:
+    import urllib.parse
+    if not locations:
+        return ""
+    if len(locations) == 1:
+        return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(locations[0])}"
+    
+    origin = urllib.parse.quote(locations[0])
+    destination = urllib.parse.quote(locations[-1])
+    waypoints = "|".join([urllib.parse.quote(loc) for loc in locations[1:-1]])
+    
+    url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
+    if waypoints:
+        url += f"&waypoints={waypoints}"
+    return url
+
+def get_apple_maps_url(locations: list[str]) -> str:
+    import urllib.parse
+    if not locations:
+        return ""
+    if len(locations) == 1:
+        return f"http://maps.apple.com/?daddr={urllib.parse.quote(locations[0])}"
+    
+    # Apple Maps doesn't support waypoints via URL scheme in the same way, 
+    # but we can set start (saddr) and destination (daddr). 
+    # For a multi-stop route on Apple Maps, we unfortunately just pass the origin and final destination.
+    origin = urllib.parse.quote(locations[0])
+    destination = urllib.parse.quote(locations[-1])
+    return f"http://maps.apple.com/?saddr={origin}&daddr={destination}"

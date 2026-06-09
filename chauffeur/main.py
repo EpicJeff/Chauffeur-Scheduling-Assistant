@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.encoders import jsonable_encoder
 import os
 import uvicorn
+from datetime import datetime, timedelta
 
 async def poll_schedule():
     while True:
@@ -398,28 +399,56 @@ def get_ha_sensors():
                 if len(daily_events) == 0:
                     continue
                 
+                route_edges = cache.get("route_edges", {})
+                home_loc = maps.get_home_location()
+                
                 # Generate Individual Event Data
                 enriched_events = []
-                for ev in daily_events:
+                for i, ev in enumerate(daily_events):
                     ev_copy = ev.copy()
+                    
+                    # Calculate Departure Time
+                    departure_time = None
+                    suggested_notification_time = None
+                    
+                    ev_start = datetime.fromisoformat(ev["start"].replace('Z', '+00:00'))
+                    
+                    if i == 0:
+                        # First event of the day
+                        travel_mins = maps.get_travel_time_minutes(home_loc, ev.get("location"))
+                        departure_time = ev_start - timedelta(minutes=travel_mins)
+                        suggested_notification_time = departure_time - timedelta(minutes=30)
+                    else:
+                        prev_ev = daily_events[i-1]
+                        edge = route_edges.get(prev_ev["id"], {})
+                        if edge.get("home_waypoint"):
+                            travel_mins = edge["home_waypoint"].get("from_home_mins", 0)
+                            departure_time = ev_start - timedelta(minutes=travel_mins)
+                            suggested_notification_time = departure_time - timedelta(minutes=30)
+                        else:
+                            travel_mins = edge.get("travel_mins", 0)
+                            departure_time = ev_start - timedelta(minutes=travel_mins)
+                            suggested_notification_time = departure_time - timedelta(minutes=5)
+                            
+                    ev_copy["departure_time"] = departure_time.isoformat() if departure_time else None
+                    ev_copy["suggested_notification_time"] = suggested_notification_time.isoformat() if suggested_notification_time else None
+                    
+                    # Maps URL for single event
                     if ev.get("location"):
-                        ev_copy["map_url"] = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(ev['location'])}"
+                        if d.get("preferred_maps_provider") == "apple":
+                            ev_copy["map_url"] = maps.get_apple_maps_url([ev["location"]])
+                        else:
+                            ev_copy["map_url"] = maps.get_google_maps_url([ev["location"]])
                     else:
                         ev_copy["map_url"] = ""
                     enriched_events.append(ev_copy)
                 
                 # Generate Multi-stop Maps Link
                 locations = [e["location"] for e in daily_events if e.get("location")]
-                maps_url = ""
-                if len(locations) == 1:
-                    maps_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(locations[0])}"
-                elif len(locations) > 1:
-                    origin = urllib.parse.quote(locations[0])
-                    destination = urllib.parse.quote(locations[-1])
-                    waypoints = "|".join([urllib.parse.quote(loc) for loc in locations[1:-1]])
-                    maps_url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}"
-                    if waypoints:
-                        maps_url += f"&waypoints={waypoints}"
+                if d.get("preferred_maps_provider") == "apple":
+                    maps_url = maps.get_apple_maps_url(locations)
+                else:
+                    maps_url = maps.get_google_maps_url(locations)
                         
                 driver_routes.append({
                     "driver_name": d["name"],

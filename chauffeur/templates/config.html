@@ -133,6 +133,13 @@
                         <label class="block text-gray-400 mb-1 text-sm">Color</label>
                         <input type="color" x-model="newDriver.color_code" class="w-14 h-12 bg-gray-900 rounded p-1 cursor-pointer border border-gray-600">
                     </div>
+                    <div class="w-full lg:w-32">
+                        <label class="block text-gray-400 mb-1 text-sm">Maps</label>
+                        <select x-model="newDriver.preferred_maps_provider" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="google">Google</option>
+                            <option value="apple">Apple</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="flex gap-4 items-end flex-wrap">
                     <div class="w-full lg:w-48">
@@ -293,7 +300,7 @@
                 drivers: [],
                 rules: [],
                 priorityRules: [],
-                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false },
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google' },
                 newDriverCalendarInput: '',
                 newRule: { driver_id: '', constraint_type: 'required', event_keyword: '' },
                 newPriorityRule: { match_type: 'keyword', match_value: '', weight_modifier: 100 },
@@ -409,7 +416,8 @@
                         preferred_start: this.newDriver.preferred_start || null,
                         preferred_end: this.newDriver.preferred_end || null,
                         is_disabled: this.newDriver.is_disabled,
-                        calendar_ids: this.newDriver.calendarIds
+                        calendar_ids: this.newDriver.calendarIds,
+                        preferred_maps_provider: this.newDriver.preferred_maps_provider || 'google'
                     };
                     if (this.editDriverId) {
                         await fetch(`api/drivers/${this.editDriverId}`, { method: 'DELETE' });
@@ -445,13 +453,14 @@
                         preferred_start: d.preferred_start || '',
                         preferred_end: d.preferred_end || '',
                         is_disabled: d.is_disabled || false,
-                        calendarIds: d.calendar_ids || []
+                        calendarIds: d.calendar_ids || [],
+                        preferred_maps_provider: d.preferred_maps_provider || 'google'
                     };
                     this.newDriverCalendarInput = '';
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google' };
                     this.newDriverCalendarInput = '';
                 },
                 async deleteDriver(doc_id) {
