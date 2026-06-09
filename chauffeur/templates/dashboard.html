@@ -1062,24 +1062,24 @@
 
                                 if (edge.home_waypoint && edge.pickup_waypoint) {
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-blue-500 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center">
+                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
+                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
                                             ${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
                                         </span>
                                     `);
                                 } else if (edge.home_waypoint) {
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-blue-500 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center">
+                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
                                 } else if (edge.pickup_waypoint) {
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
+                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
                                             ${iconCar}${formatDuration(edge.pickup_waypoint.to_pickup_mins)}${iconArrow}${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
                                         </span>
                                     `);
@@ -1095,7 +1095,7 @@
                                     }
 
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center">
+                                        <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${pillText}
                                         </span>
                                     `);
