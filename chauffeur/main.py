@@ -509,15 +509,23 @@ def test_polyline(origin: str, destination: str):
     api_key = maps.get_api_key()
     if not api_key:
         return {"error": "No API key"}
-    url = "https://maps.googleapis.com/maps/api/directions/json"
-    params = {
-        "origin": origin,
-        "destination": destination,
-        "key": api_key,
-        "mode": "driving"
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "routes.polyline.encodedPolyline"
+    }
+    payload = {
+        "origin": {
+            "address": origin
+        },
+        "destination": {
+            "address": destination
+        },
+        "travelMode": "DRIVE"
     }
     try:
-        resp = requests.get(url, params=params, timeout=5)
+        resp = requests.post(url, json=payload, headers=headers, timeout=5)
         return resp.json()
     except Exception as e:
         return {"error": str(e)}

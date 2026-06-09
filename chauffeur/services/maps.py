@@ -99,33 +99,41 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
     if cached is not None:
         return cached
         
-    # 2. Call Google Directions API
+    # 2. Call Google Routes API
     api_key = get_api_key()
     if api_key:
-        url = "https://maps.googleapis.com/maps/api/directions/json"
-        params = {
-            "origin": origin,
-            "destination": destination,
-            "key": api_key,
-            "mode": "driving"
+        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "routes.polyline.encodedPolyline"
+        }
+        payload = {
+            "origin": {
+                "address": origin
+            },
+            "destination": {
+                "address": destination
+            },
+            "travelMode": "DRIVE"
         }
         
         try:
-            resp = requests.get(url, params=params, timeout=5)
-            data = resp.json()
-            if data.get("status") == "OK":
+            resp = requests.post(url, json=payload, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
                 routes = data.get("routes", [])
                 if routes:
-                    polyline = routes[0].get("overview_polyline", {}).get("points")
+                    polyline = routes[0].get("polyline", {}).get("encodedPolyline")
                     if polyline:
                         storage.set_cached_polyline(origin.lower(), destination.lower(), polyline)
                         return polyline
                 else:
-                    print(f"Directions API: No routes found for {origin} -> {destination}")
+                    print(f"Routes API: No routes found for {origin} -> {destination}")
             else:
-                print(f"Directions API failed: status={data.get('status')}, error={data.get('error_message')}")
+                print(f"Routes API failed: status={resp.status_code}, body={resp.text}")
         except Exception as ex:
-            print(f"Directions API exception for polyline: {ex}")
+            print(f"Routes API exception for polyline: {ex}")
             
     return None
 
