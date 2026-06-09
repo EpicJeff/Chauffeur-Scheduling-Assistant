@@ -793,13 +793,13 @@
                             const isShort = height <= 55;
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             colEventsHtml += `
-                                <div ${dragAttr} ${clickAttr}
+                                <div ${dragAttr} ${clickAttr} title="${ev.title}"
                                      class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-color: ${evColor}; min-height: 24px;">
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
                                             ${colorDots}
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'max-w-[40px]' : ''}" style="color: ${evColor}">${summaries}</div>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'hidden' : ''}" style="color: ${evColor}">${summaries}</div>
                                             ${overriddenEventsList.includes(ev.id) ? '<span class="ml-1 text-yellow-500"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v5.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L9 8.586V3a1 1 0 011-1z" /></svg></span>' : ''}
                                         </div>
                                         <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
