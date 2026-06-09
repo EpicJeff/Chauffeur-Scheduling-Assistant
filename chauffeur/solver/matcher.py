@@ -422,7 +422,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                 pickup_waypoint = None
                 if shares_calendar:
                     travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
-                    next_origin = e1.location
+                    next_origin = e2.location
                     drive_to_pickup = 0
                     drive_from_pickup = travel
                 else:
@@ -440,7 +440,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                             "pickup_event_title": pickup_event.title
                         }
                     else:
-                        next_origin = e1.location
+                        next_origin = e2.location
                         drive_to_pickup = 0
                         drive_from_pickup = travel
                     
