@@ -1076,22 +1076,32 @@
                                 const trafficWarn = edge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${edge.delay_mins}min traffic delay">⚠</span>` : '';
 
                                 if (edge.home_waypoint && edge.pickup_waypoint) {
+                                    const bufferMins = 5;
+                                    const driveFromHome = edge.home_waypoint.from_home_mins + edge.pickup_waypoint.from_pickup_mins;
+                                    const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
+
                                     pills.push(`
                                         <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
+                                    pills.push(`<span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm -my-0.5">Leave at ${formatTime(leaveHomeDate.toISOString())}</span>`);
                                     pills.push(`
                                         <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
                                             ${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
                                         </span>
                                     `);
                                 } else if (edge.home_waypoint) {
+                                    const bufferMins = 5;
+                                    const driveFromHome = edge.home_waypoint.from_home_mins;
+                                    const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
+
                                     pills.push(`
                                         <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
+                                    pills.push(`<span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm -my-0.5">Leave at ${formatTime(leaveHomeDate.toISOString())}</span>`);
                                 } else if (edge.pickup_waypoint) {
                                     pills.push(`
                                         <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
