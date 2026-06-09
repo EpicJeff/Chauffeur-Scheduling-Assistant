@@ -531,7 +531,12 @@ def get_static_map(location: str, origin: str = None, theme: str = "dark"):
         ])
 
     if origin:
-        params.append(("path", f"color:0x4A90D9|weight:4|{origin}|{location}"))
+        polyline = maps.get_route_polyline(origin, location)
+        if polyline:
+            params.append(("path", f"color:0x4A90D9|weight:4|enc:{polyline}"))
+        else:
+            params.append(("path", f"color:0x4A90D9|weight:4|{origin}|{location}"))
+            
         # Replace the single marker with origin + destination markers
         params = [(k, v) for k, v in params if k != "markers"]
         params.append(("markers", f"color:green|label:A|{origin}"))

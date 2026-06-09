@@ -83,6 +83,48 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
+def get_route_polyline(origin: str, destination: str) -> Optional[str]:
+    """
+    Returns the encoded polyline string for the route between origin and destination.
+    """
+    if not origin or not destination:
+        return None
+    if origin.lower() == destination.lower():
+        return None
+        
+    cache_duration = get_cache_duration()
+    
+    # 1. Check cache
+    cached = storage.get_cached_polyline(origin.lower(), destination.lower(), max_age_mins=cache_duration)
+    if cached is not None:
+        return cached
+        
+    # 2. Call Google Directions API
+    api_key = get_api_key()
+    if api_key:
+        url = "https://maps.googleapis.com/maps/api/directions/json"
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "key": api_key,
+            "mode": "driving"
+        }
+        
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            data = resp.json()
+            if data.get("status") == "OK":
+                routes = data.get("routes", [])
+                if routes:
+                    polyline = routes[0].get("overview_polyline", {}).get("points")
+                    if polyline:
+                        storage.set_cached_polyline(origin.lower(), destination.lower(), polyline)
+                        return polyline
+        except Exception as ex:
+            print(f"Directions API error for polyline: {ex}")
+            
+    return None
+
 def get_api_key() -> Optional[str]:
     api_key = None
     
