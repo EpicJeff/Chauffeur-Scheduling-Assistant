@@ -937,6 +937,19 @@
                         }
                     });
 
+                    // Add current time line
+                    const nowTime = new Date().getTime();
+                    const nowY = getTimeY(nowTime);
+                    if (nowY > 0) {
+                        absoluteOverlays += `
+                            <div class="absolute left-0 w-full flex items-center z-30 pointer-events-none" style="top: ${nowY}px; transform: translateY(-50%);">
+                                <div class="w-full border-t-2 border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] relative">
+                                    <div class="absolute left-0 top-1/2 transform -translate-y-1/2 w-2 h-2 bg-red-500 rounded-full shadow-sm"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+
                     const colEvents = (colsObj[c_id] || []).sort((a, b) => new Date(a.start) - new Date(b.start));
                     const uniqueColEventsMap = {};
                     colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
@@ -994,10 +1007,12 @@
                             `;
                         } else {
                             const isShort = height <= 55;
+                            const isCompleted = new Date(ev.end).getTime() < nowTime;
+                            const opacityClass = isCompleted ? 'opacity-40 grayscale' : 'opacity-100';
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr} title="${ev.title}"
-                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass}"
+                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass} ${opacityClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-color: ${evColor}; min-height: 24px;">
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
