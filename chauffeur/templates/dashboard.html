@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,7 +17,7 @@
                 extend: {
                     colors: isHaTheme ? {
                         gray: {
-                            900: 'var(--ha-card-bg, #1c1c1c)', 
+                            900: 'var(--ha-card-bg, #1c1c1c)',
                             800: 'var(--ha-header-bg, #2b2b2b)',
                             700: 'var(--ha-divider, #444444)',
                             600: 'var(--ha-divider, #666666)',
@@ -35,7 +36,7 @@
                 }
             }
         }
-        
+
         function syncHaTheme() {
             try {
                 if (window.parent !== window && window.parent.document) {
@@ -47,7 +48,7 @@
                     const div = style.getPropertyValue('--divider-color');
                     const primary = style.getPropertyValue('--primary-color');
                     const secBg = style.getPropertyValue('--secondary-background-color') || card;
-                    
+
                     if (bg) document.documentElement.style.setProperty('--ha-bg', bg.trim());
                     if (card) document.documentElement.style.setProperty('--ha-card-bg', card.trim());
                     if (text) document.documentElement.style.setProperty('--ha-primary-text', text.trim());
@@ -56,7 +57,7 @@
                     if (primary) document.documentElement.style.setProperty('--ha-primary-color', primary.trim());
                     if (secBg) document.documentElement.style.setProperty('--ha-header-bg', secBg.trim());
                 }
-            } catch(e) {
+            } catch (e) {
                 // Cross-origin fallback applied automatically via CSS variable defaults
             }
         }
@@ -67,15 +68,24 @@
         }
     </script>
     <style>
-        body { background-color: #1a202c; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-        body.ha-theme { 
-            background-color: var(--ha-bg, #111111) !important; 
-            color: var(--ha-primary-text, #e1e1e1) !important; 
+        body {
+            background-color: #1a202c;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
         }
+
+        body.ha-theme {
+            background-color: var(--ha-bg, #111111) !important;
+            color: var(--ha-primary-text, #e1e1e1) !important;
+        }
+
         /* Hide scrollbar for a clean kiosk look */
-        ::-webkit-scrollbar { display: none; }
+        ::-webkit-scrollbar {
+            display: none;
+        }
     </style>
 </head>
+
 <body class="p-2 md:p-4">
     <script>
         if (isHaTheme) document.body.classList.add('ha-theme');
@@ -83,46 +93,85 @@
     <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
         <div id="header-buttons" class="flex space-x-4">
-            <button onclick="forceSync()" id="sync-btn" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
-                <svg id="sync-icon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <button onclick="forceSync()" id="sync-btn"
+                class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
+                <svg id="sync-icon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                    </path>
+                </svg>
                 <span id="sync-text">Sync Now</span>
             </button>
-            <a href="config" class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            <a href="config"
+                class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                    </path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
                 Config
             </a>
         </div>
     </div>
-    
-    <div id="error-container" class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center"></div>
+
+    <div id="error-container"
+        class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center">
+    </div>
     <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
-            
+        <div
+            class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
+
             <!-- VIEW MODE -->
             <div id="modal-view-mode">
                 <div class="flex justify-between items-start mb-6">
                     <h3 id="view-title" class="text-3xl font-bold text-blue-200">Event Title</h3>
                     <button onclick="closeEventModal()" class="text-gray-400 hover:text-white">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
                     </button>
                 </div>
-                
+
                 <div class="space-y-4 text-lg">
                     <div class="flex items-center text-gray-300">
-                        <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
                         <span id="view-time">Time</span>
                     </div>
                     <div class="flex items-start text-gray-300">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z">
+                            </path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
                         <span id="view-location" class="break-words flex-1">Location</span>
                     </div>
                     <div id="view-attendees-section" class="hidden flex items-start text-gray-300">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+                            </path>
+                        </svg>
                         <div id="view-attendees" class="flex-1 flex flex-wrap gap-2"></div>
                     </div>
                     <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
-                        <div id="view-description" class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base">No description provided.</div>
+                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6h16M4 12h16M4 18h7"></path>
+                        </svg>
+                        <div id="view-description"
+                            class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base">No description
+                            provided.</div>
                     </div>
                     <div id="view-map-section" class="hidden pt-2 border-t border-gray-700 mt-4">
                         <img id="view-map-img" class="w-full rounded-lg shadow-lg" alt="Event location map" />
@@ -131,20 +180,35 @@
 
                 <div id="conflicts-section" class="hidden mt-6 pt-6 border-t border-gray-700">
                     <h4 class="text-xl font-bold text-red-400 mb-3 flex items-center">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                            </path>
+                        </svg>
                         Conflicting Events
                     </h4>
-                    <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because they conflict with this event. Click Swap to override the schedule.</p>
+                    <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because they
+                        conflict with this event. Click Swap to override the schedule.</p>
                     <div id="conflicts-list" class="space-y-3"></div>
                 </div>
-                
+
                 <div class="mt-8 flex justify-end space-x-4">
-                    <button id="remove-override-btn" onclick="removeOverride(activeEventId)" class="hidden px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    <button id="remove-override-btn" onclick="removeOverride(activeEventId)"
+                        class="hidden px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                            </path>
+                        </svg>
                         Remove Override
                     </button>
-                    <button id="edit-details-btn" onclick="switchToEditMode()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    <button id="edit-details-btn" onclick="switchToEditMode()"
+                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
+                            </path>
+                        </svg>
                         Edit Details
                     </button>
                 </div>
@@ -154,49 +218,59 @@
             <div id="modal-edit-mode" class="hidden">
                 <h3 class="text-2xl font-bold text-blue-200 mb-6">Edit Event</h3>
                 <input type="hidden" id="edit-event-id">
-                
+
                 <div class="space-y-4">
                     <div>
                         <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                        <input type="text" id="edit-title" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold">
+                        <input type="text" id="edit-title"
+                            class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold">
                     </div>
-                    
+
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">Start Time</label>
-                            <input type="datetime-local" id="edit-start" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            <input type="datetime-local" id="edit-start"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
                         </div>
                         <div>
                             <label class="block text-gray-400 mb-1 text-sm">End Time</label>
-                            <input type="datetime-local" id="edit-end" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            <input type="datetime-local" id="edit-end"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
                         </div>
                     </div>
 
                     <div class="relative">
                         <label class="block text-gray-400 mb-1 text-sm">Location</label>
-                        <input type="text" id="edit-location" oninput="handleLocationInput()" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                        
+                        <input type="text" id="edit-location" oninput="handleLocationInput()"
+                            class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+
                         <!-- Autocomplete Dropdown -->
-                        <div id="autocomplete-dropdown" class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                        <div id="autocomplete-dropdown"
+                            class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
                         </div>
                     </div>
 
                     <div>
                         <label class="block text-gray-400 mb-1 text-sm">Guests</label>
-                        <div id="edit-guests-container" class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                        <div id="edit-guests-container"
+                            class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
                             <!-- Populated dynamically -->
                         </div>
                     </div>
 
                     <div>
                         <label class="block text-gray-400 mb-1 text-sm">Description</label>
-                        <textarea id="edit-description" rows="4" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500"></textarea>
+                        <textarea id="edit-description" rows="4"
+                            class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500"></textarea>
                     </div>
                 </div>
 
                 <div class="mt-8 flex justify-end space-x-4">
-                    <button onclick="switchToViewMode()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                    <button onclick="saveEventDetails()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save Changes</button>
+                    <button onclick="switchToViewMode()"
+                        class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                    <button onclick="saveEventDetails()"
+                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save
+                        Changes</button>
                 </div>
             </div>
 
@@ -234,7 +308,7 @@
                     showError(data.error);
                     return;
                 }
-                
+
                 // Add ghost drivers to the map
                 if (data.ghost_drivers) {
                     data.ghost_drivers.forEach(d => { driversMap[d.id] = d; });
@@ -257,12 +331,12 @@
             const btn = document.getElementById('sync-btn');
             const icon = document.getElementById('sync-icon');
             const text = document.getElementById('sync-text');
-            
+
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
             icon.classList.add('animate-spin');
             text.textContent = 'Syncing...';
-            
+
             try {
                 await fetch('api/schedule/refresh', { method: 'POST' });
                 await fetchSchedule();
@@ -286,11 +360,11 @@
         }
 
         function formatTime(dateStr) {
-            return new Date(dateStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
         function formatDateStr(dateStr) {
-            return new Date(dateStr).toLocaleDateString([], {weekday: 'long', month: 'short', day: 'numeric'});
+            return new Date(dateStr).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
         }
 
         let currentEventsMap = {};
@@ -301,7 +375,7 @@
             // HTML5 datetime-local expects YYYY-MM-DDThh:mm
             const d = new Date(isoStr);
             const pad = n => n.toString().padStart(2, '0');
-            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
         }
 
         function toIsoString(localStr) {
@@ -320,10 +394,10 @@
             const dateStr = formatDateStr(ev.start);
             const timeStr = `${formatTime(ev.start)} - ${formatTime(ev.end)}`;
             document.getElementById('view-time').textContent = `${dateStr} • ${timeStr}`;
-            
+
             const locEl = document.getElementById('view-location');
             locEl.innerHTML = ev.location ? ev.location : '<span class="italic text-gray-500">No location</span>';
-            
+
             const descEl = document.getElementById('view-description');
             descEl.innerHTML = ev.description ? ev.description : 'No description provided.';
 
@@ -348,10 +422,15 @@
             const mapImg = document.getElementById('view-map-img');
             if (ev.location) {
                 const homeLocation = currentData.home_location || '';
-                let mapUrl = `api/maps/static?location=${encodeURIComponent(ev.location)}`;
+                const isDark = window.getComputedStyle(document.documentElement).getPropertyValue('--ha-card-bg').trim().match(/^#[0-3]/) ||
+                    document.documentElement.classList.contains('dark') ||
+                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const theme = isDark ? 'dark' : 'light';
+                let mapUrl = `api/maps/static?location=${encodeURIComponent(ev.location)}&theme=${theme}`;
                 if (homeLocation) {
                     mapUrl += `&origin=${encodeURIComponent(homeLocation)}`;
                 }
+                mapImg.onerror = () => { mapSection.classList.add('hidden'); };
                 mapImg.src = mapUrl;
                 mapSection.classList.remove('hidden');
             } else {
@@ -381,7 +460,7 @@
             } else {
                 removeOverrideBtn.classList.add('hidden');
             }
-            
+
             const editDetailsBtn = document.getElementById('edit-details-btn');
             if (isReadOnly) {
                 editDetailsBtn.classList.add('hidden');
@@ -407,11 +486,11 @@
             document.getElementById('edit-end').value = toDateTimeLocal(ev.end);
             document.getElementById('edit-location').value = ev.location || '';
             document.getElementById('edit-description').value = ev.description || '';
-            
+
             // Populate guests
             const guestsContainer = document.getElementById('edit-guests-container');
             const passengerCals = currentData.passenger_calendar_ids || [];
-            
+
             if (passengerCals.length > 0) {
                 guestsContainer.innerHTML = passengerCals.map(cal_id => {
                     const isChecked = ev.calendar_ids.includes(cal_id) ? 'checked' : '';
@@ -426,7 +505,7 @@
             } else {
                 guestsContainer.innerHTML = '<span class="text-sm text-gray-500 col-span-2">No calendars configured.</span>';
             }
-            
+
             document.getElementById('autocomplete-dropdown').classList.add('hidden');
 
             document.getElementById('modal-view-mode').classList.add('hidden');
@@ -442,7 +521,7 @@
         async function handleLocationInput() {
             const input = document.getElementById('edit-location').value;
             const dropdown = document.getElementById('autocomplete-dropdown');
-            
+
             if (input.length < 3) {
                 dropdown.classList.add('hidden');
                 return;
@@ -453,9 +532,9 @@
                 try {
                     const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(input)}`);
                     const data = await res.json();
-                    
+
                     if (data.suggestions && data.suggestions.length > 0) {
-                        dropdown.innerHTML = data.suggestions.map(s => 
+                        dropdown.innerHTML = data.suggestions.map(s =>
                             `<div onclick="selectLocation('${s.description.replace(/'/g, "\\'")}')" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm">${s.description}</div>`
                         ).join('');
                         dropdown.classList.remove('hidden');
@@ -489,9 +568,9 @@
                 end: toIsoString(document.getElementById('edit-end').value),
                 attendees: attendees
             };
-            
+
             closeEventModal();
-            
+
             try {
                 await fetch(`api/events`, {
                     method: 'PATCH',
@@ -531,7 +610,7 @@
         }
 
         // Global escape key listener for modal
-        document.addEventListener('keydown', function(e) {
+        document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') closeEventModal();
         });
 
@@ -548,32 +627,32 @@
             ev.preventDefault();
             const eventId = ev.dataTransfer.getData("text");
             const sourceDriverId = ev.dataTransfer.getData("sourceDriver");
-            
+
             if (driverId === sourceDriverId) return;
 
             if (driverId === 'unassigned') {
                 const elem = ev.target.closest('.bg-cardbg');
-                if(elem) elem.style.opacity = '0.5';
+                if (elem) elem.style.opacity = '0.5';
                 await removeOverride(eventId);
             } else if (driverId !== 'no_location' && !driverId.startsWith('g')) {
                 // Change UI to reflect loading instantly
                 const elem = ev.target.closest('.bg-cardbg');
-                if(elem) elem.style.opacity = '0.5';
+                if (elem) elem.style.opacity = '0.5';
                 await forceSwap(eventId, driverId);
             }
         }
 
         function renderSchedule(data) {
             const { events, assignments, ghost_assignments, unassigned, no_location, calendar_metadata, overridden_events, lateness_warnings } = data;
-            
+
             const scheduleByDate = {};
             const overriddenEventsList = overridden_events || [];
             const latenessWarningsMap = lateness_warnings || {};
-            
+
             currentEventsMap = {};
             events.forEach(ev => {
                 currentEventsMap[ev.id] = ev;
-                
+
                 // An event can belong to multiple columns now.
                 // It belongs to its assigned column, ghost_assigned column, unassigned/no_location, AND any driver_events column.
                 let targetCols = [];
@@ -583,7 +662,7 @@
                     if (assignments && assignments[ev.id]) targetCols.push(assignments[ev.id]);
                     if (ghost_assignments && ghost_assignments[ev.id]) targetCols.push(ghost_assignments[ev.id]);
                     if (unassigned && unassigned.includes(ev.id)) targetCols.push('unassigned');
-                    
+
                     // Add columns where the driver is attending the event
                     if (data.driver_events) {
                         for (const dId of Object.keys(data.driver_events)) {
@@ -593,12 +672,12 @@
                         }
                     }
                 }
-                
+
                 if (targetCols.length === 0) return;
 
                 const dateKey = formatDateStr(ev.start);
                 if (!scheduleByDate[dateKey]) scheduleByDate[dateKey] = {};
-                
+
                 targetCols.forEach(col_id => {
                     if (!scheduleByDate[dateKey][col_id]) scheduleByDate[dateKey][col_id] = [];
                     scheduleByDate[dateKey][col_id].push(ev);
@@ -614,7 +693,7 @@
             }
 
             // Sort dates
-            const sortedDates = Object.keys(scheduleByDate).sort((a,b) => new Date(a) - new Date(b));
+            const sortedDates = Object.keys(scheduleByDate).sort((a, b) => new Date(a) - new Date(b));
 
             sortedDates.forEach(date => {
                 const colsObj = scheduleByDate[date];
@@ -649,27 +728,27 @@
                         return true;
                     });
                 });
-                
+
                 // Get all columns that should be rendered in the timeline
-                let colIds = Object.keys(driversMap).sort((a,b) => {
+                let colIds = Object.keys(driversMap).sort((a, b) => {
                     if (a.startsWith('g') && !b.startsWith('g')) return 1;
                     if (b.startsWith('g') && !a.startsWith('g')) return -1;
                     return a.localeCompare(b);
                 });
-                
+
                 if (isReadOnly) {
                     colIds = colIds.filter(id => !id.startsWith('g') && colsObj[id] && colsObj[id].length > 0);
                 }
-                
+
                 if (colIds.length === 0) {
                     return; // Skip rendering this entire date block if there are no columns
                 }
-                
+
                 const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
                 scheduleContainer.innerHTML += dateHtml;
-                
+
                 // --- Timeline Constants & Logic ---
-                const PIXELS_PER_MINUTE = 1.3; 
+                const PIXELS_PER_MINUTE = 1.3;
                 const GAP_HEIGHT = 15; // 40px height for the "..." condensed gap
 
                 // Helper: floor to hour
@@ -700,7 +779,7 @@
                 colIds.forEach(c_id => {
                     if (colsObj[c_id]) allEventsForDate.push(...colsObj[c_id]);
                 });
-                
+
                 // Active periods
                 let activePeriods = allEventsForDate.map(e => {
                     return {
@@ -708,9 +787,22 @@
                         end: ceilToHour(e.end).getTime()
                     };
                 });
-                
+
+                // Extend timeline backward for initial travel from home
+                colIds.forEach(cId => {
+                    const initEdge = initialEdges[cId];
+                    if (initEdge && initEdge.travel_mins > 0) {
+                        const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
+                        if (targetEvent) {
+                            const departureTime = new Date(targetEvent.start).getTime() - (initEdge.travel_mins + 5) * 60000;
+                            const departureHour = floorToHour(new Date(departureTime).toISOString()).getTime();
+                            activePeriods.push({ start: departureHour, end: floorToHour(targetEvent.start).getTime() });
+                        }
+                    }
+                });
+
                 activePeriods.sort((a, b) => a.start - b.start);
-                
+
                 let blocks = [];
                 if (activePeriods.length > 0) {
                     let currentBlock = activePeriods[0];
@@ -725,7 +817,7 @@
                     }
                     blocks.push(currentBlock);
                 }
-                
+
                 let currentY = 0;
                 blocks.forEach(b => {
                     b.startY = currentY;
@@ -734,9 +826,9 @@
                     b.endY = b.startY + b.pixelHeight;
                     currentY = b.endY + GAP_HEIGHT;
                 });
-                
+
                 const totalHeight = blocks.length > 0 ? blocks[blocks.length - 1].endY + 20 : 0;
-                
+
                 function getTimeY(dateStr) {
                     const t = new Date(dateStr).getTime();
                     for (let i = 0; i < blocks.length; i++) {
@@ -755,11 +847,11 @@
 
                 const wrapper = document.createElement('div');
                 wrapper.className = "flex-1 flex flex-wrap gap-3";
-                
+
                 colIds.forEach(c_id => {
                     let colInfo = { name: "Unknown", color_code: "#4a5568" };
                     if (driversMap[c_id]) colInfo = driversMap[c_id];
-                    
+
                     // Build absolute overlays for Time Lines inside THIS specific driver block!
                     let absoluteOverlays = '';
                     blocks.forEach((b, index) => {
@@ -768,7 +860,7 @@
                             const y = b.startY + ((t - b.start) / 60000) * PIXELS_PER_MINUTE;
                             const d = new Date(t);
                             const timeLabel = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                            
+
                             absoluteOverlays += `
                                 <div class="absolute left-0 w-full flex items-center z-0 pointer-events-none" style="top: ${y}px; transform: translateY(-50%);">
                                     <div class="text-[10px] text-gray-400 absolute -top-2 left-1 bg-gray-800 px-1 rounded font-mono border border-gray-700 shadow-sm z-20">${timeLabel}</div>
@@ -777,7 +869,7 @@
                             `;
                             t += 3600000; // +1 hour
                         }
-                        
+
                         if (index < blocks.length - 1) {
                             const gapY = b.endY;
                             absoluteOverlays += `
@@ -788,29 +880,29 @@
                         }
                     });
 
-                    const colEvents = (colsObj[c_id] || []).sort((a,b) => new Date(a.start) - new Date(b.start));
+                    const colEvents = (colsObj[c_id] || []).sort((a, b) => new Date(a.start) - new Date(b.start));
                     const uniqueColEventsMap = {};
                     colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
                     const uniqueColEvents = Object.values(uniqueColEventsMap);
-                    
+
                     let colEventsHtml = '';
                     uniqueColEvents.forEach((ev, index) => {
                         const startY = getTimeY(ev.start);
                         const endY = getTimeY(ev.end);
                         const height = Math.max(endY - startY, 20);
-                        
+
                         const isAssignedToThisColumn = (assignments && assignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
                         const isDriverOnly = !isAssignedToThisColumn;
-                        
+
                         let overlapIndex = 0;
-                        for(let i=0; i<index; i++) {
+                        for (let i = 0; i < index; i++) {
                             const otherEv = uniqueColEvents[i];
                             if (new Date(otherEv.end) > new Date(ev.start)) {
                                 overlapIndex++;
                             }
                         }
                         const leftOffset = 28 + (overlapIndex * 15); // leave room for time labels
-                        
+
                         const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
                         const evColor = calMetas[0].backgroundColor;
                         const colorDots = calMetas.map(m => `<div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" style="background-color: ${m.backgroundColor};"></div>`).join('');
@@ -848,30 +940,34 @@
                                 </div>
                             `;
                         }
-                        
+
                         // Initial travel pill from home (before first event)
                         if (index === 0 && !isDriverOnly) {
                             const initEdge = initialEdges[c_id];
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const departureDate = new Date(new Date(ev.start).getTime() - initEdge.travel_mins * 60000);
                                 const departureStr = formatTime(departureDate.toISOString());
+                                const departureY = getTimeY(departureDate.toISOString());
+                                const distance = startY - departureY;
                                 const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
                                 const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
                                 const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
                                 const trafficWarn = initEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${initEdge.delay_mins}min traffic delay">⚠</span>` : '';
 
-                                const pillHeight = 30;
-                                colEventsHtml += `
-                                    <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none"
-                                         style="top: ${startY - pillHeight}px; height: ${pillHeight}px; width: 100%;">
-                                        <div class="flex flex-col gap-0.5 items-center z-10 relative">
-                                            <span class="text-[9px] text-gray-500 font-bold uppercase">Leave at ${departureStr}</span>
-                                            <span class="bg-gray-900 border border-cyan-600 text-[10px] px-2 py-0.5 rounded-full text-cyan-200 shadow-sm font-mono uppercase flex items-center">
-                                                ${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}
-                                            </span>
+                                if (distance > 10) {
+                                    colEventsHtml += `
+                                        <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none"
+                                             style="top: ${departureY}px; height: ${distance}px; width: 100%;">
+                                            <div class="w-px h-full bg-blue-500/30 absolute"></div>
+                                            <div class="flex flex-col gap-0.5 items-center z-10 relative">
+                                                <span class="text-[9px] text-gray-400 font-bold uppercase">Leave at ${departureStr}</span>
+                                                <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
+                                                    ${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}
+                                                </span>
+                                            </div>
                                         </div>
-                                    </div>
-                                `;
+                                    `;
+                                }
                             }
                         }
 
@@ -881,10 +977,10 @@
                             const nextEv = uniqueColEvents[index + 1];
                             const nextStartY = getTimeY(nextEv.start);
                             const distance = nextStartY - endY;
-                            
+
                             if (distance > 0) {
                                 let pills = [];
-                                
+
                                 const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
                                 const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
                                 const iconPerson = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`;
@@ -894,7 +990,7 @@
 
                                 if (edge.home_waypoint && edge.pickup_waypoint) {
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-purple-500 text-[10px] px-2 py-0.5 rounded-full text-purple-300 shadow-sm font-mono uppercase flex items-center">
+                                        <span class="bg-gray-900 border border-blue-500 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
@@ -905,7 +1001,7 @@
                                     `);
                                 } else if (edge.home_waypoint) {
                                     pills.push(`
-                                        <span class="bg-gray-900 border border-purple-500 text-[10px] px-2 py-0.5 rounded-full text-purple-300 shadow-sm font-mono uppercase flex items-center">
+                                        <span class="bg-gray-900 border border-blue-500 text-[10px] px-2 py-0.5 rounded-full text-blue-300 shadow-sm font-mono uppercase flex items-center">
                                             ${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
                                         </span>
                                     `);
@@ -916,23 +1012,23 @@
                                         </span>
                                     `);
                                 }
-                                
+
                                 if (pills.length === 0) {
                                     const gapMinutes = Math.round((new Date(nextEv.start) - new Date(ev.end)) / 60000);
                                     const downTime = gapMinutes - edge.travel_mins;
-                                    
+
                                     let pillText = `${iconCar}${formatDuration(edge.travel_mins)}${trafficWarn}`;
                                     if (downTime > 0) {
                                         pillText += ` <span class="text-gray-500 ml-1 text-[9px] font-bold">(${iconHourglass}${formatDuration(downTime)})</span>`;
                                     }
-                                    
+
                                     pills.push(`
                                         <span class="bg-gray-900 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
                                             ${pillText}
                                         </span>
                                     `);
                                 }
-                                
+
                                 colEventsHtml += `
                                     <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none" 
                                          style="top: ${endY}px; height: ${distance}px; width: 100%;">
@@ -977,7 +1073,7 @@
                     const sidebar = document.createElement('div');
                     sidebar.className = "w-full flex flex-col gap-2 mt-2";
                     let sidebarHtml = '';
-                    
+
                     ['unassigned', 'no_location'].forEach(c_id => {
                         if (!colsObj[c_id] || colsObj[c_id].length === 0) {
                             if (c_id === 'unassigned') {
@@ -991,10 +1087,10 @@
                             }
                             return;
                         }
-                        
+
                         let colInfo = { name: "Unassigned", color_code: "#EF4444" };
                         if (c_id === 'no_location') colInfo = { name: "No Location", color_code: "#EAB308" };
-                        
+
                         let colEventsHtml = '';
                         colsObj[c_id].forEach((ev) => {
                             const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
@@ -1013,7 +1109,7 @@
                                 </div>
                             `;
                         });
-                        
+
                         sidebarHtml += `
                             <div class="bg-gray-800/80 rounded-lg border border-gray-700 overflow-hidden shadow-md"
                                  ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')">
@@ -1027,14 +1123,14 @@
                             </div>
                         `;
                     });
-                    
+
                     sidebar.innerHTML = sidebarHtml;
                     mainWrapper.appendChild(wrapper);
                     mainWrapper.appendChild(sidebar);
                 } else {
                     mainWrapper.appendChild(wrapper);
                 }
-                
+
                 scheduleContainer.appendChild(mainWrapper);
             });
         }
@@ -1047,4 +1143,5 @@
         setInterval(fetchSchedule, 15000);
     </script>
 </body>
+
 </html>

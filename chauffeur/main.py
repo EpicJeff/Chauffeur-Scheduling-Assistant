@@ -504,7 +504,7 @@ def force_refresh_schedule():
     return refresh_schedule_logic()
 
 @app.get("/api/maps/static")
-def get_static_map(location: str, origin: str = None):
+def get_static_map(location: str, origin: str = None, theme: str = "dark"):
     """Proxy Google Static Maps API to keep the API key server-side."""
     import requests
     api_key = maps.get_api_key()
@@ -515,13 +515,20 @@ def get_static_map(location: str, origin: str = None):
         ("size", "600x300"),
         ("scale", "2"),
         ("maptype", "roadmap"),
-        ("style", "feature:all|element:geometry|color:0x242f3e"),
-        ("style", "feature:all|element:labels.text.fill|color:0x746855"),
-        ("style", "feature:water|element:geometry|color:0x17263c"),
-        ("style", "feature:road|element:geometry|color:0x38414e"),
         ("key", api_key),
         ("markers", f"color:red|{location}")
     ]
+
+    if theme == "dark":
+        params.extend([
+            ("style", "feature:all|element:geometry|color:0x242f3e"),
+            ("style", "feature:all|element:labels.text.fill|color:0x746855"),
+            ("style", "feature:all|element:labels.text.stroke|color:0x242f3e"),
+            ("style", "feature:water|element:geometry|color:0x17263c"),
+            ("style", "feature:road|element:geometry|color:0x38414e"),
+            ("style", "feature:road|element:geometry.stroke|color:0x212a37"),
+            ("style", "feature:poi|element:geometry|color:0x283d6a"),
+        ])
 
     if origin:
         params.append(("path", f"color:0x4A90D9|weight:4|{origin}|{location}"))
@@ -532,8 +539,9 @@ def get_static_map(location: str, origin: str = None):
 
     try:
         resp = requests.get("https://maps.googleapis.com/maps/api/staticmap", params=params, timeout=10)
-        if resp.status_code == 200:
+        if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image"):
             return Response(content=resp.content, media_type="image/png")
+        print(f"Static Maps API error: status={resp.status_code}, body={resp.text[:500]}")
         return Response(content="Map unavailable", status_code=resp.status_code)
     except Exception as ex:
         print(f"Static Maps API error: {ex}")

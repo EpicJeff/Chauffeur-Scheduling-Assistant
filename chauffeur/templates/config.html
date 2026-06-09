@@ -52,6 +52,15 @@
                 </div>
             </div>
 
+            <!-- Route Cache Duration -->
+            <div class="mb-6">
+                <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Route Cache Duration (minutes)</label>
+                <div class="flex items-center space-x-4">
+                    <input type="number" min="1" x-model="routeCacheDurationMins" @change="saveSettings()" class="bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono w-24">
+                    <span class="text-gray-400 text-sm">How long to cache Google Maps travel time and traffic data</span>
+                </div>
+            </div>
+
             <!-- Home Location -->
             <div class="mb-6">
                 <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Home Location</label>
@@ -306,6 +315,7 @@
         function configApp() {
             return {
                 daysToShow: 7,
+                routeCacheDurationMins: 10,
                 homeLocation: '',
                 locationSuggestions: [],
                 calendarIds: [],
@@ -379,6 +389,7 @@
                     const res = await fetch('api/settings');
                     const data = await res.json();
                     this.daysToShow = data.days_to_show || 7;
+                    this.routeCacheDurationMins = data.route_cache_duration_mins || 10;
                     this.homeLocation = data.home_location || '';
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
@@ -401,6 +412,7 @@
                     const payload = { 
                         calendar_ids: this.calendarIds,
                         days_to_show: parseInt(this.daysToShow) || 7,
+                        route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 10,
                         home_location: this.homeLocation.trim() || null
                     };
                     await fetch('api/settings', {

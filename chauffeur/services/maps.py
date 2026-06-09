@@ -11,10 +11,15 @@ def get_cache_duration() -> int:
         try:
             with open(options_file, 'r') as f:
                 options = json.load(f)
-            return int(options.get('route_cache_duration_mins', 10))
+            if 'route_cache_duration_mins' in options:
+                return int(options.get('route_cache_duration_mins', 10))
         except Exception:
             pass
-    return 10
+            
+    # Fallback to local settings
+    settings = storage.get_settings()
+    return int(settings.get('route_cache_duration_mins', 10))
+
 
 def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
     """
