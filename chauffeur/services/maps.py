@@ -115,7 +115,14 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
             "destination": {
                 "address": destination
             },
-            "travelMode": "DRIVE"
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE",
+            "computeAlternativeRoutes": True,
+            "routeModifiers": {
+                "avoidTolls": True,
+                "avoidHighways": False,
+                "avoidFerries": True
+            }
         }
         
         try:
