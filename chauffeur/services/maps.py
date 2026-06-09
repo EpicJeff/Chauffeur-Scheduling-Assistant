@@ -79,18 +79,28 @@ def get_api_key() -> Optional[str]:
     return api_key
 
 def get_home_location() -> Optional[str]:
+    from services import storage
     home_loc = None
-    import os
-    import json
-    options_file = '/data/options.json'
-    if os.path.exists(options_file):
-        try:
-            with open(options_file, 'r') as f:
-                options = json.load(f)
-            home_loc = options.get('home_location')
-        except Exception:
-            pass
+    
+    # 1. Try local app settings
+    settings = storage.get_settings()
+    if settings.get('home_location'):
+        home_loc = settings.get('home_location')
+        
+    # 2. Try HA options.json
+    if not home_loc:
+        import os
+        import json
+        options_file = '/data/options.json'
+        if os.path.exists(options_file):
+            try:
+                with open(options_file, 'r') as f:
+                    options = json.load(f)
+                home_loc = options.get('home_location')
+            except Exception:
+                pass
 
+    # 3. Try Environment Variable
     if not home_loc:
         home_loc = os.environ.get('HOME_LOCATION')
         

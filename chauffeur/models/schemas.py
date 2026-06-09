@@ -46,3 +46,4 @@ class ManualOverride(BaseModel):
 class Settings(BaseModel):
     calendar_ids: List[str]
     days_to_show: int = 7
+    home_location: Optional[str] = None

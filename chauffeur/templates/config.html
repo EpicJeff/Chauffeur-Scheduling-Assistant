@@ -51,6 +51,22 @@
                     <span class="text-gray-400 text-sm">Number of days into the future to schedule (1-14)</span>
                 </div>
             </div>
+
+            <!-- Home Location -->
+            <div class="mb-6">
+                <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Home Location</label>
+                <div class="relative max-w-lg">
+                    <input type="text" x-model="homeLocation" @input="handleLocationInput()" @change="saveSettings()" placeholder="Enter your home address..." class="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                    
+                    <!-- Autocomplete Dropdown -->
+                    <div x-show="locationSuggestions.length > 0" @click.away="locationSuggestions = []" class="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                        <template x-for="s in locationSuggestions" :key="s.description">
+                            <div @click="selectLocation(s.description)" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm" x-text="s.description"></div>
+                        </template>
+                    </div>
+                </div>
+                <p class="text-gray-500 text-sm mt-1">Used to calculate layover routing logic.</p>
+            </div>
             
         </div>
 
@@ -268,6 +284,8 @@
         function configApp() {
             return {
                 daysToShow: 7,
+                homeLocation: '',
+                locationSuggestions: [],
                 calendarIds: [],
                 newCalendarIdInput: '',
                 calendarMetadata: {},
@@ -282,12 +300,40 @@
                 editDriverId: null,
                 editRuleId: null,
                 editPriorityRuleId: null,
+                autocompleteTimeout: null,
 
                 async init() {
                     await this.loadSettings();
                     await this.loadDrivers();
                     await this.loadRules();
                     await this.loadPriorityRules();
+                },
+
+                async handleLocationInput() {
+                    if (this.homeLocation.length < 3) {
+                        this.locationSuggestions = [];
+                        return;
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.homeLocation)}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.locationSuggestions = data.suggestions;
+                            } else {
+                                this.locationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+
+                selectLocation(loc) {
+                    this.homeLocation = loc;
+                    this.locationSuggestions = [];
+                    this.saveSettings();
                 },
 
                 async fetchCalendarMetadata(ids) {
@@ -311,6 +357,7 @@
                     const res = await fetch('api/settings');
                     const data = await res.json();
                     this.daysToShow = data.days_to_show || 7;
+                    this.homeLocation = data.home_location || '';
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -331,7 +378,8 @@
                 async saveSettings() {
                     const payload = { 
                         calendar_ids: this.calendarIds,
-                        days_to_show: parseInt(this.daysToShow) || 7
+                        days_to_show: parseInt(this.daysToShow) || 7,
+                        home_location: this.homeLocation.trim() || null
                     };
                     await fetch('api/settings', {
                         method: 'POST',
