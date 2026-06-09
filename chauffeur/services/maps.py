@@ -22,18 +22,12 @@ def get_cache_duration() -> int:
 
 
 def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
-    """
-    Returns the travel time between two locations in minutes.
-    If return_traffic is True, returns (minutes, delay_mins).
-    """
     if not origin or not destination:
         return (0, 0) if return_traffic else 0
     if origin.lower() == destination.lower():
         return (0, 0) if return_traffic else 0
     
-    # MOCK fallback implementation
     MOCK_TIME = 15
-    
     cache_duration = get_cache_duration()
     
     # 1. Check cache first
@@ -41,45 +35,24 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     if cached is not None:
         return (cached, 0) if return_traffic else cached
         
-    # 2. If not cached, try calling Google Maps API
-    api_key = get_api_key()
-    if api_key:
-        url = "https://maps.googleapis.com/maps/api/distancematrix/json"
-        params = {
-            "origins": origin,
-            "destinations": destination,
-            "key": api_key,
-            "units": "imperial"
-        }
+    # 2. Call get_route_info to guarantee identical times for the scheduler and the map displays
+    info = get_route_info(origin, destination)
+    if info and "duration" in info:
+        import re
+        dur_str = info["duration"]
+        sec = int(re.sub(r'\D', '', dur_str)) if dur_str else (MOCK_TIME * 60)
+        minutes = max(1, sec // 60)
         
-        if departure_time is not None:
-            params["departure_time"] = departure_time
-        else:
-            params["departure_time"] = "now"
+        delay_mins = 0
+        if info.get("staticDuration"):
+            static_sec = int(re.sub(r'\D', '', info["staticDuration"]))
+            static_mins = max(1, static_sec // 60)
+            delay_mins = max(0, minutes - static_mins)
             
-        try:
-            resp = requests.get(url, params=params, timeout=5)
-            data = resp.json()
-            if data.get("status") == "OK":
-                elements = data.get("rows", [{}])[0].get("elements", [{}])
-                element = elements[0]
-                if element.get("status") == "OK":
-                    duration_seconds = element.get("duration", {}).get("value", MOCK_TIME * 60)
-                    minutes = max(1, duration_seconds // 60)
-                    
-                    delay_mins = 0
-                    if "duration_in_traffic" in element:
-                        traffic_seconds = element["duration_in_traffic"].get("value", duration_seconds)
-                        traffic_mins = max(1, traffic_seconds // 60)
-                        delay_mins = max(0, traffic_mins - minutes)
-                        minutes = traffic_mins # Use traffic time as the actual travel time
-                        
-                    storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
-                    return (minutes, delay_mins) if return_traffic else minutes
-        except Exception as ex:
-            print(f"Distance Matrix API error: {ex}")
+        storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
+        return (minutes, delay_mins) if return_traffic else minutes
             
-    # 3. Cache and return fallback if API fails or no key
+    # 3. Cache and return fallback if API fails
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
@@ -106,7 +79,7 @@ def get_route_info(origin: str, destination: str) -> Optional[dict]:
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": api_key,
-            "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.duration,routes.distanceMeters"
+            "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.duration,routes.staticDuration,routes.distanceMeters"
         }
         payload = {
             "origin": {
@@ -137,7 +110,8 @@ def get_route_info(origin: str, destination: str) -> Optional[dict]:
                         info = {
                             "polyline": polyline,
                             "distanceMeters": route.get("distanceMeters"),
-                            "duration": route.get("duration")
+                            "duration": route.get("duration"),
+                            "staticDuration": route.get("staticDuration")
                         }
                         storage.set_cached_route_info(origin.lower(), destination.lower(), info)
                         return info

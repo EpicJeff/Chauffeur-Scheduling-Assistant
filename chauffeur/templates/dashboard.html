@@ -982,7 +982,8 @@
                         if (index === 0 && !isDriverOnly) {
                             const initEdge = initialEdges[c_id];
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
-                                const departureDate = new Date(new Date(ev.start).getTime() - initEdge.travel_mins * 60000);
+                                const bufferMins = 5; // Add a 5 minute buffer to all departures
+                                const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
                                 const departureStr = formatTime(departureDate.toISOString());
                                 const departureY = getTimeY(departureDate.toISOString());
                                 const distance = startY - departureY;
