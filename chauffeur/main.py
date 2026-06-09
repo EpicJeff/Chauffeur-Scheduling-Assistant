@@ -503,6 +503,25 @@ def get_ha_sensors():
 def force_refresh_schedule():
     return refresh_schedule_logic()
 
+@app.get("/api/maps/test_polyline")
+def test_polyline(origin: str, destination: str):
+    import requests
+    api_key = maps.get_api_key()
+    if not api_key:
+        return {"error": "No API key"}
+    url = "https://maps.googleapis.com/maps/api/directions/json"
+    params = {
+        "origin": origin,
+        "destination": destination,
+        "key": api_key,
+        "mode": "driving"
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        return resp.json()
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/maps/static")
 def get_static_map(location: str, origin: str = None, theme: str = "dark"):
     """Proxy Google Static Maps API to keep the API key server-side."""

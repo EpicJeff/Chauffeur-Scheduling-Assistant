@@ -120,8 +120,12 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
                     if polyline:
                         storage.set_cached_polyline(origin.lower(), destination.lower(), polyline)
                         return polyline
+                else:
+                    print(f"Directions API: No routes found for {origin} -> {destination}")
+            else:
+                print(f"Directions API failed: status={data.get('status')}, error={data.get('error_message')}")
         except Exception as ex:
-            print(f"Directions API error for polyline: {ex}")
+            print(f"Directions API exception for polyline: {ex}")
             
     return None
 
