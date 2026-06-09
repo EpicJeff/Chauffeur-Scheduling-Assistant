@@ -435,9 +435,19 @@
                     originLocation = decodeURIComponent(originLocationEnc);
                 }
 
-                const isDark = window.getComputedStyle(document.documentElement).getPropertyValue('--ha-card-bg').trim().match(/^#[0-3]/) ||
-                    document.documentElement.classList.contains('dark') ||
-                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+                let isDark = false;
+                const bodyBg = window.getComputedStyle(document.body).backgroundColor;
+                const bgMatch = bodyBg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                if (bgMatch && bodyBg !== 'rgba(0, 0, 0, 0)') {
+                    const r = parseInt(bgMatch[1]);
+                    const g = parseInt(bgMatch[2]);
+                    const b = parseInt(bgMatch[3]);
+                    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+                    isDark = brightness < 128;
+                } else {
+                    isDark = document.documentElement.classList.contains('dark') ||
+                             window.matchMedia('(prefers-color-scheme: dark)').matches;
+                }
                 const theme = isDark ? 'dark' : 'light';
                 let mapUrl = `api/maps/static?location=${encodeURIComponent(ev.location)}&theme=${theme}`;
                 if (originLocation) {
