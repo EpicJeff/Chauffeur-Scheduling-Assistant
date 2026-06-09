@@ -1012,12 +1012,12 @@
 
                                 if (distance > 10) {
                                     colEventsHtml += `
-                                        <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none"
+                                        <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-end pb-1.5 z-20 pointer-events-none"
                                              style="top: ${departureY}px; height: ${distance}px; width: 100%;">
-                                            <div class="w-px h-full bg-blue-500/30 absolute"></div>
+                                            <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
-                                                <span class="text-[9px] text-gray-400 font-bold uppercase">Leave at ${departureStr}</span>
-                                                <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
+                                                <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm">Leave at ${departureStr}</span>
+                                                <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-md font-mono uppercase flex items-center">
                                                     ${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}
                                                 </span>
                                             </div>
@@ -1086,9 +1086,9 @@
                                 }
 
                                 colEventsHtml += `
-                                    <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-0 pointer-events-none" 
+                                    <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-center z-20 pointer-events-none" 
                                          style="top: ${endY}px; height: ${distance}px; width: 100%;">
-                                        <div class="w-px h-full bg-blue-500/30 absolute"></div>
+                                        <div class="w-px h-full bg-blue-500/30 absolute z-0"></div>
                                         <div class="flex flex-col gap-1 items-center z-10 relative">
                                             ${pills.join('')}
                                         </div>
