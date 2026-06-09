@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from ortools.sat.python import cp_model
 from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride
 from services.maps import get_travel_time_minutes
