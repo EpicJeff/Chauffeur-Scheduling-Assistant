@@ -543,7 +543,16 @@ def get_static_map(location: str, origin: str = None, theme: str = "dark"):
         params.append(("markers", f"color:red|label:B|{location}"))
 
     try:
-        resp = requests.get("https://maps.googleapis.com/maps/api/staticmap", params=params, timeout=10)
+        import urllib.parse
+        query_parts = []
+        for k, v in params:
+            if k == "path" and "enc:" in v:
+                query_parts.append(f"{k}={v}")
+            else:
+                query_parts.append(f"{k}={urllib.parse.quote(str(v), safe=':|')}")
+        
+        url = "https://maps.googleapis.com/maps/api/staticmap?" + "&".join(query_parts)
+        resp = requests.get(url, timeout=10)
         if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image"):
             return Response(content=resp.content, media_type="image/png")
         print(f"Static Maps API error: status={resp.status_code}, body={resp.text[:500]}")
