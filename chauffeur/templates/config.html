@@ -141,7 +141,22 @@
                         </select>
                     </div>
                 </div>
-                <div class="flex gap-4 items-end flex-wrap">
+                <div class="flex gap-4 items-end flex-wrap mt-4">
+                    <div class="w-full lg:w-48">
+                        <label class="block text-gray-400 mb-1 text-sm">Phone Number</label>
+                        <input type="text" x-model="newDriver.phone_number" placeholder="e.g. 5551234567" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:w-48">
+                        <label class="block text-gray-400 mb-1 text-sm">Cell Carrier</label>
+                        <select x-model="newDriver.cell_carrier" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="">None</option>
+                            <option value="att">AT&T</option>
+                            <option value="verizon">Verizon</option>
+                            <option value="tmobile">T-Mobile</option>
+                            <option value="sprint">Sprint</option>
+                            <option value="googlefi">Google Fi</option>
+                        </select>
+                    </div>
                     <div class="w-full lg:w-48">
                         <label class="block text-gray-400 mb-1 text-sm">Pref Start Time</label>
                         <input type="time" x-model="newDriver.preferred_start" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
@@ -300,7 +315,7 @@
                 drivers: [],
                 rules: [],
                 priorityRules: [],
-                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google' },
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
                 newDriverCalendarInput: '',
                 newRule: { driver_id: '', constraint_type: 'required', event_keyword: '' },
                 newPriorityRule: { match_type: 'keyword', match_value: '', weight_modifier: 100 },
@@ -417,7 +432,9 @@
                         preferred_end: this.newDriver.preferred_end || null,
                         is_disabled: this.newDriver.is_disabled,
                         calendar_ids: this.newDriver.calendarIds,
-                        preferred_maps_provider: this.newDriver.preferred_maps_provider || 'google'
+                        preferred_maps_provider: this.newDriver.preferred_maps_provider || 'google',
+                        phone_number: this.newDriver.phone_number || null,
+                        cell_carrier: this.newDriver.cell_carrier || null
                     };
                     if (this.editDriverId) {
                         await fetch(`api/drivers/${this.editDriverId}`, { method: 'DELETE' });
@@ -454,13 +471,15 @@
                         preferred_end: d.preferred_end || '',
                         is_disabled: d.is_disabled || false,
                         calendarIds: d.calendar_ids || [],
-                        preferred_maps_provider: d.preferred_maps_provider || 'google'
+                        preferred_maps_provider: d.preferred_maps_provider || 'google',
+                        phone_number: d.phone_number || '',
+                        cell_carrier: d.cell_carrier || ''
                     };
                     this.newDriverCalendarInput = '';
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google' };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
                     this.newDriverCalendarInput = '';
                 },
                 async deleteDriver(doc_id) {

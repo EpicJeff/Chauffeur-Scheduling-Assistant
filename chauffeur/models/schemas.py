@@ -25,6 +25,8 @@ class Driver(BaseModel):
     is_disabled: bool = False
     calendar_ids: List[str] = Field(default_factory=list)
     preferred_maps_provider: str = 'google'
+    phone_number: Optional[str] = None
+    cell_carrier: Optional[str] = None
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

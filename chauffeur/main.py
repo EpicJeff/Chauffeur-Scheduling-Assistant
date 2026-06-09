@@ -449,11 +449,28 @@ def get_ha_sensors():
                     maps_url = maps.get_apple_maps_url(locations)
                 else:
                     maps_url = maps.get_google_maps_url(locations)
+                # Generate Notification Email Address
+                notification_email_address = None
+                if d.get("phone_number") and d.get("cell_carrier"):
+                    import re
+                    phone = re.sub(r'\D', '', str(d["phone_number"]))
+                    carrier = d["cell_carrier"].lower()
+                    domains = {
+                        "att": "txt.att.net",
+                        "verizon": "vtext.com",
+                        "tmobile": "tmomail.net",
+                        "sprint": "messaging.sprintpcs.com",
+                        "googlefi": "msg.fi.google.com"
+                    }
+                    if carrier in domains and len(phone) >= 10:
+                        # use last 10 digits
+                        notification_email_address = f"{phone[-10:]}@{domains[carrier]}"
                         
                 driver_routes.append({
                     "driver_name": d["name"],
                     "event_count": len(daily_events),
                     "maps_url": maps_url,
+                    "notification_email_address": notification_email_address,
                     "events": enriched_events
                 })
                 
