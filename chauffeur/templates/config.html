@@ -421,6 +421,15 @@
                         body: JSON.stringify(payload)
                     });
                 },
+                async clearCaches() {
+                    if(confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google.")) {
+                        fetch('api/cache', { method: 'DELETE' })
+                            .then(r => r.json())
+                            .then(() => {
+                                alert("Caches cleared successfully.");
+                            });
+                    }
+                },
 
                 async loadDrivers() {
                     const res = await fetch('api/drivers');

@@ -168,6 +168,14 @@ def update_settings(settings: Settings):
     refresh_schedule_logic()
     return {"status": "updated"}
 
+@app.delete("/api/cache")
+def clear_caches():
+    from services.storage import distance_cache_table, polyline_cache_table, cache_table
+    distance_cache_table.truncate()
+    polyline_cache_table.truncate()
+    cache_table.truncate()
+    return {"status": "cleared"}
+
 @app.post("/api/calendars/metadata")
 def get_calendars_metadata(calendar_ids: list[str]):
     return calendar.get_calendar_metadata(calendar_ids)
