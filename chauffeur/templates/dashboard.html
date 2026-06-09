@@ -177,7 +177,8 @@
                         <img id="view-map-img" class="w-full rounded-lg shadow-lg" alt="Event location map" />
                         <div id="view-map-balloon" class="hidden absolute top-6 left-1/2 transform -translate-x-1/2 bg-white text-gray-900 px-3 py-1.5 rounded-md shadow-lg border border-gray-200 text-sm flex flex-col items-center pointer-events-none">
                             <div class="font-bold flex items-center text-gray-800">
-                                🚗 <span id="view-map-duration" class="ml-1"></span>
+                                <svg class="w-4 h-4 mr-1 text-gray-700" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/></svg>
+                                <span id="view-map-duration"></span>
                             </div>
                             <div id="view-map-distance" class="text-xs text-gray-500"></div>
                             <!-- Small triangle arrow at the bottom pointing down -->
@@ -453,7 +454,13 @@
                                 // Convert duration string "1234s" to minutes
                                 const seconds = parseInt(data.duration.replace('s', ''), 10);
                                 const mins = Math.max(1, Math.floor(seconds / 60));
-                                document.getElementById('view-map-duration').textContent = `${mins} min`;
+                                let timeText = `${mins} min`;
+                                if (mins >= 60) {
+                                    const hrs = Math.floor(mins / 60);
+                                    const m = mins % 60;
+                                    timeText = m > 0 ? `${hrs} hr ${m} min` : `${hrs} hr`;
+                                }
+                                document.getElementById('view-map-duration').textContent = timeText;
                                 
                                 // Convert meters to miles
                                 const miles = (data.distanceMeters * 0.000621371).toFixed(1);
