@@ -384,7 +384,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Dict[str, dict]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     driver_events = defaultdict(list)
     event_map = {e.id: e for e in events}
@@ -394,8 +394,19 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             driver_events[d_id].append(event_map[e_id])
             
     edges = {}
+    initial_edges = {}
     for d_id, evs in driver_events.items():
         evs.sort(key=lambda x: x.start)
+        
+        if home_location and home_location.strip() != "":
+            first_ev = evs[0]
+            travel, delay = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+            initial_edges[d_id] = {
+                "to_event": first_ev.id,
+                "travel_mins": travel,
+                "delay_mins": delay
+            }
+            
         for i in range(len(evs) - 1):
             e1 = evs[i]
             e2 = evs[i+1]
@@ -403,12 +414,13 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             
             pickup_waypoint = None
             if shares_calendar:
-                travel = get_travel_time_minutes(e1.location, e2.location)
+                travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
                 next_origin = e1.location
                 drive_to_pickup = 0
                 drive_from_pickup = travel
             else:
                 travel = get_switch_travel_time(e1, e2, events)
+                delay = 0
                 pickup_event = get_passenger_pickup_event(e2, events)
                 if pickup_event:
                     next_origin = pickup_event.location
@@ -445,6 +457,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             edges[e1.id] = {
                 "to_event": e2.id,
                 "travel_mins": travel,
+                "delay_mins": delay,
                 "wait_mins": int(wait)
             }
             if pickup_waypoint:
@@ -452,7 +465,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             if home_waypoint:
                 edges[e1.id]["home_waypoint"] = home_waypoint
 
-    return edges
+    return edges, initial_edges
 
 def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, str], events: List[Event]) -> Dict[str, List[dict]]:
     from collections import defaultdict

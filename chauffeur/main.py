@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -285,7 +285,7 @@ def refresh_schedule_logic():
     # Route Edges
     all_assignments = {**assignments, **ghost_assignments}
     home_location = maps.get_home_location()
-    route_edges = matcher.compute_route_edges(all_assignments, events_to_solve, home_location=home_location)
+    route_edges, initial_edges = matcher.compute_route_edges(all_assignments, events_to_solve, home_location=home_location)
     
     # True Unassigned (dropped due to passenger conflicts)
     true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
@@ -303,6 +303,7 @@ def refresh_schedule_logic():
         "ghost_assignments": ghost_assignments,
         "ghost_drivers": ghost_drivers,
         "route_edges": route_edges,
+        "initial_edges": initial_edges,
         "conflicts": conflicts,
         "unassigned": true_unassigned,
         "no_location": no_location_events,
@@ -310,7 +311,8 @@ def refresh_schedule_logic():
         "calendar_metadata": calendar_metadata,
         "lateness_warnings": lateness_warnings,
         "passenger_calendar_ids": calendar_ids,
-        "driver_events": driver_events_ids
+        "driver_events": driver_events_ids,
+        "home_location": home_location or ""
     })
     
     storage.set_cached_schedule(data)
@@ -500,6 +502,42 @@ def get_ha_sensors():
 @app.post("/api/schedule/refresh")
 def force_refresh_schedule():
     return refresh_schedule_logic()
+
+@app.get("/api/maps/static")
+def get_static_map(location: str, origin: str = None):
+    """Proxy Google Static Maps API to keep the API key server-side."""
+    import requests
+    api_key = maps.get_api_key()
+    if not api_key:
+        return Response(content="No API key configured", status_code=503)
+
+    params = [
+        ("size", "600x300"),
+        ("scale", "2"),
+        ("maptype", "roadmap"),
+        ("style", "feature:all|element:geometry|color:0x242f3e"),
+        ("style", "feature:all|element:labels.text.fill|color:0x746855"),
+        ("style", "feature:water|element:geometry|color:0x17263c"),
+        ("style", "feature:road|element:geometry|color:0x38414e"),
+        ("key", api_key),
+        ("markers", f"color:red|{location}")
+    ]
+
+    if origin:
+        params.append(("path", f"color:0x4A90D9|weight:4|{origin}|{location}"))
+        # Replace the single marker with origin + destination markers
+        params = [(k, v) for k, v in params if k != "markers"]
+        params.append(("markers", f"color:green|label:A|{origin}"))
+        params.append(("markers", f"color:red|label:B|{location}"))
+
+    try:
+        resp = requests.get("https://maps.googleapis.com/maps/api/staticmap", params=params, timeout=10)
+        if resp.status_code == 200:
+            return Response(content=resp.content, media_type="image/png")
+        return Response(content="Map unavailable", status_code=resp.status_code)
+    except Exception as ex:
+        print(f"Static Maps API error: {ex}")
+        return Response(content="Map unavailable", status_code=500)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

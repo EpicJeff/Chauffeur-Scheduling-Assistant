@@ -42,19 +42,24 @@ with db_lock:
     settings_table = db.table('settings')
     distance_cache_table = db.table('distance_cache')
 
-def get_cached_travel_time(origin: str, destination: str) -> Optional[int]:
+def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10) -> Optional[int]:
+    import time
     with db_lock:
         QueryObj = Query()
         result = distance_cache_table.search((QueryObj.origin == origin) & (QueryObj.destination == destination))
         if result:
-            return result[0]['minutes']
+            cached_data = result[0]
+            timestamp = cached_data.get('timestamp', 0)
+            if time.time() - timestamp <= max_age_mins * 60:
+                return cached_data['minutes']
         return None
 
 def set_cached_travel_time(origin: str, destination: str, minutes: int):
+    import time
     with db_lock:
         QueryObj = Query()
         distance_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
-        distance_cache_table.insert({'origin': origin, 'destination': destination, 'minutes': minutes})
+        distance_cache_table.insert({'origin': origin, 'destination': destination, 'minutes': minutes, 'timestamp': time.time()})
 
 # Driver CRUD
 def get_all_drivers() -> List[dict]:

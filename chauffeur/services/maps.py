@@ -4,23 +4,37 @@ from typing import Optional
 import requests
 from services import storage
 
-def get_travel_time_minutes(origin: Optional[str], destination: Optional[str]) -> int:
+def get_cache_duration() -> int:
+    import json
+    options_file = '/data/options.json'
+    if os.path.exists(options_file):
+        try:
+            with open(options_file, 'r') as f:
+                options = json.load(f)
+            return int(options.get('route_cache_duration_mins', 10))
+        except Exception:
+            pass
+    return 10
+
+def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
     """
     Returns the travel time between two locations in minutes.
-    In Phase 2, this is a mock. In Phase 3, this will call Google Maps API.
+    If return_traffic is True, returns (minutes, delay_mins).
     """
     if not origin or not destination:
-        return 0
+        return (0, 0) if return_traffic else 0
     if origin.lower() == destination.lower():
-        return 0
+        return (0, 0) if return_traffic else 0
     
     # MOCK fallback implementation
     MOCK_TIME = 15
     
+    cache_duration = get_cache_duration()
+    
     # 1. Check cache first
-    cached = storage.get_cached_travel_time(origin.lower(), destination.lower())
+    cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration)
     if cached is not None:
-        return cached
+        return (cached, 0) if return_traffic else cached
         
     # 2. If not cached, try calling Google Maps API
     api_key = get_api_key()
@@ -32,6 +46,12 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str]) -
             "key": api_key,
             "units": "imperial"
         }
+        
+        if departure_time is not None:
+            params["departure_time"] = departure_time
+        else:
+            params["departure_time"] = "now"
+            
         try:
             resp = requests.get(url, params=params, timeout=5)
             data = resp.json()
@@ -41,14 +61,22 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str]) -
                 if element.get("status") == "OK":
                     duration_seconds = element.get("duration", {}).get("value", MOCK_TIME * 60)
                     minutes = max(1, duration_seconds // 60)
+                    
+                    delay_mins = 0
+                    if "duration_in_traffic" in element:
+                        traffic_seconds = element["duration_in_traffic"].get("value", duration_seconds)
+                        traffic_mins = max(1, traffic_seconds // 60)
+                        delay_mins = max(0, traffic_mins - minutes)
+                        minutes = traffic_mins # Use traffic time as the actual travel time
+                        
                     storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
-                    return minutes
+                    return (minutes, delay_mins) if return_traffic else minutes
         except Exception as ex:
             print(f"Distance Matrix API error: {ex}")
             
     # 3. Cache and return fallback if API fails or no key
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
-    return MOCK_TIME
+    return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
 def get_api_key() -> Optional[str]:
     api_key = None
