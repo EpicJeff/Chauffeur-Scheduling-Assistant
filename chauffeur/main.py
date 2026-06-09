@@ -432,6 +432,7 @@ def get_ha_sensors():
                             
                     ev_copy["departure_time"] = departure_time.isoformat() if departure_time else None
                     ev_copy["suggested_notification_time"] = suggested_notification_time.isoformat() if suggested_notification_time else None
+                    ev_copy["travel_mins"] = travel_mins
                     
                     # Maps URL for single event
                     if ev.get("location"):
