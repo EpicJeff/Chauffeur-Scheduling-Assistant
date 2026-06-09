@@ -446,31 +446,31 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                     
                 wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
             
-            home_waypoint = None
-            if home_location and home_location.strip() != "":
-                # Check if layover at home is possible
-                drive_to_home = get_travel_time_minutes(e1.location, home_location)
-                drive_from_home = get_travel_time_minutes(home_location, next_origin)
-                layover_mins = (e2.start - e1.end).total_seconds() / 60 - drive_to_home - drive_from_home - drive_from_pickup
+                home_waypoint = None
+                if home_location and home_location.strip() != "":
+                    # Check if layover at home is possible
+                    drive_to_home = get_travel_time_minutes(e1.location, home_location)
+                    drive_from_home = get_travel_time_minutes(home_location, next_origin)
+                    layover_mins = (e2.start - e1.end).total_seconds() / 60 - drive_to_home - drive_from_home - drive_from_pickup
+                    
+                    # If we have 15 mins or more to stay at home
+                    if layover_mins >= 15:
+                        home_waypoint = {
+                            "to_home_mins": drive_to_home,
+                            "from_home_mins": drive_from_home,
+                            "layover_mins": int(layover_mins)
+                        }
                 
-                # If we have 15 mins or more to stay at home
-                if layover_mins >= 15:
-                    home_waypoint = {
-                        "to_home_mins": drive_to_home,
-                        "from_home_mins": drive_from_home,
-                        "layover_mins": int(layover_mins)
-                    }
-            
-            edges[e1.id] = {
-                "to_event": e2.id,
-                "travel_mins": travel,
-                "delay_mins": delay,
-                "wait_mins": int(wait)
-            }
-            if pickup_waypoint:
-                edges[e1.id]["pickup_waypoint"] = pickup_waypoint
-            if home_waypoint:
-                edges[e1.id]["home_waypoint"] = home_waypoint
+                edges[e1.id] = {
+                    "to_event": e2.id,
+                    "travel_mins": travel,
+                    "delay_mins": delay,
+                    "wait_mins": int(wait)
+                }
+                if pickup_waypoint:
+                    edges[e1.id]["pickup_waypoint"] = pickup_waypoint
+                if home_waypoint:
+                    edges[e1.id]["home_waypoint"] = home_waypoint
 
     return edges, initial_edges
 
