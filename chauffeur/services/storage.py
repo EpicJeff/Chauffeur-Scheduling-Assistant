@@ -43,7 +43,7 @@ with db_lock:
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
 
-def get_cached_polyline(origin: str, destination: str, max_age_mins: int = 10) -> Optional[str]:
+def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10) -> Optional[dict]:
     import time
     with db_lock:
         QueryObj = Query()
@@ -52,15 +52,15 @@ def get_cached_polyline(origin: str, destination: str, max_age_mins: int = 10) -
             cached_data = result[0]
             timestamp = cached_data.get('timestamp', 0)
             if time.time() - timestamp <= max_age_mins * 60:
-                return cached_data['polyline']
+                return cached_data.get('info')
         return None
 
-def set_cached_polyline(origin: str, destination: str, polyline: str):
+def set_cached_route_info(origin: str, destination: str, info: dict):
     import time
     with db_lock:
         QueryObj = Query()
         polyline_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
-        polyline_cache_table.insert({'origin': origin, 'destination': destination, 'polyline': polyline, 'timestamp': time.time()})
+        polyline_cache_table.insert({'origin': origin, 'destination': destination, 'info': info, 'timestamp': time.time()})
 
 def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10) -> Optional[int]:
     import time

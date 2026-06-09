@@ -83,9 +83,9 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
-def get_route_polyline(origin: str, destination: str) -> Optional[str]:
+def get_route_info(origin: str, destination: str) -> Optional[dict]:
     """
-    Returns the encoded polyline string for the route between origin and destination.
+    Returns a dictionary with the encoded polyline string, distance, and duration for the route.
     """
     if not origin or not destination:
         return None
@@ -95,7 +95,7 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
     cache_duration = get_cache_duration()
     
     # 1. Check cache
-    cached = storage.get_cached_polyline(origin.lower(), destination.lower(), max_age_mins=cache_duration)
+    cached = storage.get_cached_route_info(origin.lower(), destination.lower(), max_age_mins=cache_duration)
     if cached is not None:
         return cached
         
@@ -106,7 +106,7 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": api_key,
-            "X-Goog-FieldMask": "routes.polyline.encodedPolyline"
+            "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.duration,routes.distanceMeters"
         }
         payload = {
             "origin": {
@@ -131,16 +131,22 @@ def get_route_polyline(origin: str, destination: str) -> Optional[str]:
                 data = resp.json()
                 routes = data.get("routes", [])
                 if routes:
-                    polyline = routes[0].get("polyline", {}).get("encodedPolyline")
+                    route = routes[0]
+                    polyline = route.get("polyline", {}).get("encodedPolyline")
                     if polyline:
-                        storage.set_cached_polyline(origin.lower(), destination.lower(), polyline)
-                        return polyline
+                        info = {
+                            "polyline": polyline,
+                            "distanceMeters": route.get("distanceMeters"),
+                            "duration": route.get("duration")
+                        }
+                        storage.set_cached_route_info(origin.lower(), destination.lower(), info)
+                        return info
                 else:
                     print(f"Routes API: No routes found for {origin} -> {destination}")
             else:
                 print(f"Routes API failed: status={resp.status_code}, body={resp.text}")
         except Exception as ex:
-            print(f"Routes API exception for polyline: {ex}")
+            print(f"Routes API exception for route info: {ex}")
             
     return None
 

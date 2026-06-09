@@ -537,6 +537,13 @@ def test_polyline(origin: str, destination: str):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/maps/route_info")
+def get_route_info(origin: str, destination: str):
+    info = maps.get_route_info(origin, destination)
+    if not info:
+        return {"error": "No route found"}
+    return info
+
 @app.get("/api/maps/static")
 def get_static_map(location: str, origin: str = None, theme: str = "dark"):
     """Proxy Google Static Maps API to keep the API key server-side."""
@@ -565,7 +572,8 @@ def get_static_map(location: str, origin: str = None, theme: str = "dark"):
         ])
 
     if origin:
-        polyline = maps.get_route_polyline(origin, location)
+        info = maps.get_route_info(origin, location)
+        polyline = info.get("polyline") if info else None
         if polyline:
             params.append(("path", f"color:0x4A90D9|weight:4|enc:{polyline}"))
         else:

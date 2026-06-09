@@ -173,8 +173,16 @@
                             class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base">No description
                             provided.</div>
                     </div>
-                    <div id="view-map-section" class="hidden pt-2 border-t border-gray-700 mt-4">
+                    <div id="view-map-section" class="hidden pt-2 border-t border-gray-700 mt-4 relative">
                         <img id="view-map-img" class="w-full rounded-lg shadow-lg" alt="Event location map" />
+                        <div id="view-map-balloon" class="hidden absolute top-6 left-1/2 transform -translate-x-1/2 bg-white text-gray-900 px-3 py-1.5 rounded-md shadow-lg border border-gray-200 text-sm flex flex-col items-center pointer-events-none">
+                            <div class="font-bold flex items-center text-gray-800">
+                                🚗 <span id="view-map-duration" class="ml-1"></span>
+                            </div>
+                            <div id="view-map-distance" class="text-xs text-gray-500"></div>
+                            <!-- Small triangle arrow at the bottom pointing down -->
+                            <div class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-white drop-shadow-md"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -433,6 +441,28 @@
                 mapImg.onerror = () => { mapSection.classList.add('hidden'); };
                 mapImg.src = mapUrl;
                 mapSection.classList.remove('hidden');
+
+                // Fetch route info for the balloon overlay
+                const balloon = document.getElementById('view-map-balloon');
+                balloon.classList.add('hidden');
+                if (homeLocation) {
+                    fetch(`api/maps/route_info?origin=${encodeURIComponent(homeLocation)}&destination=${encodeURIComponent(ev.location)}`)
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.duration && data.distanceMeters) {
+                                // Convert duration string "1234s" to minutes
+                                const seconds = parseInt(data.duration.replace('s', ''), 10);
+                                const mins = Math.max(1, Math.floor(seconds / 60));
+                                document.getElementById('view-map-duration').textContent = `${mins} min`;
+                                
+                                // Convert meters to miles
+                                const miles = (data.distanceMeters * 0.000621371).toFixed(1);
+                                document.getElementById('view-map-distance').textContent = `${miles} miles`;
+                                balloon.classList.remove('hidden');
+                            }
+                        })
+                        .catch(e => console.error("Error fetching route info for balloon", e));
+                }
             } else {
                 mapSection.classList.add('hidden');
             }
