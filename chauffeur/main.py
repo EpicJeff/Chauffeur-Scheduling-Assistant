@@ -283,7 +283,8 @@ def refresh_schedule_logic():
     
     # Route Edges
     all_assignments = {**assignments, **ghost_assignments}
-    route_edges = matcher.compute_route_edges(all_assignments, events_to_solve)
+    home_location = maps.get_home_location()
+    route_edges = matcher.compute_route_edges(all_assignments, events_to_solve, home_location=home_location)
     
     # True Unassigned (dropped due to passenger conflicts)
     true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]

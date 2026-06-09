@@ -363,7 +363,28 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None)
     final_assignments = {e_id: id_mapping[g_id] for e_id, g_id in assignments.items()}
     return final_assignments, ghost_drivers
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event]) -> Dict[str, dict]:
+def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[Event]:
+    e2_cals = set(e2.calendar_ids)
+    b_events = [e for e in all_events if e.id != e2.id and set(e.calendar_ids).intersection(e2_cals)]
+    b_events_before = [e for e in b_events if e.end <= e2.start and e.start.date() == e2.start.date()]
+    
+    if b_events_before:
+        e_b_prev = max(b_events_before, key=lambda x: x.end)
+        # If it ended within 2 hours of e2.start
+        if (e2.start - e_b_prev.end).total_seconds() <= 7200:
+            return e_b_prev
+    return None
+
+def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int:
+    pickup = get_passenger_pickup_event(e2, all_events)
+    if pickup:
+        t1 = get_travel_time_minutes(e1.location, pickup.location)
+        t2 = get_travel_time_minutes(pickup.location, e2.location)
+        return t1 + t2
+    # Default 30 min buffer
+    return get_travel_time_minutes(e1.location, e2.location) + 30
+
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Dict[str, dict]:
     from collections import defaultdict
     driver_events = defaultdict(list)
     event_map = {e.id: e for e in events}
@@ -380,17 +401,57 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event]) -> Dic
             e2 = evs[i+1]
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
             
+            pickup_waypoint = None
             if shares_calendar:
                 travel = get_travel_time_minutes(e1.location, e2.location)
+                next_origin = e1.location
+                drive_to_pickup = 0
+                drive_from_pickup = travel
             else:
                 travel = get_switch_travel_time(e1, e2, events)
+                pickup_event = get_passenger_pickup_event(e2, events)
+                if pickup_event:
+                    next_origin = pickup_event.location
+                    drive_to_pickup = get_travel_time_minutes(e1.location, pickup_event.location)
+                    drive_from_pickup = get_travel_time_minutes(pickup_event.location, e2.location)
+                    pickup_waypoint = {
+                        "to_pickup_mins": drive_to_pickup,
+                        "from_pickup_mins": drive_from_pickup,
+                        "pickup_location": pickup_event.location,
+                        "pickup_event_title": pickup_event.title
+                    }
+                else:
+                    next_origin = e1.location
+                    drive_to_pickup = 0
+                    drive_from_pickup = travel
                 
             wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
+            
+            home_waypoint = None
+            if home_location and home_location.strip() != "":
+                # Check if layover at home is possible
+                drive_to_home = get_travel_time_minutes(e1.location, home_location)
+                drive_from_home = get_travel_time_minutes(home_location, next_origin)
+                layover_mins = (e2.start - e1.end).total_seconds() / 60 - drive_to_home - drive_from_home - drive_from_pickup
+                
+                # If we have 15 mins or more to stay at home
+                if layover_mins >= 15:
+                    home_waypoint = {
+                        "to_home_mins": drive_to_home,
+                        "from_home_mins": drive_from_home,
+                        "layover_mins": int(layover_mins)
+                    }
+            
             edges[e1.id] = {
                 "to_event": e2.id,
                 "travel_mins": travel,
                 "wait_mins": int(wait)
             }
+            if pickup_waypoint:
+                edges[e1.id]["pickup_waypoint"] = pickup_waypoint
+            if home_waypoint:
+                edges[e1.id]["home_waypoint"] = home_waypoint
+
     return edges
 
 def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, str], events: List[Event]) -> Dict[str, List[dict]]:
@@ -416,21 +477,3 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 })
                 
     return conflicts
-
-def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int:
-    e2_cals = set(e2.calendar_ids)
-    
-    b_events = [e for e in all_events if e.id != e2.id and set(e.calendar_ids).intersection(e2_cals)]
-    b_events_before = [e for e in b_events if e.end <= e2.start and e.start.date() == e2.start.date()]
-    
-    if b_events_before:
-        e_b_prev = max(b_events_before, key=lambda x: x.end)
-        
-        # If it ended within 2 hours of e2.start
-        if (e2.start - e_b_prev.end).total_seconds() <= 7200:
-            t1 = get_travel_time_minutes(e1.location, e_b_prev.location)
-            t2 = get_travel_time_minutes(e_b_prev.location, e2.location)
-            return t1 + t2
-            
-    # Default 30 min buffer
-    return get_travel_time_minutes(e1.location, e2.location) + 30

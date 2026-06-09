@@ -78,6 +78,24 @@ def get_api_key() -> Optional[str]:
                 
     return api_key
 
+def get_home_location() -> Optional[str]:
+    home_loc = None
+    import os
+    import json
+    options_file = '/data/options.json'
+    if os.path.exists(options_file):
+        try:
+            with open(options_file, 'r') as f:
+                options = json.load(f)
+            home_loc = options.get('home_location')
+        except Exception:
+            pass
+
+    if not home_loc:
+        home_loc = os.environ.get('HOME_LOCATION')
+        
+    return home_loc if home_loc and str(home_loc).strip() != "" else None
+
 def autocomplete_location(input_text: str) -> list[dict]:
     """
     Calls the Google Maps Places Autocomplete API.
