@@ -393,7 +393,7 @@
             return new Date(localStr).toISOString();
         }
 
-        function openEventModal(eventId) {
+        function openEventModal(eventId, originLocationEnc) {
             activeEventId = eventId;
             const ev = currentEventsMap[eventId];
             if (!ev) return;
@@ -430,14 +430,18 @@
             const mapSection = document.getElementById('view-map-section');
             const mapImg = document.getElementById('view-map-img');
             if (ev.location) {
-                const homeLocation = currentData.home_location || '';
+                let originLocation = currentData.home_location || '';
+                if (originLocationEnc !== undefined && originLocationEnc !== null && originLocationEnc !== '') {
+                    originLocation = decodeURIComponent(originLocationEnc);
+                }
+
                 const isDark = window.getComputedStyle(document.documentElement).getPropertyValue('--ha-card-bg').trim().match(/^#[0-3]/) ||
                     document.documentElement.classList.contains('dark') ||
                     window.matchMedia('(prefers-color-scheme: dark)').matches;
                 const theme = isDark ? 'dark' : 'light';
                 let mapUrl = `api/maps/static?location=${encodeURIComponent(ev.location)}&theme=${theme}`;
-                if (homeLocation) {
-                    mapUrl += `&origin=${encodeURIComponent(homeLocation)}`;
+                if (originLocation) {
+                    mapUrl += `&origin=${encodeURIComponent(originLocation)}`;
                 }
                 mapImg.onerror = () => { mapSection.classList.add('hidden'); };
                 mapImg.src = mapUrl;
@@ -446,8 +450,8 @@
                 // Fetch route info for the balloon overlay
                 const balloon = document.getElementById('view-map-balloon');
                 balloon.classList.add('hidden');
-                if (homeLocation) {
-                    fetch(`api/maps/route_info?origin=${encodeURIComponent(homeLocation)}&destination=${encodeURIComponent(ev.location)}`)
+                if (originLocation) {
+                    fetch(`api/maps/route_info?origin=${encodeURIComponent(originLocation)}&destination=${encodeURIComponent(ev.location)}`)
                         .then(r => r.json())
                         .then(data => {
                             if (data.duration && data.distanceMeters) {
@@ -946,7 +950,21 @@
                         const summaries = calMetas.map(m => m.summary).join(' + ');
 
                         const dragAttr = isReadOnly ? '' : `draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')"`;
-                        const clickAttr = `onclick="openEventModal('${ev.id}')"`;
+                        
+                        let computedOrigin = currentData.home_location || '';
+                        if (index > 0) {
+                            const prevEv = uniqueColEvents[index - 1];
+                            const edgeFromPrev = routeEdges[prevEv.id];
+                            if (edgeFromPrev && edgeFromPrev.home_waypoint) {
+                                computedOrigin = currentData.home_location || '';
+                            } else if (edgeFromPrev && edgeFromPrev.pickup_waypoint) {
+                                computedOrigin = edgeFromPrev.pickup_waypoint.pickup_location;
+                            } else {
+                                computedOrigin = prevEv.location;
+                            }
+                        }
+                        const originLocationEnc = computedOrigin ? encodeURIComponent(computedOrigin).replace(/'/g, "\\'") : '';
+                        const clickAttr = `onclick="openEventModal('${ev.id}', '${originLocationEnc}')"`;
 
                         if (isDriverOnly) {
                             colEventsHtml += `
