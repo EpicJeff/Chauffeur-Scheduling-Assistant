@@ -35,6 +35,7 @@ class Passenger(BaseModel):
     name: str
     calendar_ids: List[str] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
+    requires_attendance: bool = False
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -59,3 +60,11 @@ class Settings(BaseModel):
     days_to_show: int = 7
     home_location: Optional[str] = None
     route_cache_duration_mins: int = 10
+
+class TelemetryEvent(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    driver_id: str
+    event_id: str
+    action: str  # e.g., 'pickup', 'dropoff', 'arrived'
+    timestamp: float = Field(default_factory=time.time)
+    details: Optional[str] = None

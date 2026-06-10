@@ -102,6 +102,10 @@
                 </svg>
                 <span id="sync-text">Sync Now</span>
             </button>
+            <button onclick="toggleNotifications()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center relative">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                <span id="notif-badge" class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
+            </button>
             <a href="config"
                 class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -119,6 +123,21 @@
     <div id="error-container"
         class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center">
     </div>
+    
+    <div id="notif-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-start mb-6 shrink-0">
+                <h3 class="text-3xl font-bold text-blue-200">Notifications</h3>
+                <button onclick="toggleNotifications()" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div id="notif-list" class="flex-1 overflow-y-auto space-y-3">
+                <p class="text-gray-500 text-center py-4 italic">No recent notifications</p>
+            </div>
+        </div>
+    </div>
+
     <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div
             class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -388,6 +407,54 @@
         function hideError() {
             document.getElementById('error-container').classList.add('hidden');
         }
+
+        let isNotifOpen = false;
+        function toggleNotifications() {
+            const modal = document.getElementById('notif-modal');
+            isNotifOpen = !isNotifOpen;
+            if (isNotifOpen) {
+                modal.classList.remove('hidden');
+                fetchNotifications();
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+
+        async function fetchNotifications() {
+            try {
+                const res = await fetch('api/telemetry');
+                const events = await res.json();
+                const list = document.getElementById('notif-list');
+                const badge = document.getElementById('notif-badge');
+                
+                if (events.length === 0) {
+                    list.innerHTML = '<p class="text-gray-500 text-center py-4 italic">No recent notifications</p>';
+                    badge.classList.add('hidden');
+                } else {
+                    badge.textContent = events.length;
+                    badge.classList.remove('hidden');
+                    
+                    list.innerHTML = events.map(ev => {
+                        const dName = driversMap[ev.driver_id]?.name || 'Unknown Driver';
+                        const timeStr = formatTime(new Date(ev.timestamp * 1000).toISOString());
+                        const colorClass = ev.action === 'arrived' ? 'text-blue-400' : 'text-green-400';
+                        return `
+                            <div class="bg-gray-900 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                                <div>
+                                    <span class="font-bold text-white">${dName}</span>
+                                    <span class="ml-2 font-bold uppercase tracking-wider text-xs px-2 py-1 bg-gray-800 rounded ${colorClass}">${ev.action}</span>
+                                    <p class="text-sm text-gray-400 mt-1">${ev.details || 'Event ID: ' + ev.event_id}</p>
+                                </div>
+                                <div class="text-xs font-bold text-gray-500">${timeStr}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error("Failed to load notifications", e);
+            }
+        }
+
 
         function formatTime(dateStr) {
             return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

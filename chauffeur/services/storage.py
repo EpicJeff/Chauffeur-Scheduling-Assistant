@@ -43,6 +43,7 @@ with db_lock:
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
     passengers_table = db.table('passengers')
+    telemetry_table = db.table('telemetry')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -185,6 +186,10 @@ def get_all_passengers() -> List[dict]:
             passengers.append(doc)
         return passengers
 
+def get_passengers() -> List[dict]:
+    with db_lock:
+        return passengers_table.all()
+
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
         return passengers_table.insert(passenger_data)
@@ -196,6 +201,16 @@ def update_passenger(doc_id: int, passenger_data: dict):
 def delete_passenger(doc_id: int):
     with db_lock:
         passengers_table.remove(doc_ids=[doc_id])
+
+def add_telemetry_event(event_data: dict) -> int:
+    with db_lock:
+        return telemetry_table.insert(event_data)
+
+def get_telemetry_events(limit: int = 50) -> List[dict]:
+    with db_lock:
+        events = telemetry_table.all()
+        events.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        return events[:limit]
 
 # Rule CRUD
 def get_all_rules() -> List[dict]:

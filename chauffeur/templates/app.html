@@ -43,6 +43,10 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
+            <button id="btn-notif" onclick="toggleNotifications()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors relative hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                <span id="notif-badge" class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
+            </button>
             <button id="btn-sync" onclick="fetchData()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             </button>
@@ -80,6 +84,19 @@
         </div>
     </div>
 
+    <!-- Notifications Modal -->
+    <div id="notif-modal" class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
+        <div id="notif-modal-content" class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
+            <div class="flex justify-between items-center mb-6 shrink-0">
+                <h3 class="text-2xl font-bold text-white">Notifications</h3>
+                <button onclick="toggleNotifications()" class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            <div id="notif-list" class="flex-1 overflow-y-auto space-y-3 no-scrollbar pb-6">
+                <p class="text-center text-gray-500 italic py-4">No recent notifications</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Action Sheet Modal -->
     <div id="action-sheet" class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
         <div id="action-sheet-content" class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
@@ -98,6 +115,11 @@
                 <button onclick="openMaps('waze')" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold text-lg shadow-lg">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 13a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-2.5-6.5a4 4 0 00-4 4h-2c0-3.31 2.69-6 6-6v2z"/></svg>
                     Waze
+                </button>
+                <div class="w-full h-px bg-gray-800 my-2"></div>
+                <button onclick="markCompleted()" id="btn-mark-completed" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    Mark as Completed
                 </button>
                 <button onclick="closeActionSheet()" class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
                     Cancel
@@ -163,23 +185,85 @@
             `).join('');
         }
 
-        async function selectDriver(driverId) {
-            selectedDriverId = driverId;
-            localStorage.setItem('chauffeur_driver_id', driverId);
+
+        let isNotifOpen = false;
+        function toggleNotifications() {
+            const modal = document.getElementById('notif-modal');
+            const content = document.getElementById('notif-modal-content');
+            isNotifOpen = !isNotifOpen;
             
-            const d = driversData.find(d => d.id === driverId);
+            if (isNotifOpen) {
+                modal.classList.remove('hidden');
+                modal.style.display = 'flex';
+                void modal.offsetWidth;
+                modal.classList.remove('opacity-0');
+                content.classList.remove('translate-y-full');
+                fetchNotifications();
+            } else {
+                modal.classList.add('opacity-0');
+                content.classList.add('translate-y-full');
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.style.display = 'none';
+                }, 300);
+            }
+        }
+
+        async function fetchNotifications() {
+            try {
+                const res = await fetch('/api/telemetry');
+                const events = await res.json();
+                const list = document.getElementById('notif-list');
+                const badge = document.getElementById('notif-badge');
+                
+                if (events.length === 0) {
+                    list.innerHTML = '<p class="text-gray-500 text-center py-4 italic">No recent notifications</p>';
+                    badge.classList.add('hidden');
+                } else {
+                    badge.textContent = events.length;
+                    badge.classList.remove('hidden');
+                    
+                    list.innerHTML = events.map(ev => {
+                        const dName = driversData.find(d => d.id === ev.driver_id)?.name || 'Unknown Driver';
+                        const timeStr = new Date(ev.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        const colorClass = ev.action === 'arrived' ? 'text-blue-400' : 'text-green-400';
+                        return `
+                            <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                                <div>
+                                    <span class="font-bold text-white">${dName}</span>
+                                    <span class="ml-2 font-bold uppercase tracking-wider text-[10px] px-2 py-1 bg-gray-900 rounded ${colorClass}">${ev.action}</span>
+                                    <p class="text-xs text-gray-400 mt-1">${ev.details || 'Event ID: ' + ev.event_id}</p>
+                                </div>
+                                <div class="text-[10px] font-bold text-gray-500">${timeStr}</div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error("Failed to load notifications", e);
+            }
+        }
+
+        async function selectDriver(id) {
+            currentDriverId = id;
+            selectedDriverId = id;
+            localStorage.setItem('chauffeur_driver_id', id);
+            
+            const d = driversData.find(d => d.id === id);
             if (d) {
                 document.getElementById('driver-name').textContent = d.name;
                 document.getElementById('driver-avatar').textContent = d.name.charAt(0).toUpperCase();
                 document.getElementById('driver-avatar').style.borderColor = d.color_code;
                 document.getElementById('driver-avatar').style.color = d.color_code;
             }
-
+            
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
             document.getElementById('btn-switch-driver').classList.remove('hidden');
+            document.getElementById('btn-notif').classList.remove('hidden');
             
             await fetchData();
+            fetchNotifications();
         }
 
         function clearDriver() {
@@ -215,8 +299,8 @@
             return m > 0 ? `${h}h ${m}m` : `${h}h`;
         }
 
-        function openActionSheet(origin, destination, legTitle, waypoint = null) {
-            routeContext = { origin, destination, waypoint };
+        function openActionSheet(origin, destination, legTitle, eventId = null) {
+            routeContext = { origin, destination, legTitle, eventId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
             
             const sheet = document.getElementById('action-sheet');
@@ -254,13 +338,49 @@
             if (provider === 'google') {
                 url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}`;
             } else if (provider === 'apple') {
-                url = `http://maps.apple.com/?daddr=${destEnc}${routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : ''}`;
+                url = `maps://?daddr=${destEnc}${routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : ''}`;
             } else if (provider === 'waze') {
-                url = `https://waze.com/ul?q=${destEnc}&navigate=yes`;
+                url = `waze://?q=${destEnc}&navigate=yes`;
             }
             
             closeActionSheet();
-            window.location.href = url;
+            const a = document.createElement('a');
+            a.href = url;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        async function markCompleted() {
+            if (!routeContext || !routeContext.eventId || !currentDriverId) return;
+            const btn = document.getElementById('btn-mark-completed');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-6 h-6 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Saving...';
+            
+            try {
+                let actionStr = 'completed';
+                if (routeContext.legTitle.includes('Pickup')) actionStr = 'picked up';
+                if (routeContext.legTitle.includes('Dropoff')) actionStr = 'dropped off';
+                if (routeContext.legTitle.includes('Home')) actionStr = 'arrived';
+                
+                await fetch('/api/telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        driver_id: currentDriverId,
+                        event_id: routeContext.eventId,
+                        action: actionStr,
+                        details: routeContext.legTitle
+                    })
+                });
+                // Could refresh timeline or add visual completion state here
+                closeActionSheet();
+            } catch (e) {
+                console.error("Failed to mark completed", e);
+                btn.textContent = 'Failed';
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         function openEventModal(titleStr) {
@@ -423,13 +543,13 @@
                                 const leg2Mins = edge.pickup_waypoint.from_global_home_mins;
                                 const leg2DepTime = new Date(depTime.getTime() + leg1Mins * 60000);
                                 
-                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
+                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
                                 html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1, 'blue', badges);
                                 
-                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
                             } else {
-                                let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                                let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args, 'blue', badges);
                             }
                         }
@@ -476,24 +596,24 @@
                             const leg2Mins = edge.home_waypoint.from_home_mins;
                             const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
                             
-                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff/Pickup'`;
+                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff/Pickup', '${ev.id}'`;
                             html += renderLegPill(formatTime(ev.end), "Drive to Dropoff/Pickup", leg1Mins, 0, args1, 'blue');
                             
-                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
                             html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue', nextBadges);
                         } else if (edge.pickup_waypoint) {
                             const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
                             const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
                             const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
                             
-                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
+                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
                             html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1, 'blue', nextBadges);
                             
-                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
                             html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
                         } else {
                             let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
-                            let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}'`;
+                            let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
                             html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue', nextBadges);
                         }
                     }
@@ -513,13 +633,13 @@
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
                                 const leg2ArrTime = arriveDate;
                                 
-                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff'`;
+                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1, 'green', badges);
                                 
-                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive Home'`;
+                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive Home', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2ArrTime.toISOString()), "Drive Home", leg2Mins, edge.delay_mins, args2, 'green');
                             } else {
-                                let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive Home'`;
+                                let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive Home', '${ev.id}'`;
                                 html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args, 'green', badges);
                             }
                         }

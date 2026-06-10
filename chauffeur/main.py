@@ -203,6 +203,16 @@ def clear_caches():
     cache_table.truncate()
     return {"status": "cleared"}
 
+# --- Telemetry API ---
+@app.post("/api/telemetry")
+def submit_telemetry(event: TelemetryEvent):
+    storage.add_telemetry_event(event.model_dump() if hasattr(event, 'model_dump') else event.dict())
+    return {"status": "recorded"}
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    return storage.get_telemetry_events()
+
 @app.post("/api/calendars/metadata")
 def get_calendars_metadata(calendar_ids: list[str]):
     return calendar.get_calendar_metadata(calendar_ids)
@@ -368,7 +378,7 @@ def refresh_schedule_logic():
     previous_assignments = old_cache.get("assignments", {})
             
     assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-        events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map
+        events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers
     )
     
     # Ghost Routes
@@ -419,7 +429,7 @@ def refresh_schedule_logic():
     overridden_event_ids = [o.event_id for o in overrides]
     
     diagnostics = matcher.compute_diagnostics(
-        true_unassigned, events_to_solve, drivers, driver_events_map, assignments, overrides, rules
+        true_unassigned, events_to_solve, drivers, driver_events_map, assignments, overrides, rules, passengers=passengers
     )
     
     data = jsonable_encoder({

@@ -259,6 +259,9 @@
                                         <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-mono text-xs" x-text="tag"></span>
                                     </template>
                                     <span x-text="passenger.calendar_ids.length + ' calendars'"></span>
+                                    <template x-if="passenger.requires_attendance">
+                                        <span class="px-2 py-0.5 bg-red-900/50 text-red-300 rounded font-bold text-xs uppercase tracking-wide border border-red-800">Requires Attendance</span>
+                                    </template>
                                 </div>
                             </div>
                         </div>
@@ -317,6 +320,16 @@
                             </template>
                         </div>
                     </div>
+                </div>
+                <div class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">
+                    <div>
+                        <h4 class="font-bold text-white mb-1">Requires Attendance</h4>
+                        <p class="text-xs text-gray-400">If enabled, drivers will be scheduled to stay for the entirety of this passenger's events and cannot perform overlapping routes.</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" x-model="newPassenger.requires_attendance" class="sr-only peer">
+                        <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
                 </div>
                 <div class="flex gap-4 mt-4">
                     <button @click="submitPassenger()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" x-text="editPassengerId ? 'Save Passenger' : 'Add Passenger'"></button>
@@ -736,12 +749,12 @@
                             body: JSON.stringify(payload)
                         });
                     }
-                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [] };
+                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false };
                     await this.loadPassengers();
                 },
 
                 editPassenger(passenger) {
-                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [] };
+                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [], requires_attendance: passenger.requires_attendance || false };
                     this.editPassengerId = passenger.doc_id;
                 },
 

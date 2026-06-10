@@ -11,7 +11,8 @@ def solve_schedule(
     priority_rules: List[PriorityRule] = None,
     overrides: List[ManualOverride] = None,
     previous_assignments: Dict[str, str] = None,
-    driver_events: Dict[str, List[Event]] = None
+    driver_events: Dict[str, List[Event]] = None,
+    passengers: List[Passenger] = None
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -27,7 +28,16 @@ def solve_schedule(
         overrides = []
     if driver_events is None:
         driver_events = {}
-
+    if passengers is None:
+        passengers = []
+        
+    # Pre-calculate requires_attendance per event
+    req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
+    event_requires_attendance = {
+        e.id: bool(set(e.calendar_ids).intersection(req_att_cals))
+        for e in events
+    }
+        
     model = cp_model.CpModel()
     
     # 1. Variables: assign[e.id, d.id]
@@ -55,6 +65,20 @@ def solve_schedule(
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
                 total_needed_seconds = (travel_time_mins + 5) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
+                
+                # Check attendance constraints
+                attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
+                # If neither requires attendance, and we can perform interleaved dropoffs/pickups:
+                # D1 -> D2 -> P1 -> P2
+                # Dropoff gap: e2.start - e1.start >= travel(e1.location, e2.location)
+                # Pickup gap: e2.end - e1.end >= travel(e1.location, e2.location)
+                # This is a simplification. A full simulation is better.
+                if not attendance_conflict:
+                    # Let's see if we can do D1 -> e2_pickup -> D2
+                    d1_to_d2 = get_travel_time_minutes(e1.location, e2.location) * 60
+                    if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= d1_to_d2:
+                        gap_seconds = float('inf')  # Allow overlap!
+
                 if gap_seconds < total_needed_seconds:
                     # Passenger conflict soft penalty
                     for d1 in drivers:
@@ -68,6 +92,14 @@ def solve_schedule(
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
                 total_needed_seconds = (travel_time_mins + 5) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
+                
+                attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
+                if not attendance_conflict:
+                    # e1 and e2 do not share a calendar, meaning e2 passengers need pickup
+                    d1_to_d2 = get_switch_travel_time(e1, e2, events) * 60
+                    if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= get_travel_time_minutes(e1.location, e2.location) * 60:
+                        gap_seconds = float('inf')
+
                 if gap_seconds < total_needed_seconds:
                     # Driver conflict soft penalty
                     for d in drivers:
@@ -485,8 +517,11 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         pickup_location = home_location if home_location else driver_home
                         pickup_title = "Home"
                     
-                    drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(e1.end.timestamp()), return_traffic=True)
-                    drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(e1.end.timestamp() + drive_to_pickup*60), return_traffic=True)
+                    # If e2 starts before e1 ends, we must depart from e1 right after dropoff (e1.start)
+                    dep_time = min(e1.end.timestamp(), e2.start.timestamp())
+                    
+                    drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
+                    drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
                     
                     travel = drive_to_pickup + drive_from_pickup
                     delay = delay_to + delay_from
@@ -499,18 +534,22 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "pickup_event_title": pickup_title
                     }
                 else:
-                    travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
+                    dep_time = min(e1.end.timestamp(), e2.start.timestamp())
+                    travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
                     next_origin = e2.location
                     pickup_event = None
                     
-                wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
+                # Wait time is calculated from arrival at e2.location until e2.start
+                # But if they overlap, they might arrive exactly on time.
+                arr_time = dep_time + (travel * 60)
+                wait = max(0, (e2.start.timestamp() - arr_time) / 60)
             
                 home_waypoint = None
-                travel_gap = (e2.start - e1.end).total_seconds() / 60
+                travel_gap = (e2.start.timestamp() - dep_time) / 60
                 pickup_location = pickup_event.location if (not shares_calendar and pickup_event) else e2.location
                 if travel_gap > 45 and driver_home and driver_home.strip() != "":
-                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(e1.end.timestamp()), return_traffic=True)
-                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(e1.end.timestamp() + travel_to_home*60), return_traffic=True)
+                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(dep_time), return_traffic=True)
+                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
                     layover = travel_gap - travel_to_home - travel_from_home
                     
                     if layover >= 20:
@@ -561,7 +600,16 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
-def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule]) -> dict:
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None) -> dict:
+    if passengers is None:
+        passengers = []
+        
+    req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
+    event_requires_attendance = {
+        e.id: bool(set(e.calendar_ids).intersection(req_att_cals))
+        for e in events
+    }
+    
     diagnostics = {}
     event_map = {e.id: e for e in events}
     overridden_pairs = set()
@@ -626,7 +674,19 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             needed_secs = (travel + 5) * 60
                             e_before_a = (a_e.start - e.end).total_seconds() >= needed_secs
                             a_before_e = (e.start - a_e.end).total_seconds() >= needed_secs
-                            if not e_before_a and not a_before_e:
+                            
+                            attendance_conflict = event_requires_attendance.get(e.id, False) or event_requires_attendance.get(a_e.id, False)
+                            allow_overlap = False
+                            if not attendance_conflict:
+                                d1_to_d2 = get_travel_time_minutes(e.location, a_e.location) * 60
+                                if e.start <= a_e.start:
+                                    if (a_e.start - e.start).total_seconds() >= d1_to_d2 and (a_e.end - e.end).total_seconds() >= d1_to_d2:
+                                        allow_overlap = True
+                                else:
+                                    if (e.start - a_e.start).total_seconds() >= d1_to_d2 and (e.end - a_e.end).total_seconds() >= d1_to_d2:
+                                        allow_overlap = True
+                                        
+                            if not e_before_a and not a_before_e and not allow_overlap:
                                 reason = f"Conflicts with assigned event: '{a_e.title}'"
                                 break
 
