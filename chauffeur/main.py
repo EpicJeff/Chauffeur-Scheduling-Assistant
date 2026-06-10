@@ -23,11 +23,105 @@ async def poll_schedule():
             print(f"Polling error: {e}")
         await asyncio.sleep(300)
 
+import time
+from datetime import datetime, timezone
+import json
+import asyncio
+import os
 @asynccontextmanager
+
+async def push_notification_loop():
+    while True:
+        try:
+            from services import storage
+            
+            cache_doc = storage.cache_table.all()
+            if not cache_doc:
+                await asyncio.sleep(60)
+                continue
+            cache_doc = cache_doc[0]
+            
+            schedule = cache_doc.get("schedule")
+            events = {e["id"]: e for e in cache_doc.get("events", [])}
+            if not schedule:
+                await asyncio.sleep(60)
+                continue
+                
+            now_ts = datetime.now().timestamp()
+            subs = storage.get_push_subscriptions()
+            completed = storage.get_completed_drives()
+            
+            vapid_private_key = "data/vapid_private.pem"
+            if not os.path.exists(vapid_private_key):
+                await asyncio.sleep(60)
+                continue
+
+            # Reconstruct the legs
+            for d_id, items in schedule.items():
+                initial_edges = items.get("initial_edges", {})
+                route_edges = items.get("route_edges", {})
+                final_edges = items.get("final_edges", {})
+                
+                # Check Initial Edges
+                for ev_id, edge in initial_edges.items():
+                    ev = events.get(ev_id)
+                    if not ev: continue
+                    dep_time = datetime.fromisoformat(ev["start"]).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
+                    leg_id = f"init_{ev_id}"
+                    
+                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                        send_push(d_id, subs, "Time to Leave!", f"Drive to {ev['location'].split(',')[0]}", leg_id)
+                        
+                # Check Route Edges
+                for ev_id, edge in route_edges.items():
+                    ev = events.get(ev_id)
+                    next_ev = events.get(edge.get("to_event", ""))
+                    if not ev or not next_ev: continue
+                    
+                    dep_time = datetime.fromisoformat(ev["end"]).timestamp()
+                    leg_id = f"route_{ev_id}_{next_ev['id']}"
+                    title = f"Drive to {next_ev['location'].split(',')[0]}"
+
+                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                        send_push(d_id, subs, "Time to Leave!", title, leg_id)
+
+                # Check Final Edges
+                for ev_id, edge in final_edges.items():
+                    ev = events.get(ev_id)
+                    if not ev: continue
+                    dep_time = datetime.fromisoformat(ev["end"]).timestamp()
+                    leg_id = f"final_{ev_id}"
+
+                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                        send_push(d_id, subs, "Time to Leave!", "Drive Home", leg_id)
+                        
+        except Exception as e:
+            print(f"Error in push loop: {e}")
+            
+        await asyncio.sleep(60)
+
+def send_push(d_id, subs, title, body, leg_id):
+    from pywebpush import webpush, WebPushException
+    import json
+    for sub in subs:
+        if sub.get("driver_id") == d_id:
+            try:
+                webpush(
+                    subscription_info=sub["subscription"],
+                    data=json.dumps({"title": title, "body": body, "actions": [{"action": "complete", "title": "Mark Completed"}], "data": {"leg_id": leg_id}}),
+                    vapid_private_key="data/vapid_private.pem",
+                    vapid_claims={"sub": "mailto:admin@example.com"}
+                )
+                print(f"Sent push to {d_id}: {title} - {body}")
+            except WebPushException as ex:
+                print(f"Push failed: {repr(ex)}")
+
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(poll_schedule())
+    push_task = asyncio.create_task(push_notification_loop())
     yield
     task.cancel()
+    push_task.cancel()
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
 
@@ -456,6 +550,27 @@ def refresh_schedule_logic():
     
     storage.set_cached_schedule(data)
     return data
+
+
+from fastapi.responses import FileResponse
+@app.get("/sw.js")
+def get_service_worker():
+    return FileResponse(os.path.join(STATIC_DIR, "sw.js"), media_type="application/javascript")
+
+@app.get("/api/vapid_public_key")
+def get_vapid_public_key():
+    # Return the URL-safe base64 VAPID public key
+    return {"public_key": "BLq6066CQlVR7OfljOCtbfedooq5P4L9g0pS2z7vVUt1bVC-0wbyF_iZIGwva_igQkYcDw6CIpBqsOIbFoSbbl8"}
+
+@app.post("/api/push_subscribe")
+def push_subscribe(sub: PushSubscription):
+    storage.save_push_subscription(sub.driver_id, sub.subscription)
+    return {"status": "ok"}
+
+@app.post("/api/drive_status")
+def update_drive_status(status: DriveStatus):
+    storage.mark_drive_status(status.leg_id, status.status)
+    return {"status": "ok"}
 
 @app.get("/api/schedule")
 def get_schedule():

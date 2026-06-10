@@ -44,6 +44,8 @@ with db_lock:
     polyline_cache_table = db.table('polyline_cache')
     passengers_table = db.table('passengers')
     telemetry_table = db.table('telemetry')
+    push_subscriptions_table = db.table('push_subscriptions')
+    drive_status_table = db.table('drive_status')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -301,3 +303,23 @@ def update_settings(settings_data: dict):
     with db_lock:
         settings_table.truncate()
         settings_table.insert(settings_data)
+
+# Push Subscriptions
+def save_push_subscription(driver_id: str, subscription_info: dict):
+    with db_lock:
+        push_subscriptions_table.upsert({'driver_id': driver_id, 'subscription': subscription_info}, Query().driver_id == driver_id)
+
+def get_push_subscriptions(driver_id: str = None):
+    with db_lock:
+        if driver_id:
+            return push_subscriptions_table.search(Query().driver_id == driver_id)
+        return push_subscriptions_table.all()
+
+# Drive Status
+def mark_drive_status(leg_id: str, status: str):
+    with db_lock:
+        drive_status_table.upsert({'leg_id': leg_id, 'status': status}, Query().leg_id == leg_id)
+
+def get_completed_drives():
+    with db_lock:
+        return [doc['leg_id'] for doc in drive_status_table.search(Query().status == 'completed')]

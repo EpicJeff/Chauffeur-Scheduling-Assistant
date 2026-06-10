@@ -266,6 +266,54 @@
             fetchNotifications();
         }
 
+        
+        function urlB64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function enableNotifications() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                alert("Push notifications are not supported by your browser.");
+                return;
+            }
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') {
+                alert("Permission not granted.");
+                return;
+            }
+            
+            try {
+                const reg = await navigator.serviceWorker.register('/sw.js');
+                const response = await fetch('/api/vapid_public_key');
+                const data = await response.json();
+                
+                const subscription = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlB64ToUint8Array(data.public_key)
+                });
+                
+                await fetch('/api/push_subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        driver_id: currentDriverId,
+                        subscription: subscription
+                    })
+                });
+                alert("Notifications enabled!");
+            } catch (e) {
+                console.error(e);
+                alert("Failed to enable notifications: " + e.message);
+            }
+        }
+
         function clearDriver() {
             selectedDriverId = null;
             localStorage.removeItem('chauffeur_driver_id');
@@ -299,8 +347,8 @@
             return m > 0 ? `${h}h ${m}m` : `${h}h`;
         }
 
-        function openActionSheet(origin, destination, legTitle, eventId = null) {
-            routeContext = { origin, destination, legTitle, eventId };
+        function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
+            routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
             
             const sheet = document.getElementById('action-sheet');
@@ -370,7 +418,18 @@
                         driver_id: currentDriverId,
                         event_id: routeContext.eventId,
                         action: actionStr,
-                        details: routeContext.legTitle
+                        details: routeContext.legTitle,
+                        leg_id: routeContext.legId
+                    })
+                });
+                
+                // ALSO mark it in drive_status backend
+                await fetch('/api/drive_status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        leg_id: routeContext.legId,
+                        status: 'completed'
                     })
                 });
                 // Could refresh timeline or add visual completion state here
@@ -423,7 +482,20 @@
             }, 300);
         }
 
-        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '') {
+        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null) {
+            const isCompleted = legId && scheduleData && scheduleData.completed_drives && scheduleData.completed_drives.includes(legId);
+            if (isCompleted) {
+                return `
+                    <div class="flex items-start mb-2 relative z-10 opacity-60">
+                        <div class="w-8 h-8 rounded-full bg-gray-800 border-2 border-gray-950 flex items-center justify-center shrink-0 shadow-sm text-green-400">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        </div>
+                        <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-lg p-2 flex items-center justify-between">
+                            <div class="text-gray-400 font-medium text-sm line-through">${title}</div>
+                        </div>
+                    </div>`;
+            }
+
             const iconSvg = colorTheme === 'blue' 
                 ? `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>`
                 : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
@@ -544,13 +616,13 @@
                                 const leg2DepTime = new Date(depTime.getTime() + leg1Mins * 60000);
                                 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
-                                html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1, 'blue', badges);
+                                html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`);
                                 
                                 let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}'`, 'blue', '', `init_${ev.id}`);
                             } else {
                                 let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args, 'blue', badges);
+                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args + `, 'init_${ev.id}'`, 'blue', badges, `init_${ev.id}`);
                             }
                         }
                     }
@@ -598,24 +670,24 @@
                             const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
                             
                             let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff/Pickup', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), "Drive to Dropoff/Pickup", leg1Mins, 0, args1, 'blue');
+                            html += renderLegPill(formatTime(ev.end), "Drive to Dropoff/Pickup", leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`);
                             
                             let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue', nextBadges);
+                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`);
                         } else if (edge.pickup_waypoint) {
                             const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
                             const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
                             const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
                             
                             let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1, 'blue', nextBadges);
+                            html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`);
                             
                             let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}'`, 'blue', '', `init_${ev.id}`);
                         } else {
                             let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
                             let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue', nextBadges);
+                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`);
                         }
                         }
                     }
@@ -636,13 +708,13 @@
                                 const leg2ArrTime = arriveDate;
                                 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1, 'green', badges);
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`);
                                 
                                 let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive Home', '${ev.id}'`;
-                                html += renderLegPill(formatTime(leg2ArrTime.toISOString()), "Drive Home", leg2Mins, edge.delay_mins, args2, 'green');
+                                html += renderLegPill(formatTime(leg2ArrTime.toISOString()), "Drive Home", leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`);
                             } else {
                                 let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive Home', '${ev.id}'`;
-                                html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args, 'green', badges);
+                                html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args + `, 'final_${ev.id}'`, 'green', badges, `final_${ev.id}`);
                             }
                         }
                     }

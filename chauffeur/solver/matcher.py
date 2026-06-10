@@ -554,7 +554,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 if travel_gap > 45 and driver_home and driver_home.strip() != "":
                     travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(dep_time), return_traffic=True)
                     travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
-                    layover = travel_gap - travel_to_home - travel_from_home
+                    layover = travel_gap - travel_to_home - travel_from_home - 5
                     
                     if layover >= 20:
                         home_waypoint = {
