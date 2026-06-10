@@ -43,6 +43,11 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
+            <button id="btn-push" onclick="enableNotifications()" class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-white transition-colors relative hidden" title="Enable Push Notifications">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                <span class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2 animate-ping"></span>
+                <span class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
+            </button>
             <button id="btn-notif" onclick="toggleNotifications()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors relative hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
                 <span id="notif-badge" class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
@@ -158,6 +163,7 @@
         function showDriverSelection() {
             document.getElementById('screen-schedule').classList.add('hidden');
             document.getElementById('btn-switch-driver').classList.add('hidden');
+            document.getElementById('btn-push').classList.add('hidden');
             document.getElementById('screen-select-driver').classList.remove('hidden');
             
             document.getElementById('driver-name').textContent = "Select Driver";
@@ -261,6 +267,7 @@
             document.getElementById('screen-schedule').classList.remove('hidden');
             document.getElementById('btn-switch-driver').classList.remove('hidden');
             document.getElementById('btn-notif').classList.remove('hidden');
+            document.getElementById('btn-push').classList.remove('hidden');
             
             await fetchData();
             fetchNotifications();
@@ -384,9 +391,9 @@
             
             let url = '';
             if (provider === 'google') {
-                url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}`;
+                url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}&dir_action=navigate`;
             } else if (provider === 'apple') {
-                url = `maps://?daddr=${destEnc}${routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : ''}`;
+                url = `maps://?daddr=${destEnc}&dirflg=d`;
             } else if (provider === 'waze') {
                 url = `waze://?q=${destEnc}&navigate=yes`;
             }
