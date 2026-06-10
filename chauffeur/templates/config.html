@@ -584,13 +584,13 @@
                 },
                 async deleteDriver(docId) {
                     if(!confirm('Are you sure you want to delete this driver?')) return;
-                    await fetch(`/api/drivers/${docId}`, { method: 'DELETE' });
+                    await fetch(`api/drivers/${docId}`, { method: 'DELETE' });
                     await this.loadDrivers();
                 },
 
                 // --- Passengers ---
                 async loadPassengers() {
-                    const res = await fetch('/api/passengers');
+                    const res = await fetch('api/passengers');
                     this.passengers = await res.json();
                 },
 
@@ -610,14 +610,14 @@
                     const payload = { ...this.newPassenger };
                     
                     if (this.editPassengerId) {
-                        await fetch(`/api/passengers/${this.editPassengerId}`, {
+                        await fetch(`api/passengers/${this.editPassengerId}`, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
                         this.editPassengerId = null;
                     } else {
-                        await fetch('/api/passengers', {
+                        await fetch('api/passengers', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
@@ -639,7 +639,7 @@
 
                 async deletePassenger(docId) {
                     if(!confirm('Are you sure you want to delete this passenger?')) return;
-                    await fetch(`/api/passengers/${docId}`, { method: 'DELETE' });
+                    await fetch(`api/passengers/${docId}`, { method: 'DELETE' });
                     await this.loadPassengers();
                 },
 
