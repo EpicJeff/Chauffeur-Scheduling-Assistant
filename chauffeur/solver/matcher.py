@@ -388,7 +388,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict]]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     driver_events = defaultdict(list)
     event_map = {e.id: e for e in events}
@@ -399,6 +399,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             
     edges = {}
     initial_edges = {}
+    final_edges = {}
     for d_id, evs in driver_events.items():
         evs.sort(key=lambda x: x.start)
         
@@ -416,6 +417,14 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                     "to_event": first_ev.id,
                     "travel_mins": travel,
                     "delay_mins": delay
+                }
+                
+                last_ev = date_evs[-1]
+                travel_home, delay_home = get_travel_time_minutes(last_ev.location, home_location, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
+                final_edges[last_ev.id] = {
+                    "from_event": last_ev.id,
+                    "travel_mins": travel_home,
+                    "delay_mins": delay_home
                 }
                 
             for i in range(len(date_evs) - 1):
@@ -476,7 +485,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                 if home_waypoint:
                     edges[e1.id]["home_waypoint"] = home_waypoint
 
-    return edges, initial_edges
+    return edges, initial_edges, final_edges
 
 def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, str], events: List[Event]) -> Dict[str, List[dict]]:
     from collections import defaultdict
