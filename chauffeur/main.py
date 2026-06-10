@@ -11,6 +11,38 @@ class PushSubscription(BaseModel):
 class DriveStatus(BaseModel):
     leg_id: str
     status: str
+
+import os
+from py_vapid import Vapid, utils
+from cryptography.hazmat.primitives import serialization
+
+if os.path.exists('/data/options.json'):
+    DATA_DIR = '/data'
+else:
+    DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+VAPID_PRIVATE_KEY_PATH = os.path.join(DATA_DIR, 'vapid_private.pem')
+VAPID_PUBLIC_KEY_STR = ""
+
+def ensure_vapid_keys():
+    global VAPID_PUBLIC_KEY_STR
+    v = Vapid()
+    if not os.path.exists(VAPID_PRIVATE_KEY_PATH):
+        print("Generating new VAPID keys...")
+        v.generate_keys()
+        v.save_key(VAPID_PRIVATE_KEY_PATH)
+    else:
+        v = Vapid.from_file(VAPID_PRIVATE_KEY_PATH)
+    
+    # Extract public key as URL-safe base64
+    raw_pub = v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    VAPID_PUBLIC_KEY_STR = utils.b64urlencode(raw_pub)
+    if isinstance(VAPID_PUBLIC_KEY_STR, bytes):
+        VAPID_PUBLIC_KEY_STR = VAPID_PUBLIC_KEY_STR.decode('utf-8')
+
+ensure_vapid_keys()
+
 from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent
 from services import storage, calendar, maps
 from solver import matcher
@@ -60,7 +92,7 @@ async def push_notification_loop():
             subs = storage.get_push_subscriptions()
             completed = storage.get_completed_drives()
             
-            vapid_private_key = "data/vapid_private.pem"
+            vapid_private_key = VAPID_PRIVATE_KEY_PATH
             if not os.path.exists(vapid_private_key):
                 await asyncio.sleep(60)
                 continue
@@ -118,7 +150,7 @@ def send_push(d_id, subs, title, body, leg_id):
                 webpush(
                     subscription_info=sub["subscription"],
                     data=json.dumps({"title": title, "body": body, "actions": [{"action": "complete", "title": "Mark Completed"}], "data": {"leg_id": leg_id}}),
-                    vapid_private_key="data/vapid_private.pem",
+                    vapid_private_key=VAPID_PRIVATE_KEY_PATH,
                     vapid_claims={"sub": "mailto:admin@example.com"}
                 )
                 print(f"Sent push to {d_id}: {title} - {body}")
@@ -569,7 +601,7 @@ def get_service_worker():
 @app.get("/api/vapid_public_key")
 def get_vapid_public_key():
     # Return the URL-safe base64 VAPID public key
-    return {"public_key": "BMfyQ7vUQ2lrejDd0aVJbP3pP0O5OyeBxKaAXtml3KN5u7BJzoCe1k-128xLjniUzVevh276QfacSQ2jHAusC3c"}
+    return {"public_key": VAPID_PUBLIC_KEY_STR}
 
 @app.post("/api/push_subscribe")
 def push_subscribe(sub: PushSubscription):
