@@ -617,6 +617,7 @@
                             let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
                             html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue', nextBadges);
                         }
+                        }
                     }
 
                     // --- Final Edge ---
