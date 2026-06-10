@@ -288,30 +288,37 @@ def refresh_schedule_logic():
     for e in all_fetched_events:
         all_events_for_ui[e.id] = e
         
+        original_calendar_ids = list(e.calendar_ids)
         is_passenger = any(c in calendar_ids for c in e.calendar_ids)
         
         # Also check passenger tags and passenger calendar IDs
         matched_passengers = []
         for p in passengers:
             # Match by passenger's calendar ID
-            if any(c in p.calendar_ids for c in e.calendar_ids):
+            if any(c in p.calendar_ids for c in original_calendar_ids):
                 is_passenger = True
-                matched_passengers.append(p)
+                if p not in matched_passengers:
+                    matched_passengers.append(p)
             # Match by hashtag
             elif p.hashtag:
                 title_match = fuzzy_has_hashtag(e.title, p.hashtag)
                 desc_match = fuzzy_has_hashtag(e.description, p.hashtag)
                 if title_match or desc_match:
                     is_passenger = True
-                    matched_passengers.append(p)
-                    # Add passenger ID to event's calendar_ids so the frontend/solver treats them as the passenger
-                    e.calendar_ids.append(p.id)
+                    if p not in matched_passengers:
+                        matched_passengers.append(p)
+                        
+        if matched_passengers:
+            # Replace the generic calendar IDs with the actual passenger IDs.
+            # This ensures that "Data Calendars" don't falsely trigger overlap conflicts
+            # for different passengers.
+            e.calendar_ids = [str(p.id) for p in matched_passengers]
                     
         if is_passenger:
             events.append(e)
             
         for d in drivers:
-            if any(c in d.calendar_ids for c in e.calendar_ids):
+            if any(c in d.calendar_ids for c in original_calendar_ids):
                 driver_events_map[d.id].append(e)
                 driver_events_ids[d.id].append(e.id)
                 
@@ -358,6 +365,14 @@ def refresh_schedule_logic():
     conflicts = matcher.compute_conflicts(assignments, ghost_assignments, events_to_solve)
     
     calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
+    
+    # Inject passenger metadata so the UI renders their badges nicely
+    for p in passengers:
+        calendar_metadata[str(p.id)] = {
+            "summary": p.name,
+            "backgroundColor": "#9333ea",
+            "foregroundColor": "#ffffff"
+        }
     
     overridden_event_ids = [o.event_id for o in overrides]
     
