@@ -2,7 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
