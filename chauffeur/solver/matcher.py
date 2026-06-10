@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple, Optional
 from ortools.sat.python import cp_model
-from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride
+from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Passenger
 from services.maps import get_travel_time_minutes
 from datetime import datetime
 
