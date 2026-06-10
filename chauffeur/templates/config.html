@@ -238,7 +238,7 @@
                 <template x-for="passenger in passengers" :key="passenger.doc_id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="flex items-center mb-4 md:mb-0">
-                            <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 bg-purple-700 text-white">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white" :style="`background-color: ${getPassengerColor(passenger)}`">
                                 <span x-text="passenger.name.charAt(0)"></span>
                             </div>
                             <div>
@@ -636,6 +636,20 @@
                 },
 
                 // --- Passengers ---
+                getPassengerColor(passenger) {
+                    const PALETTE = ["#3B82F6", "#10B981", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#06B6D4", "#84CC16"];
+                    if (passenger.calendar_ids && passenger.calendar_ids.length > 0) {
+                        const calId = passenger.calendar_ids[0];
+                        if (this.calendarMetadata[calId]) {
+                            return this.calendarMetadata[calId].backgroundColor;
+                        }
+                    }
+                    const idStr = passenger.id || '';
+                    if (!idStr) return '#8B5CF6'; // purple fallback
+                    let sum = 0;
+                    for(let i=0; i<idStr.length; i++) sum += idStr.charCodeAt(i);
+                    return PALETTE[sum % PALETTE.length];
+                },
                 async loadPassengers() {
                     const res = await fetch('api/passengers');
                     this.passengers = await res.json();
