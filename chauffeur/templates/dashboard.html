@@ -529,7 +529,7 @@
             if (currentData.diagnostics && currentData.diagnostics[eventId]) {
                 const diag = currentData.diagnostics[eventId];
                 const reasonsHtml = Object.entries(diag).map(([driverId, reason]) => {
-                    const dName = drivers.find(d => d.id === driverId)?.name || driverId;
+                    const dName = currentData.drivers?.find(d => d.id === driverId)?.name || driverId;
                     return `
                         <div class="bg-gray-900 border border-yellow-900/50 p-4 rounded-lg flex flex-col space-y-1">
                             <span class="font-bold text-blue-300">${dName}</span>
