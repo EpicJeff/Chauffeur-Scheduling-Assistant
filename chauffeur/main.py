@@ -69,7 +69,9 @@ from datetime import datetime, timezone
 import json
 import asyncio
 import os
+notified_drives = set()
 async def push_notification_loop():
+    global notified_drives
     while True:
         try:
             from services import storage
@@ -108,8 +110,9 @@ async def push_notification_loop():
                     dep_time = datetime.fromisoformat(ev["start"]).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
                     leg_id = f"init_{ev_id}"
                     
-                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
                         send_push(d_id, subs, "Time to Leave!", f"Drive to {ev['location'].split(',')[0]}", leg_id)
+                        notified_drives.add(leg_id)
                         
                 # Check Route Edges
                 for ev_id, edge in route_edges.items():
@@ -121,8 +124,9 @@ async def push_notification_loop():
                     leg_id = f"route_{ev_id}_{next_ev['id']}"
                     title = f"Drive to {next_ev['location'].split(',')[0]}"
 
-                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
                         send_push(d_id, subs, "Time to Leave!", title, leg_id)
+                        notified_drives.add(leg_id)
 
                 # Check Final Edges
                 for ev_id, edge in final_edges.items():
@@ -131,8 +135,9 @@ async def push_notification_loop():
                     dep_time = datetime.fromisoformat(ev["end"]).timestamp()
                     leg_id = f"final_{ev_id}"
 
-                    if leg_id not in completed and 0 <= dep_time - now_ts <= 60:
+                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
                         send_push(d_id, subs, "Time to Leave!", "Drive Home", leg_id)
+                        notified_drives.add(leg_id)
                         
         except Exception as e:
             print(f"Error in push loop: {e}")
