@@ -387,10 +387,18 @@ def refresh_schedule_logic():
     
     calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
     
+    PALETTE = [
+        "#3B82F6", "#10B981", "#8B5CF6", "#EC4899", 
+        "#14B8A6", "#F97316", "#06B6D4", "#84CC16"
+    ]
+    
     # Inject passenger metadata so the UI renders their badges nicely
     for p in passengers:
-        bg_color = "#9333ea"
+        # Fallback to a deterministic color based on their passenger ID
+        color_index = sum(ord(c) for c in str(p.id)) % len(PALETTE)
+        bg_color = PALETTE[color_index]
         fg_color = "#ffffff"
+        
         if p.calendar_ids:
             # Try to grab the color from the passenger's first associated calendar
             primary_cal = p.calendar_ids[0]
