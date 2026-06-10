@@ -367,9 +367,8 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None)
     final_assignments = {e_id: id_mapping[g_id] for e_id, g_id in assignments.items()}
     return final_assignments, ghost_drivers
 
-def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[Event]:
-    e2_cals = set(e2.calendar_ids)
-    b_events = [e for e in all_events if e.id != e2.id and set(e.calendar_ids).intersection(e2_cals)]
+def get_passenger_pickup_event_for_subset(e2: Event, subset_cals: set, all_events: List[Event]) -> Optional[Event]:
+    b_events = [e for e in all_events if e.id != e2.id and set(e.calendar_ids).intersection(subset_cals)]
     b_events_before = [e for e in b_events if e.end <= e2.start and e.start.date() == e2.start.date()]
     
     if b_events_before:
@@ -378,6 +377,9 @@ def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[E
         if (e2.start - e_b_prev.end).total_seconds() <= 7200:
             return e_b_prev
     return None
+
+def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[Event]:
+    return get_passenger_pickup_event_for_subset(e2, set(e2.calendar_ids), all_events)
 
 def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int:
     pickup = get_passenger_pickup_event(e2, all_events)
@@ -467,32 +469,39 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             for i in range(len(date_evs) - 1):
                 e1 = date_evs[i]
                 e2 = date_evs[i+1]
-                shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+                e1_cals = set(e1.calendar_ids)
+                e2_cals = set(e2.calendar_ids)
+                shares_calendar = bool(e1_cals.intersection(e2_cals))
+                new_passengers = e2_cals - e1_cals
                 
                 pickup_waypoint = None
-                if shares_calendar:
+                
+                if new_passengers:
+                    pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, events)
+                    if pickup_event:
+                        pickup_location = pickup_event.location
+                        pickup_title = pickup_event.title
+                    else:
+                        pickup_location = home_location if home_location else driver_home
+                        pickup_title = "Home"
+                    
+                    drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(e1.end.timestamp()), return_traffic=True)
+                    drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(e1.end.timestamp() + drive_to_pickup*60), return_traffic=True)
+                    
+                    travel = drive_to_pickup + drive_from_pickup
+                    delay = delay_to + delay_from
+                    next_origin = pickup_location
+                    
+                    pickup_waypoint = {
+                        "to_pickup_mins": drive_to_pickup,
+                        "from_pickup_mins": drive_from_pickup,
+                        "pickup_location": pickup_location,
+                        "pickup_event_title": pickup_title
+                    }
+                else:
                     travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(e1.end.timestamp()), return_traffic=True)
                     next_origin = e2.location
-                    drive_to_pickup = 0
-                    drive_from_pickup = travel
-                else:
-                    travel = get_switch_travel_time(e1, e2, events)
-                    delay = 0
-                    pickup_event = get_passenger_pickup_event(e2, events)
-                    if pickup_event:
-                        next_origin = pickup_event.location
-                        drive_to_pickup = get_travel_time_minutes(e1.location, pickup_event.location)
-                        drive_from_pickup = get_travel_time_minutes(pickup_event.location, e2.location)
-                        pickup_waypoint = {
-                            "to_pickup_mins": drive_to_pickup,
-                            "from_pickup_mins": drive_from_pickup,
-                            "pickup_location": pickup_event.location,
-                            "pickup_event_title": pickup_event.title
-                        }
-                    else:
-                        next_origin = e2.location
-                        drive_to_pickup = 0
-                        drive_from_pickup = travel
+                    pickup_event = None
                     
                 wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
             
