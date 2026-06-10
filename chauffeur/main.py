@@ -69,8 +69,6 @@ from datetime import datetime, timezone
 import json
 import asyncio
 import os
-@asynccontextmanager
-
 async def push_notification_loop():
     while True:
         try:
@@ -157,6 +155,7 @@ def send_push(d_id, subs, title, body, leg_id):
             except WebPushException as ex:
                 print(f"Push failed: {repr(ex)}")
 
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
