@@ -73,17 +73,7 @@ def solve_schedule(
                 
                 # Check attendance constraints
                 attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
-                # If neither requires attendance, and we can perform interleaved dropoffs/pickups:
-                # D1 -> D2 -> P1 -> P2
-                # Dropoff gap: e2.start - e1.start >= travel(e1.location, e2.location)
-                # Pickup gap: e2.end - e1.end >= travel(e1.location, e2.location)
-                # This is a simplification. A full simulation is better.
-                if not attendance_conflict:
-                    # Let's see if we can do D1 -> e2_pickup -> D2
-                    d1_to_d2 = get_travel_time_minutes(e1.location, e2.location) * 60
-                    if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= d1_to_d2:
-                        gap_seconds = float('inf')  # Allow overlap!
-
+                
                 if gap_seconds < total_needed_seconds:
                     # Passenger conflict soft penalty
                     for d1 in drivers:
