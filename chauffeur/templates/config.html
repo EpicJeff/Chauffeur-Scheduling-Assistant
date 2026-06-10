@@ -181,6 +181,10 @@
                         <input type="time" x-model="newDriver.preferred_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                     </div>
                     <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Driver Home Location Override</label>
+                        <input type="text" x-model="newDriver.home_location" placeholder="e.g. 123 Main St (Leave blank for default)" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:flex-1">
                         <label class="block text-gray-400 mb-1 text-sm">Hashtags</label>
                         <div class="flex gap-2 mb-2">
                             <input type="text" x-model="newDriverHashtagInput" @keydown.enter="addDriverHashtag()" placeholder="#nate" class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
@@ -564,6 +568,7 @@
                         priority_index: parseInt(this.newDriver.priority_index),
                         preferred_start: this.newDriver.preferred_start || null,
                         preferred_end: this.newDriver.preferred_end || null,
+                        home_location: this.newDriver.home_location || null,
                         is_disabled: this.newDriver.is_disabled,
                         calendar_ids: this.newDriver.calendarIds,
                         hashtags: this.newDriver.hashtags,
@@ -614,6 +619,7 @@
                         priority_index: d.priority_index || 1,
                         preferred_start: d.preferred_start || '',
                         preferred_end: d.preferred_end || '',
+                        home_location: d.home_location || '',
                         is_disabled: d.is_disabled || false,
                         calendarIds: d.calendar_ids || [],
                         hashtags: d.hashtags || [],
@@ -626,7 +632,7 @@
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },

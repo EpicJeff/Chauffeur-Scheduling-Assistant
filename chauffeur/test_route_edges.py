@@ -35,5 +35,5 @@ assignments = {"e1": "d1", "e2": "d1"}
 events = [e1, e2, e_pickup]
 home_loc = "999 Home St"
 
-edges = compute_route_edges(assignments, events, home_location=home_loc)
+edges = compute_route_edges(assignments, events, drivers=[], home_location=home_loc)
 print(json.dumps(edges, indent=2))

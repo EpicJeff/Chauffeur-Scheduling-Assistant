@@ -388,7 +388,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     driver_events = defaultdict(list)
     event_map = {e.id: e for e in events}
@@ -400,9 +400,16 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
     edges = {}
     initial_edges = {}
     final_edges = {}
+    driver_map = {d.id: d for d in drivers}
+    
     for d_id, evs in driver_events.items():
         evs.sort(key=lambda x: x.start)
         
+        # Determine the driver's specific home location
+        driver_home = home_location
+        if d_id in driver_map and driver_map[d_id].home_location:
+            driver_home = driver_map[d_id].home_location
+            
         # Group events by date to correctly compute initial edges per day and prevent cross-day routing
         from itertools import groupby
         for date_obj, date_evs_iter in groupby(evs, key=lambda x: x.start.date()):
@@ -410,9 +417,9 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
             if not date_evs:
                 continue
                 
-            if home_location and home_location.strip() != "":
+            if driver_home and driver_home.strip() != "":
                 first_ev = date_evs[0]
-                travel, delay = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
                 initial_edges[first_ev.id] = {
                     "to_event": first_ev.id,
                     "travel_mins": travel,
@@ -420,7 +427,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                 }
                 
                 last_ev = date_evs[-1]
-                travel_home, delay_home = get_travel_time_minutes(last_ev.location, home_location, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
+                travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
                 final_edges[last_ev.id] = {
                     "from_event": last_ev.id,
                     "travel_mins": travel_home,
@@ -460,19 +467,23 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], home_l
                 wait = max(0, (e2.start - e1.end).total_seconds() / 60 - travel)
             
                 home_waypoint = None
-                if home_location and home_location.strip() != "":
-                    # Check if layover at home is possible
-                    drive_to_home = get_travel_time_minutes(e1.location, home_location)
-                    drive_from_home = get_travel_time_minutes(home_location, next_origin)
-                    layover_mins = (e2.start - e1.end).total_seconds() / 60 - drive_to_home - drive_from_home - drive_from_pickup
+                travel_gap = (e2.start - e1.end).total_seconds() / 60
+                pickup_location = pickup_event.location if (not shares_calendar and pickup_event) else e2.location
+                if travel_gap > 45 and driver_home and driver_home.strip() != "":
+                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(e1.end.timestamp()), return_traffic=True)
+                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(e1.end.timestamp() + travel_to_home*60), return_traffic=True)
+                    layover = travel_gap - travel_to_home - travel_from_home
                     
-                    # If we have 15 mins or more to stay at home
-                    if layover_mins >= 15:
+                    if layover >= 20:
                         home_waypoint = {
-                            "to_home_mins": drive_to_home,
-                            "from_home_mins": drive_from_home,
-                            "layover_mins": int(layover_mins)
+                            "to_home_mins": travel_to_home,
+                            "to_home_delay_mins": to_delay,
+                            "from_home_mins": travel_from_home,
+                            "from_home_delay_mins": from_delay,
+                            "layover_mins": int(layover)
                         }
+                        travel = travel_to_home + travel_from_home
+                        delay = to_delay + from_delay
                 
                 edges[e1.id] = {
                     "to_event": e2.id,

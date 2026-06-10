@@ -22,6 +22,7 @@ class Driver(BaseModel):
     priority_index: int = 1
     preferred_start: Optional[str] = None
     preferred_end: Optional[str] = None
+    home_location: Optional[str] = None
     is_disabled: bool = False
     calendar_ids: List[str] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
