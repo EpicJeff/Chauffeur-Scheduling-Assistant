@@ -247,23 +247,63 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            const originEnc = encodeURIComponent(routeContext.origin);
+            const originEnc = routeContext.origin ? `&origin=${encodeURIComponent(routeContext.origin)}` : '';
             const destEnc = encodeURIComponent(routeContext.destination);
             
             let url = '';
             if (provider === 'google') {
-                url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}`;
+                url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}`;
             } else if (provider === 'apple') {
-                url = `http://maps.apple.com/?saddr=${originEnc}&daddr=${destEnc}`;
+                url = `http://maps.apple.com/?daddr=${destEnc}${routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : ''}`;
             } else if (provider === 'waze') {
                 url = `https://waze.com/ul?q=${destEnc}&navigate=yes`;
             }
             
             closeActionSheet();
-            window.open(url, '_blank');
+            window.location.href = url;
         }
 
-        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue') {
+        function openEventModal(titleStr) {
+            const ev = JSON.parse(decodeURIComponent(titleStr));
+            document.getElementById('em-title').textContent = ev.title;
+            document.getElementById('em-time').textContent = ev.timeStr;
+            document.getElementById('em-location').textContent = ev.location || 'No location provided';
+            document.getElementById('em-passengers').innerHTML = ev.passengerHtml || '<span class="text-gray-500 italic">None</span>';
+            
+            const mapBtn = document.getElementById('em-map-btn');
+            if (ev.location) {
+                mapBtn.style.display = 'flex';
+                mapBtn.onclick = () => {
+                    closeEventModal();
+                    setTimeout(() => openActionSheet('', ev.location, 'Map to Event'), 300);
+                };
+            } else {
+                mapBtn.style.display = 'none';
+            }
+            
+            const modal = document.getElementById('event-modal');
+            const content = document.getElementById('event-modal-content');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            void modal.offsetWidth; // trigger reflow
+            modal.classList.remove('opacity-0');
+            content.classList.remove('translate-y-full');
+            content.classList.remove('sm:scale-95');
+        }
+
+        function closeEventModal() {
+            const modal = document.getElementById('event-modal');
+            const content = document.getElementById('event-modal-content');
+            modal.classList.add('opacity-0');
+            content.classList.add('translate-y-full');
+            content.classList.add('sm:scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }, 300);
+        }
+
+        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '') {
             const iconSvg = colorTheme === 'blue' 
                 ? `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>`
                 : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
@@ -283,6 +323,7 @@
                     <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
                         <div class="text-sm font-bold ${timeColorClassText} mb-1 uppercase tracking-wider">${timeLabel} ${timeStr}</div>
                         <div class="text-white font-medium text-lg leading-tight mb-2">${title}</div>
+                        ${subtitleHtml ? `<div class="flex flex-wrap gap-1 mb-2">${subtitleHtml}</div>` : ''}
                         <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
                             <span class="${durationClassText}">${formatDuration(mins)}</span>
                             ${delayMins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${delayMins}m</span>` : ''}
@@ -358,6 +399,12 @@
                 
                 const driverConfig = driversData.find(d => d.id === dId) || {};
                 const globalHome = scheduleData.home_location || '';
+                const calendar_metadata = scheduleData.calendar_metadata || {};
+
+                function getPassengerBadges(eventObj) {
+                    const calMetas = eventObj.calendar_ids.map(c => calendar_metadata[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' });
+                    return calMetas.map(meta => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border border-gray-600 truncate max-w-[80px]" style="background-color: ${meta.backgroundColor}20; color: ${meta.backgroundColor}; border-color: ${meta.backgroundColor}50;" title="${meta.summary}">${meta.summary}</span>`).join('');
+                }
                 
                 evs.forEach((ev, evIdx) => {
                     const isDriverOnly = !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]);
@@ -369,6 +416,7 @@
                             const originLocation = driverConfig.home_location || globalHome;
                             const destinationLocation = ev.location;
                             const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5) * 60000);
+                            const badges = getPassengerBadges(ev);
                             
                             if (edge.pickup_waypoint) {
                                 const leg1Mins = edge.pickup_waypoint.from_driver_home_mins;
@@ -376,13 +424,13 @@
                                 const leg2DepTime = new Date(depTime.getTime() + leg1Mins * 60000);
                                 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
-                                html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1, 'blue');
+                                html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1, 'blue', badges);
                                 
                                 let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
                                 html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
                             } else {
                                 let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
-                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args, 'blue');
+                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args, 'blue', badges);
                             }
                         }
                     }
@@ -392,13 +440,25 @@
                     let titleClass = isDriverOnly ? 'text-gray-400' : 'text-white';
                     
                     html += `
-                        <div class="flex items-start mb-6 relative z-10">
+                    const badges = getPassengerBadges(ev);
+                    
+                    const eventData = {
+                        title: ev.title,
+                        timeStr: `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
+                        location: ev.location,
+                        passengerHtml: badges
+                    };
+                    const evDataStr = encodeURIComponent(JSON.stringify(eventData));
+
+                    html += `
+                        <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
                             <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
                                 ${formatTime(ev.start).split(':')[0]}
                             </div>
-                            <div class="ml-4 flex-1 ${bgColor} rounded-xl p-4 shadow-sm">
+                            <div class="ml-4 flex-1 ${bgColor} rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
                                 <div class="text-sm font-bold text-gray-400 mb-1">${formatTime(ev.start)} - ${formatTime(ev.end)}</div>
                                 <div class="${titleClass} font-bold text-xl leading-tight mb-2">${ev.title}</div>
+                                ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
                                 ${ev.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${ev.location}</span></div>` : ''}
                             </div>
                         </div>
@@ -411,6 +471,7 @@
                         
                         let computedOrigin = ev.location;
                         const destinationLocation = nextEv.location;
+                        const nextBadges = getPassengerBadges(nextEv);
 
                         if (edge.home_waypoint) {
                             const leg1Mins = edge.home_waypoint.to_home_mins;
@@ -421,21 +482,21 @@
                             html += renderLegPill(formatTime(ev.end), "Drive to Dropoff/Pickup", leg1Mins, 0, args1, 'blue');
                             
                             let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
-                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue', nextBadges);
                         } else if (edge.pickup_waypoint) {
                             const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
                             const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
                             const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
                             
                             let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
-                            html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1, 'blue');
+                            html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1, 'blue', nextBadges);
                             
                             let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
                             html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
                         } else {
                             let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
                             let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}'`;
-                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue');
+                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue', nextBadges);
                         }
                     }
 
@@ -446,6 +507,7 @@
                             const arriveDate = new Date(new Date(ev.end).getTime() + edge.travel_mins * 60000);
                             const originLocation = ev.location;
                             const destinationLocation = driverConfig.home_location || globalHome;
+                            const badges = getPassengerBadges(ev);
                             
                             if (edge.dropoff_waypoint) {
                                 const leg1Mins = edge.dropoff_waypoint.to_global_home_mins;
@@ -454,13 +516,13 @@
                                 const leg2ArrTime = arriveDate;
                                 
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff'`;
-                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1, 'green');
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1, 'green', badges);
                                 
                                 let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive Home'`;
                                 html += renderLegPill(formatTime(leg2ArrTime.toISOString()), "Drive Home", leg2Mins, edge.delay_mins, args2, 'green');
                             } else {
                                 let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive Home'`;
-                                html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args, 'green');
+                                html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args, 'green', badges);
                             }
                         }
                     }
@@ -534,5 +596,29 @@
 
         window.onload = init;
     </script>
+
+    <!-- Event Details Modal -->
+    <div id="event-modal" class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex items-end sm:items-center justify-center p-4">
+        <div id="event-modal-content" class="bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
+            <div class="flex justify-between items-start mb-4">
+                <h3 id="em-title" class="text-2xl font-bold text-white pr-4">Event Title</h3>
+                <button onclick="closeEventModal()" class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            <p id="em-time" class="text-blue-400 font-bold mb-4">Time</p>
+            <div class="mb-4">
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Passengers</p>
+                <div id="em-passengers" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="mb-6">
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Location</p>
+                <p id="em-location" class="text-gray-300 text-sm break-words"></p>
+            </div>
+            <button id="em-map-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/></svg>
+                Open in Maps
+            </button>
+        </div>
+    </div>
 </body>
+
 </html>
