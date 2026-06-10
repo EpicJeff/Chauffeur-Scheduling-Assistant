@@ -9,3 +9,6 @@ googlemaps
 tinydb
 jinja2
 ortools
+pywebpush
+cryptography
+
