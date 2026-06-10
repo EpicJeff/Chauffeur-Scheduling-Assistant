@@ -347,6 +347,11 @@ def submit_telemetry(event: TelemetryEvent):
 def get_telemetry():
     return storage.get_telemetry_events()
 
+@app.post("/api/telemetry/clear")
+def clear_telemetry():
+    storage.clear_telemetry_events()
+    return {"status": "cleared"}
+
 @app.post("/api/calendars/metadata")
 def get_calendars_metadata(calendar_ids: list[str]):
     return calendar.get_calendar_metadata(calendar_ids)
@@ -616,10 +621,14 @@ def update_drive_status(status: DriveStatus):
 def get_schedule():
     try:
         cache = storage.get_cached_schedule()
+        completed = storage.get_completed_drives()
         if cache:
+            cache["completed_drives"] = completed
             return cache
         # First time run
-        return refresh_schedule_logic()
+        res = refresh_schedule_logic()
+        res["completed_drives"] = completed
+        return res
     except Exception as e:
         import traceback
         return {"error_debug": str(e), "traceback": traceback.format_exc()}

@@ -214,6 +214,10 @@ def get_telemetry_events(limit: int = 50) -> List[dict]:
         events.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
         return events[:limit]
 
+def clear_telemetry_events():
+    with db_lock:
+        telemetry_table.truncate()
+
 # Rule CRUD
 def get_all_rules() -> List[dict]:
     with db_lock:
