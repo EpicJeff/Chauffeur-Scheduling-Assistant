@@ -180,9 +180,16 @@
                         <label class="block text-gray-400 mb-1 text-sm">Pref End Time</label>
                         <input type="time" x-model="newDriver.preferred_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                     </div>
-                    <div class="w-full lg:flex-1">
+                    <div class="w-full lg:flex-1 relative">
                         <label class="block text-gray-400 mb-1 text-sm">Driver Home Location Override</label>
-                        <input type="text" x-model="newDriver.home_location" placeholder="e.g. 123 Main St (Leave blank for default)" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                        <input type="text" x-model="newDriver.home_location" @input="handleDriverLocationInput()" placeholder="e.g. 123 Main St (Leave blank for default)" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                        
+                        <!-- Autocomplete Dropdown -->
+                        <div x-show="driverLocationSuggestions.length > 0" @click.away="driverLocationSuggestions = []" class="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                            <template x-for="s in driverLocationSuggestions" :key="s.description">
+                                <div @click="selectDriverLocation(s.description)" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm" x-text="s.description"></div>
+                            </template>
+                        </div>
                     </div>
                     <div class="w-full lg:flex-1">
                         <label class="block text-gray-400 mb-1 text-sm">Hashtags</label>
@@ -429,6 +436,8 @@
                 homeLocation: '',
                 locationSuggestions: [],
                 calendarIds: [],
+                driverLocationSuggestions: [],
+                autocompleteTimeout: null,
                 newCalendarIdInput: '',
                 calendarMetadata: {},
                 isHomeAssistant: false,
@@ -483,6 +492,32 @@
                     this.homeLocation = loc;
                     this.locationSuggestions = [];
                     this.saveSettings();
+                },
+
+                async handleDriverLocationInput() {
+                    if (!this.newDriver.home_location || this.newDriver.home_location.length < 3) {
+                        this.driverLocationSuggestions = [];
+                        return;
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newDriver.home_location)}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.driverLocationSuggestions = data.suggestions;
+                            } else {
+                                this.driverLocationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+
+                selectDriverLocation(loc) {
+                    this.newDriver.home_location = loc;
+                    this.driverLocationSuggestions = [];
                 },
 
                 async fetchCalendarMetadata(ids) {
