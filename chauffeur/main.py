@@ -378,10 +378,19 @@ def refresh_schedule_logic():
     
     # Inject passenger metadata so the UI renders their badges nicely
     for p in passengers:
+        bg_color = "#9333ea"
+        fg_color = "#ffffff"
+        if p.calendar_ids:
+            # Try to grab the color from the passenger's first associated calendar
+            primary_cal = p.calendar_ids[0]
+            if primary_cal in calendar_metadata:
+                bg_color = calendar_metadata[primary_cal].get("backgroundColor", bg_color)
+                fg_color = calendar_metadata[primary_cal].get("foregroundColor", fg_color)
+                
         calendar_metadata[str(p.id)] = {
             "summary": p.name,
-            "backgroundColor": "#9333ea",
-            "foregroundColor": "#ffffff"
+            "backgroundColor": bg_color,
+            "foregroundColor": fg_color
         }
     
     overridden_event_ids = [o.event_id for o in overrides]
