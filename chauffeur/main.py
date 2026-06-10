@@ -58,6 +58,10 @@ def root_redirect():
 def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="dashboard.html")
 
+@app.get("/app")
+def driver_app(request: Request):
+    return templates.TemplateResponse(request=request, name="app.html")
+
 @app.get("/config")
 def config(request: Request):
     return templates.TemplateResponse(request=request, name="config.html")
