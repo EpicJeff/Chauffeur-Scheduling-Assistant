@@ -618,7 +618,7 @@
             
             if (checkbox.checked) {
                 if (!regex.test(desc)) {
-                    descEl.value = desc ? desc + '\\n' + hashtag : hashtag;
+                    descEl.value = desc ? desc + ' ' + hashtag : hashtag;
                 }
             } else {
                 descEl.value = desc.replace(regex, ' ').trim();
