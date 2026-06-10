@@ -44,6 +44,60 @@ with db_lock:
     polyline_cache_table = db.table('polyline_cache')
     passengers_table = db.table('passengers')
 
+def migrate_passengers_from_settings():
+    with db_lock:
+        settings_docs = settings_table.all()
+        if not settings_docs:
+            return
+        
+        settings = settings_docs[0]
+        passenger_cals = settings.get('passenger_calendar_ids', [])
+        metadata = settings.get('calendar_metadata', {})
+        
+        if not passenger_cals:
+            return
+            
+        existing_passengers = passengers_table.all()
+        existing_hashtags = {p.get('hashtag') for p in existing_passengers if p.get('hashtag')}
+        
+        for cal_id in passenger_cals:
+            already_migrated = False
+            for p in existing_passengers:
+                if cal_id in p.get('calendar_ids', []):
+                    already_migrated = True
+                    break
+            if already_migrated:
+                continue
+                
+            meta = metadata.get(cal_id, {})
+            name = meta.get('summary', cal_id)
+            
+            base_hashtag = '#' + ''.join(c.lower() for c in name if c.isalnum())
+            if not base_hashtag or base_hashtag == '#':
+                base_hashtag = '#passenger'
+                
+            hashtag = base_hashtag
+            counter = 1
+            while hashtag in existing_hashtags:
+                hashtag = f"{base_hashtag}{counter}"
+                counter += 1
+                
+            new_passenger = {
+                'name': name,
+                'hashtag': hashtag,
+                'calendar_ids': [cal_id]
+            }
+            
+            passengers_table.insert(new_passenger)
+            existing_hashtags.add(hashtag)
+            existing_passengers.append(new_passenger)
+            
+        # Remove passenger_calendar_ids so we don't migrate again
+        settings.pop('passenger_calendar_ids', None)
+        settings_table.update(settings, doc_ids=[settings.doc_id])
+
+migrate_passengers_from_settings()
+
 def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10) -> Optional[dict]:
     import time
     with db_lock:
