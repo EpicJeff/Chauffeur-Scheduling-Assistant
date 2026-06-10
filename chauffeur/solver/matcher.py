@@ -87,7 +87,7 @@ def solve_schedule(
                             model.AddImplication(both, assign_vars[(e1.id, d1.id)])
                             model.AddImplication(both, assign_vars[(e2.id, d2.id)])
                             model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
-                            objective_terms.append(both * -1000000)
+                            objective_terms.append(both * -2000000)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
                 total_needed_seconds = (travel_time_mins + 5) * 60
@@ -422,18 +422,27 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, driver_attendances: Dict[str, List[str]] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
-    driver_events = defaultdict(list)
+    driver_events = defaultdict(set)
     event_map = {e.id: e for e in events}
     
     for e_id, d_id in assignments.items():
         if e_id in event_map:
-            driver_events[d_id].append(event_map[e_id])
+            driver_events[d_id].add(event_map[e_id])
             
-    edges = {}
-    initial_edges = {}
-    final_edges = {}
+    if driver_attendances:
+        for d_id, e_ids in driver_attendances.items():
+            for e_id in e_ids:
+                if e_id in event_map:
+                    driver_events[d_id].add(event_map[e_id])
+                    
+    # Convert sets back to lists for sorting
+    driver_events = {d_id: list(evs) for d_id, evs in driver_events.items()}
+            
+    edges = defaultdict(dict)
+    initial_edges = defaultdict(dict)
+    final_edges = defaultdict(dict)
     driver_map = {d.id: d for d in drivers}
     
     for d_id, evs in driver_events.items():
@@ -458,7 +467,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 if is_passenger_ev and home_location and driver_home != home_location:
                     travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, home_location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
                     travel_to_ev, delay_to_ev = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
-                    initial_edges[first_ev.id] = {
+                    initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel_to_pickup + travel_to_ev,
                         "delay_mins": delay_to_pickup + delay_to_ev,
@@ -469,7 +478,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     }
                 else:
                     travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
-                    initial_edges[first_ev.id] = {
+                    initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel,
                         "delay_mins": delay
@@ -481,7 +490,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 if is_last_passenger_ev and home_location and driver_home != home_location:
                     travel_to_dropoff, delay_to_dropoff = get_travel_time_minutes(last_ev.location, home_location, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
                     travel_to_home, delay_to_home = get_travel_time_minutes(home_location, driver_home, departure_time=int(last_ev.end.timestamp() + travel_to_dropoff*60), return_traffic=True)
-                    final_edges[last_ev.id] = {
+                    final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_to_dropoff + travel_to_home,
                         "delay_mins": delay_to_dropoff + delay_to_home,
@@ -492,7 +501,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     }
                 else:
                     travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
-                    final_edges[last_ev.id] = {
+                    final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_home,
                         "delay_mins": delay_home
@@ -563,16 +572,16 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         travel = travel_to_home + travel_from_home
                         delay = to_delay + from_delay
                 
-                edges[e1.id] = {
+                edges[d_id][e1.id] = {
                     "to_event": e2.id,
                     "travel_mins": travel,
                     "delay_mins": delay,
                     "wait_mins": int(wait)
                 }
                 if pickup_waypoint:
-                    edges[e1.id]["pickup_waypoint"] = pickup_waypoint
+                    edges[d_id][e1.id]["pickup_waypoint"] = pickup_waypoint
                 if home_waypoint:
-                    edges[e1.id]["home_waypoint"] = home_waypoint
+                    edges[d_id][e1.id]["home_waypoint"] = home_waypoint
 
     return edges, initial_edges, final_edges
 

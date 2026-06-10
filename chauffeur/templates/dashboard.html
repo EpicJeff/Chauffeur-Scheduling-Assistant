@@ -974,7 +974,7 @@
 
                 // Extend timeline backward for initial travel from home
                 allEventsForDate.forEach(ev => {
-                    const initEdge = initialEdges[ev.id];
+                    const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
                     if (initEdge && initEdge.travel_mins > 0) {
                         const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
                         if (targetEvent) {
@@ -984,7 +984,7 @@
                         }
                     }
                     
-                    const finalEdge = finalEdges[ev.id];
+                    const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
                     if (finalEdge && finalEdge.travel_mins > 0) {
                         const targetEvent = allEventsForDate.find(e => e.id === finalEdge.from_event);
                         if (targetEvent) {
@@ -1098,6 +1098,14 @@
                         const endY = getTimeY(ev.end);
                         const height = Math.max(endY - startY, 20);
 
+                        let badgeHtml = '';
+                        let borderClass = 'border-gray-700 hover:border-gray-500';
+                        if (unassigned && unassigned.includes(ev.id) && c_id !== 'unassigned') {
+                            borderClass = 'border-red-500 hover:border-red-400';
+                            badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
+                        }
+
+
                         const isAssignedToThisColumn = (assignments && assignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
                         const isDriverOnly = !isAssignedToThisColumn;
 
@@ -1149,8 +1157,9 @@
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr} title="${ev.title}"
-                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass} ${opacityClass}"
-                                     style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-color: ${evColor}; min-height: 24px;">
+                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass} ${opacityClass} border ${borderClass}"
+                                     style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-left-color: ${evColor}; min-height: 24px;">
+                                    ${badgeHtml}
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
                                             ${colorDots}
@@ -1165,8 +1174,8 @@
                         }
 
                         // Initial travel pill from home (before first event)
-                        if (index === 0 && !isDriverOnly) {
-                            const initEdge = initialEdges[ev.id];
+                        if (index === 0) {
+                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const bufferMins = 5; // Add a 5 minute buffer to all departures
                                 const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
@@ -1198,8 +1207,8 @@
                         }
 
                         // Routing pill between events
-                        if (!isDriverOnly && index < uniqueColEvents.length - 1 && routeEdges[ev.id]) {
-                            const edge = routeEdges[ev.id];
+                        if (index < uniqueColEvents.length - 1 && routeEdges[c_id] && routeEdges[c_id][ev.id]) {
+                            const edge = routeEdges[c_id][ev.id];
                             const nextEv = uniqueColEvents[index + 1];
                             const nextStartY = getTimeY(nextEv.start);
                             const distance = nextStartY - endY;
@@ -1288,8 +1297,8 @@
                         }
                         
                         // Final travel pill after last event
-                        if (index === uniqueColEvents.length - 1 && !isDriverOnly) {
-                            const finalEdge = finalEdges[ev.id];
+                        if (index === uniqueColEvents.length - 1) {
+                            const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
                                 const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins) * 60000);
                                 const arriveStr = formatTime(arriveDate.toISOString());
