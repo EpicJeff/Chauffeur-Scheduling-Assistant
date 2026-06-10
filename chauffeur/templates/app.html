@@ -215,8 +215,8 @@
             return m > 0 ? `${h}h ${m}m` : `${h}h`;
         }
 
-        function openActionSheet(origin, destination, legTitle) {
-            routeContext = { origin, destination };
+        function openActionSheet(origin, destination, legTitle, waypoint = null) {
+            routeContext = { origin, destination, waypoint };
             document.getElementById('sheet-subtitle').textContent = legTitle;
             
             const sheet = document.getElementById('action-sheet');
@@ -247,13 +247,14 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            const { origin, destination } = routeContext;
+            const { origin, destination, waypoint } = routeContext;
             const originEnc = encodeURIComponent(origin);
             const destEnc = encodeURIComponent(destination);
+            const waypointEnc = waypoint ? `&waypoints=${encodeURIComponent(waypoint)}` : '';
             
             let url = '';
             if (provider === 'google') {
-                url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}`;
+                url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}${waypointEnc}`;
             } else if (provider === 'apple') {
                 url = `http://maps.apple.com/?saddr=${originEnc}&daddr=${destEnc}`;
             } else if (provider === 'waze') {
@@ -339,14 +340,18 @@
                         const edge = initial_edges[ev.id];
                         if (edge && edge.travel_mins > 0) {
                             const originLocation = driverConfig.home_location || globalHome;
-                            const destinationLocation = edge.pickup_waypoint ? globalHome : ev.location;
+                            const destinationLocation = ev.location;
+                            const waypointLocation = edge.pickup_waypoint ? globalHome : null;
                             const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5) * 60000);
                             
                             let destStr = edge.pickup_waypoint ? "Pickup" : ev.location;
                             const titleStr = `${formatTime(depTime.toISOString())} - Drive to ${destStr}`;
+                            
+                            let openActionArgs = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
+                            if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
 
                             html += `
-                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet('${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}')">
+                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
                                     <div class="w-10 h-10 rounded-full bg-blue-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-blue-300">
                                         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>
                                     </div>
@@ -386,16 +391,17 @@
                         const nextEv = evs[evIdx + 1];
                         
                         let computedOrigin = ev.location;
-                        if (edge.home_waypoint) {
-                            computedOrigin = globalHome; // simplification
-                        }
                         const destinationLocation = nextEv.location;
+                        const waypointLocation = edge.home_waypoint ? globalHome : null;
 
                         let destStr = nextEv.location ? nextEv.location.split(',')[0] : 'Next Event';
                         const titleStr = `${formatTime(ev.end)} - Drive to ${destStr}`;
+                        
+                        let openActionArgs = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
+                        if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
 
                         html += `
-                            <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet('${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}')">
+                            <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
                                 <div class="w-10 h-10 rounded-full bg-blue-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-blue-300">
                                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>
                                 </div>
@@ -418,12 +424,16 @@
                             const arriveDate = new Date(new Date(ev.end).getTime() + edge.travel_mins * 60000);
                             const originLocation = ev.location;
                             const destinationLocation = driverConfig.home_location || globalHome;
+                            const waypointLocation = edge.dropoff_waypoint ? globalHome : null;
                             
                             let destStr = edge.dropoff_waypoint ? "Home via Dropoff" : "Home";
                             const titleStr = `${formatTime(ev.end)} - Drive to ${destStr}`;
+                            
+                            let openActionArgs = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
+                            if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
 
                             html += `
-                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet('${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}')">
+                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
                                     <div class="w-10 h-10 rounded-full bg-green-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-green-300">
                                         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
                                     </div>
