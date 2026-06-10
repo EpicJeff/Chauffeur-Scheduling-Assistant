@@ -910,6 +910,16 @@
                             activePeriods.push({ start: departureHour, end: floorToHour(targetEvent.start).getTime() });
                         }
                     }
+                    
+                    const finalEdge = finalEdges[ev.id];
+                    if (finalEdge && finalEdge.travel_mins > 0) {
+                        const targetEvent = allEventsForDate.find(e => e.id === finalEdge.from_event);
+                        if (targetEvent) {
+                            const arriveTime = new Date(targetEvent.end).getTime() + (finalEdge.travel_mins + 5) * 60000;
+                            const arriveHour = ceilToHour(new Date(arriveTime).toISOString()).getTime();
+                            activePeriods.push({ start: ceilToHour(targetEvent.end).getTime(), end: arriveHour });
+                        }
+                    }
                 });
 
                 activePeriods.sort((a, b) => a.start - b.start);
@@ -1103,7 +1113,9 @@
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
                                                 <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm">Leave at ${departureStr}</span>
                                                 <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-md font-mono uppercase flex items-center">
-                                                    ${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}
+                                                    ${initEdge.pickup_waypoint 
+                                                        ? `${iconCar}${formatDuration(initEdge.pickup_waypoint.from_driver_home_mins)}${iconArrow}${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.pickup_waypoint.from_global_home_mins)}${trafficWarn}`
+                                                        : `${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}`}
                                                 </span>
                                             </div>
                                         </div>
@@ -1195,10 +1207,42 @@
                                     <div class="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20 pointer-events-none" 
                                          style="top: ${endY}px;">
                                         <span class="bg-gray-900 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
-                                            ${iconCar}${formatDuration(edge.travel_mins)}
+                                            ${iconCar}${formatDuration(edge.travel_mins)}${trafficWarn}
                                         </span>
                                     </div>
                                 `;
+                        }
+                        
+                        // Final travel pill after last event
+                        if (index === uniqueColEvents.length - 1 && !isDriverOnly) {
+                            const finalEdge = finalEdges[ev.id];
+                            if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
+                                const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins) * 60000);
+                                const arriveStr = formatTime(arriveDate.toISOString());
+                                const arriveY = getTimeY(arriveDate.toISOString());
+                                const distance = arriveY - endY;
+                                
+                                const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
+                                const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+                                const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
+                                const trafficWarn = finalEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${finalEdge.delay_mins}min traffic delay">⚠</span>` : '';
+
+                                if (distance > 10) {
+                                    colEventsHtml += `
+                                        <div class="absolute left-1/2 transform -translate-x-1/2 flex flex-col items-center justify-start pt-1.5 z-20 pointer-events-none"
+                                             style="top: ${endY}px; height: ${distance}px; width: 100%;">
+                                            <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
+                                            <div class="flex flex-col gap-0.5 items-center z-10 relative">
+                                                <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-md font-mono uppercase flex items-center">
+                                                    ${finalEdge.dropoff_waypoint
+                                                        ? `${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_global_home_mins)}${iconArrow}${iconHome}${iconArrow}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_driver_home_mins)}${trafficWarn}`
+                                                        : `${iconCar}${formatDuration(finalEdge.travel_mins)}${trafficWarn}${iconArrow}${iconHome}`}
+                                                </span>
+                                                <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm mt-0.5 whitespace-nowrap">Arrive home at ${arriveStr}</span>
+                                            </div>
+                                        </div>
+                                    `;
+                                }
                             }
                         }
                     });

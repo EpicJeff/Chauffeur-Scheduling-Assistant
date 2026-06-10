@@ -419,20 +419,50 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 
             if driver_home and driver_home.strip() != "":
                 first_ev = date_evs[0]
-                travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
-                initial_edges[first_ev.id] = {
-                    "to_event": first_ev.id,
-                    "travel_mins": travel,
-                    "delay_mins": delay
-                }
+                is_passenger_ev = first_ev.id in assignments
+                
+                if is_passenger_ev and home_location and driver_home != home_location:
+                    travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, home_location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                    travel_to_ev, delay_to_ev = get_travel_time_minutes(home_location, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                    initial_edges[first_ev.id] = {
+                        "to_event": first_ev.id,
+                        "travel_mins": travel_to_pickup + travel_to_ev,
+                        "delay_mins": delay_to_pickup + delay_to_ev,
+                        "pickup_waypoint": {
+                            "from_driver_home_mins": travel_to_pickup,
+                            "from_global_home_mins": travel_to_ev
+                        }
+                    }
+                else:
+                    travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                    initial_edges[first_ev.id] = {
+                        "to_event": first_ev.id,
+                        "travel_mins": travel,
+                        "delay_mins": delay
+                    }
                 
                 last_ev = date_evs[-1]
-                travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
-                final_edges[last_ev.id] = {
-                    "from_event": last_ev.id,
-                    "travel_mins": travel_home,
-                    "delay_mins": delay_home
-                }
+                is_last_passenger_ev = last_ev.id in assignments
+                
+                if is_last_passenger_ev and home_location and driver_home != home_location:
+                    travel_to_dropoff, delay_to_dropoff = get_travel_time_minutes(last_ev.location, home_location, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
+                    travel_to_home, delay_to_home = get_travel_time_minutes(home_location, driver_home, departure_time=int(last_ev.end.timestamp() + travel_to_dropoff*60), return_traffic=True)
+                    final_edges[last_ev.id] = {
+                        "from_event": last_ev.id,
+                        "travel_mins": travel_to_dropoff + travel_to_home,
+                        "delay_mins": delay_to_dropoff + delay_to_home,
+                        "dropoff_waypoint": {
+                            "to_global_home_mins": travel_to_dropoff,
+                            "to_driver_home_mins": travel_to_home
+                        }
+                    }
+                else:
+                    travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
+                    final_edges[last_ev.id] = {
+                        "from_event": last_ev.id,
+                        "travel_mins": travel_home,
+                        "delay_mins": delay_home
+                    }
                 
             for i in range(len(date_evs) - 1):
                 e1 = date_evs[i]
