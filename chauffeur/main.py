@@ -2,6 +2,15 @@ from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Dict, Any
+
+class PushSubscription(BaseModel):
+    driver_id: str
+    subscription: Dict[str, Any]
+
+class DriveStatus(BaseModel):
+    leg_id: str
+    status: str
 from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent
 from services import storage, calendar, maps
 from solver import matcher
