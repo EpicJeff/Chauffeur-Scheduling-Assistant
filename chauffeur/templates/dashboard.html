@@ -973,25 +973,29 @@
                 });
 
                 // Extend timeline backward for initial travel from home
-                allEventsForDate.forEach(ev => {
-                    const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
-                    if (initEdge && initEdge.travel_mins > 0) {
-                        const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
-                        if (targetEvent) {
-                            const departureTime = new Date(targetEvent.start).getTime() - (initEdge.travel_mins + 5) * 60000;
-                            const departureHour = floorToHour(new Date(departureTime).toISOString()).getTime();
-                            activePeriods.push({ start: departureHour, end: floorToHour(targetEvent.start).getTime() });
-                        }
-                    }
-                    
-                    const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
-                    if (finalEdge && finalEdge.travel_mins > 0) {
-                        const targetEvent = allEventsForDate.find(e => e.id === finalEdge.from_event);
-                        if (targetEvent) {
-                            const arriveTime = new Date(targetEvent.end).getTime() + (finalEdge.travel_mins + 5) * 60000;
-                            const arriveHour = ceilToHour(new Date(arriveTime).toISOString()).getTime();
-                            activePeriods.push({ start: ceilToHour(targetEvent.end).getTime(), end: arriveHour });
-                        }
+                colIds.forEach(c_id => {
+                    if (colsObj[c_id]) {
+                        colsObj[c_id].forEach(ev => {
+                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
+                            if (initEdge && initEdge.travel_mins > 0) {
+                                const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
+                                if (targetEvent) {
+                                    const departureTime = new Date(targetEvent.start).getTime() - (initEdge.travel_mins + 5) * 60000;
+                                    const departureHour = floorToHour(new Date(departureTime).toISOString()).getTime();
+                                    activePeriods.push({ start: departureHour, end: floorToHour(targetEvent.start).getTime() });
+                                }
+                            }
+                            
+                            const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
+                            if (finalEdge && finalEdge.travel_mins > 0) {
+                                const targetEvent = allEventsForDate.find(e => e.id === finalEdge.from_event);
+                                if (targetEvent) {
+                                    const arriveTime = new Date(targetEvent.end).getTime() + (finalEdge.travel_mins + 5) * 60000;
+                                    const arriveHour = ceilToHour(new Date(arriveTime).toISOString()).getTime();
+                                    activePeriods.push({ start: ceilToHour(targetEvent.end).getTime(), end: arriveHour });
+                                }
+                            }
+                        });
                     }
                 });
 
