@@ -31,6 +31,11 @@ def solve_schedule(
     if passengers is None:
         passengers = []
         
+    # Default missing event locations to home_location to prevent 0-minute teleportation
+    for e in events:
+        if not getattr(e, 'location', None) or str(e.location).strip() == "":
+            e.location = home_location
+
     # Pre-calculate requires_attendance per event
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
     event_requires_attendance = {
