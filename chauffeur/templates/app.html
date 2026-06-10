@@ -251,14 +251,21 @@
             const originEnc = encodeURIComponent(origin);
             const destEnc = encodeURIComponent(destination);
             const waypointEnc = waypoint ? `&waypoints=${encodeURIComponent(waypoint)}` : '';
-            
             let url = '';
             if (provider === 'google') {
                 url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}${waypointEnc}`;
             } else if (provider === 'apple') {
-                url = `http://maps.apple.com/?saddr=${originEnc}&daddr=${destEnc}`;
+                // Apple Maps officially supports multiple daddr in iOS 16+ for multi-stop
+                const appleWaypoints = waypoint ? `&daddr=${encodeURIComponent(waypoint)}&daddr=${destEnc}` : `&daddr=${destEnc}`;
+                url = `http://maps.apple.com/?saddr=${originEnc}${appleWaypoints}`;
             } else if (provider === 'waze') {
-                url = `https://waze.com/ul?q=${destEnc}&navigate=yes`;
+                // Waze does not support multi-stop routing via URL. 
+                // Route to the waypoint (pickup) first if it exists, otherwise final destination.
+                const wazeDest = waypoint ? encodeURIComponent(waypoint) : destEnc;
+                url = `https://waze.com/ul?q=${wazeDest}&navigate=yes`;
+                if (waypoint) {
+                    alert("Waze does not support multi-stop routes. Routing to your first stop (the Pickup/Dropoff).");
+                }
             }
             
             closeActionSheet();
