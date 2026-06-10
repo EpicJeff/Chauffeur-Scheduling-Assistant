@@ -238,8 +238,7 @@ def refresh_schedule_logic():
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
-    if not calendar_ids:
-        return {"error": "No calendar IDs configured in settings."}
+
         
     drivers_data = storage.get_all_drivers()
     # Provide default values for existing drivers to pass Pydantic validation
@@ -256,7 +255,20 @@ def refresh_schedule_logic():
             if cid and cid.strip():
                 driver_calendar_ids.add(cid.strip())
                 
-    all_cals_to_fetch = list(set(calendar_ids) | driver_calendar_ids)
+    passengers_data = storage.get_all_passengers()
+    passengers = [Passenger(**p) for p in passengers_data]
+    
+    passenger_calendar_ids = set()
+    for p in passengers:
+        for cid in p.calendar_ids:
+            if cid and cid.strip():
+                passenger_calendar_ids.add(cid.strip())
+                
+    all_cals_to_fetch = list(set(calendar_ids) | driver_calendar_ids | passenger_calendar_ids)
+    
+    # If there are no calendars to fetch at all, return an error
+    if not all_cals_to_fetch:
+        return {"error": "No calendar IDs configured in settings, drivers, or passengers."}
     
     days_to_show = settings.get("days_to_show", 7)
     
@@ -267,8 +279,6 @@ def refresh_schedule_logic():
         
     events = []
     all_events_for_ui = {} # To avoid duplicates in payload
-    passengers_data = storage.get_all_passengers()
-    passengers = [Passenger(**p) for p in passengers_data]
     import difflib
     
     def fuzzy_has_hashtag(text, target_tag):
