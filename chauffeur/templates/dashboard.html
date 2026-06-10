@@ -1178,7 +1178,7 @@
                         }
 
                         // Initial travel pill from home (before first event)
-                        if (index === 0) {
+                        if (initialEdges[c_id] && initialEdges[c_id][ev.id]) {
                             const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const bufferMins = 5; // Add a 5 minute buffer to all departures
@@ -1211,9 +1211,10 @@
                         }
 
                         // Routing pill between events
-                        if (index < uniqueColEvents.length - 1 && routeEdges[c_id] && routeEdges[c_id][ev.id]) {
+                        if (routeEdges[c_id] && routeEdges[c_id][ev.id]) {
                             const edge = routeEdges[c_id][ev.id];
-                            const nextEv = uniqueColEvents[index + 1];
+                            const nextEv = uniqueColEvents.find(e => e.id === edge.to_event);
+                            if (nextEv) {
                             const nextStartY = getTimeY(nextEv.start);
                             const distance = nextStartY - endY;
                             const trafficWarn = edge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${edge.delay_mins}min traffic delay">⚠</span>` : '';
@@ -1299,9 +1300,10 @@
                                 `;
                             }
                         }
+                        }
                         
                         // Final travel pill after last event
-                        if (index === uniqueColEvents.length - 1) {
+                        if (finalEdges[c_id] && finalEdges[c_id][ev.id]) {
                             const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
                                 const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins) * 60000);
@@ -1367,6 +1369,7 @@
                                     </div>
                                 `;
                             }
+                        }
                             return;
                         }
 

@@ -530,8 +530,8 @@
                     const isDriverOnly = !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]);
                     
                     // --- Initial Edge ---
-                    if (evIdx === 0 && !isDriverOnly) {
-                        const edge = initial_edges[ev.id];
+                    if (initial_edges[dId] && initial_edges[dId][ev.id]) {
+                        const edge = initial_edges[dId] ? initial_edges[dId][ev.id] : null;
                         if (edge && edge.travel_mins > 0) {
                             const originLocation = driverConfig.home_location || globalHome;
                             const destinationLocation = ev.location;
@@ -583,9 +583,10 @@
                     `;
 
                     // --- Routing Edge ---
-                    if (!isDriverOnly && evIdx < evs.length - 1 && route_edges[ev.id]) {
-                        const edge = route_edges[ev.id];
-                        const nextEv = evs[evIdx + 1];
+                    if (route_edges[dId] && route_edges[dId][ev.id]) {
+                        const edge = route_edges[dId] ? route_edges[dId][ev.id] : null;
+                        const nextEv = evs.find(e => e.id === edge.to_event);
+                        if (nextEv) {
                         
                         let computedOrigin = ev.location;
                         const destinationLocation = nextEv.location;
@@ -619,8 +620,8 @@
                     }
 
                     // --- Final Edge ---
-                    if (evIdx === evs.length - 1 && !isDriverOnly) {
-                        const edge = final_edges[ev.id];
+                    if (final_edges[dId] && final_edges[dId][ev.id]) {
+                        const edge = final_edges[dId] ? final_edges[dId][ev.id] : null;
                         if (edge && edge.travel_mins > 0) {
                             const arriveDate = new Date(new Date(ev.end).getTime() + edge.travel_mins * 60000);
                             const originLocation = ev.location;
