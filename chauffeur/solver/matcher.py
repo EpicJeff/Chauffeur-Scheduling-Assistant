@@ -501,3 +501,79 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 })
                 
     return conflicts
+
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule]) -> dict:
+    diagnostics = {}
+    event_map = {e.id: e for e in events}
+    overridden_pairs = set()
+    for o in overrides:
+        eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
+        did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
+        if eid and did:
+            overridden_pairs.add((eid, did))
+    
+    for u_id in unassigned_ids:
+        e = event_map.get(u_id)
+        if not e: continue
+        
+        diagnostics[u_id] = {}
+        for d in drivers:
+            reason = None
+            
+            # 1. Overrides
+            for o in overrides:
+                eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
+                did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
+                if eid == e.id and did != d.id and did != 'unassigned':
+                    reason = "Blocked by Manual Override for another driver."
+                if eid == e.id and did == 'unassigned':
+                    reason = "Blocked by 'Unassigned' override."
+                
+            # 2. Driver Personal Calendar
+            if not reason:
+                for de in driver_events.get(d.id, []):
+                    if e.id == de.id: continue
+                    travel = get_travel_time_minutes(e.location, de.location) if e.location and de.location else 20
+                    needed_secs = (travel + 5) * 60
+                    e_before_de = (de.start - e.end).total_seconds() >= needed_secs
+                    de_before_e = (e.start - de.end).total_seconds() >= needed_secs
+                    if not e_before_de and not de_before_e:
+                        reason = f"Conflicts with driver's personal event: '{de.title}'"
+                        break
+                        
+            # 3. Rule constraints
+            if not reason:
+                for r in rules:
+                    if r.event_keyword.lower() in e.title.lower():
+                        if r.constraint_type == 'unavailable' and r.driver_id == d.id:
+                            reason = "Prohibited by 'Unavailable' rule."
+                            break
+                        elif r.constraint_type == 'required' and r.driver_id != d.id:
+                            if (e.id, d.id) not in overridden_pairs:
+                                reason = "Blocked by 'Required' rule for another driver."
+                                break
+            
+            # 4. Overlap with existing assignments
+            if not reason:
+                for a_id, a_d_id in assignments.items():
+                    if a_d_id == d.id and a_id != e.id:
+                        a_e = event_map.get(a_id)
+                        if a_e:
+                            shares_calendar = bool(set(e.calendar_ids).intersection(set(a_e.calendar_ids)))
+                            if shares_calendar:
+                                travel = get_travel_time_minutes(e.location, a_e.location) if e.location and a_e.location else 20
+                            else:
+                                travel = get_switch_travel_time(e, a_e, events)
+                            needed_secs = (travel + 5) * 60
+                            e_before_a = (a_e.start - e.end).total_seconds() >= needed_secs
+                            a_before_e = (e.start - a_e.end).total_seconds() >= needed_secs
+                            if not e_before_a and not a_before_e:
+                                reason = f"Conflicts with assigned event: '{a_e.title}'"
+                                break
+
+            if not reason:
+                reason = "Dropped by solver to optimize overall schedule."
+                
+            diagnostics[u_id][d.id] = reason
+            
+    return diagnostics

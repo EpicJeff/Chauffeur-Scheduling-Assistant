@@ -42,6 +42,7 @@ with db_lock:
     settings_table = db.table('settings')
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
+    passengers_table = db.table('passengers')
 
 def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10) -> Optional[dict]:
     import time
@@ -98,6 +99,28 @@ def add_driver(driver_data: dict) -> int:
 def delete_driver(doc_id: int):
     with db_lock:
         drivers_table.remove(doc_ids=[doc_id])
+
+# Passenger CRUD
+def get_all_passengers() -> List[dict]:
+    with db_lock:
+        passengers = []
+        for p in passengers_table.all():
+            doc = dict(p)
+            doc['doc_id'] = p.doc_id
+            passengers.append(doc)
+        return passengers
+
+def add_passenger(passenger_data: dict) -> int:
+    with db_lock:
+        return passengers_table.insert(passenger_data)
+
+def update_passenger(doc_id: int, passenger_data: dict):
+    with db_lock:
+        passengers_table.update(passenger_data, doc_ids=[doc_id])
+
+def delete_passenger(doc_id: int):
+    with db_lock:
+        passengers_table.remove(doc_ids=[doc_id])
 
 # Rule CRUD
 def get_all_rules() -> List[dict]:

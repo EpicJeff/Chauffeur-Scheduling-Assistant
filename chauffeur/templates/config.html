@@ -214,6 +214,74 @@
             </div>
         </div>
 
+        <!-- Passengers -->
+        <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-blue-300">Passengers</h2>
+            <div class="space-y-4 mb-8">
+                <template x-for="passenger in passengers" :key="passenger.doc_id">
+                    <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
+                        <div class="flex items-center mb-4 md:mb-0">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 bg-purple-700 text-white">
+                                <span x-text="passenger.name.charAt(0)"></span>
+                            </div>
+                            <div>
+                                <h3 class="text-xl font-bold text-white" x-text="passenger.name"></h3>
+                                <div class="text-gray-400 text-sm flex gap-2 items-center mt-1">
+                                    <span x-show="passenger.hashtag" class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-mono text-xs" x-text="passenger.hashtag"></span>
+                                    <span x-text="passenger.calendar_ids.length + ' calendars'"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button @click="editPassenger(passenger)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            </button>
+                            <button @click="deletePassenger(passenger.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
+                <h3 class="text-lg font-bold text-white mb-4" x-text="editPassengerId ? 'Edit Passenger' : 'Add New Passenger'"></h3>
+                <div class="flex gap-4 items-end flex-wrap">
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                        <input type="text" x-model="newPassenger.name" placeholder="Passenger Name" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Hashtag (e.g. #sarah)</label>
+                        <input type="text" x-model="newPassenger.hashtag" placeholder="#hashtag" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
+                    </div>
+                    <div class="w-full lg:flex-1">
+                        <label class="block text-gray-400 mb-1 text-sm">Personal Calendar IDs</label>
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" x-model="newPassengerCalendarInput" @keydown.enter="addPassengerCalendarId()" placeholder="e.g. personal@gmail.com" class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
+                            <button @click="addPassengerCalendarId()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="(calId, index) in newPassenger.calendar_ids" :key="index">
+                                <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
+                                     :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
+                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                                    <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-1"></span>
+                                    <button @click="removePassengerCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-4 mt-4">
+                    <button @click="submitPassenger()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" x-text="editPassengerId ? 'Save Passenger' : 'Add Passenger'"></button>
+                    <button x-show="editPassengerId" @click="cancelEditPassenger()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Rules -->
         <div class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Routing Rules</h2>
@@ -329,13 +397,17 @@
                 calendarMetadata: {},
                 isHomeAssistant: false,
                 drivers: [],
+                passengers: [],
                 rules: [],
                 priorityRules: [],
                 newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
                 newDriverCalendarInput: '',
+                newPassenger: { name: '', hashtag: '', calendar_ids: [] },
+                newPassengerCalendarInput: '',
                 newRule: { driver_id: '', constraint_type: 'required', event_keyword: '' },
                 newPriorityRule: { match_type: 'keyword', match_value: '', weight_modifier: 100 },
                 editDriverId: null,
+                editPassengerId: null,
                 editRuleId: null,
                 editPriorityRuleId: null,
                 autocompleteTimeout: null,
@@ -343,6 +415,7 @@
                 async init() {
                     await this.loadSettings();
                     await this.loadDrivers();
+                    await this.loadPassengers();
                     await this.loadRules();
                     await this.loadPriorityRules();
                 },
@@ -509,11 +582,68 @@
                     this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
                     this.newDriverCalendarInput = '';
                 },
-                async deleteDriver(doc_id) {
-                    await fetch(`api/drivers/${doc_id}`, { method: 'DELETE' });
+                async deleteDriver(docId) {
+                    if(!confirm('Are you sure you want to delete this driver?')) return;
+                    await fetch(`/api/drivers/${docId}`, { method: 'DELETE' });
                     await this.loadDrivers();
                 },
 
+                // --- Passengers ---
+                async loadPassengers() {
+                    const res = await fetch('/api/passengers');
+                    this.passengers = await res.json();
+                },
+
+                addPassengerCalendarId() {
+                    if (this.newPassengerCalendarInput) {
+                        this.newPassenger.calendar_ids.push(this.newPassengerCalendarInput);
+                        this.newPassengerCalendarInput = '';
+                    }
+                },
+
+                removePassengerCalendarId(index) {
+                    this.newPassenger.calendar_ids.splice(index, 1);
+                },
+
+                async submitPassenger() {
+                    if (!this.newPassenger.name) return alert('Name is required');
+                    const payload = { ...this.newPassenger };
+                    
+                    if (this.editPassengerId) {
+                        await fetch(`/api/passengers/${this.editPassengerId}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        this.editPassengerId = null;
+                    } else {
+                        await fetch('/api/passengers', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                    }
+                    this.newPassenger = { name: '', hashtag: '', calendar_ids: [] };
+                    await this.loadPassengers();
+                },
+
+                editPassenger(passenger) {
+                    this.newPassenger = { ...passenger };
+                    this.editPassengerId = passenger.doc_id;
+                },
+
+                cancelEditPassenger() {
+                    this.newPassenger = { name: '', hashtag: '', calendar_ids: [] };
+                    this.editPassengerId = null;
+                },
+
+                async deletePassenger(docId) {
+                    if(!confirm('Are you sure you want to delete this passenger?')) return;
+                    await fetch(`/api/passengers/${docId}`, { method: 'DELETE' });
+                    await this.loadPassengers();
+                },
+
+                // --- Rules ---
                 async loadRules() {
                     const res = await fetch('api/rules');
                     this.rules = await res.json();

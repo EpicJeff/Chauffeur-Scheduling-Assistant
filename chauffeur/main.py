@@ -2,7 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -80,6 +80,29 @@ def create_driver(driver: Driver):
 @app.delete("/api/drivers/{doc_id}")
 def delete_driver(doc_id: int):
     storage.delete_driver(doc_id)
+    refresh_schedule_logic()
+    return {"status": "deleted"}
+
+# --- Passengers API ---
+@app.get("/api/passengers")
+def get_passengers():
+    return storage.get_all_passengers()
+
+@app.post("/api/passengers")
+def create_passenger(passenger: Passenger):
+    doc_id = storage.add_passenger(passenger.model_dump() if hasattr(passenger, 'model_dump') else passenger.dict())
+    refresh_schedule_logic()
+    return {"doc_id": doc_id, "status": "created"}
+
+@app.put("/api/passengers/{doc_id}")
+def update_passenger(doc_id: int, passenger: Passenger):
+    storage.update_passenger(doc_id, passenger.model_dump() if hasattr(passenger, 'model_dump') else passenger.dict())
+    refresh_schedule_logic()
+    return {"status": "updated"}
+
+@app.delete("/api/passengers/{doc_id}")
+def delete_passenger(doc_id: int):
+    storage.delete_passenger(doc_id)
     refresh_schedule_logic()
     return {"status": "deleted"}
 
@@ -244,6 +267,21 @@ def refresh_schedule_logic():
         
     events = []
     all_events_for_ui = {} # To avoid duplicates in payload
+    passengers_data = storage.get_all_passengers()
+    passengers = [Passenger(**p) for p in passengers_data]
+    import difflib
+    
+    def fuzzy_has_hashtag(text, target_tag):
+        if not target_tag or not text: return False
+        words = [w.lower().strip() for w in text.split()]
+        target = target_tag.lower().strip()
+        for w in words:
+            if w.startswith('#'):
+                ratio = difflib.SequenceMatcher(None, w, target).ratio()
+                if ratio >= 0.8:
+                    return True
+        return False
+
     driver_events_map = {d.id: [] for d in drivers}
     driver_events_ids = {d.id: [] for d in drivers}
     
@@ -251,6 +289,24 @@ def refresh_schedule_logic():
         all_events_for_ui[e.id] = e
         
         is_passenger = any(c in calendar_ids for c in e.calendar_ids)
+        
+        # Also check passenger tags and passenger calendar IDs
+        matched_passengers = []
+        for p in passengers:
+            # Match by passenger's calendar ID
+            if any(c in p.calendar_ids for c in e.calendar_ids):
+                is_passenger = True
+                matched_passengers.append(p)
+            # Match by hashtag
+            elif p.hashtag:
+                title_match = fuzzy_has_hashtag(e.title, p.hashtag)
+                desc_match = fuzzy_has_hashtag(e.description, p.hashtag)
+                if title_match or desc_match:
+                    is_passenger = True
+                    matched_passengers.append(p)
+                    # Add passenger ID to event's calendar_ids so the frontend/solver treats them as the passenger
+                    e.calendar_ids.append(p.id)
+                    
         if is_passenger:
             events.append(e)
             
@@ -305,6 +361,10 @@ def refresh_schedule_logic():
     
     overridden_event_ids = [o.event_id for o in overrides]
     
+    diagnostics = matcher.compute_diagnostics(
+        true_unassigned, events_to_solve, drivers, driver_events_map, assignments, overrides, rules
+    )
+    
     data = jsonable_encoder({
         "events": list(all_events_for_ui.values()),
         "assignments": assignments,
@@ -320,7 +380,8 @@ def refresh_schedule_logic():
         "lateness_warnings": lateness_warnings,
         "passenger_calendar_ids": calendar_ids,
         "driver_events": driver_events_ids,
-        "home_location": home_location or ""
+        "home_location": home_location or "",
+        "diagnostics": diagnostics
     })
     
     storage.set_cached_schedule(data)

@@ -28,6 +28,12 @@ class Driver(BaseModel):
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
 
+class Passenger(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    calendar_ids: List[str] = Field(default_factory=list)
+    hashtag: Optional[str] = None
+
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     driver_id: str
