@@ -356,6 +356,11 @@
                     showError(data.error);
                     return;
                 }
+                if (data.error_debug) {
+                    showError("Backend Error: " + data.error_debug + "\n" + (data.traceback || ""));
+                    console.error(data.traceback);
+                    return;
+                }
 
                 // Add ghost drivers to the map
                 if (data.ghost_drivers) {
@@ -372,7 +377,8 @@
                 currentData = data;
                 renderSchedule(data);
             } catch (err) {
-                showError("Failed to connect to the server.");
+                console.error(err);
+                showError("Error: " + err.message + "\n" + err.stack);
             }
         }
 
