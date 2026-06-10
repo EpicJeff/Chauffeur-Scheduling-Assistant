@@ -424,21 +424,21 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
 
 def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, driver_attendances: Dict[str, List[str]] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
-    driver_events = defaultdict(set)
+    driver_event_ids = defaultdict(set)
     event_map = {e.id: e for e in events}
     
     for e_id, d_id in assignments.items():
         if e_id in event_map:
-            driver_events[d_id].add(event_map[e_id])
+            driver_event_ids[d_id].add(e_id)
             
     if driver_attendances:
         for d_id, e_ids in driver_attendances.items():
             for e_id in e_ids:
                 if e_id in event_map:
-                    driver_events[d_id].add(event_map[e_id])
+                    driver_event_ids[d_id].add(e_id)
                     
     # Convert sets back to lists for sorting
-    driver_events = {d_id: list(evs) for d_id, evs in driver_events.items()}
+    driver_events = {d_id: [event_map[e_id] for e_id in ev_ids] for d_id, ev_ids in driver_event_ids.items()}
             
     edges = defaultdict(dict)
     initial_edges = defaultdict(dict)
