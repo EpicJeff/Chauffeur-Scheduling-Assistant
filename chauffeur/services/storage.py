@@ -143,6 +143,8 @@ def get_all_drivers() -> List[dict]:
         for d in drivers_table.all():
             doc = dict(d)
             doc['doc_id'] = d.doc_id
+            if 'hashtags' not in doc:
+                doc['hashtags'] = []
             drivers.append(doc)
         return drivers
 
@@ -161,6 +163,25 @@ def get_all_passengers() -> List[dict]:
         for p in passengers_table.all():
             doc = dict(p)
             doc['doc_id'] = p.doc_id
+            
+            # Auto-migrate string 'hashtag' to list 'hashtags'
+            if 'hashtag' in doc:
+                old_tag = doc.pop('hashtag')
+                if 'hashtags' not in doc:
+                    doc['hashtags'] = []
+                if old_tag and old_tag not in doc['hashtags']:
+                    doc['hashtags'].append(old_tag)
+                # Save migration
+                passengers_table.update({'hashtags': doc['hashtags']}, doc_ids=[doc['doc_id']])
+                try:
+                    passengers_table.update(db.table('passengers').update(db.delete('hashtag'), doc_ids=[doc['doc_id']]))
+                except:
+                    # Depending on TinyDB version, deleting a field might differ.
+                    passengers_table.update({'hashtag': None}, doc_ids=[doc['doc_id']])
+                
+            if 'hashtags' not in doc:
+                doc['hashtags'] = []
+                
             passengers.append(doc)
         return passengers
 

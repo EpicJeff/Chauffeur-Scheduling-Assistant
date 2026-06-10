@@ -582,27 +582,47 @@
 
             // Populate guests
             const guestsContainer = document.getElementById('edit-guests-container');
-            const passengerCals = currentData.passenger_calendar_ids || [];
+            const entities = [...(currentData.passengers || []), ...(currentData.drivers || [])];
+            const hashtagEntities = entities.filter(e => e.hashtags && e.hashtags.length > 0);
 
-            if (passengerCals.length > 0) {
-                guestsContainer.innerHTML = passengerCals.map(cal_id => {
-                    const isChecked = ev.calendar_ids.includes(cal_id) ? 'checked' : '';
-                    const calName = currentData.calendar_metadata[cal_id]?.summary || cal_id;
+            if (hashtagEntities.length > 0) {
+                guestsContainer.innerHTML = hashtagEntities.map(ent => {
+                    const primaryTag = ent.hashtags[0];
+                    const hasTag = ent.hashtags.some(tag => {
+                        const titleMatch = (ev.title || '').toLowerCase().includes(tag.toLowerCase());
+                        const descMatch = (ev.description || '').toLowerCase().includes(tag.toLowerCase());
+                        return titleMatch || descMatch;
+                    });
+                    const isChecked = hasTag ? 'checked' : '';
                     return `
                         <label class="flex items-center space-x-2 text-sm text-gray-300">
-                            <input type="checkbox" value="${cal_id}" class="guest-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500" ${isChecked}>
-                            <span class="truncate" title="${calName}">${calName}</span>
+                            <input type="checkbox" value="${primaryTag}" onchange="toggleHashtag(this, '${primaryTag}')" class="guest-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500" ${isChecked}>
+                            <span class="truncate" title="${ent.name}">${ent.name}</span>
                         </label>
                     `;
                 }).join('');
             } else {
-                guestsContainer.innerHTML = '<span class="text-sm text-gray-500 col-span-2">No calendars configured.</span>';
+                guestsContainer.innerHTML = '<span class="text-sm text-gray-500 col-span-2">No hashtags configured for any passenger or driver.</span>';
             }
 
             document.getElementById('autocomplete-dropdown').classList.add('hidden');
 
             document.getElementById('modal-view-mode').classList.add('hidden');
             document.getElementById('modal-edit-mode').classList.remove('hidden');
+        }
+
+        function toggleHashtag(checkbox, hashtag) {
+            const descEl = document.getElementById('edit-description');
+            let desc = descEl.value;
+            const regex = new RegExp(`(^|\\s)${hashtag}(\\s|$)`, 'i');
+            
+            if (checkbox.checked) {
+                if (!regex.test(desc)) {
+                    descEl.value = desc ? desc + '\\n' + hashtag : hashtag;
+                }
+            } else {
+                descEl.value = desc.replace(regex, ' ').trim();
+            }
         }
 
         function closeEventModal() {
@@ -649,17 +669,13 @@
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
 
-            const guestCheckboxes = document.querySelectorAll('.guest-checkbox:checked');
-            const attendees = Array.from(guestCheckboxes).map(cb => cb.value);
-
             const payload = {
                 source_event_ids: ev.source_event_ids,
                 title: document.getElementById('edit-title').value,
                 location: document.getElementById('edit-location').value,
                 description: document.getElementById('edit-description').value,
                 start: toIsoString(document.getElementById('edit-start').value),
-                end: toIsoString(document.getElementById('edit-end').value),
-                attendees: attendees
+                end: toIsoString(document.getElementById('edit-end').value)
             };
 
             closeEventModal();

@@ -24,6 +24,7 @@ class Driver(BaseModel):
     preferred_end: Optional[str] = None
     is_disabled: bool = False
     calendar_ids: List[str] = Field(default_factory=list)
+    hashtags: List[str] = Field(default_factory=list)
     preferred_maps_provider: str = 'google'
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
@@ -32,7 +33,7 @@ class Passenger(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
     calendar_ids: List[str] = Field(default_factory=list)
-    hashtag: Optional[str] = None
+    hashtags: List[str] = Field(default_factory=list)
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

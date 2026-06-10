@@ -309,14 +309,16 @@ def refresh_schedule_logic():
                 is_passenger = True
                 if p not in matched_passengers:
                     matched_passengers.append(p)
-            # Match by hashtag
-            elif p.hashtag:
-                title_match = fuzzy_has_hashtag(e.title, p.hashtag)
-                desc_match = fuzzy_has_hashtag(e.description, p.hashtag)
-                if title_match or desc_match:
-                    is_passenger = True
-                    if p not in matched_passengers:
-                        matched_passengers.append(p)
+            # Match by hashtags
+            elif p.hashtags:
+                for tag in p.hashtags:
+                    title_match = fuzzy_has_hashtag(e.title, tag)
+                    desc_match = fuzzy_has_hashtag(e.description, tag)
+                    if title_match or desc_match:
+                        is_passenger = True
+                        if p not in matched_passengers:
+                            matched_passengers.append(p)
+                        break
                         
         if matched_passengers:
             # Replace the generic calendar IDs with the actual passenger IDs.
@@ -328,9 +330,18 @@ def refresh_schedule_logic():
             events.append(e)
             
         for d in drivers:
+            # Check calendar_ids
             if any(c in d.calendar_ids for c in original_calendar_ids):
                 driver_events_map[d.id].append(e)
                 driver_events_ids[d.id].append(e.id)
+                continue
+            
+            # Check driver hashtags
+            for tag in d.hashtags:
+                if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
+                    driver_events_map[d.id].append(e)
+                    driver_events_ids[d.id].append(e.id)
+                    break
                 
     rules_data = storage.get_all_rules()
     priority_rules_data = storage.get_all_priority_rules()
@@ -415,7 +426,9 @@ def refresh_schedule_logic():
         "passenger_calendar_ids": calendar_ids,
         "driver_events": driver_events_ids,
         "home_location": home_location or "",
-        "diagnostics": diagnostics
+        "diagnostics": diagnostics,
+        "passengers": passengers,
+        "drivers": drivers
     })
     
     storage.set_cached_schedule(data)
