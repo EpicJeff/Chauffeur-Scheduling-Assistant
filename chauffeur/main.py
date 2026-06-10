@@ -569,7 +569,7 @@ def get_service_worker():
 @app.get("/api/vapid_public_key")
 def get_vapid_public_key():
     # Return the URL-safe base64 VAPID public key
-    return {"public_key": "BLq6066CQlVR7OfljOCtbfedooq5P4L9g0pS2z7vVUt1bVC-0wbyF_iZIGwva_igQkYcDw6CIpBqsOIbFoSbbl8"}
+    return {"public_key": "BMfyQ7vUQ2lrejDd0aVJbP3pP0O5OyeBxKaAXtml3KN5u7BJzoCe1k-128xLjniUzVevh276QfacSQ2jHAusC3c"}
 
 @app.post("/api/push_subscribe")
 def push_subscribe(sub: PushSubscription):
