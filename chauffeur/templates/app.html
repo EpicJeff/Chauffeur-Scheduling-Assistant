@@ -247,29 +247,49 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            const { origin, destination, waypoint } = routeContext;
-            const originEnc = encodeURIComponent(origin);
-            const destEnc = encodeURIComponent(destination);
-            const waypointEnc = waypoint ? `&waypoints=${encodeURIComponent(waypoint)}` : '';
+            const originEnc = encodeURIComponent(routeContext.origin);
+            const destEnc = encodeURIComponent(routeContext.destination);
+            
             let url = '';
             if (provider === 'google') {
-                url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}${waypointEnc}`;
+                url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}`;
             } else if (provider === 'apple') {
-                // Apple Maps officially supports multiple daddr in iOS 16+ for multi-stop
-                const appleWaypoints = waypoint ? `&daddr=${encodeURIComponent(waypoint)}&daddr=${destEnc}` : `&daddr=${destEnc}`;
-                url = `http://maps.apple.com/?saddr=${originEnc}${appleWaypoints}`;
+                url = `http://maps.apple.com/?saddr=${originEnc}&daddr=${destEnc}`;
             } else if (provider === 'waze') {
-                // Waze does not support multi-stop routing via URL. 
-                // Route to the waypoint (pickup) first if it exists, otherwise final destination.
-                const wazeDest = waypoint ? encodeURIComponent(waypoint) : destEnc;
-                url = `https://waze.com/ul?q=${wazeDest}&navigate=yes`;
-                if (waypoint) {
-                    alert("Waze does not support multi-stop routes. Routing to your first stop (the Pickup/Dropoff).");
-                }
+                url = `https://waze.com/ul?q=${destEnc}&navigate=yes`;
             }
             
             closeActionSheet();
             window.open(url, '_blank');
+        }
+
+        function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue') {
+            const iconSvg = colorTheme === 'blue' 
+                ? `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>`
+                : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+            
+            const colorClassBg = colorTheme === 'blue' ? 'bg-blue-900' : 'bg-green-900';
+            const colorClassText = colorTheme === 'blue' ? 'text-blue-300' : 'text-green-300';
+            const timeColorClassText = colorTheme === 'blue' ? 'text-blue-400' : 'text-green-400';
+            const durationClassText = colorTheme === 'blue' ? 'text-blue-500' : 'text-green-500';
+
+            const timeLabel = colorTheme === 'blue' ? 'Leave at' : 'Arrive by';
+
+            return `
+                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${actionArgs})">
+                    <div class="w-10 h-10 rounded-full ${colorClassBg} border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md ${colorClassText}">
+                        ${iconSvg}
+                    </div>
+                    <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
+                        <div class="text-sm font-bold ${timeColorClassText} mb-1 uppercase tracking-wider">${timeLabel} ${timeStr}</div>
+                        <div class="text-white font-medium text-lg leading-tight mb-2">${title}</div>
+                        <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
+                            <span class="${durationClassText}">${formatDuration(mins)}</span>
+                            ${delayMins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${delayMins}m</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         function buildTimeline() {
@@ -348,30 +368,22 @@
                         if (edge && edge.travel_mins > 0) {
                             const originLocation = driverConfig.home_location || globalHome;
                             const destinationLocation = ev.location;
-                            const waypointLocation = edge.pickup_waypoint ? globalHome : null;
                             const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5) * 60000);
                             
-                            let destStr = edge.pickup_waypoint ? "Pickup" : ev.location;
-                            const titleStr = `${formatTime(depTime.toISOString())} - Drive to ${destStr}`;
-                            
-                            let openActionArgs = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
-                            if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
-
-                            html += `
-                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
-                                    <div class="w-10 h-10 rounded-full bg-blue-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-blue-300">
-                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>
-                                    </div>
-                                    <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
-                                        <div class="text-sm font-bold text-blue-400 mb-1 uppercase tracking-wider">Leave at ${formatTime(depTime.toISOString())}</div>
-                                        <div class="text-white font-medium text-lg leading-tight mb-2">Drive to ${destStr}</div>
-                                        <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
-                                            <span class="text-blue-500">${formatDuration(edge.travel_mins)}</span>
-                                            ${edge.delay_mins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${edge.delay_mins}m</span>` : ''}
-                                        </div>
-                                    </div>
-                                </div>
-                            `;
+                            if (edge.pickup_waypoint) {
+                                const leg1Mins = edge.pickup_waypoint.from_driver_home_mins;
+                                const leg2Mins = edge.pickup_waypoint.from_global_home_mins;
+                                const leg2DepTime = new Date(depTime.getTime() + leg1Mins * 60000);
+                                
+                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
+                                html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1, 'blue');
+                                
+                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                            } else {
+                                let args = `'${originLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                                html += renderLegPill(formatTime(depTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, edge.travel_mins, edge.delay_mins, args, 'blue');
+                            }
                         }
                     }
 
@@ -399,29 +411,32 @@
                         
                         let computedOrigin = ev.location;
                         const destinationLocation = nextEv.location;
-                        const waypointLocation = edge.home_waypoint ? globalHome : null;
 
-                        let destStr = nextEv.location ? nextEv.location.split(',')[0] : 'Next Event';
-                        const titleStr = `${formatTime(ev.end)} - Drive to ${destStr}`;
-                        
-                        let openActionArgs = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
-                        if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
-
-                        html += `
-                            <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
-                                <div class="w-10 h-10 rounded-full bg-blue-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-blue-300">
-                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>
-                                </div>
-                                <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
-                                    <div class="text-sm font-bold text-blue-400 mb-1 uppercase tracking-wider">Leave at ${formatTime(ev.end)}</div>
-                                    <div class="text-white font-medium text-lg leading-tight mb-2">Drive to ${destStr}</div>
-                                    <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
-                                        <span class="text-blue-500">${formatDuration(edge.travel_mins)}</span>
-                                        ${edge.delay_mins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${edge.delay_mins}m</span>` : ''}
-                                    </div>
-                                </div>
-                            </div>
-                        `;
+                        if (edge.home_waypoint) {
+                            const leg1Mins = edge.home_waypoint.to_home_mins;
+                            const leg2Mins = edge.home_waypoint.from_home_mins;
+                            const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
+                            
+                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff/Pickup'`;
+                            html += renderLegPill(formatTime(ev.end), "Drive to Dropoff/Pickup", leg1Mins, 0, args1, 'blue');
+                            
+                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                        } else if (edge.pickup_waypoint) {
+                            const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
+                            const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
+                            const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
+                            
+                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Pickup'`;
+                            html += renderLegPill(formatTime(ev.end), "Drive to Pickup", leg1Mins, 0, args1, 'blue');
+                            
+                            let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}'`;
+                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2, 'blue');
+                        } else {
+                            let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
+                            let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}'`;
+                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args, 'blue');
+                        }
                     }
 
                     // --- Final Edge ---
@@ -431,29 +446,22 @@
                             const arriveDate = new Date(new Date(ev.end).getTime() + edge.travel_mins * 60000);
                             const originLocation = ev.location;
                             const destinationLocation = driverConfig.home_location || globalHome;
-                            const waypointLocation = edge.dropoff_waypoint ? globalHome : null;
                             
-                            let destStr = edge.dropoff_waypoint ? "Home via Dropoff" : "Home";
-                            const titleStr = `${formatTime(ev.end)} - Drive to ${destStr}`;
-                            
-                            let openActionArgs = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', '${titleStr.replace(/'/g, "\\'")}'`;
-                            if (waypointLocation) openActionArgs += `, '${waypointLocation.replace(/'/g, "\\'")}'`;
-
-                            html += `
-                                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${openActionArgs})">
-                                    <div class="w-10 h-10 rounded-full bg-green-900 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-green-300">
-                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-                                    </div>
-                                    <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
-                                        <div class="text-sm font-bold text-green-400 mb-1 uppercase tracking-wider">Arrive by ${formatTime(arriveDate.toISOString())}</div>
-                                        <div class="text-white font-medium text-lg leading-tight mb-2">Drive ${destStr}</div>
-                                        <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
-                                            <span class="text-green-500">${formatDuration(edge.travel_mins)}</span>
-                                            ${edge.delay_mins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${edge.delay_mins}m</span>` : ''}
-                                        </div>
-                                    </div>
-                                </div>
-                            `;
+                            if (edge.dropoff_waypoint) {
+                                const leg1Mins = edge.dropoff_waypoint.to_global_home_mins;
+                                const leg2Mins = edge.dropoff_waypoint.to_driver_home_mins;
+                                const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
+                                const leg2ArrTime = arriveDate;
+                                
+                                let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${globalHome.replace(/'/g, "\\'")}', 'Drive to Dropoff'`;
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1, 'green');
+                                
+                                let args2 = `'${globalHome.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive Home'`;
+                                html += renderLegPill(formatTime(leg2ArrTime.toISOString()), "Drive Home", leg2Mins, edge.delay_mins, args2, 'green');
+                            } else {
+                                let args = `'${(originLocation || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive Home'`;
+                                html += renderLegPill(formatTime(arriveDate.toISOString()), "Drive Home", edge.travel_mins, edge.delay_mins, args, 'green');
+                            }
                         }
                     }
                 });
