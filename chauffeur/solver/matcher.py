@@ -228,7 +228,7 @@ def solve_schedule(
                             objective_terms.append(both_assigned * 100)
                     
     # 4c. Mutually Exclusive Event Groups
-    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive' and getattr(r, 'event_keyword', None)]
     for r in mut_ex_rules:
         from collections import defaultdict
         groups = defaultdict(list)

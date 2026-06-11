@@ -587,7 +587,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
     )
     
     duplicate_groups = []
-    mut_ex_keywords = [r.event_keyword.lower() for r in rules if r.constraint_type == 'mutually_exclusive']
+    mut_ex_keywords = [r.event_keyword.lower() for r in rules if r.constraint_type == 'mutually_exclusive' and getattr(r, 'event_keyword', None)]
     from collections import defaultdict
     dup_groups = defaultdict(list)
     for e in events_to_solve:
