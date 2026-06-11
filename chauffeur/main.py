@@ -513,6 +513,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     
         if is_passenger:
             events.append(e)
+
+        if not getattr(e, 'location', '') or not str(e.location).strip():
+            continue
             
         for d in drivers:
             # Check calendar_ids
