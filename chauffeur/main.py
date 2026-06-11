@@ -685,19 +685,28 @@ def update_drive_status(status: DriveStatus):
 
 custom_schedule_cache = {}
 
+from fastapi import BackgroundTasks
+
 @app.get("/api/schedule")
-def get_schedule(start_date: str = None, end_date: str = None, force_refresh: bool = False):
+def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False):
     try:
         completed = storage.get_completed_drives()
         
-        # check default cache if no custom dates
-        if not start_date and not end_date and not force_refresh:
-            cached = storage.get_cached_schedule()
+        # Check cache instantly
+        if not force_refresh:
+            if not start_date and not end_date:
+                cached = storage.get_cached_schedule()
+            else:
+                cached_custom = storage.get_custom_schedule(start_date, end_date)
+                cached = cached_custom.get('schedule') if cached_custom else None
+                
             if cached:
                 cached["completed_drives"] = completed
+                # Fire an async background refresh so Google Calendar latency (1-5s) doesn't block the UI
+                background_tasks.add_task(refresh_schedule_logic, start_date, end_date, False)
                 return cached
 
-        # Fetch using lazy solving logic
+        # Fetch fresh and block if no cache exists or forced
         try:
             res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
             if "error" not in res:
