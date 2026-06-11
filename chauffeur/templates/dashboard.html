@@ -830,7 +830,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ event_id: ghostEventId, driver_id: driverId })
                 });
-                fetchSchedule();
+                fetchSchedule(!!currentStartDate);
             } catch (e) {
                 alert("Failed to force swap");
             }

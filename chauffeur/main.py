@@ -372,7 +372,16 @@ def get_places_autocomplete(input: str):
     return {"suggestions": suggestions}
 
 # --- Schedule API ---
-def refresh_schedule_logic(start_date_str=None, end_date_str=None):
+import hashlib
+
+def hash_events(events_list):
+    sorted_events = sorted(events_list, key=lambda e: getattr(e, 'id', ''))
+    parts = []
+    for e in sorted_events:
+        parts.append(f"{getattr(e, 'id', '')}|{getattr(e, 'start', '')}|{getattr(e, 'end', '')}|{getattr(e, 'location', '')}|{getattr(e, 'title', '')}")
+    return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
+
+def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False):
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
@@ -414,6 +423,14 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None):
         all_fetched_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_show, start_date_str=start_date_str, end_date_str=end_date_str)
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
+        
+    # Lazy Solving Check
+    current_events_hash = hash_events(all_fetched_events)
+    if start_date_str and end_date_str and not force_refresh:
+        cached_custom = storage.get_custom_schedule(start_date_str, end_date_str)
+        if cached_custom and cached_custom.get('events_hash') == current_events_hash:
+            return cached_custom['schedule']
+
         
     events = []
     all_events_for_ui = {} # To avoid duplicates in payload
@@ -667,39 +684,22 @@ def update_drive_status(status: DriveStatus):
 custom_schedule_cache = {}
 
 @app.get("/api/schedule")
-def get_schedule(start_date: str = None, end_date: str = None):
+def get_schedule(start_date: str = None, end_date: str = None, force_refresh: bool = False):
     try:
         completed = storage.get_completed_drives()
         
-        # check cache first if no custom dates
-        if not start_date and not end_date:
+        # check default cache if no custom dates
+        if not start_date and not end_date and not force_refresh:
             cached = storage.get_cached_schedule()
             if cached:
                 cached["completed_drives"] = completed
                 return cached
-                
-        # Check memory cache for custom dates
-        if start_date and end_date:
-            cache_key = f"{start_date}_{end_date}"
-            if cache_key in custom_schedule_cache:
-                entry = custom_schedule_cache[cache_key]
-                # 5 minute expiration (same as background sync)
-                import datetime
-                if datetime.datetime.now().timestamp() - entry['time'] < 300:
-                    data = entry['data']
-                    data["completed_drives"] = completed
-                    return data
 
-        # otherwise fetch fresh
+        # Fetch using lazy solving logic
         try:
-            res = refresh_schedule_logic(start_date, end_date)
-            if start_date and end_date and "error" not in res:
-                import datetime
-                custom_schedule_cache[f"{start_date}_{end_date}"] = {
-                    'time': datetime.datetime.now().timestamp(),
-                    'data': res
-                }
-            res["completed_drives"] = completed
+            res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
+            if "error" not in res:
+                res["completed_drives"] = completed
             return res
         except Exception as e:
             import traceback
