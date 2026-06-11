@@ -146,10 +146,16 @@ def solve_schedule(
         # Calculate dynamic base weight for the event
         base_event_weight = 100
         for pr in priority_rules:
+            mod = pr.weight_modifier
+            if mod == 500 or mod == 200: mod = 10000
+            elif mod == 100: mod = 1000
+            elif mod == -100: mod = -1000
+            elif mod == -500: mod = -10000
+            
             if pr.match_type == 'keyword' and pr.match_value.lower() in e.title.lower():
-                base_event_weight += pr.weight_modifier
+                base_event_weight += mod
             elif pr.match_type == 'calendar' and pr.match_value in e.calendar_ids:
-                base_event_weight += pr.weight_modifier
+                base_event_weight += mod
                 
         for d in drivers:
             weight = base_event_weight

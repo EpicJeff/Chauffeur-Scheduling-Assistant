@@ -614,11 +614,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if any(kw in core_title_lower for kw in mut_ex_keywords):
             continue
             
-        cals_tuple = tuple(sorted(e.calendar_ids))
-        duration = (e.end - e.start).total_seconds()
-        
         if len(core_title) > 3:
-            key = (date_str, core_title, duration, cals_tuple)
+            # Group by date and core title only. Ignore calendar source and duration 
+            # to catch sync duplicates or manually created alternatives.
+            key = (date_str, core_title)
             dup_groups[key].append(e)
             
     for key, evs in dup_groups.items():
