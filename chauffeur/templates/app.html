@@ -790,8 +790,8 @@
             document.getElementById('current-day-label').textContent = label;
             document.getElementById('date-subtitle').textContent = dDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
             
-            document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
-            document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;
+            // document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
+            // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;
         }
 
         function prevDay() {
