@@ -806,11 +806,90 @@
             // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;
         }
 
+        async function fetchMoreDays(direction) {
+            const btnPrev = document.getElementById('btn-prev-day');
+            const btnNext = document.getElementById('btn-next-day');
+            btnPrev.disabled = true;
+            btnNext.disabled = true;
+            document.getElementById('current-day-label').textContent = 'Loading...';
+            
+            let queryStart, queryEnd;
+            if (direction === 'next') {
+                queryStart = new Date(window.globalStartDate);
+                queryStart.setDate(queryStart.getDate() + window.globalDaysToShow);
+                queryEnd = new Date(queryStart);
+                queryEnd.setDate(queryEnd.getDate() + 6);
+                window.globalDaysToShow += 7;
+            } else {
+                queryEnd = new Date(window.globalStartDate);
+                queryEnd.setDate(queryEnd.getDate() - 1);
+                queryStart = new Date(queryEnd);
+                queryStart.setDate(queryStart.getDate() - 6);
+                window.globalStartDate = queryStart;
+                window.globalDaysToShow += 7;
+            }
+            
+            const startStr = queryStart.toISOString().split('T')[0];
+            const endStr = queryEnd.toISOString().split('T')[0];
+            
+            try {
+                const res = await fetch(`/api/schedule?start_date=${startStr}&end_date=${endStr}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    
+                    // Merge events
+                    const existingIds = new Set(scheduleData.events.map(e => e.id));
+                    (data.events || []).forEach(e => {
+                        if (!existingIds.has(e.id)) scheduleData.events.push(e);
+                    });
+                    
+                    // Merge assignments
+                    if (data.assignments) {
+                        for (const dId in data.assignments) {
+                            if (!scheduleData.assignments[dId]) scheduleData.assignments[dId] = { initial_edges: {}, route_edges: {}, final_edges: {} };
+                            Object.assign(scheduleData.assignments[dId].initial_edges, data.assignments[dId].initial_edges);
+                            Object.assign(scheduleData.assignments[dId].route_edges, data.assignments[dId].route_edges);
+                            Object.assign(scheduleData.assignments[dId].final_edges, data.assignments[dId].final_edges);
+                        }
+                    }
+                    if (data.driver_events) {
+                        for (const dId in data.driver_events) {
+                            if (!scheduleData.driver_events[dId]) scheduleData.driver_events[dId] = [];
+                            scheduleData.driver_events[dId] = [...new Set([...scheduleData.driver_events[dId], ...data.driver_events[dId]])];
+                        }
+                    }
+                    
+                    buildTimeline();
+                    
+                    // Restore scroll position
+                    const container = document.getElementById('days-container');
+                    if (direction === 'next') {
+                        activeDateIndex++;
+                        const paneWidth = container.clientWidth;
+                        container.scrollBy({ left: paneWidth, behavior: 'instant' });
+                    } else {
+                        activeDateIndex += 7;
+                        activeDateIndex--;
+                        const paneWidth = container.clientWidth;
+                        container.scrollBy({ left: -paneWidth, behavior: 'instant' });
+                    }
+                }
+            } catch (err) {
+                console.error(err);
+            } finally {
+                btnPrev.disabled = false;
+                btnNext.disabled = false;
+                updateHeaderDate();
+            }
+        }
+
         function prevDay() {
             if (activeDateIndex > 0) {
                 const container = document.getElementById('days-container');
                 const paneWidth = container.clientWidth;
                 container.scrollBy({ left: -paneWidth, behavior: 'smooth' });
+            } else {
+                fetchMoreDays('prev');
             }
         }
 
@@ -819,6 +898,8 @@
                 const container = document.getElementById('days-container');
                 const paneWidth = container.clientWidth;
                 container.scrollBy({ left: paneWidth, behavior: 'smooth' });
+            } else {
+                fetchMoreDays('next');
             }
         }
 
