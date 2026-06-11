@@ -220,12 +220,19 @@ def solve_schedule(
                         model.AddImplication(both_assigned, assign_vars[(e2.id, d.id)])
                         model.AddBoolOr([both_assigned, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
                         
+                        travel_mins = get_travel_time_minutes(e1.location, e2.location) if shares_calendar else get_switch_travel_time(e1, e2, events)
+                        
                         if shares_calendar:
                             objective_terms.append(both_assigned * 50)
-                        if same_loc:
+                            
+                        if same_loc and travel_mins <= 5:
                             # Higher bonus for doing things at the exact same location (reduces travel)
-                            # Helps the solver pick the "back-to-back" option in mutually exclusive groups
                             objective_terms.append(both_assigned * 100)
+                            
+                        # Penalize travel time for events assigned to the same driver
+                        gap_seconds = (e2.start - e1.end).total_seconds()
+                        if gap_seconds < 10800: # 3 hours
+                            objective_terms.append(both_assigned * (-int(travel_mins)))
                     
     # 4c. Mutually Exclusive Event Groups
     mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive' and getattr(r, 'event_keyword', None)]
@@ -689,12 +696,15 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             gap = (de.start - e.end).total_seconds()
                         else:
                             gap = (e.start - de.end).total_seconds()
+                        e_duration = (e.end - e.start).total_seconds() / 60
                         lateness_mins = int((needed_secs - gap) / 60)
+                        if lateness_mins > min(60, e_duration * 0.75):
+                            lateness_mins = 0
                         reason = {
                             "text": f"Conflicts with driver's personal event: '{de.title}'",
                             "type": "personal_conflict",
                             "conflict_event_title": de.title,
-                            "lateness_mins": max(1, lateness_mins)
+                            "lateness_mins": lateness_mins if lateness_mins > 0 else None
                         }
                         break
                         
@@ -713,12 +723,15 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             gap = (e.start - ae.end).total_seconds()
                             
                         if gap < needed_secs:
+                            e_duration = (e.end - e.start).total_seconds() / 60
                             lateness_mins = int((needed_secs - gap) / 60)
+                            if lateness_mins > min(60, e_duration * 0.75):
+                                lateness_mins = 0
                             reason = {
                                 "text": f"Passenger cannot travel from/to '{ae.title}' in time.",
                                 "type": "conflict",
                                 "conflict_event_title": ae.title,
-                                "lateness_mins": max(1, lateness_mins)
+                                "lateness_mins": lateness_mins if lateness_mins > 0 else None
                             }
                             break
                             
@@ -738,12 +751,15 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             gap = (e.start - ae.end).total_seconds()
                             
                         if gap < needed_secs:
+                            e_duration = (e.end - e.start).total_seconds() / 60
                             lateness_mins = int((needed_secs - gap) / 60)
+                            if lateness_mins > min(60, e_duration * 0.75):
+                                lateness_mins = 0
                             reason = {
                                 "text": f"Driver cannot travel from/to scheduled event '{ae.title}' in time.",
                                 "type": "conflict",
                                 "conflict_event_title": ae.title,
-                                "lateness_mins": max(1, lateness_mins)
+                                "lateness_mins": lateness_mins if lateness_mins > 0 else None
                             }
                             break
                         
@@ -790,13 +806,16 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                     gap_seconds = (a_e.start - e.end).total_seconds()
                                 else:
                                     gap_seconds = (e.start - a_e.end).total_seconds()
+                                e_duration = (e.end - e.start).total_seconds() / 60
                                 lateness_mins = int((needed_secs - gap_seconds) / 60)
+                                if lateness_mins > min(60, e_duration * 0.75):
+                                    lateness_mins = 0
                                 reason = {
                                     "text": f"Conflicts with assigned event: '{a_e.title}'",
                                     "type": "conflict",
                                     "conflict_event_id": a_e.id,
                                     "conflict_event_title": a_e.title,
-                                    "lateness_mins": max(1, lateness_mins)
+                                    "lateness_mins": lateness_mins if lateness_mins > 0 else None
                                 }
                                 break
 
