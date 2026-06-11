@@ -382,6 +382,13 @@
         }
 
         async function fetchSchedule(isPagination = false) {
+            const btnPrev = document.getElementById('btn-prev-week');
+            const btnNext = document.getElementById('btn-next-week');
+            if (btnPrev) btnPrev.disabled = true;
+            if (btnNext) btnNext.disabled = true;
+            const label = document.getElementById('pagination-label');
+            if (label && isPagination) label.textContent = "Loading...";
+
             try {
                 const driversRes = await fetch('api/drivers');
                 const driversList = await driversRes.json();
@@ -1472,7 +1479,13 @@
 
         // Polling every 15 seconds to fetch the latest CACHED schedule from the backend
         // (The backend itself polls Google Calendar every 5 minutes in the background)
-        setInterval(fetchSchedule, 15000);
+        setInterval(() => {
+            if (currentStartDate && currentEndDate) {
+                fetchSchedule(true);
+            } else {
+                fetchSchedule();
+            }
+        }, 15000);
     </script>
 </body>
 

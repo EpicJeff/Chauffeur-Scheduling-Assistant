@@ -236,7 +236,7 @@
                     </div>
                 </div>
                 <div class="flex gap-4 mt-2">
-                    <button @click="submitDriver()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" x-text="editDriverId ? 'Save Driver' : 'Add Driver'"></button>
+                    <button @click="submitDriver()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" :disabled="saving" x-text="saving ? 'Saving...' : (editDriverId ? 'Save Driver' : 'Add Driver')"></button>
                     <button x-show="editDriverId" @click="cancelEditDriver()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
                 </div>
             </div>
@@ -332,7 +332,7 @@
                     </label>
                 </div>
                 <div class="flex gap-4 mt-4">
-                    <button @click="submitPassenger()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" x-text="editPassengerId ? 'Save Passenger' : 'Add Passenger'"></button>
+                    <button @click="submitPassenger()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center" :disabled="saving" x-text="saving ? 'Saving...' : (editPassengerId ? 'Save Passenger' : 'Add Passenger')"></button>
                     <button x-show="editPassengerId" @click="cancelEditPassenger()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
                 </div>
             </div>
@@ -383,7 +383,7 @@
                     <label class="block text-gray-400 mb-1 text-sm">Event Keyword</label>
                     <input type="text" x-model="newRule.event_keyword" placeholder="e.g. Soccer" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                 </div>
-                <button @click="submitRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" x-text="editRuleId ? 'Save Rule' : 'Add Rule'"></button>
+                <button @click="submitRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" :disabled="saving" x-text="saving ? 'Saving...' : (editRuleId ? 'Save Rule' : 'Add Rule')"></button>
                 <button x-show="editRuleId" @click="cancelEditRule()" class="bg-gray-600 hover:bg-gray-500 w-full lg:w-auto px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center mt-2 lg:mt-0">Cancel</button>
             </div>
         </div>
@@ -434,7 +434,7 @@
                         <option value="-1000">Ignore (-1000)</option>
                     </select>
                 </div>
-                <button @click="submitPriorityRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" x-text="editPriorityRuleId ? 'Save Priority' : 'Add Priority'"></button>
+                <button @click="submitPriorityRule()" class="bg-blue-600 hover:bg-blue-500 w-full lg:w-auto px-8 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center" :disabled="saving" x-text="saving ? 'Saving...' : (editPriorityRuleId ? 'Save Priority' : 'Add Priority')"></button>
                 <button x-show="editPriorityRuleId" @click="cancelEditPriorityRule()" class="bg-gray-600 hover:bg-gray-500 w-full lg:w-auto px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center mt-2 lg:mt-0">Cancel</button>
             </div>
         </div>
@@ -574,6 +574,8 @@
                     await this.saveSettings();
                 },
                 async saveSettings() {
+                    this.saving = true;
+                    try {
                     const payload = { 
                         calendar_ids: this.calendarIds,
                         days_to_show: parseInt(this.daysToShow) || 7,
@@ -606,6 +608,8 @@
                     await this.fetchCalendarMetadata(allDriverCals);
                 },
                 async submitDriver() {
+                    this.saving = true;
+                    try {
                     if (!this.newDriver.id || !this.newDriver.name) return;
                     
                     const payload = {
@@ -732,6 +736,8 @@
                 },
 
                 async submitPassenger() {
+                    this.saving = true;
+                    try {
                     if (!this.newPassenger.name) return alert('Name is required');
                     const payload = { ...this.newPassenger };
                     
@@ -783,6 +789,8 @@
                     this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
                 },
                 async submitRule() {
+                    this.saving = true;
+                    try {
                     if (!this.newRule.driver_id || !this.newRule.event_keyword) return;
                     if (this.editRuleId) {
                         await fetch(`api/rules/${this.editRuleId}`, {
@@ -819,6 +827,8 @@
                     this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
                 },
                 async submitPriorityRule() {
+                    this.saving = true;
+                    try {
                     if (!this.newPriorityRule.match_value) return;
                     this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
                     

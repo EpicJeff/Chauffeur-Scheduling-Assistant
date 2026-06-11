@@ -664,28 +664,49 @@ def update_drive_status(status: DriveStatus):
     storage.mark_drive_status(status.leg_id, status.status)
     return {"status": "ok"}
 
+custom_schedule_cache = {}
+
 @app.get("/api/schedule")
 def get_schedule(start_date: str = None, end_date: str = None):
     try:
         completed = storage.get_completed_drives()
         
+        # check cache first if no custom dates
+        if not start_date and not end_date:
+            cached = storage.get_cached_schedule()
+            if cached:
+                cached["completed_drives"] = completed
+                return cached
+                
+        # Check memory cache for custom dates
         if start_date and end_date:
-            res = refresh_schedule_logic(start_date, end_date)
-            res["completed_drives"] = completed
-            return res
-            
-        cache = storage.get_cached_schedule()
-        if cache:
-            cache["completed_drives"] = completed
-            return cache
-            
-        # First time run
-        res = refresh_schedule_logic()
-        res["completed_drives"] = completed
-        return res
+            cache_key = f"{start_date}_{end_date}"
+            if cache_key in custom_schedule_cache:
+                entry = custom_schedule_cache[cache_key]
+                # 5 minute expiration (same as background sync)
+                import datetime
+                if datetime.datetime.now().timestamp() - entry['time'] < 300:
+                    data = entry['data']
+                    data["completed_drives"] = completed
+                    return data
+
+        # otherwise wait for lock and fetch fresh
+        with schedule_lock:
+            try:
+                res = refresh_schedule_logic(start_date, end_date)
+                if start_date and end_date and "error" not in res:
+                    import datetime
+                    custom_schedule_cache[f"{start_date}_{end_date}"] = {
+                        'time': datetime.datetime.now().timestamp(),
+                        'data': res
+                    }
+                res["completed_drives"] = completed
+                return res
+            except Exception as e:
+                import traceback
+                return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
     except Exception as e:
-        import traceback
-        return {"error_debug": str(e), "traceback": traceback.format_exc()}
+        return {"error": str(e)}
 
 @app.get("/api/ha_sensors")
 def get_ha_sensors():
