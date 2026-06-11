@@ -228,6 +228,32 @@ def get_all_rules() -> List[dict]:
         for r in rules_table.all():
             doc = dict(r)
             doc['doc_id'] = r.doc_id
+            
+            # Auto-migrate
+            needs_update = False
+            if 'keywords' not in doc:
+                doc['keywords'] = []
+                if doc.get('event_keyword'):
+                    doc['keywords'].append(doc['event_keyword'])
+                    doc['event_keyword'] = None
+                needs_update = True
+            
+            if 'passenger_ids' not in doc: 
+                doc['passenger_ids'] = []
+                needs_update = True
+            if 'days_of_week' not in doc: 
+                doc['days_of_week'] = []
+                needs_update = True
+            if 'time_start' not in doc: 
+                doc['time_start'] = None
+                needs_update = True
+            if 'time_end' not in doc: 
+                doc['time_end'] = None
+                needs_update = True
+                
+            if needs_update:
+                rules_table.update(doc, doc_ids=[doc['doc_id']])
+                
             rules.append(doc)
         return rules
 
@@ -251,6 +277,39 @@ def get_all_priority_rules() -> List[dict]:
         for r in priority_rules_table.all():
             doc = dict(r)
             doc['doc_id'] = r.doc_id
+            
+            # Auto-migrate
+            needs_update = False
+            if 'keywords' not in doc:
+                doc['keywords'] = []
+                match_type = doc.get('match_type')
+                match_value = doc.get('match_value')
+                if match_type == 'keyword' and match_value:
+                    doc['keywords'].append(match_value)
+                needs_update = True
+                
+            if 'passenger_ids' not in doc:
+                doc['passenger_ids'] = []
+                match_type = doc.get('match_type')
+                match_value = doc.get('match_value')
+                if match_type == 'calendar' and match_value:
+                    # In legacy, we matched raw calendar ids, but we'll adapt to passenger_ids if it's there
+                    pass
+                needs_update = True
+                
+            if 'days_of_week' not in doc: 
+                doc['days_of_week'] = []
+                needs_update = True
+            if 'time_start' not in doc: 
+                doc['time_start'] = None
+                needs_update = True
+            if 'time_end' not in doc: 
+                doc['time_end'] = None
+                needs_update = True
+                
+            if needs_update:
+                priority_rules_table.update(doc, doc_ids=[doc['doc_id']])
+                
             rules.append(doc)
         return rules
 

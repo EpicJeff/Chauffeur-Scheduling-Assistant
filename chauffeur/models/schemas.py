@@ -41,15 +41,25 @@ class Passenger(BaseModel):
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     driver_id: str
-    event_keyword: str
+    event_keyword: Optional[str] = None # Deprecated
     constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive'
     tolerance_mins: int = 0
+    keywords: List[str] = Field(default_factory=list)
+    passenger_ids: List[str] = Field(default_factory=list)
+    days_of_week: List[int] = Field(default_factory=list)
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    match_type: str       # 'keyword' or 'calendar'
-    match_value: str
+    match_type: Optional[str] = None       # Deprecated
+    match_value: Optional[str] = None      # Deprecated
     weight_modifier: int
+    keywords: List[str] = Field(default_factory=list)
+    passenger_ids: List[str] = Field(default_factory=list)
+    days_of_week: List[int] = Field(default_factory=list)
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
 
 class ManualOverride(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

@@ -4,6 +4,52 @@ from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Pa
 from services.maps import get_travel_time_minutes
 from datetime import datetime
 
+def does_event_match_rule(event, rule) -> bool:
+    has_any_criteria = False
+    
+    # 1. Keywords
+    if hasattr(rule, 'keywords') and rule.keywords:
+        has_any_criteria = True
+        match_kw = False
+        event_text = (event.title + " " + (event.description or "")).lower()
+        for kw in rule.keywords:
+            if kw.lower() in event_text:
+                match_kw = True
+                break
+        if not match_kw: return False
+        
+    # 2. Passengers
+    if hasattr(rule, 'passenger_ids') and rule.passenger_ids:
+        has_any_criteria = True
+        match_pax = False
+        for pid in rule.passenger_ids:
+            if pid in event.calendar_ids:
+                match_pax = True
+                break
+        if not match_pax: return False
+        
+    # 3. Days of Week
+    if hasattr(rule, 'days_of_week') and rule.days_of_week:
+        has_any_criteria = True
+        if event.start.weekday() not in rule.days_of_week: return False
+        
+    # 4. Time Window
+    if hasattr(rule, 'time_start') and rule.time_start:
+        has_any_criteria = True
+        try:
+            h, m = map(int, rule.time_start.split(':'))
+            if event.start.hour * 60 + event.start.minute < h * 60 + m: return False
+        except: pass
+        
+    if hasattr(rule, 'time_end') and rule.time_end:
+        has_any_criteria = True
+        try:
+            h, m = map(int, rule.time_end.split(':'))
+            if event.end.hour * 60 + event.end.minute > h * 60 + m: return False
+        except: pass
+        
+    return has_any_criteria
+
 def solve_schedule(
     events: List[Event],
     drivers: List[Driver],
@@ -62,7 +108,7 @@ def solve_schedule(
     for e in events:
         tol = 0
         for r in rules:
-            if r.constraint_type == 'tolerance' and r.event_keyword.lower() in e.title.lower():
+            if r.constraint_type == 'tolerance' and does_event_match_rule(e, r):
                 tol = max(tol, getattr(r, 'tolerance_mins', 0))
         e_tolerances[e.id] = tol
         
@@ -195,7 +241,7 @@ def solve_schedule(
             # Apply Driver Rules
             for r in rules:
                 # Simple keyword matching (case-insensitive)
-                if r.event_keyword.lower() in e.title.lower() and r.driver_id == d.id:
+                if does_event_match_rule(e, r) and r.driver_id == d.id:
                     if r.constraint_type == 'required':
                         # This driver MUST do it, meaning all other drivers cannot
                         for other_d in drivers:
@@ -241,12 +287,12 @@ def solve_schedule(
                             objective_terms.append(both_assigned * (-int(travel_mins)))
                     
     # 4c. Mutually Exclusive Event Groups
-    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive' and getattr(r, 'event_keyword', None)]
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
     for r in mut_ex_rules:
         from collections import defaultdict
         groups = defaultdict(list)
         for e in events:
-            if r.event_keyword.lower() in e.title.lower():
+            if does_event_match_rule(e, r):
                 date_str = e.start.strftime('%Y-%m-%d')
                 key = (date_str, tuple(sorted(e.calendar_ids)))
                 groups[key].append(e)
@@ -774,7 +820,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             # 3. Rule constraints
             if not reason:
                 for r in rules:
-                    if r.event_keyword.lower() in e.title.lower():
+                    if does_event_match_rule(e, r):
                         if r.constraint_type == 'unavailable' and r.driver_id == d.id:
                             reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
                             break

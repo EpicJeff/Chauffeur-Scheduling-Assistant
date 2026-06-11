@@ -1701,9 +1701,13 @@
             let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
             const payload = {
                 driver_id: driverId,
-                event_keyword: coreKeyword,
                 constraint_type: constraintType,
-                tolerance_mins: toleranceMins
+                tolerance_mins: toleranceMins,
+                keywords: [coreKeyword],
+                passenger_ids: [],
+                days_of_week: [],
+                time_start: null,
+                time_end: null
             };
 
             try {
@@ -1730,9 +1734,12 @@
             keyword = decodeURIComponent(keyword);
             let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
             const payload = {
-                match_type: 'keyword',
-                match_value: coreKeyword,
-                weight_modifier: weight
+                weight_modifier: weight,
+                keywords: [coreKeyword],
+                passenger_ids: [],
+                days_of_week: [],
+                time_start: null,
+                time_end: null
             };
             try {
                 const res = await fetch('api/priority_rules', {
