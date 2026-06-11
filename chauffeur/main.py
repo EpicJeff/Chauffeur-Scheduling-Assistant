@@ -690,21 +690,20 @@ def get_schedule(start_date: str = None, end_date: str = None):
                     data["completed_drives"] = completed
                     return data
 
-        # otherwise wait for lock and fetch fresh
-        with schedule_lock:
-            try:
-                res = refresh_schedule_logic(start_date, end_date)
-                if start_date and end_date and "error" not in res:
-                    import datetime
-                    custom_schedule_cache[f"{start_date}_{end_date}"] = {
-                        'time': datetime.datetime.now().timestamp(),
-                        'data': res
-                    }
-                res["completed_drives"] = completed
-                return res
-            except Exception as e:
-                import traceback
-                return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
+        # otherwise fetch fresh
+        try:
+            res = refresh_schedule_logic(start_date, end_date)
+            if start_date and end_date and "error" not in res:
+                import datetime
+                custom_schedule_cache[f"{start_date}_{end_date}"] = {
+                    'time': datetime.datetime.now().timestamp(),
+                    'data': res
+                }
+            res["completed_drives"] = completed
+            return res
+        except Exception as e:
+            import traceback
+            return {"error": str(e), "traceback": traceback.format_exc(), "error_debug": str(e)}
     except Exception as e:
         return {"error": str(e)}
 
