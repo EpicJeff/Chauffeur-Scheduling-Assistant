@@ -580,14 +580,6 @@
             let startDate = new Date();
             startDate.setHours(0,0,0,0);
             
-            const sortedAvailableDates = Object.keys(byDate).sort();
-            if (sortedAvailableDates.length > 0) {
-                const firstEvDate = new Date(sortedAvailableDates[0] + 'T00:00:00');
-                if (firstEvDate > startDate) {
-                    startDate = firstEvDate;
-                }
-            }
-
             const daysToShow = scheduleData.settings ? scheduleData.settings.days_to_show : 7;
             for (let i=0; i<daysToShow; i++) {
                 const d = new Date(startDate);

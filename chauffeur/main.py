@@ -69,80 +69,42 @@ from datetime import datetime, timezone
 import json
 import asyncio
 import os
-notified_drives = set()
 async def push_notification_loop():
-    global notified_drives
     while True:
         try:
             from services import storage
             
-            cache_doc = storage.cache_table.all()
-            if not cache_doc:
-                await asyncio.sleep(60)
-                continue
-            cache_doc = cache_doc[0]
-            
-            schedule = cache_doc.get("schedule")
-            events = {e["id"]: e for e in cache_doc.get("events", [])}
-            if not schedule:
-                await asyncio.sleep(60)
+            vapid_private_key = VAPID_PRIVATE_KEY_PATH
+            if not os.path.exists(vapid_private_key):
+                await asyncio.sleep(30)
                 continue
                 
             now_ts = datetime.now().timestamp()
             subs = storage.get_push_subscriptions()
             completed = storage.get_completed_drives()
+            pending_notifications = storage.get_pending_notifications()
             
-            vapid_private_key = VAPID_PRIVATE_KEY_PATH
-            if not os.path.exists(vapid_private_key):
-                await asyncio.sleep(60)
-                continue
-
-            # Reconstruct the legs
-            for d_id, items in schedule.items():
-                initial_edges = items.get("initial_edges", {})
-                route_edges = items.get("route_edges", {})
-                final_edges = items.get("final_edges", {})
+            for notif in pending_notifications:
+                if notif.get("fired"): continue
                 
-                # Check Initial Edges
-                for ev_id, edge in initial_edges.items():
-                    ev = events.get(ev_id)
-                    if not ev: continue
-                    dep_time = datetime.fromisoformat(ev["start"]).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
-                    leg_id = f"init_{ev_id}"
+                notif_id = notif["notif_id"]
+                trigger_ts = notif["trigger_timestamp"]
+                d_id = notif["driver_id"]
+                
+                # Check if it's time to fire (and hasn't expired > 10 mins ago)
+                if trigger_ts <= now_ts <= trigger_ts + 600:
+                    if notif_id not in completed:
+                        send_push(d_id, subs, notif["title"], notif["body"], notif_id)
+                    # Always mark it fired so we don't try again
+                    storage.mark_notification_fired(notif_id)
+                elif now_ts > trigger_ts + 600:
+                    # Expired, mark it fired
+                    storage.mark_notification_fired(notif_id)
                     
-                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
-                        send_push(d_id, subs, "Time to Leave!", f"Drive to {ev['location'].split(',')[0]}", leg_id)
-                        notified_drives.add(leg_id)
-                        
-                # Check Route Edges
-                for ev_id, edge in route_edges.items():
-                    ev = events.get(ev_id)
-                    next_ev = events.get(edge.get("to_event", ""))
-                    if not ev or not next_ev: continue
-                    
-                    dep_time = datetime.fromisoformat(ev["end"]).timestamp()
-                    leg_id = f"route_{ev_id}_{next_ev['id']}"
-                    title = f"Drive to {next_ev['location'].split(',')[0]}"
-
-                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
-                        send_push(d_id, subs, "Time to Leave!", title, leg_id)
-                        notified_drives.add(leg_id)
-
-                # Check Final Edges
-                for ev_id, edge in final_edges.items():
-                    ev = events.get(ev_id)
-                    if not ev: continue
-                    dep_time = datetime.fromisoformat(ev["end"]).timestamp()
-                    leg_id = f"final_{ev_id}"
-
-                    if leg_id not in completed and leg_id not in notified_drives and -60 <= dep_time - now_ts <= 120:
-                        send_push(d_id, subs, "Time to Leave!", "Drive Home", leg_id)
-                        notified_drives.add(leg_id)
-                        
         except Exception as e:
             print(f"Error in push loop: {e}")
             
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 def send_push(d_id, subs, title, body, leg_id):
     from pywebpush import webpush, WebPushException
@@ -599,6 +561,61 @@ def refresh_schedule_logic():
     })
     
     storage.set_cached_schedule(data)
+
+    # --- Generate Pending Notifications ---
+    pending_notifications = []
+    events_by_id = {e.id: e for e in all_events_for_ui.values()}
+    now_ts = datetime.now().timestamp()
+    
+    for d_id, items in data.get("assignments", {}).items():
+        if d_id.startswith('ghost_'): continue
+        
+        for ev_id, edge in items.get("initial_edges", {}).items():
+            ev = events_by_id.get(ev_id)
+            if not ev: continue
+            dep_time = datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
+            if now_ts <= dep_time + 600:
+                pending_notifications.append({
+                    "notif_id": f"init_{ev_id}",
+                    "driver_id": d_id,
+                    "trigger_timestamp": dep_time,
+                    "title": "Time to Leave!",
+                    "body": f"Drive to {ev.location.split(',')[0]}",
+                    "fired": False
+                })
+                
+        for ev_id, edge in items.get("route_edges", {}).items():
+            ev = events_by_id.get(ev_id)
+            next_ev = events_by_id.get(edge.get("to_event", ""))
+            if not ev or not next_ev: continue
+            dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
+            if now_ts <= dep_time + 600:
+                pending_notifications.append({
+                    "notif_id": f"route_{ev_id}_{next_ev.id}",
+                    "driver_id": d_id,
+                    "trigger_timestamp": dep_time,
+                    "title": "Time to Leave!",
+                    "body": f"Drive to {next_ev.location.split(',')[0]}",
+                    "fired": False
+                })
+                
+        for ev_id, edge in items.get("final_edges", {}).items():
+            ev = events_by_id.get(ev_id)
+            if not ev: continue
+            dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
+            if now_ts <= dep_time + 600:
+                pending_notifications.append({
+                    "notif_id": f"final_{ev_id}",
+                    "driver_id": d_id,
+                    "trigger_timestamp": dep_time,
+                    "title": "Time to Leave!",
+                    "body": "Drive Home",
+                    "fired": False
+                })
+                
+    storage.save_pending_notifications(pending_notifications)
+    # ----------------------------------------
+    
     return data
 
 

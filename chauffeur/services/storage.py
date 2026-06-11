@@ -46,6 +46,7 @@ with db_lock:
     telemetry_table = db.table('telemetry')
     push_subscriptions_table = db.table('push_subscriptions')
     drive_status_table = db.table('drive_status')
+    pending_notifications_table = db.table('pending_notifications')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -322,7 +323,24 @@ def get_push_subscriptions(driver_id: str = None):
 # Drive Status
 def mark_drive_status(leg_id: str, status: str):
     with db_lock:
-        drive_status_table.upsert({'leg_id': leg_id, 'status': status}, Query().leg_id == leg_id)
+        q = Query()
+        drive_status_table.upsert({'leg_id': leg_id, 'status': status}, q.leg_id == leg_id)
+
+# --- Pending Notifications ---
+def save_pending_notifications(notifications: List[dict]):
+    with db_lock:
+        pending_notifications_table.truncate()
+        if notifications:
+            pending_notifications_table.insert_multiple(notifications)
+
+def get_pending_notifications() -> List[dict]:
+    with db_lock:
+        return pending_notifications_table.all()
+
+def mark_notification_fired(notif_id: str):
+    with db_lock:
+        q = Query()
+        pending_notifications_table.update({'fired': True}, q.notif_id == notif_id)
 
 def get_completed_drives():
     with db_lock:
