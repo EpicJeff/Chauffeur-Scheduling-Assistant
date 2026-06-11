@@ -346,14 +346,58 @@
         let conflictsMap = {};
         let assignmentsMap = {};
 
-        async function fetchSchedule() {
+                let currentStartDate = null;
+        let currentEndDate = null;
+
+        async function fetchPrevWeek() {
+            if (!currentStartDate) {
+                currentStartDate = new Date();
+                currentStartDate.setHours(0,0,0,0);
+            }
+            const endD = new Date(currentStartDate);
+            endD.setDate(endD.getDate() - 1);
+            const startD = new Date(endD);
+            startD.setDate(startD.getDate() - 6);
+            
+            currentStartDate = startD;
+            currentEndDate = endD;
+            await fetchSchedule(true);
+        }
+
+        async function fetchNextWeek() {
+            if (!currentEndDate) {
+                currentEndDate = new Date();
+                currentEndDate.setHours(0,0,0,0);
+                const daysToShow = currentData && currentData.settings ? currentData.settings.days_to_show : 7;
+                currentEndDate.setDate(currentEndDate.getDate() + (daysToShow - 1));
+            }
+            const startD = new Date(currentEndDate);
+            startD.setDate(startD.getDate() + 1);
+            const endD = new Date(startD);
+            endD.setDate(endD.getDate() + 6);
+            
+            currentStartDate = startD;
+            currentEndDate = endD;
+            await fetchSchedule(true);
+        }
+
+        async function fetchSchedule(isPagination = false) {
             try {
                 const driversRes = await fetch('api/drivers');
                 const driversList = await driversRes.json();
                 driversMap = {};
                 driversList.filter(d => !d.is_disabled).forEach(d => { driversMap[d.id] = d; });
 
-                const res = await fetch('api/schedule');
+                let url = 'api/schedule';
+                if (currentStartDate && currentEndDate && isPagination) {
+                    const s = currentStartDate.toISOString().split('T')[0];
+                    const e = currentEndDate.toISOString().split('T')[0];
+                    url = `api/schedule?start_date=${s}&end_date=${e}`;
+                } else if (!isPagination) {
+                    currentStartDate = null;
+                    currentEndDate = null;
+                }
+                const res = await fetch(url);
                 const data = await res.json();
 
                 if (data.error) {
