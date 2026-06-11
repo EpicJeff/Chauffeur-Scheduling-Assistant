@@ -766,6 +766,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 e_cals = set(e.calendar_ids)
                 for ae in events:
                     if getattr(ae, 'all_day', False): continue
+                    if not getattr(ae, 'location', '') or not str(ae.location).strip(): continue
                     if ae.id == e.id: continue
                     if ae.start.date() != e.start.date(): continue
                     if e_cals.intersection(ae.calendar_ids):
