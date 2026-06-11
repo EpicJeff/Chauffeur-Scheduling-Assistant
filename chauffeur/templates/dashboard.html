@@ -1245,7 +1245,7 @@
                 mainWrapper.className = "flex flex-col gap-4 mt-0";
                 
                 if (data.duplicate_groups) {
-                    const daySuggestions = data.duplicate_groups.filter(g => g.date === date);
+                    const daySuggestions = data.duplicate_groups.filter(g => formatDateStr(g.date + "T12:00:00") === date);
                     if (daySuggestions.length > 0) {
                         const suggDiv = document.createElement('div');
                         suggDiv.className = "space-y-3 mb-2";
