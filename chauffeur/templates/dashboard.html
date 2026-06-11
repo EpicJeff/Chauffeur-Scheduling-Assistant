@@ -680,8 +680,7 @@
                     let actionHtml = "";
                     
                     // The event title being clicked (the unassigned event)
-                    // Wait, 'event' is available here from openEventModal(eventId)
-                    const evTitle = encodeURIComponent(event.title);
+                    const evTitle = encodeURIComponent(ev.title);
                     
                     if (typeof reasonObj === 'object') {
                         text = reasonObj.text;

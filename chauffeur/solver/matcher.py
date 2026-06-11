@@ -698,6 +698,55 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                         }
                         break
                         
+            # 2.5 Passenger Transit Check
+            if not reason:
+                e_cals = set(e.calendar_ids)
+                for ae in events:
+                    if ae.id == e.id: continue
+                    if ae.start.date() != e.start.date(): continue
+                    if e_cals.intersection(ae.calendar_ids):
+                        travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
+                        needed_secs = (travel + 5) * 60
+                        if e.start <= ae.start:
+                            gap = (ae.start - e.end).total_seconds()
+                        else:
+                            gap = (e.start - ae.end).total_seconds()
+                            
+                        if gap < needed_secs:
+                            lateness_mins = int((needed_secs - gap) / 60)
+                            reason = {
+                                "text": f"Passenger cannot travel from/to '{ae.title}' in time.",
+                                "type": "conflict",
+                                "conflict_event_title": ae.title,
+                                "lateness_mins": max(1, lateness_mins)
+                            }
+                            break
+                            
+            # 2.6 Driver Schedule Transit Check (Already Assigned Events)
+            if not reason:
+                for ae_id, assigned_d_id in assignments.items():
+                    if assigned_d_id == d.id and ae_id != e.id:
+                        ae = event_map.get(ae_id)
+                        if not ae: continue
+                        if ae.start.date() != e.start.date(): continue
+                        
+                        travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
+                        needed_secs = (travel + 5) * 60
+                        if e.start <= ae.start:
+                            gap = (ae.start - e.end).total_seconds()
+                        else:
+                            gap = (e.start - ae.end).total_seconds()
+                            
+                        if gap < needed_secs:
+                            lateness_mins = int((needed_secs - gap) / 60)
+                            reason = {
+                                "text": f"Driver cannot travel from/to scheduled event '{ae.title}' in time.",
+                                "type": "conflict",
+                                "conflict_event_title": ae.title,
+                                "lateness_mins": max(1, lateness_mins)
+                            }
+                            break
+                        
             # 3. Rule constraints
             if not reason:
                 for r in rules:
