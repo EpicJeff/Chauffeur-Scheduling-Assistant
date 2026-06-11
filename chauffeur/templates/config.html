@@ -976,35 +976,35 @@
                 },
                 editRule(rule) {
                     this.editRuleId = rule.doc_id;
-                    this.newRule = { driver_id: rule.driver_id, constraint_type: rule.constraint_type, event_keyword: rule.event_keyword };
+                    this.newRule = { 
+                        driver_id: rule.driver_id, 
+                        constraint_type: rule.constraint_type, 
+                        keywords: [...(rule.keywords || [])], 
+                        passenger_ids: [...(rule.passenger_ids || [])],
+                        days_of_week: [...(rule.days_of_week || [])],
+                        time_start: rule.time_start || '',
+                        time_end: rule.time_end || ''
+                    };
                 },
                 cancelEditRule() {
                     this.editRuleId = null;
-                    this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
+                    this.newRule = { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
                 },
                 async submitRule() {
                     this.saving = true;
                     try {
-                    if (!this.newRule.driver_id || !this.newRule.event_keyword) return;
-                    if (this.editRuleId) {
-                        await fetch(`api/rules/${this.editRuleId}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.newRule)
-                        });
-                        this.editRuleId = null;
-                    } else {
-                        await fetch('api/rules', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.newRule)
-                        });
-                    }
-                    this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
-                    await this.loadRules();
-                    } finally {
-                        this.saving = false;
-                    }
+                        if (!this.newRule.driver_id) return alert('Driver is required');
+                        if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                        
+                        const payload = JSON.parse(JSON.stringify(this.newRule));
+                        if(this.editRuleId) {
+                            await fetch(`api/rules/${this.editRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        } else {
+                            await fetch('api/rules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        }
+                        this.cancelEditRule();
+                        await this.loadRules();
+                    } finally { this.saving = false; }
                 },
                 async deleteRule(doc_id) {
                     await fetch(`api/rules/${doc_id}`, { method: 'DELETE' });
@@ -1017,37 +1017,34 @@
                 },
                 editPriorityRule(rule) {
                     this.editPriorityRuleId = rule.doc_id;
-                    this.newPriorityRule = { match_type: rule.match_type, match_value: rule.match_value, weight_modifier: rule.weight_modifier };
+                    this.newPriorityRule = { 
+                        weight_modifier: rule.weight_modifier, 
+                        keywords: [...(rule.keywords || [])], 
+                        passenger_ids: [...(rule.passenger_ids || [])],
+                        days_of_week: [...(rule.days_of_week || [])],
+                        time_start: rule.time_start || '',
+                        time_end: rule.time_end || ''
+                    };
                 },
                 cancelEditPriorityRule() {
                     this.editPriorityRuleId = null;
-                    this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
+                    this.newPriorityRule = { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
                 },
                 async submitPriorityRule() {
                     this.saving = true;
                     try {
-                    if (!this.newPriorityRule.match_value) return;
-                    this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
-                    
-                    if (this.editPriorityRuleId) {
-                        await fetch(`api/priority_rules/${this.editPriorityRuleId}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.newPriorityRule)
-                        });
-                        this.editPriorityRuleId = null;
-                    } else {
-                        await fetch('api/priority_rules', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(this.newPriorityRule)
-                        });
-                    }
-                    this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
-                    await this.loadPriorityRules();
-                    } finally {
-                        this.saving = false;
-                    }
+                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                        this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
+                        
+                        const payload = JSON.parse(JSON.stringify(this.newPriorityRule));
+                        if (this.editPriorityRuleId) {
+                            await fetch(`api/priority_rules/${this.editPriorityRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        } else {
+                            await fetch('api/priority_rules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                        }
+                        this.cancelEditPriorityRule();
+                        await this.loadPriorityRules();
+                    } finally { this.saving = false; }
                 },
                 async deletePriorityRule(doc_id) {
                     await fetch(`api/priority_rules/${doc_id}`, { method: 'DELETE' });
