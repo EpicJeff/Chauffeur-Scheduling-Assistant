@@ -319,6 +319,24 @@ def clear_telemetry():
     storage.clear_telemetry_events()
     return {"status": "cleared"}
 
+@app.post("/api/telemetry/test_push")
+def test_push_notification(driver_id: str = None):
+    subs = storage.get_push_subscriptions()
+    if not subs:
+        return {"error": "No push subscriptions found"}
+        
+    for sub in subs:
+        if not driver_id or sub.get("driver_id") == driver_id:
+            send_push(
+                sub.get("driver_id"), 
+                [sub], 
+                "Test Notification", 
+                "This is a test push notification from Chauffeur!", 
+                "test_leg"
+            )
+    return {"status": "sent"}
+
+
 @app.post("/api/calendars/metadata")
 def get_calendars_metadata(calendar_ids: list[str]):
     return calendar.get_calendar_metadata(calendar_ids)
@@ -354,7 +372,7 @@ def get_places_autocomplete(input: str):
     return {"suggestions": suggestions}
 
 # --- Schedule API ---
-def refresh_schedule_logic():
+def refresh_schedule_logic(start_date_str=None, end_date_str=None):
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
@@ -560,9 +578,10 @@ def refresh_schedule_logic():
         "drivers": drivers
     })
     
-    storage.set_cached_schedule(data)
+    if not start_date_str and not end_date_str:
+        storage.set_cached_schedule(data)
 
-    # --- Generate Pending Notifications ---
+        # --- Generate Pending Notifications ---
     pending_notifications = []
     events_by_id = {e.id: e for e in all_events_for_ui.values()}
     now_ts = datetime.now().timestamp()
@@ -640,13 +659,20 @@ def update_drive_status(status: DriveStatus):
     return {"status": "ok"}
 
 @app.get("/api/schedule")
-def get_schedule():
+def get_schedule(start_date: str = None, end_date: str = None):
     try:
-        cache = storage.get_cached_schedule()
         completed = storage.get_completed_drives()
+        
+        if start_date and end_date:
+            res = refresh_schedule_logic(start_date, end_date)
+            res["completed_drives"] = completed
+            return res
+            
+        cache = storage.get_cached_schedule()
         if cache:
             cache["completed_drives"] = completed
             return cache
+            
         # First time run
         res = refresh_schedule_logic()
         res["completed_drives"] = completed

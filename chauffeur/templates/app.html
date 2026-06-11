@@ -577,12 +577,14 @@
             });
 
             currentDates = [];
-            let startDate = new Date();
-            startDate.setHours(0,0,0,0);
+            if (!window.globalStartDate) {
+                window.globalStartDate = new Date();
+                window.globalStartDate.setHours(0,0,0,0);
+                window.globalDaysToShow = scheduleData.settings ? scheduleData.settings.days_to_show : 7;
+            }
             
-            const daysToShow = scheduleData.settings ? scheduleData.settings.days_to_show : 7;
-            for (let i=0; i<daysToShow; i++) {
-                const d = new Date(startDate);
+            for (let i=0; i<window.globalDaysToShow; i++) {
+                const d = new Date(window.globalStartDate);
                 d.setDate(d.getDate() + i);
                 currentDates.push(d.toLocaleDateString('en-CA'));
             }
