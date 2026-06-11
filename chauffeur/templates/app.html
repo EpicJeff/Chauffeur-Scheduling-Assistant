@@ -920,7 +920,23 @@
             }
         }
 
-        window.onload = init;
+        window.onload = () => {
+            init();
+            
+            // Check for navigation URL parameters
+            const params = new URLSearchParams(window.location.search);
+            const navDest = params.get('navigate_dest');
+            if (navDest) {
+                const navTitle = params.get('navigate_title') || 'Navigation';
+                const navLeg = params.get('navigate_leg') || null;
+                setTimeout(() => {
+                    openActionSheet('', navDest, navTitle, null, navLeg);
+                }, 500); // Give UI time to render
+                
+                // Clean up the URL so it doesn't pop up again on refresh
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        };
     </script>
 
     <!-- Event Details Modal -->

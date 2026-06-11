@@ -34,8 +34,21 @@ self.addEventListener('notificationclick', function(event) {
         }
     } else if (event.action === 'navigate') {
         const navigateUrl = event.notification.data.navigate_url;
-        if (navigateUrl && clients.openWindow) {
-            event.waitUntil(clients.openWindow(navigateUrl));
+        if (navigateUrl) {
+            event.waitUntil(
+                clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+                    for (let i = 0; i < windowClients.length; i++) {
+                        const client = windowClients[i];
+                        if (client.url.includes('/app') && 'focus' in client) {
+                            client.navigate(navigateUrl);
+                            return client.focus();
+                        }
+                    }
+                    if (clients.openWindow) {
+                        return clients.openWindow(navigateUrl);
+                    }
+                })
+            );
         }
     } else {
         // Just open the app if they clicked the notification body

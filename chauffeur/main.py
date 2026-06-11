@@ -114,7 +114,7 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
     actions = [{"action": "complete", "title": "Mark Completed"}]
     navigate_url = None
     if location:
-        navigate_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(location)}"
+        navigate_url = f"/app?navigate_dest={urllib.parse.quote(location)}&navigate_title={urllib.parse.quote(title)}&navigate_leg={leg_id}"
         actions.insert(0, {"action": "navigate", "title": "Navigate"})
 
     for sub in subs:
@@ -132,7 +132,7 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
                     vapid_claims={"sub": "mailto:admin@example.com"}
                 )
                 print(f"Sent push to {d_id}: {title} - {body}")
-            except WebPushException as ex:
+            except Exception as ex:
                 print(f"Push failed: {repr(ex)}")
 
 @asynccontextmanager
