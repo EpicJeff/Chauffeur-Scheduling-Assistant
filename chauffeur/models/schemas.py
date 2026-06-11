@@ -41,7 +41,8 @@ class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     driver_id: str
     event_keyword: str
-    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable'
+    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive'
+    tolerance_mins: int = 0
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

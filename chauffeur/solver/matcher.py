@@ -58,6 +58,14 @@ def solve_schedule(
     # 3. Constraint: No Overlap + Travel Time
     objective_terms = []
     
+    e_tolerances = {}
+    for e in events:
+        tol = 0
+        for r in rules:
+            if r.constraint_type == 'tolerance' and r.event_keyword.lower() in e.title.lower():
+                tol = max(tol, getattr(r, 'tolerance_mins', 0))
+        e_tolerances[e.id] = tol
+        
     # Sort events by start time to easily check pairs
     sorted_events = sorted(events, key=lambda x: x.start)
     for i in range(len(sorted_events)):
@@ -74,7 +82,8 @@ def solve_schedule(
                 # Check attendance constraints
                 attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                 
-                if gap_seconds < total_needed_seconds:
+                gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+                if gap_seconds_with_tolerance < total_needed_seconds:
                     # Passenger conflict soft penalty
                     for d1 in drivers:
                         for d2 in drivers:
@@ -95,7 +104,8 @@ def solve_schedule(
                     if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= get_travel_time_minutes(e1.location, e2.location) * 60:
                         gap_seconds = float('inf')
 
-                if gap_seconds < total_needed_seconds:
+                gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+                if gap_seconds_with_tolerance < total_needed_seconds:
                     # Driver conflict soft penalty
                     for d in drivers:
                         both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
@@ -194,23 +204,49 @@ def solve_schedule(
                         
             objective_terms.append(assign_vars[(e.id, d.id)] * weight)
             
-    # 4b. Passenger Continuity Bonus
+    # 4b. Passenger and Location Continuity Bonus
     for i in range(len(sorted_events)):
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
             e2 = sorted_events[j]
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+            same_loc = bool(e1.location and e2.location and e1.location.lower() == e2.location.lower())
             
-            if shares_calendar and e1.start.date() == e2.start.date():
-                for d in drivers:
-                    both_assigned = model.NewBoolVar(f'both_{e1.id}_{e2.id}_{d.id}')
-                    model.AddImplication(both_assigned, assign_vars[(e1.id, d.id)])
-                    model.AddImplication(both_assigned, assign_vars[(e2.id, d.id)])
-                    model.AddBoolOr([both_assigned, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
-                    # Add a nice bonus for keeping a passenger with the same driver across multiple events on the SAME DAY
-                    objective_terms.append(both_assigned * 50)
+            if e1.start.date() == e2.start.date():
+                if shares_calendar or same_loc:
+                    for d in drivers:
+                        both_assigned = model.NewBoolVar(f'both_{e1.id}_{e2.id}_{d.id}')
+                        model.AddImplication(both_assigned, assign_vars[(e1.id, d.id)])
+                        model.AddImplication(both_assigned, assign_vars[(e2.id, d.id)])
+                        model.AddBoolOr([both_assigned, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                        
+                        if shares_calendar:
+                            objective_terms.append(both_assigned * 50)
+                        if same_loc:
+                            # Higher bonus for doing things at the exact same location (reduces travel)
+                            # Helps the solver pick the "back-to-back" option in mutually exclusive groups
+                            objective_terms.append(both_assigned * 100)
                     
-    # 4c. Override weights
+    # 4c. Mutually Exclusive Event Groups
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
+    for r in mut_ex_rules:
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for e in events:
+            if r.event_keyword.lower() in e.title.lower():
+                date_str = e.start.strftime('%Y-%m-%d')
+                groups[date_str].append(e)
+                
+        for date_str, group_events in groups.items():
+            if len(group_events) > 1:
+                group_vars = []
+                for e in group_events:
+                    for d in drivers:
+                        group_vars.append(assign_vars[(e.id, d.id)])
+                # Max 1 event from this group can be assigned
+                model.Add(sum(group_vars) <= 1)
+
+    # 4d. Override weights
     import time
     base_time = time.time()
     for o in overrides:
@@ -636,9 +672,9 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
                 did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
                 if eid == e.id and did != d.id and did != 'unassigned':
-                    reason = "Blocked by Manual Override for another driver."
+                    reason = {"text": "Blocked by Manual Override for another driver.", "type": "override"}
                 if eid == e.id and did == 'unassigned':
-                    reason = "Blocked by 'Unassigned' override."
+                    reason = {"text": "Blocked by 'Unassigned' override.", "type": "override"}
                 
             # 2. Driver Personal Calendar
             if not reason:
@@ -649,7 +685,17 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     e_before_de = (de.start - e.end).total_seconds() >= needed_secs
                     de_before_e = (e.start - de.end).total_seconds() >= needed_secs
                     if not e_before_de and not de_before_e:
-                        reason = f"Conflicts with driver's personal event: '{de.title}'"
+                        if e.start <= de.start:
+                            gap = (de.start - e.end).total_seconds()
+                        else:
+                            gap = (e.start - de.end).total_seconds()
+                        lateness_mins = int((needed_secs - gap) / 60)
+                        reason = {
+                            "text": f"Conflicts with driver's personal event: '{de.title}'",
+                            "type": "personal_conflict",
+                            "conflict_event_title": de.title,
+                            "lateness_mins": max(1, lateness_mins)
+                        }
                         break
                         
             # 3. Rule constraints
@@ -657,11 +703,11 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 for r in rules:
                     if r.event_keyword.lower() in e.title.lower():
                         if r.constraint_type == 'unavailable' and r.driver_id == d.id:
-                            reason = "Prohibited by 'Unavailable' rule."
+                            reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
                             break
                         elif r.constraint_type == 'required' and r.driver_id != d.id:
                             if (e.id, d.id) not in overridden_pairs:
-                                reason = "Blocked by 'Required' rule for another driver."
+                                reason = {"text": "Blocked by 'Required' rule for another driver.", "type": "rule"}
                                 break
             
             # 4. Overlap with existing assignments
@@ -691,12 +737,22 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                         allow_overlap = True
                                         
                             if not e_before_a and not a_before_e and not allow_overlap:
-                                reason = f"Conflicts with assigned event: '{a_e.title}'"
+                                if e.start <= a_e.start:
+                                    gap_seconds = (a_e.start - e.end).total_seconds()
+                                else:
+                                    gap_seconds = (e.start - a_e.end).total_seconds()
+                                lateness_mins = int((needed_secs - gap_seconds) / 60)
+                                reason = {
+                                    "text": f"Conflicts with assigned event: '{a_e.title}'",
+                                    "type": "conflict",
+                                    "conflict_event_id": a_e.id,
+                                    "conflict_event_title": a_e.title,
+                                    "lateness_mins": max(1, lateness_mins)
+                                }
                                 break
 
             if not reason:
-                reason = "Dropped by solver to optimize overall schedule."
+                reason = {"text": "Dropped by solver to optimize overall schedule.", "type": "optimization"}
                 
             diagnostics[u_id][d.id] = reason
             
-    return diagnostics

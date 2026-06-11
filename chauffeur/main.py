@@ -586,7 +586,36 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         true_unassigned, events_to_solve, drivers, driver_events_map, assignments, overrides, rules, passengers=passengers
     )
     
+    duplicate_groups = []
+    mut_ex_keywords = [r.event_keyword.lower() for r in rules if r.constraint_type == 'mutually_exclusive']
+    from collections import defaultdict
+    dup_groups = defaultdict(list)
+    for e in events_to_solve:
+        date_str = e.start.strftime('%Y-%m-%d')
+        core_title = e.title.split(' - ')[0].split(':')[0].strip()
+        core_title_lower = core_title.lower()
+        
+        if any(kw in core_title_lower for kw in mut_ex_keywords):
+            continue
+            
+        cals_tuple = tuple(sorted(e.calendar_ids))
+        duration = (e.end - e.start).total_seconds()
+        
+        if len(core_title) > 3:
+            key = (date_str, core_title, duration, cals_tuple)
+            dup_groups[key].append(e)
+            
+    for key, evs in dup_groups.items():
+        if len(evs) > 1:
+            duplicate_groups.append({
+                "date": key[0],
+                "keyword": key[1],
+                "original_titles": [e.title for e in evs],
+                "event_ids": [e.id for e in evs]
+            })
+
     data = jsonable_encoder({
+        "duplicate_groups": duplicate_groups,
         "events": list(all_events_for_ui.values()),
         "assignments": assignments,
         "ghost_assignments": ghost_assignments,

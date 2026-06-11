@@ -328,7 +328,8 @@
         </div>
     </div>
 
-    <div id="schedule-container" class="space-y-12 pb-10">
+        <div id="suggestions-container" class="mb-6 space-y-4"></div>
+    <div id="schedule-container"  class="space-y-12 pb-10">
         <p class="text-center text-gray-500 text-xl mt-20 animate-pulse">Loading schedule...</p>
     </div>
 
@@ -671,12 +672,48 @@
             const diagnosticsList = document.getElementById('diagnostics-list');
             if (currentData.diagnostics && currentData.diagnostics[eventId]) {
                 const diag = currentData.diagnostics[eventId];
-                const reasonsHtml = Object.entries(diag).map(([driverId, reason]) => {
+                const reasonsHtml = Object.entries(diag).map(([driverId, reasonObj]) => {
                     const dName = currentData.drivers?.find(d => d.id === driverId)?.name || driverId;
+                    
+                    let text = reasonObj;
+                    let type = "unknown";
+                    let actionHtml = "";
+                    
+                    // The event title being clicked (the unassigned event)
+                    // Wait, 'event' is available here from openEventModal(eventId)
+                    const evTitle = encodeURIComponent(event.title);
+                    
+                    if (typeof reasonObj === 'object') {
+                        text = reasonObj.text;
+                        type = reasonObj.type;
+                        
+                        if (type === 'conflict' || type === 'personal_conflict') {
+                            actionHtml = `
+                                <div class="mt-3 flex space-x-2">
+                                    <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15})" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
+                                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        Allow ${reasonObj.lateness_mins || 15}m Late
+                                    </button>
+                                    <button onclick="createPriorityRule('${evTitle}', 200)" class="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
+                                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                        Prioritize Event
+                                    </button>
+                                </div>
+                            `;
+                        } else if (type === 'rule') {
+                            actionHtml = `
+                                <div class="mt-3">
+                                    <a href="/config" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded inline-block shadow-sm transition-colors">Manage Rules</a>
+                                </div>
+                            `;
+                        }
+                    }
+
                     return `
                         <div class="bg-gray-900 border border-yellow-900/50 p-4 rounded-lg flex flex-col space-y-1">
                             <span class="font-bold text-blue-300">${dName}</span>
-                            <span class="text-sm text-gray-300">${reason}</span>
+                            <span class="text-sm text-gray-300">${text}</span>
+                            ${actionHtml}
                         </div>
                     `;
                 }).join('');
@@ -904,6 +941,29 @@
             const { events, assignments, ghost_assignments, unassigned, no_location, calendar_metadata, overridden_events, lateness_warnings } = data;
 
             const scheduleByDate = {};
+            const suggestionsContainer = document.getElementById('suggestions-container');
+            if (data.duplicate_groups && data.duplicate_groups.length > 0) {
+                suggestionsContainer.innerHTML = data.duplicate_groups.map(group => `
+                    <div class="bg-blue-900/30 border border-blue-500/50 p-4 rounded-xl flex items-start justify-between shadow-lg">
+                        <div class="flex items-start">
+                            <svg class="w-6 h-6 text-blue-400 mt-0.5 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <div>
+                                <h4 class="text-blue-300 font-bold text-lg leading-tight">Multiple Options Detected</h4>
+                                <p class="text-blue-200/80 text-sm mt-1">We noticed multiple options for <strong>${group.keyword}</strong> on ${formatDateStr(group.date)}.</p>
+                                <p class="text-blue-200/80 text-sm">Should we automatically pick the best option and ignore the rest?</p>
+                            </div>
+                        </div>
+                        <div class="ml-4 flex-shrink-0">
+                            <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'mutually_exclusive', 0)" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors">Yes, Pick Best Option</button>
+                        </div>
+                    </div>
+                `).join('');
+                suggestionsContainer.classList.remove('hidden');
+            } else if (suggestionsContainer) {
+                suggestionsContainer.innerHTML = '';
+                suggestionsContainer.classList.add('hidden');
+            }
+
             const overriddenEventsList = overridden_events || [];
             const latenessWarningsMap = lateness_warnings || {};
 
@@ -1461,7 +1521,10 @@
                                      style="border-color: ${evColor}">
                                     <div class="flex items-center gap-2 overflow-hidden flex-1">
                                         <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 whitespace-nowrap" style="color: ${evColor}">${summaries}</div>
-                                        <div class="font-bold text-[11px] text-white leading-tight group-hover:text-blue-300 transition-colors truncate">${ev.title}</div>
+                                        <div class="font-bold text-[11px] text-white leading-tight group-hover:text-blue-300 transition-colors truncate flex items-center gap-1">
+                                          ${c_id === 'unassigned' ? '<svg class="w-3.5 h-3.5 text-yellow-500 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>' : ''}
+                                          <span class="truncate">${ev.title}</span>
+                                      </div>
                                     </div>
                                     <div class="text-gray-400 text-[10px] font-medium whitespace-nowrap ml-2">${formatTime(ev.start)} - ${formatTime(ev.end)}</div>
                                 </div>
@@ -1505,7 +1568,59 @@
                 fetchSchedule();
             }
         }, 15000);
-    </script>
+    
+        async function createRule(driverId, keyword, constraintType, toleranceMins) {
+            keyword = decodeURIComponent(keyword);
+            // Extract the core part of the title before a dash or colon if it exists, to make the rule more general
+            let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
+            const payload = {
+                driver_id: driverId,
+                event_keyword: coreKeyword,
+                constraint_type: constraintType,
+                tolerance_mins: toleranceMins
+            };
+
+            try {
+                const res = await fetch('/api/rules', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showToast('Tolerance Rule created! Recalculating...', 'success');
+                    closeModal();
+                    fetchSchedule(true);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function createPriorityRule(keyword, weight) {
+            keyword = decodeURIComponent(keyword);
+            let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
+            const payload = {
+                match_type: 'keyword',
+                match_value: coreKeyword,
+                weight_modifier: weight
+            };
+            try {
+                const res = await fetch('/api/priority_rules', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showToast('Priority Rule created! Recalculating...', 'success');
+                    closeModal();
+                    fetchSchedule(true);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+</script>
 </body>
+
 
 </html>
