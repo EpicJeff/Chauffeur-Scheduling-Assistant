@@ -406,8 +406,15 @@
                     const e = currentEndDate.toISOString().split('T')[0];
                     url = `api/schedule?start_date=${s}&end_date=${e}`;
                 } else if (!isPagination) {
-                    currentStartDate = null;
-                    currentEndDate = null;
+                    // Set to current local browser date to bypass server UTC timezone mismatches
+                    currentStartDate = new Date();
+                    // Optional: Get days_to_show from metadata if needed, defaulting to 7
+                    currentEndDate = new Date(currentStartDate);
+                    currentEndDate.setDate(currentEndDate.getDate() + 6);
+                    
+                    const s = currentStartDate.toISOString().split('T')[0];
+                    const e = currentEndDate.toISOString().split('T')[0];
+                    url = `api/schedule?start_date=${s}&end_date=${e}`;
                 }
                 const res = await fetch(url);
                 const data = await res.json();
@@ -462,7 +469,13 @@
             text.textContent = 'Syncing...';
 
             try {
-                await fetch('api/schedule/refresh', { method: 'POST' });
+                let url = 'api/schedule/refresh';
+                if (currentStartDate && currentEndDate) {
+                    const s = currentStartDate.toISOString().split('T')[0];
+                    const e = currentEndDate.toISOString().split('T')[0];
+                    url = `api/schedule/refresh?start_date=${s}&end_date=${e}`;
+                }
+                await fetch(url, { method: 'POST' });
                 await fetchSchedule();
             } catch (e) {
                 showError("Manual sync failed.");

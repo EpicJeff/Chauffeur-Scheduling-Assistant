@@ -941,8 +941,8 @@ def get_ha_sensors():
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-def force_refresh_schedule():
-    return refresh_schedule_logic()
+def force_refresh_schedule(start_date: str = None, end_date: str = None):
+    return refresh_schedule_logic(start_date, end_date, force_refresh=True)
 
 @app.get("/api/maps/test_polyline")
 def test_polyline(origin: str, destination: str):
