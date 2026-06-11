@@ -300,10 +300,7 @@ def delete_override(doc_id: int):
 
 @app.delete("/api/overrides/event/{event_id}")
 def delete_override_by_event(event_id: str):
-    # Overrides are unique per event_id, so we can use the same remove query as in add_override
-    from services.storage import overrides_table
-    from tinydb import Query
-    overrides_table.remove(Query().event_id == event_id)
+    storage.delete_override_by_event(event_id)
     refresh_schedule_logic()
     return {"status": "deleted"}
 

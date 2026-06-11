@@ -289,6 +289,12 @@ def delete_override(doc_id: int):
         custom_schedules_table.truncate()
         overrides_table.remove(doc_ids=[doc_id])
 
+def delete_override_by_event(event_id: str):
+    from tinydb import Query
+    with db_lock:
+        custom_schedules_table.truncate()
+        overrides_table.remove(Query().event_id == event_id)
+
 # Schedule Cache
 def get_cached_schedule() -> dict:
     with db_lock:
