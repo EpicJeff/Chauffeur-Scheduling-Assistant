@@ -52,16 +52,18 @@ self.addEventListener('notificationclick', function(event) {
         }
     } else {
         // Just open the app if they clicked the notification body
+        const navigateUrl = event.notification.data.navigate_url || '/app';
         event.waitUntil(
-            clients.matchAll({ type: 'window' }).then(windowClients => {
+            clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
                 for (let i = 0; i < windowClients.length; i++) {
                     const client = windowClients[i];
                     if (client.url.includes('/app') && 'focus' in client) {
+                        client.navigate(navigateUrl);
                         return client.focus();
                     }
                 }
                 if (clients.openWindow) {
-                    return clients.openWindow('/app');
+                    return clients.openWindow(navigateUrl);
                 }
             })
         );
