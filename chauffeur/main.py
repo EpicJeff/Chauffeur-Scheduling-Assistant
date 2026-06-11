@@ -615,9 +615,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             continue
             
         if len(core_title) > 3:
-            # Group by date and core title only. Ignore calendar source and duration 
-            # to catch sync duplicates or manually created alternatives.
-            key = (date_str, core_title)
+            # Group by date, core title, and calendars. Ignore duration.
+            # This catches duplicates for the same attendee, while keeping separate events for different attendees distinct.
+            key = (date_str, core_title, tuple(sorted(e.calendar_ids)))
             dup_groups[key].append(e)
             
     for key, evs in dup_groups.items():
