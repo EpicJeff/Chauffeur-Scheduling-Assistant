@@ -1,3 +1,7 @@
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -402,6 +406,14 @@ def hash_events(events_list):
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False):
+    try:
+        return _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh)
+    except Exception as e:
+        logger.error("Fatal error during schedule generation", exc_info=True)
+        import traceback
+        return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
+
+def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False):
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     

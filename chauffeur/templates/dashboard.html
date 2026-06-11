@@ -435,9 +435,9 @@
                     
                     const s = toLocalIsoString(currentStartDate);
                     const e = toLocalIsoString(currentEndDate);
-                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
+                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
                 }
-                const res = await fetch(url);
+                const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' } });
                 const data = await res.json();
 
                 if (data.error) {
@@ -498,7 +498,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
                     
-                    url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
+                    url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
                 }
                 await fetch(url, { method: 'POST' });
                 await fetchSchedule();
@@ -1031,7 +1031,7 @@
                         <div class="flex items-start">
                             <svg class="w-6 h-6 text-blue-400 mt-0.5 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             <div>
-                                <h4 class="text-blue-300 font-bold text-lg leading-tight">Multiple Options Detected</h4>
+                                <h4 class="text-blue-300 font-bold text-lg leading-tight">Duplicate Mutually Exclusive Events</h4>
                                 <p class="text-blue-200/80 text-sm mt-1">We noticed multiple options for <strong>${group.keyword}</strong> on ${formatDateStr(group.date)}.</p>
                                 <p class="text-blue-200/80 text-sm">Should we automatically pick the best option and ignore the rest?</p>
                             </div>
