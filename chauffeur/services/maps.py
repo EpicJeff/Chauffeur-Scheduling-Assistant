@@ -51,6 +51,8 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
             
         storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
         return (minutes, delay_mins) if return_traffic else minutes
+        
+    return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
             
     # 3. Cache and return fallback if API fails
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
