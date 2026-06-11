@@ -843,13 +843,29 @@
                         if (!existingIds.has(e.id)) scheduleData.events.push(e);
                     });
                     
-                    // Merge assignments
+                    // Merge assignments and edges
                     if (data.assignments) {
-                        for (const dId in data.assignments) {
-                            if (!scheduleData.assignments[dId]) scheduleData.assignments[dId] = { initial_edges: {}, route_edges: {}, final_edges: {} };
-                            Object.assign(scheduleData.assignments[dId].initial_edges, data.assignments[dId].initial_edges);
-                            Object.assign(scheduleData.assignments[dId].route_edges, data.assignments[dId].route_edges);
-                            Object.assign(scheduleData.assignments[dId].final_edges, data.assignments[dId].final_edges);
+                        Object.assign(scheduleData.assignments, data.assignments);
+                    }
+                    if (data.ghost_assignments) {
+                        Object.assign(scheduleData.ghost_assignments, data.ghost_assignments);
+                    }
+                    if (data.initial_edges) {
+                        for (const dId in data.initial_edges) {
+                            if (!scheduleData.initial_edges[dId]) scheduleData.initial_edges[dId] = {};
+                            Object.assign(scheduleData.initial_edges[dId], data.initial_edges[dId]);
+                        }
+                    }
+                    if (data.route_edges) {
+                        for (const dId in data.route_edges) {
+                            if (!scheduleData.route_edges[dId]) scheduleData.route_edges[dId] = {};
+                            Object.assign(scheduleData.route_edges[dId], data.route_edges[dId]);
+                        }
+                    }
+                    if (data.final_edges) {
+                        for (const dId in data.final_edges) {
+                            if (!scheduleData.final_edges[dId]) scheduleData.final_edges[dId] = {};
+                            Object.assign(scheduleData.final_edges[dId], data.final_edges[dId]);
                         }
                     }
                     if (data.driver_events) {

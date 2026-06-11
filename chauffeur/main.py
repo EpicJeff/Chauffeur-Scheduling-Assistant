@@ -586,10 +586,16 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None):
     events_by_id = {e.id: e for e in all_events_for_ui.values()}
     now_ts = datetime.now().timestamp()
     
-    for d_id, items in data.get("assignments", {}).items():
+    # Collect all drivers from edges
+    all_driver_ids = set()
+    all_driver_ids.update(data.get("initial_edges", {}).keys())
+    all_driver_ids.update(data.get("route_edges", {}).keys())
+    all_driver_ids.update(data.get("final_edges", {}).keys())
+    
+    for d_id in all_driver_ids:
         if d_id.startswith('ghost_'): continue
         
-        for ev_id, edge in items.get("initial_edges", {}).items():
+        for ev_id, edge in data.get("initial_edges", {}).get(d_id, {}).items():
             ev = events_by_id.get(ev_id)
             if not ev: continue
             dep_time = datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
@@ -603,7 +609,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None):
                     "fired": False
                 })
                 
-        for ev_id, edge in items.get("route_edges", {}).items():
+        for ev_id, edge in data.get("route_edges", {}).get(d_id, {}).items():
             ev = events_by_id.get(ev_id)
             next_ev = events_by_id.get(edge.get("to_event", ""))
             if not ev or not next_ev: continue
@@ -618,7 +624,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None):
                     "fired": False
                 })
                 
-        for ev_id, edge in items.get("final_edges", {}).items():
+        for ev_id, edge in data.get("final_edges", {}).get(d_id, {}).items():
             ev = events_by_id.get(ev_id)
             if not ev: continue
             dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
