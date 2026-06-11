@@ -248,9 +248,10 @@ def solve_schedule(
         for e in events:
             if r.event_keyword.lower() in e.title.lower():
                 date_str = e.start.strftime('%Y-%m-%d')
-                groups[date_str].append(e)
+                key = (date_str, tuple(sorted(e.calendar_ids)))
+                groups[key].append(e)
                 
-        for date_str, group_events in groups.items():
+        for key, group_events in groups.items():
             if len(group_events) > 1:
                 group_vars = []
                 for e in group_events:
