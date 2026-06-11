@@ -32,6 +32,11 @@ self.addEventListener('notificationclick', function(event) {
                 })
             );
         }
+    } else if (event.action === 'navigate') {
+        const navigateUrl = event.notification.data.navigate_url;
+        if (navigateUrl && clients.openWindow) {
+            event.waitUntil(clients.openWindow(navigateUrl));
+        }
     } else {
         // Just open the app if they clicked the notification body
         event.waitUntil(
