@@ -233,7 +233,7 @@
 
         async function clearNotifications() {
             try {
-                await fetch('/api/telemetry/clear', { method: 'POST' });
+                await fetch('api/telemetry/clear', { method: 'POST' });
                 fetchNotifications();
             } catch (err) {
                 console.error(err);
@@ -243,7 +243,7 @@
         async function testPushNotification() {
             try {
                 if (!currentDriverId) return alert("Select a driver first");
-                const res = await fetch(`/api/telemetry/test_push?driver_id=${currentDriverId}`, { method: 'POST' });
+                const res = await fetch(`api/telemetry/test_push?driver_id=${currentDriverId}`, { method: 'POST' });
                 if (res.ok) alert("Test push notification sent!");
             } catch (err) {
                 console.error(err);
@@ -252,7 +252,7 @@
 
         async function fetchNotifications() {
             try {
-                const res = await fetch('/api/telemetry');
+                const res = await fetch('api/telemetry');
                 const events = await res.json();
                 const list = document.getElementById('notif-list');
                 const badge = document.getElementById('notif-badge');
@@ -333,7 +333,7 @@
             
             try {
                 const reg = await navigator.serviceWorker.register('/sw.js');
-                const response = await fetch('/api/vapid_public_key');
+                const response = await fetch('api/vapid_public_key');
                 const data = await response.json();
                 
                 const subscription = await reg.pushManager.subscribe({
@@ -341,7 +341,7 @@
                     applicationServerKey: urlB64ToUint8Array(data.public_key)
                 });
                 
-                await fetch('/api/push_subscribe', {
+                await fetch('api/push_subscribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -453,7 +453,7 @@
                 if (routeContext.legTitle.includes('Dropoff')) actionStr = 'dropped off';
                 if (routeContext.legTitle.includes('Home')) actionStr = 'arrived';
                 
-                await fetch('/api/telemetry', {
+                await fetch('api/telemetry', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -466,7 +466,7 @@
                 });
                 
                 // ALSO mark it in drive_status backend
-                await fetch('/api/drive_status', {
+                await fetch('api/drive_status', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -833,7 +833,7 @@
             const endStr = queryEnd.toISOString().split('T')[0];
             
             try {
-                const res = await fetch(`/api/schedule?start_date=${startStr}&end_date=${endStr}`);
+                const res = await fetch(`api/schedule?start_date=${startStr}&end_date=${endStr}`);
                 if (res.ok) {
                     const data = await res.json();
                     
