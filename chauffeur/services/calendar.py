@@ -39,10 +39,14 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
     service = get_calendar_service()
     
     if start_date_str and end_date_str:
-        start_dt = datetime.datetime.fromisoformat(start_date_str).astimezone()
-        end_dt = datetime.datetime.fromisoformat(end_date_str).astimezone()
-        time_min = start_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        time_max = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+        if 'T' in start_date_str:
+            time_min = start_date_str
+            time_max = end_date_str
+        else:
+            start_dt = datetime.datetime.fromisoformat(start_date_str).astimezone()
+            end_dt = datetime.datetime.fromisoformat(end_date_str).astimezone()
+            time_min = start_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            time_max = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
     else:
         now_local = datetime.datetime.now().astimezone()
         start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)

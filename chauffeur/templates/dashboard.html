@@ -382,6 +382,20 @@
             await fetchSchedule(true, true, false);
         }
 
+        function toLocalIsoString(date) {
+            const tzo = -date.getTimezoneOffset(),
+                dif = tzo >= 0 ? '+' : '-',
+                pad = function(num) { return (num < 10 ? '0' : '') + num; };
+            return date.getFullYear() +
+                '-' + pad(date.getMonth() + 1) +
+                '-' + pad(date.getDate()) +
+                'T' + pad(date.getHours()) +
+                ':' + pad(date.getMinutes()) +
+                ':' + pad(date.getSeconds()) +
+                dif + pad(Math.floor(Math.abs(tzo) / 60)) +
+                ':' + pad(Math.abs(tzo) % 60);
+        }
+
         async function fetchSchedule(isPagination = false, isLoadingNext = false, isLoadingPrev = false) {
             const btnPrev = document.getElementById('btn-prev-week');
             const btnNext = document.getElementById('btn-next-week');
@@ -402,19 +416,24 @@
 
                 let url = 'api/schedule';
                 if (currentStartDate && currentEndDate && isPagination) {
-                    const s = currentStartDate.toISOString().split('T')[0];
-                    const e = currentEndDate.toISOString().split('T')[0];
-                    url = `api/schedule?start_date=${s}&end_date=${e}`;
+                    const s = toLocalIsoString(currentStartDate);
+                    
+                    const endOfDay = new Date(currentEndDate);
+                    endOfDay.setHours(23, 59, 59, 999);
+                    const e = toLocalIsoString(endOfDay);
+                    
+                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 } else if (!isPagination) {
-                    // Set to current local browser date to bypass server UTC timezone mismatches
                     currentStartDate = new Date();
-                    // Optional: Get days_to_show from metadata if needed, defaulting to 7
+                    currentStartDate.setHours(0, 0, 0, 0);
+                    
                     currentEndDate = new Date(currentStartDate);
                     currentEndDate.setDate(currentEndDate.getDate() + 6);
+                    currentEndDate.setHours(23, 59, 59, 999);
                     
-                    const s = currentStartDate.toISOString().split('T')[0];
-                    const e = currentEndDate.toISOString().split('T')[0];
-                    url = `api/schedule?start_date=${s}&end_date=${e}`;
+                    const s = toLocalIsoString(currentStartDate);
+                    const e = toLocalIsoString(currentEndDate);
+                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 }
                 const res = await fetch(url);
                 const data = await res.json();
@@ -471,9 +490,13 @@
             try {
                 let url = 'api/schedule/refresh';
                 if (currentStartDate && currentEndDate) {
-                    const s = currentStartDate.toISOString().split('T')[0];
-                    const e = currentEndDate.toISOString().split('T')[0];
-                    url = `api/schedule/refresh?start_date=${s}&end_date=${e}`;
+                    const s = toLocalIsoString(currentStartDate);
+                    
+                    const endOfDay = new Date(currentEndDate);
+                    endOfDay.setHours(23, 59, 59, 999);
+                    const e = toLocalIsoString(endOfDay);
+                    
+                    url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 }
                 await fetch(url, { method: 'POST' });
                 await fetchSchedule();

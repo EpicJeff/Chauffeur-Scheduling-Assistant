@@ -170,7 +170,9 @@ def root_redirect():
 
 @app.get("/dashboard")
 def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="dashboard.html")
+    response = templates.TemplateResponse(request=request, name="dashboard.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 @app.get("/app")
 def driver_app(request: Request):
