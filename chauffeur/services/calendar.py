@@ -38,7 +38,8 @@ def get_calendar_service():
 def fetch_upcoming_events(calendar_ids: list[str], days=7) -> list[Event]:
     service = get_calendar_service()
     now_local = datetime.datetime.now().astimezone()
-    time_min = now_local.isoformat()
+    start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    time_min = start_of_day.isoformat()
     
     # Target day is today + (days - 1). End of day is 23:59:59.
     target_date = now_local + datetime.timedelta(days=days-1)
