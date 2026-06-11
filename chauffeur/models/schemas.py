@@ -13,6 +13,7 @@ class Event(BaseModel):
     description: Optional[str] = None
     calendar_ids: List[str]
     source_event_ids: List[str]
+    all_day: bool = False
 
 class Driver(BaseModel):
     id: str

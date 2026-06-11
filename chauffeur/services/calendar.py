@@ -79,7 +79,9 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                 start_str = start_str.replace('Z', '+00:00')
                 end_str = end_str.replace('Z', '+00:00')
                 
+                is_all_day = False
                 if len(start_str) <= 10:  # YYYY-MM-DD
+                    is_all_day = True
                     start_dt = datetime.datetime.strptime(start_str, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
                     end_dt = datetime.datetime.strptime(end_str, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
                 else:
