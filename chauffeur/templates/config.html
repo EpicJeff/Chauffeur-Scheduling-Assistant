@@ -444,6 +444,7 @@
     <script>
         function configApp() {
             return {
+                saving: false,
                 daysToShow: 7,
                 routeCacheDurationMins: 10,
                 homeLocation: '',
@@ -576,17 +577,24 @@
                 async saveSettings() {
                     this.saving = true;
                     try {
-                    const payload = { 
-                        calendar_ids: this.calendarIds,
-                        days_to_show: parseInt(this.daysToShow) || 7,
-                        route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 10,
-                        home_location: this.homeLocation.trim() || null
-                    };
-                    await fetch('api/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
+                        const payload = { 
+                            calendar_ids: this.calendarIds,
+                            days_to_show: parseInt(this.daysToShow) || 7,
+                            route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 10,
+                            home_location: this.homeLocation || ''
+                        };
+                        
+                        await fetch('api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (this.isHomeAssistant) {
+                            await fetch('api/settings/ha_sync', { method: 'POST' });
+                        }
+                    } finally {
+                        this.saving = false;
+                    }
                 },
                 async clearCaches() {
                     if(confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google.")) {
@@ -639,6 +647,9 @@
                     });
                     this.cancelEditDriver();
                     await this.loadDrivers();
+                    } finally {
+                        this.saving = false;
+                    }
                 },
                 async addDriverCalendarId() {
                     const val = this.newDriverCalendarInput.trim();
@@ -757,6 +768,9 @@
                     }
                     this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false };
                     await this.loadPassengers();
+                    } finally {
+                        this.saving = false;
+                    }
                 },
 
                 editPassenger(passenger) {
@@ -808,6 +822,9 @@
                     }
                     this.newRule = { driver_id: '', constraint_type: 'required', event_keyword: '' };
                     await this.loadRules();
+                    } finally {
+                        this.saving = false;
+                    }
                 },
                 async deleteRule(doc_id) {
                     await fetch(`api/rules/${doc_id}`, { method: 'DELETE' });
@@ -848,6 +865,9 @@
                     }
                     this.newPriorityRule = { match_type: 'keyword', match_value: '', weight_modifier: 100 };
                     await this.loadPriorityRules();
+                    } finally {
+                        this.saving = false;
+                    }
                 },
                 async deletePriorityRule(doc_id) {
                     await fetch(`api/priority_rules/${doc_id}`, { method: 'DELETE' });

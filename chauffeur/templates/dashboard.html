@@ -94,8 +94,8 @@
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
         <div id="header-buttons" class="flex space-x-4">
             <div class="flex space-x-2 mt-4 md:mt-0">
-                <button onclick="fetchPrevWeek()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow-md border border-gray-700 transition-colors">&larr; Prev Week</button>
-                <button onclick="fetchNextWeek()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow-md border border-gray-700 transition-colors">Next Week &rarr;</button>
+                <button id="btn-prev-week" onclick="fetchPrevWeek()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50">&larr; Prev Week</button>
+                <button id="btn-next-week" onclick="fetchNextWeek()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50">Next Week &rarr;</button>
             </div>
             <button onclick="forceSync()" id="sync-btn"
                 class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
@@ -361,7 +361,7 @@
             
             currentStartDate = startD;
             currentEndDate = endD;
-            await fetchSchedule(true);
+            await fetchSchedule(true, false, true);
         }
 
         async function fetchNextWeek() {
@@ -378,16 +378,20 @@
             
             currentStartDate = startD;
             currentEndDate = endD;
-            await fetchSchedule(true);
+            await fetchSchedule(true, true, false);
         }
 
-        async function fetchSchedule(isPagination = false) {
+        async function fetchSchedule(isPagination = false, isLoadingNext = false, isLoadingPrev = false) {
             const btnPrev = document.getElementById('btn-prev-week');
             const btnNext = document.getElementById('btn-next-week');
-            if (btnPrev) btnPrev.disabled = true;
-            if (btnNext) btnNext.disabled = true;
-            const label = document.getElementById('pagination-label');
-            if (label && isPagination) label.textContent = "Loading...";
+            if (btnPrev) {
+                btnPrev.disabled = true;
+                if (isLoadingPrev) btnPrev.innerHTML = '<span class="animate-pulse">Loading...</span>';
+            }
+            if (btnNext) {
+                btnNext.disabled = true;
+                if (isLoadingNext) btnNext.innerHTML = '<span class="animate-pulse">Loading...</span>';
+            }
 
             try {
                 const driversRes = await fetch('api/drivers');
@@ -434,6 +438,15 @@
             } catch (err) {
                 console.error(err);
                 showError("Error: " + err.message + "\n" + err.stack);
+            } finally {
+                if (btnPrev) {
+                    btnPrev.disabled = false;
+                    btnPrev.innerHTML = '&larr; Prev Week';
+                }
+                if (btnNext) {
+                    btnNext.disabled = false;
+                    btnNext.innerHTML = 'Next Week &rarr;';
+                }
             }
         }
 
@@ -824,27 +837,33 @@
 
         async function forceSwap(ghostEventId, driverId) {
             closeEventModal();
+            document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
                 await fetch('api/overrides', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ event_id: ghostEventId, driver_id: driverId })
                 });
-                fetchSchedule(!!currentStartDate);
+                await fetchSchedule(!!currentStartDate);
             } catch (e) {
                 alert("Failed to force swap");
+            } finally {
+                document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
             }
         }
 
         async function removeOverride(eventId) {
             closeEventModal();
+            document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
                 await fetch(`api/overrides/event/${encodeURIComponent(eventId)}`, {
                     method: 'DELETE'
                 });
-                fetchSchedule();
+                await fetchSchedule(!!currentStartDate);
             } catch (e) {
                 alert("Failed to remove override");
+            } finally {
+                document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
             }
         }
 
