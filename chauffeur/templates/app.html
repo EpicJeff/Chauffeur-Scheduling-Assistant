@@ -95,8 +95,10 @@
             <div class="flex justify-between items-center mb-6 shrink-0">
                 <div class="flex justify-between items-center w-full pb-2 border-b border-gray-800">
                 <h2 class="text-xl font-bold text-white">Notifications</h2>
-                <button onclick="clearNotifications()" class="text-sm font-medium text-red-400 hover:text-red-300 transition-colors">Clear All</button>
+                <button onclick="clearNotifications()" class="text-sm font-bold text-red-400 bg-red-400/10 px-3 py-1 rounded-lg active:bg-red-400/20 transition-colors">Clear All</button>
             </div>
+            
+            <button onclick="testPushNotification()" class="mb-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg active:scale-95 transition-all">Send Test Push Notification</button>
                 <button onclick="toggleNotifications()" class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div id="notif-list" class="flex-1 overflow-y-auto space-y-3 no-scrollbar pb-6">
@@ -232,9 +234,19 @@
         async function clearNotifications() {
             try {
                 await fetch('/api/telemetry/clear', { method: 'POST' });
-                await fetchNotifications();
-            } catch (e) {
-                console.error(e);
+                fetchNotifications();
+            } catch (err) {
+                console.error(err);
+            }
+        }
+        
+        async function testPushNotification() {
+            try {
+                if (!currentDriverId) return alert("Select a driver first");
+                const res = await fetch(`/api/telemetry/test_push?driver_id=${currentDriverId}`, { method: 'POST' });
+                if (res.ok) alert("Test push notification sent!");
+            } catch (err) {
+                console.error(err);
             }
         }
 
