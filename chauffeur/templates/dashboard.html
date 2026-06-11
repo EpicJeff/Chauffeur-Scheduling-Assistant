@@ -727,11 +727,11 @@
                         if (type === 'conflict' || type === 'personal_conflict') {
                             actionHtml = `
                                 <div class="mt-3 flex space-x-2">
-                                    <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15})" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
+                                    <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15}, this)" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
                                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                         Allow ${reasonObj.lateness_mins || 15}m Late
                                     </button>
-                                    <button onclick="createPriorityRule('${evTitle}', 200)" class="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
+                                    <button onclick="createPriorityRule('${evTitle}', 200, this)" class="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
                                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                                         Prioritize Event
                                     </button>
@@ -1289,7 +1289,7 @@
                                         </div>
                                     </div>
                                     <div class="flex-shrink-0 flex items-center h-full">
-                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'mutually_exclusive', 0)" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full">Create Global Rule</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'mutually_exclusive', 0, this)" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule</button>
                                     </div>
                                 </div>
                             `;
@@ -1690,7 +1690,12 @@
             }
         }, 15000);
     
-        async function createRule(driverId, keyword, constraintType, toleranceMins) {
+        async function createRule(driverId, keyword, constraintType, toleranceMins, btnElement = null) {
+            if (btnElement) {
+                btnElement.disabled = true;
+                const originalText = btnElement.innerHTML;
+                btnElement.innerHTML = '<span class="animate-pulse flex items-center gap-2"><svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving...</span>';
+            }
             keyword = decodeURIComponent(keyword);
             // Extract the core part of the title before a dash or colon if it exists, to make the rule more general
             let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
@@ -1708,7 +1713,6 @@
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    showToast('Tolerance Rule created! Recalculating...', 'success');
                     closeModal();
                     fetchSchedule(true);
                 }
@@ -1717,7 +1721,12 @@
             }
         }
 
-        async function createPriorityRule(keyword, weight) {
+        async function createPriorityRule(keyword, weight, btnElement = null) {
+            if (btnElement) {
+                btnElement.disabled = true;
+                const originalText = btnElement.innerHTML;
+                btnElement.innerHTML = '<span class="animate-pulse flex items-center gap-2"><svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving...</span>';
+            }
             keyword = decodeURIComponent(keyword);
             let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
             const payload = {
@@ -1732,7 +1741,6 @@
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    showToast('Priority Rule created! Recalculating...', 'success');
                     closeModal();
                     fetchSchedule(true);
                 }
