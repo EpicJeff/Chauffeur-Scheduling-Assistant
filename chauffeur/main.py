@@ -166,9 +166,13 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # --- UI Routes ---
 @app.get("/")
 def root_redirect():
-    return RedirectResponse(url="dashboard")
+    return RedirectResponse(url="dashboard_v2")
 
 @app.get("/dashboard")
+def dashboard_legacy():
+    return RedirectResponse(url="dashboard_v2")
+
+@app.get("/dashboard_v2")
 def dashboard(request: Request):
     response = templates.TemplateResponse(request=request, name="dashboard.html")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
