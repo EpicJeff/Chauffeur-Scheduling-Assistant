@@ -605,6 +605,10 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
     events_by_id = {e.id: e for e in all_events_for_ui.values()}
     now_ts = datetime.now().timestamp()
     
+    # Preserve fired status
+    existing_notifs = storage.get_pending_notifications()
+    fired_notif_ids = {n["notif_id"] for n in existing_notifs if n.get("fired")}
+    
     # Collect all drivers from edges
     all_driver_ids = set()
     all_driver_ids.update(data.get("initial_edges", {}).keys())
@@ -619,13 +623,14 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
             if not ev: continue
             dep_time = datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
             if now_ts <= dep_time + 600:
+                notif_id = f"init_{ev_id}"
                 pending_notifications.append({
-                    "notif_id": f"init_{ev_id}",
+                    "notif_id": notif_id,
                     "driver_id": d_id,
                     "trigger_timestamp": dep_time,
                     "title": "Time to Leave!",
                     "body": f"Drive to {ev.location.split(',')[0]}",
-                    "fired": False
+                    "fired": notif_id in fired_notif_ids
                 })
                 
         for ev_id, edge in data.get("route_edges", {}).get(d_id, {}).items():
@@ -634,13 +639,14 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
             if not ev or not next_ev: continue
             dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
             if now_ts <= dep_time + 600:
+                notif_id = f"route_{ev_id}_{next_ev.id}"
                 pending_notifications.append({
-                    "notif_id": f"route_{ev_id}_{next_ev.id}",
+                    "notif_id": notif_id,
                     "driver_id": d_id,
                     "trigger_timestamp": dep_time,
                     "title": "Time to Leave!",
                     "body": f"Drive to {next_ev.location.split(',')[0]}",
-                    "fired": False
+                    "fired": notif_id in fired_notif_ids
                 })
                 
         for ev_id, edge in data.get("final_edges", {}).get(d_id, {}).items():
@@ -648,13 +654,14 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
             if not ev: continue
             dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
             if now_ts <= dep_time + 600:
+                notif_id = f"final_{ev_id}"
                 pending_notifications.append({
-                    "notif_id": f"final_{ev_id}",
+                    "notif_id": notif_id,
                     "driver_id": d_id,
                     "trigger_timestamp": dep_time,
                     "title": "Time to Leave!",
                     "body": "Drive Home",
-                    "fired": False
+                    "fired": notif_id in fired_notif_ids
                 })
                 
     storage.save_pending_notifications(pending_notifications)
