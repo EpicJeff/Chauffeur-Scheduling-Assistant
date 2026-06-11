@@ -776,6 +776,52 @@
                 editDetailsBtn.classList.remove('hidden');
             }
 
+            // Unassigned details
+            const isUnassigned = currentData.unassigned && currentData.unassigned.includes(eventId);
+            if (isUnassigned) {
+                const diag = (currentData.diagnostics && currentData.diagnostics[eventId]) ? currentData.diagnostics[eventId] : {};
+                const diagEntries = Object.entries(diag);
+                let diagContent = '<p class="text-sm text-yellow-700 italic mb-2">No diagnostic data available.</p>';
+                
+                if (diagEntries.length > 0) {
+                    diagContent = diagEntries.map(([dId, d]) => {
+                        const driver = driversMap[dId];
+                        const driverName = driver ? driver.name : 'Unknown Driver';
+                        let icon = '?';
+                        if (d.type === 'override') icon = '??';
+                        else if (d.type === 'overlap') icon = '??';
+                        else if (d.type === 'conflict') icon = '??';
+                        else if (d.type === 'personal_conflict') icon = '??';
+                        else if (d.type === 'optimization') icon = '??';
+                        
+                        return 
+                            <div class="bg-white/60 p-2 rounded border border-yellow-100 flex items-start text-sm mb-2">
+                                <span class="mr-2 text-lg leading-none">{icon}</span>
+                                <div>
+                                    <div class="font-bold text-gray-800">{driverName}</div>
+                                    <div class="text-gray-600">{d.text}</div>
+                                </div>
+                            </div>
+                        ;
+                    }).join('');
+                }
+
+                const unassignedHtml = 
+                    <div class="mt-6 bg-yellow-50 border border-yellow-200 p-4 rounded-xl">
+                        <h4 class="text-yellow-800 font-bold flex items-center mb-2">
+                            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                            Assignment Diagnostics
+                        </h4>
+                        <div class="space-y-3">
+                            {diagContent}
+                        </div>
+                    </div>
+                ;
+                document.getElementById('view-unassigned-reason').innerHTML = unassignedHtml;
+            } else {
+                document.getElementById('view-unassigned-reason').innerHTML = '';
+            }
+
             switchToViewMode();
             document.getElementById('event-modal').classList.remove('hidden');
         }
@@ -1028,7 +1074,12 @@
 
                 if (targetCols.length === 0) return;
 
-                const dateKey = formatDateStr(ev.start);
+                let eventStartD = new Date(ev.start);
+                if (currentStartDate && eventStartD < currentStartDate) {
+                    eventStartD = new Date(currentStartDate);
+                    eventStartD.setHours(0,0,0,0);
+                }
+                const dateKey = formatDateStr(eventStartD);
                 if (!scheduleByDate[dateKey]) scheduleByDate[dateKey] = {};
 
                 targetCols.forEach(col_id => {
