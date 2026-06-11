@@ -985,14 +985,27 @@
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || ''
                     };
+                    
+                    if (this.newRule.keywords.length === 1) {
+                        this.newRuleKeywordInput = this.newRule.keywords.pop();
+                    } else {
+                        this.newRuleKeywordInput = '';
+                    }
                 },
                 cancelEditRule() {
                     this.editRuleId = null;
+                    this.newRuleKeywordInput = '';
                     this.newRule = { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
                 },
                 async submitRule() {
                     this.saving = true;
                     try {
+                        const kwInput = this.newRuleKeywordInput.trim();
+                        if (kwInput && !this.newRule.keywords.includes(kwInput)) {
+                            this.newRule.keywords.push(kwInput);
+                        }
+                        this.newRuleKeywordInput = '';
+                        
                         if (!this.newRule.driver_id) return alert('Driver is required');
                         if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
                         
@@ -1025,14 +1038,27 @@
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || ''
                     };
+                    
+                    if (this.newPriorityRule.keywords.length === 1) {
+                        this.newPriorityRuleKeywordInput = this.newPriorityRule.keywords.pop();
+                    } else {
+                        this.newPriorityRuleKeywordInput = '';
+                    }
                 },
                 cancelEditPriorityRule() {
                     this.editPriorityRuleId = null;
+                    this.newPriorityRuleKeywordInput = '';
                     this.newPriorityRule = { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
                 },
                 async submitPriorityRule() {
                     this.saving = true;
                     try {
+                        const kwInput = this.newPriorityRuleKeywordInput.trim();
+                        if (kwInput && !this.newPriorityRule.keywords.includes(kwInput)) {
+                            this.newPriorityRule.keywords.push(kwInput);
+                        }
+                        this.newPriorityRuleKeywordInput = '';
+                        
                         if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
                         this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
                         
