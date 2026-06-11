@@ -302,6 +302,31 @@ def set_cached_schedule(schedule_data: dict):
         cache_table.truncate()
         cache_table.insert(schedule_data)
 
+def save_custom_schedule(start_date: str, end_date: str, schedule_data: dict, events_hash: str):
+    with db_lock:
+        custom_schedules_table.upsert({
+            'start_date': start_date,
+            'end_date': end_date,
+            'schedule': schedule_data,
+            'events_hash': events_hash
+        }, (Query().start_date == start_date) & (Query().end_date == end_date))
+
+def get_custom_schedule(start_date: str, end_date: str):
+    with db_lock:
+        res = custom_schedules_table.search((Query().start_date == start_date) & (Query().end_date == end_date))
+        if res:
+            return res[0]
+        return None
+
+def get_all_custom_schedule_keys():
+    with db_lock:
+        return [{'start_date': doc['start_date'], 'end_date': doc['end_date']} for doc in custom_schedules_table.all()]
+
+def clear_custom_schedules():
+    with db_lock:
+        custom_schedules_table.truncate()
+
+
 # Settings CRUD
 def get_settings() -> dict:
     with db_lock:

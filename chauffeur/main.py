@@ -597,6 +597,8 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
     
     if not start_date_str and not end_date_str:
         storage.set_cached_schedule(data)
+    else:
+        storage.save_custom_schedule(start_date_str, end_date_str, data, current_events_hash)
 
         # --- Generate Pending Notifications ---
     pending_notifications = []
