@@ -818,15 +818,13 @@
                 queryStart = new Date(window.globalStartDate);
                 queryStart.setDate(queryStart.getDate() + window.globalDaysToShow);
                 queryEnd = new Date(queryStart);
-                queryEnd.setDate(queryEnd.getDate() + 6);
-                window.globalDaysToShow += 7;
+                window.globalDaysToShow += 1;
             } else {
                 queryEnd = new Date(window.globalStartDate);
                 queryEnd.setDate(queryEnd.getDate() - 1);
                 queryStart = new Date(queryEnd);
-                queryStart.setDate(queryStart.getDate() - 6);
                 window.globalStartDate = queryStart;
-                window.globalDaysToShow += 7;
+                window.globalDaysToShow += 1;
             }
             
             const startStr = queryStart.toISOString().split('T')[0];
@@ -884,10 +882,13 @@
                         const paneWidth = container.clientWidth;
                         container.scrollBy({ left: paneWidth, behavior: 'instant' });
                     } else {
-                        activeDateIndex += 7;
-                        activeDateIndex--;
-                        const paneWidth = container.clientWidth;
-                        container.scrollBy({ left: -paneWidth, behavior: 'instant' });
+                        // The entire timeline shifted right by 1, so our activeDateIndex is now +1
+                        // We want to move to the newly inserted day at index 0, which means we do nothing to activeDateIndex but scroll left
+                        // Wait, buildTimeline resets container scroll to 0?
+                        // Let's just rely on prevDay scroll behavior.
+                        // Actually, just let activeDateIndex be 0 (since we swiped left to the new day)
+                        activeDateIndex = 0;
+                        container.scrollTo({ left: 0, behavior: 'instant' });
                     }
                 }
             } catch (err) {
