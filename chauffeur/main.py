@@ -411,7 +411,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None):
     days_to_show = settings.get("days_to_show", 7)
     
     try:
-        all_fetched_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_show)
+        all_fetched_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_show, start_date_str=start_date_str, end_date_str=end_date_str)
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
         
