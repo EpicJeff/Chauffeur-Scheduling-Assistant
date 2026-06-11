@@ -1055,8 +1055,49 @@
                 },
 
                 getDriverName(id) {
+                    if (id === 'any') return 'Any Driver';
                     const d = this.drivers.find(x => x.id === id);
                     return d ? d.name : id;
+                },
+                getPassengerName(id) {
+                    const p = this.passengers.find(x => x.calendar_ids && x.calendar_ids.includes(id));
+                    return p ? p.name : id;
+                },
+                addRuleKeyword() {
+                    const val = this.newRuleKeywordInput.trim();
+                    if (val && !this.newRule.keywords.includes(val)) {
+                        this.newRule.keywords.push(val);
+                    }
+                    this.newRuleKeywordInput = '';
+                },
+                removeRuleKeyword(idx) { this.newRule.keywords.splice(idx, 1); },
+                toggleRuleDay(day) {
+                    const idx = this.newRule.days_of_week.indexOf(day);
+                    if(idx === -1) this.newRule.days_of_week.push(day);
+                    else this.newRule.days_of_week.splice(idx, 1);
+                },
+                toggleRulePassenger(pid) {
+                    const idx = this.newRule.passenger_ids.indexOf(pid);
+                    if(idx === -1) this.newRule.passenger_ids.push(pid);
+                    else this.newRule.passenger_ids.splice(idx, 1);
+                },
+                addPriorityRuleKeyword() {
+                    const val = this.newPriorityRuleKeywordInput.trim();
+                    if (val && !this.newPriorityRule.keywords.includes(val)) {
+                        this.newPriorityRule.keywords.push(val);
+                    }
+                    this.newPriorityRuleKeywordInput = '';
+                },
+                removePriorityRuleKeyword(idx) { this.newPriorityRule.keywords.splice(idx, 1); },
+                togglePriorityRuleDay(day) {
+                    const idx = this.newPriorityRule.days_of_week.indexOf(day);
+                    if(idx === -1) this.newPriorityRule.days_of_week.push(day);
+                    else this.newPriorityRule.days_of_week.splice(idx, 1);
+                },
+                togglePriorityRulePassenger(pid) {
+                    const idx = this.newPriorityRule.passenger_ids.indexOf(pid);
+                    if(idx === -1) this.newPriorityRule.passenger_ids.push(pid);
+                    else this.newPriorityRule.passenger_ids.splice(idx, 1);
                 }
             }
         }
