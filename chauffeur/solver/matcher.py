@@ -805,3 +805,5 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 
             diagnostics[u_id][d.id] = reason
             
+    return diagnostics
+            
