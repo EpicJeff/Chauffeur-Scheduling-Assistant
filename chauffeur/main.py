@@ -137,6 +137,7 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    storage.custom_schedules_table.truncate()
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
     yield
