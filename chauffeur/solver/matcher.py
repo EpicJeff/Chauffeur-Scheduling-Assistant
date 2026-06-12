@@ -182,13 +182,6 @@ def solve_schedule(
                 
                 if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
                     gap_seconds = float('inf')
-                else:
-                    attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
-                    if not attendance_conflict:
-                        # e1 and e2 do not share a calendar, meaning e2 passengers need pickup
-                        d1_to_d2 = get_switch_travel_time(e1, e2, events) * 60
-                        if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= get_travel_time_minutes(e1.location, e2.location) * 60:
-                            gap_seconds = float('inf')
 
                 if (e1.id, e2.id) in grouped_event_pairs:
                     gap_seconds = float('inf')
