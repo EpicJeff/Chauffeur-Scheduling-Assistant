@@ -159,6 +159,8 @@ def solve_schedule(
                     d1_to_d2 = get_switch_travel_time(e1, e2, events) * 60
                     if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= get_travel_time_minutes(e1.location, e2.location) * 60:
                         gap_seconds = float('inf')
+                    elif e1.location and e2.location and e1.location.lower() == e2.location.lower():
+                        gap_seconds = float('inf')
 
                 gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
                 if gap_seconds_with_tolerance < total_needed_seconds:
