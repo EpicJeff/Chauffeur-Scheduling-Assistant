@@ -362,17 +362,43 @@
             showDriverSelection();
         }
 
-        async function fetchData() {
+        async function fetchSchedule(refresh = false) {
+            const container = document.getElementById('days-container');
             const btnSync = document.getElementById('btn-sync');
-            btnSync.classList.add('animate-spin');
+            
+            const cached = localStorage.getItem('chauffeur_schedule');
+            let hasCachedData = false;
+            if (cached && !refresh) {
+                try {
+                    scheduleData = JSON.parse(cached);
+                    buildTimeline();
+                    hasCachedData = true;
+                    // Do not return here, let it fetch fresh data in the background
+                } catch(e) {}
+            }
+
+            if (refresh) {
+                // If it's a manual refresh, clear the start date to reset the view
+                window.globalStartDate = null;
+            }
+            
+            if (!hasCachedData || refresh) {
+                btnSync.classList.add('animate-spin');
+            }
             
             try {
-                const res = await fetch('api/schedule');
+                let url = 'api/schedule';
+                if (refresh) url += '?force_refresh=true';
+                
+                const res = await fetch(url);
                 scheduleData = await res.json();
+                localStorage.setItem('chauffeur_schedule', JSON.stringify(scheduleData));
                 buildTimeline();
             } catch (e) {
                 console.error("Failed to fetch schedule", e);
-                document.getElementById('days-container').innerHTML = `<div class="w-full flex items-center justify-center text-red-400">Failed to load data</div>`;
+                if (!hasCachedData) {
+                    document.getElementById('days-container').innerHTML = `<div class="w-full flex items-center justify-center text-red-400">Failed to load data</div>`;
+                }
             } finally {
                 setTimeout(() => btnSync.classList.remove('animate-spin'), 500);
             }
