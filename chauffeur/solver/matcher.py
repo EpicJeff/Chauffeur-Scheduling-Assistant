@@ -1039,94 +1039,93 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
     return diagnostics
             
 
- d e f   s p l i t _ s t a g g e r e d _ e v e n t s ( a s s i g n m e n t s :   D i c t [ s t r ,   s t r ] ,   g h o s t _ a s s i g n m e n t s :   D i c t [ s t r ,   s t r ] ,   e v e n t s :   L i s t [ E v e n t ] )   - >   L i s t [ E v e n t ] : 
-         f r o m   c o l l e c t i o n s   i m p o r t   d e f a u l t d i c t 
-         d r i v e r _ e v e n t s   =   d e f a u l t d i c t ( l i s t ) 
-         e v e n t _ m a p   =   { e . i d :   e   f o r   e   i n   e v e n t s } 
-         
-         a l l _ a s s i g n   =   { * * a s s i g n m e n t s ,   * * g h o s t _ a s s i g n m e n t s } 
-         f o r   e _ i d ,   d _ i d   i n   a l l _ a s s i g n . i t e m s ( ) : 
-                 i f   e _ i d   i n   e v e n t _ m a p : 
-                         d r i v e r _ e v e n t s [ d _ i d ] . a p p e n d ( e v e n t _ m a p [ e _ i d ] ) 
-                         
-         e v e n t s _ t o _ r e m o v e   =   s e t ( ) 
-         e v e n t s _ t o _ a d d   =   [ ] 
-         
-         f o r   d _ i d ,   e v s   i n   d r i v e r _ e v e n t s . i t e m s ( ) : 
-                 e v s . s o r t ( k e y = l a m b d a   x :   x . s t a r t ) 
-                 
-                 #   D e t e c t   s t a g g e r s 
-                 f o r   i   i n   r a n g e ( l e n ( e v s )   -   1 ) : 
-                         e 1   =   e v s [ i ] 
-                         e 2   =   e v s [ i + 1 ] 
-                         i f   e 2 . s t a r t   <   e 1 . e n d : 
-                                 #   O v e r l a p !   C h e c k   i f   i t ' s   a   v a l i d   s t a g g e r   ( i . e .   n o t   g r o u p e d ,   n o   s h a r e d   c a l e n d a r ) 
-                                 s h a r e s _ c a l e n d a r   =   b o o l ( s e t ( e 1 . c a l e n d a r _ i d s ) . i n t e r s e c t i o n ( s e t ( e 2 . c a l e n d a r _ i d s ) ) ) 
-                                 i f   n o t   s h a r e s _ c a l e n d a r : 
-                                         i f   e 2 . e n d   < =   e 1 . e n d : 
-                                                 #   P r o f i l e   B :   e 2   e n v e l o p e d   b y   e 1 .   e 1   i s   s p l i t ,   e 2   i s   k e p t   i n t a c t . 
-                                                 i f   e 1 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
-                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 1 . i d ) 
-                                                         #   C r e a t e   e 1   d r o p o f f 
-                                                         e 1 _ d r o p   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
-                                                         e 1 _ d r o p . i d   =   e 1 . i d   +   ' _ d r o p o f f ' 
-                                                         e 1 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
-                                                         e 1 _ d r o p . e n d   =   e 1 . s t a r t 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ d r o p ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
-                                                         
-                                                         #   C r e a t e   e 1   p i c k u p 
-                                                         e 1 _ p i c k   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
-                                                         e 1 _ p i c k . i d   =   e 1 . i d   +   ' _ p i c k u p ' 
-                                                         e 1 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
-                                                         e 1 _ p i c k . s t a r t   =   e 1 . e n d 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ p i c k ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
-                                         e l s e : 
-                                                 #   P r o f i l e   A :   e 1   a n d   e 2   o v e r l a p .   B o t h   s p l i t . 
-                                                 i f   e 1 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
-                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 1 . i d ) 
-                                                         e 1 _ d r o p   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
-                                                         e 1 _ d r o p . i d   =   e 1 . i d   +   ' _ d r o p o f f ' 
-                                                         e 1 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
-                                                         e 1 _ d r o p . e n d   =   e 1 . s t a r t 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ d r o p ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
-                                                         
-                                                         e 1 _ p i c k   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
-                                                         e 1 _ p i c k . i d   =   e 1 . i d   +   ' _ p i c k u p ' 
-                                                         e 1 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
-                                                         e 1 _ p i c k . s t a r t   =   e 1 . e n d 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ p i c k ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
-                                                         
-                                                 i f   e 2 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
-                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 2 . i d ) 
-                                                         e 2 _ d r o p   =   e 2 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 2 ,   ' m o d e l _ c o p y ' )   e l s e   e 2 . c o p y ( ) 
-                                                         e 2 _ d r o p . i d   =   e 2 . i d   +   ' _ d r o p o f f ' 
-                                                         e 2 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
-                                                         e 2 _ d r o p . e n d   =   e 2 . s t a r t 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 2 _ d r o p ,   d _ i d ,   e 2 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
-                                                         
-                                                         e 2 _ p i c k   =   e 2 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 2 ,   ' m o d e l _ c o p y ' )   e l s e   e 2 . c o p y ( ) 
-                                                         e 2 _ p i c k . i d   =   e 2 . i d   +   ' _ p i c k u p ' 
-                                                         e 2 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
-                                                         e 2 _ p i c k . s t a r t   =   e 2 . e n d 
-                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 2 _ p i c k ,   d _ i d ,   e 2 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
- 
-         i f   n o t   e v e n t s _ t o _ r e m o v e : 
-                 r e t u r n   e v e n t s 
- 
-         n e w _ e v e n t s   =   [ e   f o r   e   i n   e v e n t s   i f   e . i d   n o t   i n   e v e n t s _ t o _ r e m o v e ] 
-         f o r   n e w _ e ,   d _ i d ,   i s _ g h o s t   i n   e v e n t s _ t o _ a d d : 
-                 n e w _ e v e n t s . a p p e n d ( n e w _ e ) 
-                 i f   i s _ g h o s t : 
-                         g h o s t _ a s s i g n m e n t s [ n e w _ e . i d ]   =   d _ i d 
-                 e l s e : 
-                         a s s i g n m e n t s [ n e w _ e . i d ]   =   d _ i d 
-                         
-         f o r   e _ i d   i n   e v e n t s _ t o _ r e m o v e : 
-                 i f   e _ i d   i n   a s s i g n m e n t s : 
-                         d e l   a s s i g n m e n t s [ e _ i d ] 
-                 i f   e _ i d   i n   g h o s t _ a s s i g n m e n t s : 
-                         d e l   g h o s t _ a s s i g n m e n t s [ e _ i d ] 
-                         
-         r e t u r n   n e w _ e v e n t s 
-  
- 
+def split_staggered_events(assignments: Dict[str, str], ghost_assignments: Dict[str, str], events: List[Event]) -> List[Event]:
+    from collections import defaultdict
+    driver_events = defaultdict(list)
+    event_map = {e.id: e for e in events}
+    
+    all_assign = {**assignments, **ghost_assignments}
+    for e_id, d_id in all_assign.items():
+        if e_id in event_map:
+            driver_events[d_id].append(event_map[e_id])
+            
+    events_to_remove = set()
+    events_to_add = []
+    
+    for d_id, evs in driver_events.items():
+        evs.sort(key=lambda x: x.start)
+        
+        # Detect staggers
+        for i in range(len(evs) - 1):
+            e1 = evs[i]
+            e2 = evs[i+1]
+            if e2.start < e1.end:
+                # Overlap! Check if it's a valid stagger (i.e. not grouped, no shared calendar)
+                shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+                if not shares_calendar:
+                    if e2.end <= e1.end:
+                        # Profile B: e2 enveloped by e1. e1 is split, e2 is kept intact.
+                        if e1.id not in events_to_remove:
+                            events_to_remove.add(e1.id)
+                            # Create e1 dropoff
+                            e1_drop = e1.model_copy() if hasattr(e1, 'model_copy') else e1.copy()
+                            e1_drop.id = e1.id + '_dropoff'
+                            e1_drop.event_type = 'dropoff'
+                            e1_drop.end = e1.start
+                            events_to_add.append((e1_drop, d_id, e1.id in ghost_assignments))
+                            
+                            # Create e1 pickup
+                            e1_pick = e1.model_copy() if hasattr(e1, 'model_copy') else e1.copy()
+                            e1_pick.id = e1.id + '_pickup'
+                            e1_pick.event_type = 'pickup'
+                            e1_pick.start = e1.end
+                            events_to_add.append((e1_pick, d_id, e1.id in ghost_assignments))
+                    else:
+                        # Profile A: e1 and e2 overlap. Both split.
+                        if e1.id not in events_to_remove:
+                            events_to_remove.add(e1.id)
+                            e1_drop = e1.model_copy() if hasattr(e1, 'model_copy') else e1.copy()
+                            e1_drop.id = e1.id + '_dropoff'
+                            e1_drop.event_type = 'dropoff'
+                            e1_drop.end = e1.start
+                            events_to_add.append((e1_drop, d_id, e1.id in ghost_assignments))
+                            
+                            e1_pick = e1.model_copy() if hasattr(e1, 'model_copy') else e1.copy()
+                            e1_pick.id = e1.id + '_pickup'
+                            e1_pick.event_type = 'pickup'
+                            e1_pick.start = e1.end
+                            events_to_add.append((e1_pick, d_id, e1.id in ghost_assignments))
+                            
+                        if e2.id not in events_to_remove:
+                            events_to_remove.add(e2.id)
+                            e2_drop = e2.model_copy() if hasattr(e2, 'model_copy') else e2.copy()
+                            e2_drop.id = e2.id + '_dropoff'
+                            e2_drop.event_type = 'dropoff'
+                            e2_drop.end = e2.start
+                            events_to_add.append((e2_drop, d_id, e2.id in ghost_assignments))
+                            
+                            e2_pick = e2.model_copy() if hasattr(e2, 'model_copy') else e2.copy()
+                            e2_pick.id = e2.id + '_pickup'
+                            e2_pick.event_type = 'pickup'
+                            e2_pick.start = e2.end
+                            events_to_add.append((e2_pick, d_id, e2.id in ghost_assignments))
+
+    if not events_to_remove:
+        return events
+
+    new_events = [e for e in events if e.id not in events_to_remove]
+    for new_e, d_id, is_ghost in events_to_add:
+        new_events.append(new_e)
+        if is_ghost:
+            ghost_assignments[new_e.id] = d_id
+        else:
+            assignments[new_e.id] = d_id
+            
+    for e_id in events_to_remove:
+        if e_id in assignments:
+            del assignments[e_id]
+        if e_id in ghost_assignments:
+            del ghost_assignments[e_id]
+            
+    return new_events
+
