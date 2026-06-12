@@ -5,7 +5,7 @@ from services.maps import get_travel_time_minutes
 from datetime import datetime
 import math
 
-def does_event_match_rule(event, rule) -> bool:
+def does_event_match_rule(event, rule, passengers=None) -> bool:
     has_any_criteria = False
     
     # 1. Keywords
@@ -23,7 +23,16 @@ def does_event_match_rule(event, rule) -> bool:
     if hasattr(rule, 'passenger_ids') and rule.passenger_ids:
         has_any_criteria = True
         match_pax = False
+        
+        resolved_pids = set()
         for pid in rule.passenger_ids:
+            resolved_pids.add(str(pid))
+            if passengers:
+                for p in passengers:
+                    if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
+                        resolved_pids.add(str(p.id))
+                        
+        for pid in resolved_pids:
             if pid in event.calendar_ids:
                 match_pax = True
                 break
@@ -109,7 +118,7 @@ def solve_schedule(
     for e in events:
         tol = 0
         for r in rules:
-            if r.constraint_type == 'tolerance' and does_event_match_rule(e, r):
+            if r.constraint_type == 'tolerance' and does_event_match_rule(e, r, passengers):
                 tol = max(tol, getattr(r, 'tolerance_mins', 0))
         e_tolerances[e.id] = tol
         
@@ -199,9 +208,7 @@ def solve_schedule(
             elif mod == -100: mod = -1000
             elif mod == -500: mod = -10000
             
-            if pr.match_type == 'keyword' and pr.match_value.lower() in e.title.lower():
-                base_event_weight += mod
-            elif pr.match_type == 'calendar' and pr.match_value in e.calendar_ids:
+            if does_event_match_rule(e, pr, passengers):
                 base_event_weight += mod
                 
         for d in drivers:
@@ -242,7 +249,7 @@ def solve_schedule(
             # Apply Driver Rules
             for r in rules:
                 # Simple keyword matching (case-insensitive)
-                if does_event_match_rule(e, r) and r.driver_id == d.id:
+                if does_event_match_rule(e, r, passengers) and r.driver_id == d.id:
                     if r.constraint_type == 'required':
                         # This driver MUST do it, meaning all other drivers cannot
                         for other_d in drivers:
@@ -293,7 +300,7 @@ def solve_schedule(
         from collections import defaultdict
         groups = defaultdict(list)
         for e in events:
-            if does_event_match_rule(e, r):
+            if does_event_match_rule(e, r, passengers):
                 period = getattr(r, 'grouping_period', 'daily')
                 if period == 'daily':
                     key = (e.start.strftime('%Y-%m-%d'), r.id)
@@ -829,7 +836,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             # 3. Rule constraints
             if not reason:
                 for r in rules:
-                    if does_event_match_rule(e, r):
+                    if does_event_match_rule(e, r, passengers):
                         if r.constraint_type == 'unavailable' and r.driver_id == d.id:
                             reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
                             break
