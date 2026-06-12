@@ -1385,15 +1385,19 @@
                         const dragAttr = isReadOnly ? '' : `draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')"`;
 
                         let computedOrigin = currentData.home_location || '';
+                        let lateMins = 0;
                         if (index > 0) {
                             const prevEv = uniqueColEvents[index - 1];
-                            const edgeFromPrev = routeEdges[prevEv.id];
+                            const edgeFromPrev = routeEdges[c_id] ? routeEdges[c_id][prevEv.id] : null;
                             if (edgeFromPrev && edgeFromPrev.home_waypoint) {
                                 computedOrigin = currentData.home_location || '';
                             } else if (edgeFromPrev && edgeFromPrev.pickup_waypoint) {
                                 computedOrigin = edgeFromPrev.pickup_waypoint.pickup_location;
                             } else {
                                 computedOrigin = prevEv.location;
+                            }
+                            if (edgeFromPrev && edgeFromPrev.to_event === ev.id) {
+                                lateMins = edgeFromPrev.late_mins || 0;
                             }
                         }
                         const originLocationEnc = computedOrigin ? encodeURIComponent(computedOrigin).replace(/'/g, "\\'") : '';
@@ -1424,6 +1428,7 @@
                                             ${colorDots}
                                             <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate ${isShort ? 'hidden' : ''}" style="color: ${evColor}">${summaries}</div>
                                             ${overriddenEventsList.includes(ev.id) ? '<span class="ml-1 text-yellow-500"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v5.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L9 8.586V3a1 1 0 011-1z" /></svg></span>' : ''}
+                                            ${lateMins > 0 ? `<span class="ml-1 text-red-500 bg-red-500/20 px-1 rounded font-bold flex items-center" title="Arriving ${lateMins}m late"><svg class="w-2.5 h-2.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>${lateMins}m</span>` : ''}
                                         </div>
                                         <div class="font-bold text-[12px] text-white leading-tight truncate pointer-events-none ${isShort ? 'flex-1 min-w-0' : 'mb-0.5 mt-0.5'}">${ev.title}</div>
                                         <div class="text-gray-400 text-[10px] font-medium truncate pointer-events-none shrink-0">${isShort ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>

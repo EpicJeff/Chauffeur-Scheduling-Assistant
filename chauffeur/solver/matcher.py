@@ -795,13 +795,18 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         }
                         travel = travel_to_home + travel_from_home
                         delay = to_delay + from_delay
-                        wait = 0  # Since they go home, they can time their departure to arrive precisely on time
+                        # Arrive precisely on time
+                        arr_time = dep_time + ((travel_to_home + max(0, layover) + travel_from_home) * 60)
+                        wait = 0
+
+                late = max(0, (arr_time - e2.start.timestamp()) / 60)
                 
                 edges[d_id][e1.id] = {
                     "to_event": e2.id,
                     "travel_mins": travel,
                     "delay_mins": delay,
-                    "wait_mins": int(wait)
+                    "wait_mins": int(wait),
+                    "late_mins": int(late)
                 }
                 if pickup_waypoint:
                     edges[d_id][e1.id]["pickup_waypoint"] = pickup_waypoint
