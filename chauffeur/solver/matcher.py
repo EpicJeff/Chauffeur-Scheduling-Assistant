@@ -709,7 +709,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 pickup_waypoint = None
                 
                 if new_passengers:
-                    pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, events)
+                    assigned_events = [ev for ev in events if ev.id in assignments]
+                    pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, assigned_events)
                     if pickup_event:
                         pickup_location = pickup_event.location
                         pickup_title = pickup_event.title
