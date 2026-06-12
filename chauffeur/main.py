@@ -565,7 +565,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Route Edges
     all_assignments = {**assignments, **ghost_assignments}
     home_location = maps.get_home_location()
-    route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, events_to_solve, drivers, home_location=home_location, driver_attendances=driver_events_ids)
+    route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, events_to_solve, drivers, home_location=home_location, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
     
     # True Unassigned (dropped due to passenger conflicts)
     true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
