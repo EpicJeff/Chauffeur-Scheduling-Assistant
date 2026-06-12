@@ -3,6 +3,7 @@ from ortools.sat.python import cp_model
 from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Passenger
 from services.maps import get_travel_time_minutes
 from datetime import datetime
+import math
 
 def does_event_match_rule(event, rule) -> bool:
     has_any_criteria = False
@@ -293,8 +294,15 @@ def solve_schedule(
         groups = defaultdict(list)
         for e in events:
             if does_event_match_rule(e, r):
-                date_str = e.start.strftime('%Y-%m-%d')
-                key = (date_str, tuple(sorted(e.calendar_ids)))
+                period = getattr(r, 'grouping_period', 'daily')
+                if period == 'daily':
+                    key = (e.start.strftime('%Y-%m-%d'), r.id)
+                elif period == 'weekly':
+                    key = (e.start.strftime('%Y-%W'), r.id)
+                elif period == 'monthly':
+                    key = (e.start.strftime('%Y-%m'), r.id)
+                else:
+                    key = r.id
                 groups[key].append(e)
                 
         for key, group_events in groups.items():
@@ -750,7 +758,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                         else:
                             gap = (e.start - de.end).total_seconds()
                         e_duration = (e.end - e.start).total_seconds() / 60
-                        lateness_mins = int((needed_secs - gap) / 60)
+                        lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                         if lateness_mins > min(60, e_duration * 0.75):
                             lateness_mins = 0
                         reason = {
@@ -779,7 +787,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             
                         if gap < needed_secs:
                             e_duration = (e.end - e.start).total_seconds() / 60
-                            lateness_mins = int((needed_secs - gap) / 60)
+                            lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                             if lateness_mins > min(60, e_duration * 0.75):
                                 lateness_mins = 0
                             reason = {
@@ -807,7 +815,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             
                         if gap < needed_secs:
                             e_duration = (e.end - e.start).total_seconds() / 60
-                            lateness_mins = int((needed_secs - gap) / 60)
+                            lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                             if lateness_mins > min(60, e_duration * 0.75):
                                 lateness_mins = 0
                             reason = {
@@ -862,7 +870,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                 else:
                                     gap_seconds = (e.start - a_e.end).total_seconds()
                                 e_duration = (e.end - e.start).total_seconds() / 60
-                                lateness_mins = int((needed_secs - gap_seconds) / 60)
+                                lateness_mins = math.ceil((needed_secs - gap_seconds) / 60.0)
                                 if lateness_mins > min(60, e_duration * 0.75):
                                     lateness_mins = 0
                                 reason = {

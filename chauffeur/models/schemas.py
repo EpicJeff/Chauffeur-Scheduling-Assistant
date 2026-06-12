@@ -44,6 +44,7 @@ class Rule(BaseModel):
     event_keyword: Optional[str] = None # Deprecated
     constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive'
     tolerance_mins: int = 0
+    grouping_period: str = 'daily'
     keywords: List[str] = Field(default_factory=list)
     passenger_ids: List[str] = Field(default_factory=list)
     days_of_week: List[int] = Field(default_factory=list)

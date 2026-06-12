@@ -396,6 +396,12 @@
                                 <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type"></span> 
                             </div>
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
+                                <template x-if="rule.constraint_type === 'tolerance'">
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance: ' + rule.tolerance_mins + 'm'"></span>
+                                </template>
+                                <template x-if="rule.constraint_type === 'mutually_exclusive'">
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-teal-300 italic" x-text="'Period: ' + (rule.grouping_period || 'daily')"></span>
+                                </template>
                                 <span class="font-bold">IF</span>
                                 <template x-if="rule.keywords && rule.keywords.length > 0">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + rule.keywords.join(', ')"></span>
@@ -443,6 +449,20 @@
                             <option value="preferred">Preferred</option>
                             <option value="unavailable">Unavailable</option>
                             <option value="mutually_exclusive">Mutually Exclusive</option>
+                            <option value="tolerance">Late Arrival (Tolerance)</option>
+                        </select>
+                    </div>
+                    <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'tolerance'">
+                        <label class="block text-gray-400 mb-1 text-sm">Tolerance (mins)</label>
+                        <input type="number" x-model.number="newRule.tolerance_mins" min="0" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'mutually_exclusive'">
+                        <label class="block text-gray-400 mb-1 text-sm">Grouping Period</label>
+                        <select x-model="newRule.grouping_period" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="all">Entire Period</option>
                         </select>
                     </div>
                 </div>
@@ -979,6 +999,8 @@
                     this.newRule = { 
                         driver_id: rule.driver_id, 
                         constraint_type: rule.constraint_type, 
+                        tolerance_mins: rule.tolerance_mins || 0,
+                        grouping_period: rule.grouping_period || 'daily',
                         keywords: [...(rule.keywords || [])], 
                         passenger_ids: [...(rule.passenger_ids || [])],
                         days_of_week: [...(rule.days_of_week || [])],
@@ -995,7 +1017,7 @@
                 cancelEditRule() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
+                    this.newRule = { driver_id: '', constraint_type: 'required', tolerance_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
                 },
                 async submitRule() {
                     this.saving = true;
