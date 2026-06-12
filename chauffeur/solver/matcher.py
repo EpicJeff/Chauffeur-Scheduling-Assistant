@@ -57,8 +57,29 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
             h, m = map(int, rule.time_end.split(':'))
             if event.end.hour * 60 + event.end.minute > h * 60 + m: return False
         except: pass
-        
+    def does_event_match_rule(event, rule, passengers=None) -> bool:
+    # (Leaving original content above this line intact by starting replace below it... wait, I need to start at line 63)
     return has_any_criteria
+
+def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: List[Passenger]) -> set:
+    grouped_event_pairs = set()
+    group_rules = [r for r in rules if getattr(r, 'constraint_type', None) == 'group']
+    from collections import defaultdict
+    for r in group_rules:
+        daily_matches = defaultdict(list)
+        for e in events:
+            # Match any of the filter sets
+            for fs in getattr(r, 'filter_sets', []):
+                if does_event_match_rule(e, fs, passengers):
+                    daily_matches[e.start.date()].append(e)
+                    break
+        for group_events in daily_matches.values():
+            if len(group_events) > 1:
+                for i in range(len(group_events)):
+                    for j in range(i + 1, len(group_events)):
+                        grouped_event_pairs.add((group_events[i].id, group_events[j].id))
+                        grouped_event_pairs.add((group_events[j].id, group_events[i].id))
+    return grouped_event_pairs
 
 def solve_schedule(
     events: List[Event],
@@ -122,23 +143,7 @@ def solve_schedule(
                 tol = max(tol, getattr(r, 'tolerance_mins', 0))
         e_tolerances[e.id] = tol
         
-    grouped_event_pairs = set()
-    group_rules = [r for r in rules if r.constraint_type == 'group']
-    for r in group_rules:
-        from collections import defaultdict
-        daily_matches = defaultdict(list)
-        for e in events:
-            # Match any of the filter sets
-            for fs in getattr(r, 'filter_sets', []):
-                if does_event_match_rule(e, fs, passengers):
-                    daily_matches[e.start.date()].append(e)
-                    break
-        for group_events in daily_matches.values():
-            if len(group_events) > 1:
-                for i in range(len(group_events)):
-                    for j in range(i + 1, len(group_events)):
-                        grouped_event_pairs.add((group_events[i].id, group_events[j].id))
-                        grouped_event_pairs.add((group_events[j].id, group_events[i].id))
+    grouped_event_pairs = get_grouped_event_pairs(events, rules, passengers)
 
     # Sort events by start time to easily check pairs
     sorted_events = sorted(events, key=lambda x: x.start)
@@ -613,7 +618,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, driver_attendances: Dict[str, List[str]] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     driver_event_ids = defaultdict(set)
     event_map = {e.id: e for e in events}
@@ -644,6 +649,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
         if d_id in driver_map and driver_map[d_id].home_location:
             driver_home = driver_map[d_id].home_location
             
+        grouped_event_pairs = get_grouped_event_pairs(events, rules, passengers) if rules and passengers else set()
+        
         # Group events by date to correctly compute initial edges per day and prevent cross-day routing
         from itertools import groupby
         for date_obj, date_evs_iter in groupby(evs, key=lambda x: x.start.date()):
@@ -708,38 +715,55 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 
                 pickup_waypoint = None
                 
-                if new_passengers:
-                    assigned_events = [ev for ev in events if ev.id in assignments]
-                    pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, assigned_events)
-                    if pickup_event:
-                        pickup_location = pickup_event.location
-                        pickup_title = pickup_event.title
-                    else:
-                        pickup_location = home_location if home_location else driver_home
-                        pickup_title = "Home"
-                    
-                    # If e2 starts before e1 ends, we must depart from e1 right after dropoff (e1.start)
+                if (e1.id, e2.id) in grouped_event_pairs:
+                    # They are grouped, so they are traveling together!
+                    # The pickup for any new passengers is e1's location.
                     dep_time = min(e1.end.timestamp(), e2.start.timestamp())
-                    
-                    drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
-                    drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
-                    
-                    travel = drive_to_pickup + drive_from_pickup
-                    delay = delay_to + delay_from
-                    next_origin = pickup_location
+                    drive_to_pickup = 0
+                    delay_to = 0
+                    drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
                     
                     pickup_waypoint = {
-                        "to_pickup_mins": drive_to_pickup,
+                        "to_pickup_mins": 0,
                         "from_pickup_mins": drive_from_pickup,
-                        "pickup_location": pickup_location,
-                        "pickup_event_title": pickup_title
+                        "pickup_location": e1.location,
+                        "pickup_event_title": e1.title
                     }
+                    travel = drive_from_pickup
+                    delay = delay_from
                 else:
-                    dep_time = min(e1.end.timestamp(), e2.start.timestamp())
-                    travel, delay = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
-                    next_origin = e2.location
-                    pickup_event = None
-                    
+                    if new_passengers:
+                        assigned_events = [ev for ev in events if ev.id in assignments]
+                        pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, assigned_events)
+                        if pickup_event:
+                            pickup_location = pickup_event.location
+                            pickup_title = pickup_event.title
+                        else:
+                            pickup_location = home_location if home_location else driver_home
+                            pickup_title = "Home"
+                        
+                        # If e2 starts before e1 ends, we must depart from e1 right after dropoff (e1.start)
+                        dep_time = min(e1.end.timestamp(), e2.start.timestamp())
+                        
+                        drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
+                        drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
+                        
+                        pickup_waypoint = {
+                            "to_pickup_mins": drive_to_pickup,
+                            "from_pickup_mins": drive_from_pickup,
+                            "pickup_location": pickup_location,
+                            "pickup_event_title": pickup_title
+                        }
+                        travel = drive_to_pickup + drive_from_pickup
+                        delay = delay_to + delay_from
+                    else:
+                        dep_time = min(e1.end.timestamp(), e2.start.timestamp())
+                        drive_mins, delay_mins = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
+                        travel = drive_mins
+                        delay = delay_mins
+                
+                # Check for layover home trip (only if we have more than 45 mins of free time)
+                
                 # Wait time is calculated from arrival at e2.location until e2.start
                 # But if they overlap, they might arrive exactly on time.
                 arr_time = dep_time + (travel * 60)
