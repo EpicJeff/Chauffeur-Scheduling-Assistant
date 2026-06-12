@@ -535,28 +535,41 @@
                                 </div>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
-                                        <label class="block text-gray-400 mb-1 text-xs">Keywords</label>
-                                        <input type="text" placeholder="Comma separated" :value="fs.keywords.join(', ')" @change="fs.keywords = $event.target.value.split(',').map(s=>s.trim()).filter(s=>s)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-gray-400 mb-1 text-xs">Passengers</label>
-                                        <select multiple @change="fs.passenger_ids = Array.from($event.target.selectedOptions).map(o=>o.value)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm h-20">
-                                            <template x-for="p in passengers">
-                                                <option :value="p.calendar_ids[0]" x-text="p.name" :selected="fs.passenger_ids.includes(p.calendar_ids[0])"></option>
+                                        <label class="block text-gray-400 mb-1 text-xs">Keywords (Must match one)</label>
+                                        <div class="flex gap-2 mb-2">
+                                            <input type="text" :id="'kwInput_' + fidx" @keydown.enter.prevent="let val = document.getElementById('kwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('kwInput_' + fidx).value = '';" placeholder="e.g. Soccer" class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                            <button @click.prevent="let val = document.getElementById('kwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('kwInput_' + fidx).value = '';" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="(kw, index) in fs.keywords" :key="index">
+                                                <span class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
+                                                    <span x-text="kw"></span>
+                                                    <button @click.prevent="fs.keywords.splice(index, 1)" class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                </span>
                                             </template>
-                                        </select>
+                                        </div>
                                     </div>
                                     <div>
-                                        <label class="block text-gray-400 mb-1 text-xs">Days</label>
-                                        <select multiple @change="fs.days_of_week = Array.from($event.target.selectedOptions).map(o=>parseInt(o.value))" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm h-20">
-                                            <option value="0" :selected="fs.days_of_week.includes(0)">Mon</option>
-                                            <option value="1" :selected="fs.days_of_week.includes(1)">Tue</option>
-                                            <option value="2" :selected="fs.days_of_week.includes(2)">Wed</option>
-                                            <option value="3" :selected="fs.days_of_week.includes(3)">Thu</option>
-                                            <option value="4" :selected="fs.days_of_week.includes(4)">Fri</option>
-                                            <option value="5" :selected="fs.days_of_week.includes(5)">Sat</option>
-                                            <option value="6" :selected="fs.days_of_week.includes(6)">Sun</option>
-                                        </select>
+                                        <label class="block text-gray-400 mb-1 text-xs">Passengers (Must match one)</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="p in passengers">
+                                                <button @click.prevent="fs.passenger_ids.includes(p.calendar_ids[0]) ? fs.passenger_ids = fs.passenger_ids.filter(id => id !== p.calendar_ids[0]) : fs.passenger_ids.push(p.calendar_ids[0])" 
+                                                        :class="fs.passenger_ids.includes(p.calendar_ids[0]) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                        class="border px-2 py-1 rounded text-xs font-bold transition-colors" x-text="p.name"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 border-t border-gray-600 pt-4">
+                                    <div>
+                                        <label class="block text-gray-400 mb-1 text-xs">Days of the Week</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
+                                                <button @click.prevent="fs.days_of_week.includes(idx) ? fs.days_of_week = fs.days_of_week.filter(d => d !== idx) : fs.days_of_week.push(idx)" 
+                                                        :class="fs.days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                        class="border px-2 py-1 rounded text-xs font-bold transition-colors" x-text="day"></button>
+                                            </template>
+                                        </div>
                                     </div>
                                     <div class="flex gap-2">
                                         <div class="flex-1">
@@ -1086,7 +1099,16 @@
                         this.newRuleKeywordInput = '';
                         
                         if (!this.newRule.driver_id) return alert('Driver is required');
-                        if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                        
+                        if (this.newRule.constraint_type === 'group') {
+                            if (this.newRule.filter_sets.length < 2) return alert('You must specify at least two filter sets to group');
+                            for (let i=0; i<this.newRule.filter_sets.length; i++) {
+                                let fs = this.newRule.filter_sets[i];
+                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0) return alert('Event Filter ' + (i+1) + ' must have at least one keyword or passenger');
+                            }
+                        } else {
+                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                        }
                         
                         const payload = JSON.parse(JSON.stringify(this.newRule));
                         if(this.editRuleId) {
