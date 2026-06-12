@@ -44,6 +44,7 @@ class EventFilter(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    location: Optional[str] = None
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -57,6 +58,7 @@ class Rule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    location: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
 
 class PriorityRule(BaseModel):
@@ -69,6 +71,7 @@ class PriorityRule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    location: Optional[str] = None
 
 class ManualOverride(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

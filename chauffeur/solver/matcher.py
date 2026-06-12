@@ -57,8 +57,12 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
             h, m = map(int, rule.time_end.split(':'))
             if event.end.hour * 60 + event.end.minute > h * 60 + m: return False
         except: pass
-    def does_event_match_rule(event, rule, passengers=None) -> bool:
-    # (Leaving original content above this line intact by starting replace below it... wait, I need to start at line 63)
+    # 5. Location
+    if hasattr(rule, 'location') and rule.location:
+        has_any_criteria = True
+        if not event.location or rule.location.lower() not in event.location.lower():
+            return False
+            
     return has_any_criteria
 
 def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: List[Passenger]) -> set:
