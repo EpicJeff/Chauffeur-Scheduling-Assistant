@@ -38,11 +38,18 @@ class Passenger(BaseModel):
     hashtags: List[str] = Field(default_factory=list)
     requires_attendance: bool = False
 
+class EventFilter(BaseModel):
+    keywords: List[str] = Field(default_factory=list)
+    passenger_ids: List[str] = Field(default_factory=list)
+    days_of_week: List[int] = Field(default_factory=list)
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
+
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     driver_id: str
     event_keyword: Optional[str] = None # Deprecated
-    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive'
+    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive', 'group'
     tolerance_mins: int = 0
     grouping_period: str = 'daily'
     keywords: List[str] = Field(default_factory=list)
@@ -50,6 +57,7 @@ class Rule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    filter_sets: List[EventFilter] = Field(default_factory=list)
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

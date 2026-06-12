@@ -402,6 +402,9 @@
                                 <template x-if="rule.constraint_type === 'mutually_exclusive'">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-teal-300 italic" x-text="'Period: ' + (rule.grouping_period || 'daily')"></span>
                                 </template>
+                                <template x-if="rule.constraint_type === 'group'">
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-purple-300 italic" x-text="(rule.filter_sets ? rule.filter_sets.length : 0) + ' events grouped'"></span>
+                                </template>
                                 <span class="font-bold">IF</span>
                                 <template x-if="rule.keywords && rule.keywords.length > 0">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + rule.keywords.join(', ')"></span>
@@ -450,6 +453,7 @@
                             <option value="unavailable">Unavailable</option>
                             <option value="mutually_exclusive">Mutually Exclusive</option>
                             <option value="tolerance">Late Arrival (Tolerance)</option>
+                            <option value="group">Group Events</option>
                         </select>
                     </div>
                     <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'tolerance'">
@@ -467,6 +471,7 @@
                     </div>
                 </div>
 
+                <div x-show="newRule.constraint_type !== 'group'">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 border-t border-gray-600 pt-4">
                     <div>
                         <label class="block text-gray-400 mb-1 text-sm font-bold">Keywords (Must match one)</label>
@@ -516,6 +521,58 @@
                             <input type="time" x-model="newRule.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                         </div>
                     </div>
+                </div>
+                </div>
+
+                <div x-show="newRule.constraint_type === 'group'" class="mt-4 border-t border-gray-600 pt-4 space-y-6">
+                    <label class="block text-gray-400 mb-1 text-sm font-bold">Group Filter Sets</label>
+                    <div class="space-y-4">
+                        <template x-for="(fs, fidx) in newRule.filter_sets" :key="fidx">
+                            <div class="bg-gray-800 p-4 rounded border border-gray-600">
+                                <div class="flex justify-between items-center mb-4">
+                                    <span class="font-bold text-white" x-text="'Event Filter ' + (fidx + 1)"></span>
+                                    <button @click.prevent="newRule.filter_sets.splice(fidx, 1)" class="text-red-400 hover:text-red-300">Remove</button>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-gray-400 mb-1 text-xs">Keywords</label>
+                                        <input type="text" placeholder="Comma separated" :value="fs.keywords.join(', ')" @change="fs.keywords = $event.target.value.split(',').map(s=>s.trim()).filter(s=>s)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-400 mb-1 text-xs">Passengers</label>
+                                        <select multiple @change="fs.passenger_ids = Array.from($event.target.selectedOptions).map(o=>o.value)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm h-20">
+                                            <template x-for="p in passengers">
+                                                <option :value="p.calendar_ids[0]" x-text="p.name" :selected="fs.passenger_ids.includes(p.calendar_ids[0])"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-400 mb-1 text-xs">Days</label>
+                                        <select multiple @change="fs.days_of_week = Array.from($event.target.selectedOptions).map(o=>parseInt(o.value))" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm h-20">
+                                            <option value="0" :selected="fs.days_of_week.includes(0)">Mon</option>
+                                            <option value="1" :selected="fs.days_of_week.includes(1)">Tue</option>
+                                            <option value="2" :selected="fs.days_of_week.includes(2)">Wed</option>
+                                            <option value="3" :selected="fs.days_of_week.includes(3)">Thu</option>
+                                            <option value="4" :selected="fs.days_of_week.includes(4)">Fri</option>
+                                            <option value="5" :selected="fs.days_of_week.includes(5)">Sat</option>
+                                            <option value="6" :selected="fs.days_of_week.includes(6)">Sun</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-xs">Time Start</label>
+                                            <input type="time" x-model="fs.time_start" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-xs">Time End</label>
+                                            <input type="time" x-model="fs.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <button @click.prevent="newRule.filter_sets.push({keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: ''})" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold">+ Add Event to Group</button>
                 </div>
 
                 <div class="flex gap-4 pt-4">
@@ -663,7 +720,7 @@
                 newPassenger: { name: '', hashtags: [], calendar_ids: [] },
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
-                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' },
+                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', filter_sets: [] },
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' },
                 newPriorityRuleKeywordInput: '',
@@ -1017,7 +1074,7 @@
                 cancelEditRule() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', tolerance_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '' };
+                    this.newRule = { driver_id: '', constraint_type: 'required', tolerance_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', filter_sets: [] };
                 },
                 async submitRule() {
                     this.saving = true;

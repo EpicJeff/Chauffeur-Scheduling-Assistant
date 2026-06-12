@@ -122,6 +122,24 @@ def solve_schedule(
                 tol = max(tol, getattr(r, 'tolerance_mins', 0))
         e_tolerances[e.id] = tol
         
+    grouped_event_pairs = set()
+    group_rules = [r for r in rules if r.constraint_type == 'group']
+    for r in group_rules:
+        from collections import defaultdict
+        daily_matches = defaultdict(list)
+        for e in events:
+            # Match any of the filter sets
+            for fs in getattr(r, 'filter_sets', []):
+                if does_event_match_rule(e, fs, passengers):
+                    daily_matches[e.start.date()].append(e)
+                    break
+        for group_events in daily_matches.values():
+            if len(group_events) > 1:
+                for i in range(len(group_events)):
+                    for j in range(i + 1, len(group_events)):
+                        grouped_event_pairs.add((group_events[i].id, group_events[j].id))
+                        grouped_event_pairs.add((group_events[j].id, group_events[i].id))
+
     # Sort events by start time to easily check pairs
     sorted_events = sorted(events, key=lambda x: x.start)
     for i in range(len(sorted_events)):
@@ -162,6 +180,9 @@ def solve_schedule(
                         d1_to_d2 = get_switch_travel_time(e1, e2, events) * 60
                         if (e2.start - e1.start).total_seconds() >= d1_to_d2 and (e2.end - e1.end).total_seconds() >= get_travel_time_minutes(e1.location, e2.location) * 60:
                             gap_seconds = float('inf')
+
+                if (e1.id, e2.id) in grouped_event_pairs:
+                    gap_seconds = float('inf')
 
                 gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
                 if gap_seconds_with_tolerance < total_needed_seconds:
@@ -327,7 +348,23 @@ def solve_schedule(
                 # Max 1 event from this group can be assigned
                 model.Add(sum(group_vars) <= 1)
 
-    # 4d. Override weights
+    # 4d. Custom Grouping Rules
+    # Only iterate through unique pairs to save constraints (a, b) and avoid doing (b, a)
+    processed_pairs = set()
+    for e1_id, e2_id in grouped_event_pairs:
+        pair_key = frozenset([e1_id, e2_id])
+        if pair_key in processed_pairs:
+            continue
+        processed_pairs.add(pair_key)
+        
+        # Prevent splitting: if e1 is assigned to d1, e2 CANNOT be assigned to d2 (where d1 != d2).
+        # This ensures that if both are assigned, they share the same driver.
+        for d1 in drivers:
+            for d2 in drivers:
+                if d1.id != d2.id:
+                    model.AddImplication(assign_vars[(e1_id, d1.id)], assign_vars[(e2_id, d2.id)].Not())
+
+    # 4e. Override weights
     import time
     base_time = time.time()
     for o in overrides:
