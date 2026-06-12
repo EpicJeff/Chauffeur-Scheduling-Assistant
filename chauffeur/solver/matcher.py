@@ -596,8 +596,8 @@ def get_passenger_pickup_event_for_subset(e2: Event, subset_cals: set, all_event
     
     if b_events_before:
         e_b_prev = max(b_events_before, key=lambda x: x.end)
-        # If it ended within 2 hours of e2.start
-        if (e2.start - e_b_prev.end).total_seconds() <= 7200:
+        # If it ended within 15 minutes of e2.start
+        if (e2.start - e_b_prev.end).total_seconds() <= 900:
             return e_b_prev
     return None
 
