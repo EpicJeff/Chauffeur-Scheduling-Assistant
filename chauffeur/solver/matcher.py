@@ -182,6 +182,29 @@ def solve_schedule(
                 
                 if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
                     gap_seconds = float('inf')
+                else:
+                    attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
+                    if not attendance_conflict and e1.location and e2.location:
+                        req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
+                        late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
+                        
+                        req_e1_e2 = get_travel_time_minutes(e1.location, e2.location) * 60 + 5 * 60
+                        req_e2_e1 = get_travel_time_minutes(e2.location, e1.location) * 60 + 5 * 60
+                        
+                        tol_e1 = e_tolerances.get(e1.id, 0) * 60
+                        tol_e2 = e_tolerances.get(e2.id, 0) * 60
+                        
+                        if e2.end <= e1.end:
+                            # Profile B: e2 is fully enveloped by e1. Drop e1 -> Drop e2 -> Pick e2 -> Pick e1
+                            late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.end).total_seconds())
+                            if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1:
+                                gap_seconds = float('inf')
+                        else:
+                            # Profile A: e1 and e2 overlap. Drop e1 -> Drop e2 -> Pick e1 -> Pick e2
+                            late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.start).total_seconds())
+                            late_pick_e2 = max(0, req_e1_e2 - (e2.end - e1.end).total_seconds())
+                            if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1 and late_pick_e2 <= tol_e2:
+                                gap_seconds = float('inf')
 
                 if (e1.id, e2.id) in grouped_event_pairs:
                     gap_seconds = float('inf')
@@ -709,6 +732,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 e2_cals = set(e2.calendar_ids)
                 shares_calendar = bool(e1_cals.intersection(e2_cals))
                 new_passengers = e2_cals - e1_cals
+                if getattr(e2, 'event_type', 'standard') == 'pickup':
+                    new_passengers = set()
                 
                 pickup_waypoint = None
                 
@@ -1013,3 +1038,95 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             
     return diagnostics
             
+
+ d e f   s p l i t _ s t a g g e r e d _ e v e n t s ( a s s i g n m e n t s :   D i c t [ s t r ,   s t r ] ,   g h o s t _ a s s i g n m e n t s :   D i c t [ s t r ,   s t r ] ,   e v e n t s :   L i s t [ E v e n t ] )   - >   L i s t [ E v e n t ] : 
+         f r o m   c o l l e c t i o n s   i m p o r t   d e f a u l t d i c t 
+         d r i v e r _ e v e n t s   =   d e f a u l t d i c t ( l i s t ) 
+         e v e n t _ m a p   =   { e . i d :   e   f o r   e   i n   e v e n t s } 
+         
+         a l l _ a s s i g n   =   { * * a s s i g n m e n t s ,   * * g h o s t _ a s s i g n m e n t s } 
+         f o r   e _ i d ,   d _ i d   i n   a l l _ a s s i g n . i t e m s ( ) : 
+                 i f   e _ i d   i n   e v e n t _ m a p : 
+                         d r i v e r _ e v e n t s [ d _ i d ] . a p p e n d ( e v e n t _ m a p [ e _ i d ] ) 
+                         
+         e v e n t s _ t o _ r e m o v e   =   s e t ( ) 
+         e v e n t s _ t o _ a d d   =   [ ] 
+         
+         f o r   d _ i d ,   e v s   i n   d r i v e r _ e v e n t s . i t e m s ( ) : 
+                 e v s . s o r t ( k e y = l a m b d a   x :   x . s t a r t ) 
+                 
+                 #   D e t e c t   s t a g g e r s 
+                 f o r   i   i n   r a n g e ( l e n ( e v s )   -   1 ) : 
+                         e 1   =   e v s [ i ] 
+                         e 2   =   e v s [ i + 1 ] 
+                         i f   e 2 . s t a r t   <   e 1 . e n d : 
+                                 #   O v e r l a p !   C h e c k   i f   i t ' s   a   v a l i d   s t a g g e r   ( i . e .   n o t   g r o u p e d ,   n o   s h a r e d   c a l e n d a r ) 
+                                 s h a r e s _ c a l e n d a r   =   b o o l ( s e t ( e 1 . c a l e n d a r _ i d s ) . i n t e r s e c t i o n ( s e t ( e 2 . c a l e n d a r _ i d s ) ) ) 
+                                 i f   n o t   s h a r e s _ c a l e n d a r : 
+                                         i f   e 2 . e n d   < =   e 1 . e n d : 
+                                                 #   P r o f i l e   B :   e 2   e n v e l o p e d   b y   e 1 .   e 1   i s   s p l i t ,   e 2   i s   k e p t   i n t a c t . 
+                                                 i f   e 1 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
+                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 1 . i d ) 
+                                                         #   C r e a t e   e 1   d r o p o f f 
+                                                         e 1 _ d r o p   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
+                                                         e 1 _ d r o p . i d   =   e 1 . i d   +   ' _ d r o p o f f ' 
+                                                         e 1 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
+                                                         e 1 _ d r o p . e n d   =   e 1 . s t a r t 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ d r o p ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+                                                         
+                                                         #   C r e a t e   e 1   p i c k u p 
+                                                         e 1 _ p i c k   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
+                                                         e 1 _ p i c k . i d   =   e 1 . i d   +   ' _ p i c k u p ' 
+                                                         e 1 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
+                                                         e 1 _ p i c k . s t a r t   =   e 1 . e n d 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ p i c k ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+                                         e l s e : 
+                                                 #   P r o f i l e   A :   e 1   a n d   e 2   o v e r l a p .   B o t h   s p l i t . 
+                                                 i f   e 1 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
+                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 1 . i d ) 
+                                                         e 1 _ d r o p   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
+                                                         e 1 _ d r o p . i d   =   e 1 . i d   +   ' _ d r o p o f f ' 
+                                                         e 1 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
+                                                         e 1 _ d r o p . e n d   =   e 1 . s t a r t 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ d r o p ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+                                                         
+                                                         e 1 _ p i c k   =   e 1 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 1 ,   ' m o d e l _ c o p y ' )   e l s e   e 1 . c o p y ( ) 
+                                                         e 1 _ p i c k . i d   =   e 1 . i d   +   ' _ p i c k u p ' 
+                                                         e 1 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
+                                                         e 1 _ p i c k . s t a r t   =   e 1 . e n d 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 1 _ p i c k ,   d _ i d ,   e 1 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+                                                         
+                                                 i f   e 2 . i d   n o t   i n   e v e n t s _ t o _ r e m o v e : 
+                                                         e v e n t s _ t o _ r e m o v e . a d d ( e 2 . i d ) 
+                                                         e 2 _ d r o p   =   e 2 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 2 ,   ' m o d e l _ c o p y ' )   e l s e   e 2 . c o p y ( ) 
+                                                         e 2 _ d r o p . i d   =   e 2 . i d   +   ' _ d r o p o f f ' 
+                                                         e 2 _ d r o p . e v e n t _ t y p e   =   ' d r o p o f f ' 
+                                                         e 2 _ d r o p . e n d   =   e 2 . s t a r t 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 2 _ d r o p ,   d _ i d ,   e 2 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+                                                         
+                                                         e 2 _ p i c k   =   e 2 . m o d e l _ c o p y ( )   i f   h a s a t t r ( e 2 ,   ' m o d e l _ c o p y ' )   e l s e   e 2 . c o p y ( ) 
+                                                         e 2 _ p i c k . i d   =   e 2 . i d   +   ' _ p i c k u p ' 
+                                                         e 2 _ p i c k . e v e n t _ t y p e   =   ' p i c k u p ' 
+                                                         e 2 _ p i c k . s t a r t   =   e 2 . e n d 
+                                                         e v e n t s _ t o _ a d d . a p p e n d ( ( e 2 _ p i c k ,   d _ i d ,   e 2 . i d   i n   g h o s t _ a s s i g n m e n t s ) ) 
+ 
+         i f   n o t   e v e n t s _ t o _ r e m o v e : 
+                 r e t u r n   e v e n t s 
+ 
+         n e w _ e v e n t s   =   [ e   f o r   e   i n   e v e n t s   i f   e . i d   n o t   i n   e v e n t s _ t o _ r e m o v e ] 
+         f o r   n e w _ e ,   d _ i d ,   i s _ g h o s t   i n   e v e n t s _ t o _ a d d : 
+                 n e w _ e v e n t s . a p p e n d ( n e w _ e ) 
+                 i f   i s _ g h o s t : 
+                         g h o s t _ a s s i g n m e n t s [ n e w _ e . i d ]   =   d _ i d 
+                 e l s e : 
+                         a s s i g n m e n t s [ n e w _ e . i d ]   =   d _ i d 
+                         
+         f o r   e _ i d   i n   e v e n t s _ t o _ r e m o v e : 
+                 i f   e _ i d   i n   a s s i g n m e n t s : 
+                         d e l   a s s i g n m e n t s [ e _ i d ] 
+                 i f   e _ i d   i n   g h o s t _ a s s i g n m e n t s : 
+                         d e l   g h o s t _ a s s i g n m e n t s [ e _ i d ] 
+                         
+         r e t u r n   n e w _ e v e n t s 
+  
+ 

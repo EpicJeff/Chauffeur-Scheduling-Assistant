@@ -14,6 +14,7 @@ class Event(BaseModel):
     calendar_ids: List[str]
     source_event_ids: List[str]
     all_day: bool = False
+    event_type: str = "standard"
 
 class Driver(BaseModel):
     id: str

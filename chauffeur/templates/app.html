@@ -704,8 +704,8 @@
                     }
                     
                     const eventData = {
-                        title: ev.title,
-                        timeStr: `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
+                        title: ev.event_type === 'dropoff' ? 'Dropoff: ' + ev.title : (ev.event_type === 'pickup' ? 'Pickup: ' + ev.title : ev.title),
+                        timeStr: (ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
                         location: ev.location,
                         passengerHtml: badges
                     };
@@ -717,8 +717,12 @@
                                 ${formatTime(ev.start).split(':')[0]}
                             </div>
                             <div class="ml-4 flex-1 ${bgColor} rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
-                                <div class="text-sm font-bold text-gray-400 mb-1">${formatTime(ev.start)} - ${formatTime(ev.end)}</div>
-                                <div class="${titleClass} font-bold text-xl leading-tight mb-2">${ev.title}</div>
+                                <div class="text-sm font-bold text-gray-400 mb-1">${(ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
+                                <div class="${titleClass} font-bold text-xl leading-tight mb-2">
+                                    ${ev.event_type === 'dropoff' ? '<span class="text-[10px] tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-1 rounded mr-2 align-middle border border-orange-500/50">Dropoff</span>' : ''}
+                                    ${ev.event_type === 'pickup' ? '<span class="text-[10px] tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-1 rounded mr-2 align-middle border border-green-500/50">Pickup</span>' : ''}
+                                    ${ev.title}
+                                </div>
                                 ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
                                 ${lateMins > 0 ? `<div class="text-red-400 font-bold text-sm mb-2 flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Arriving ${lateMins}m Late</div>` : ''}
                                 ${ev.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${ev.location}</span></div>` : ''}

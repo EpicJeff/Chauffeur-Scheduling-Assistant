@@ -563,6 +563,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     assigned_events = [e for e in events_to_solve if e.id in assignments]
     ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
     
+    # Split Staggered Events
+    events_to_solve = matcher.split_staggered_events(assignments, ghost_assignments, events_to_solve)
+
     # Route Edges
     all_assignments = {**assignments, **ghost_assignments}
     home_location = maps.get_home_location()
