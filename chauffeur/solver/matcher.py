@@ -725,7 +725,11 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     dep_time = min(e1.end.timestamp(), e2.start.timestamp())
                     drive_to_pickup = 0
                     delay_to = 0
-                    drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
+                    
+                    if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
+                        drive_from_pickup, delay_from = 0, 0
+                    else:
+                        drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
                     
                     pickup_waypoint = {
                         "to_pickup_mins": 0,
@@ -776,21 +780,22 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 home_waypoint = None
                 travel_gap = (e2.start.timestamp() - dep_time) / 60
                 pickup_location = pickup_event.location if (not shares_calendar and pickup_event) else e2.location
-                if travel_gap > 45 and driver_home and driver_home.strip() != "":
+                if (travel_gap > 45 or wait > 15) and driver_home and driver_home.strip() != "":
                     travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(dep_time), return_traffic=True)
                     travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
                     layover = travel_gap - travel_to_home - travel_from_home - 5
                     
-                    if layover >= 20:
+                    if layover >= 20 or (wait > 15 and layover >= 0):
                         home_waypoint = {
                             "to_home_mins": travel_to_home,
                             "to_home_delay_mins": to_delay,
                             "from_home_mins": travel_from_home,
                             "from_home_delay_mins": from_delay,
-                            "layover_mins": int(layover)
+                            "layover_mins": int(max(0, layover))
                         }
                         travel = travel_to_home + travel_from_home
                         delay = to_delay + from_delay
+                        wait = 0  # Since they go home, they can time their departure to arrive precisely on time
                 
                 edges[d_id][e1.id] = {
                     "to_event": e2.id,
