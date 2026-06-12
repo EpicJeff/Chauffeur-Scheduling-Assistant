@@ -802,7 +802,7 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
     try:
         cache = storage.get_cached_schedule()
         if not cache:
-            cache = background_tasks.add_task(refresh_schedule_logic)
+            cache = refresh_schedule_logic(None, None, True)
             
         import urllib.parse
         from datetime import datetime
