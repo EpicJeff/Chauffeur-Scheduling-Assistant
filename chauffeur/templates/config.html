@@ -520,9 +520,15 @@
                             <label class="block text-gray-400 mb-1 text-sm font-bold">Time End</label>
                             <input type="time" x-model="newRule.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                         </div>
-                        <div class="flex-1 md:flex-[2]">
+                        <div class="flex-1 md:flex-[2] relative">
                             <label class="block text-gray-400 mb-1 text-sm font-bold">Location (Match)</label>
-                            <input type="text" x-model="newRule.location" placeholder="e.g. Gym" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                            <input type="text" x-model="newRule.location" @input="handleRuleLocationInput()" placeholder="e.g. Gym" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                            <!-- Autocomplete Dropdown -->
+                            <div x-show="ruleLocationSuggestions.length > 0" @click.away="ruleLocationSuggestions = []" class="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                                <template x-for="s in ruleLocationSuggestions" :key="s.description">
+                                    <div @click="selectRuleLocation(s.description)" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm" x-text="s.description"></div>
+                                </template>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -708,9 +714,15 @@
                             <label class="block text-gray-400 mb-1 text-sm font-bold">Time End</label>
                             <input type="time" x-model="newPriorityRule.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                         </div>
-                        <div class="flex-1 md:flex-[2]">
+                        <div class="flex-1 md:flex-[2] relative">
                             <label class="block text-gray-400 mb-1 text-sm font-bold">Location (Match)</label>
-                            <input type="text" x-model="newPriorityRule.location" placeholder="e.g. Gym" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                            <input type="text" x-model="newPriorityRule.location" @input="handlePriorityRuleLocationInput()" placeholder="e.g. Gym" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                            <!-- Autocomplete Dropdown -->
+                            <div x-show="priorityRuleLocationSuggestions.length > 0" @click.away="priorityRuleLocationSuggestions = []" class="absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                                <template x-for="s in priorityRuleLocationSuggestions" :key="s.description">
+                                    <div @click="selectPriorityRuleLocation(s.description)" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm" x-text="s.description"></div>
+                                </template>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -734,6 +746,8 @@
                 locationSuggestions: [],
                 calendarIds: [],
                 driverLocationSuggestions: [],
+                ruleLocationSuggestions: [],
+                priorityRuleLocationSuggestions: [],
                 autocompleteTimeout: null,
                 newCalendarIdInput: '',
                 calendarMetadata: {},
@@ -817,6 +831,57 @@
                 selectDriverLocation(loc) {
                     this.newDriver.home_location = loc;
                     this.driverLocationSuggestions = [];
+                },
+                async handleRuleLocationInput() {
+                    if (!this.newRule.location || this.newRule.location.length < 3) {
+                        this.ruleLocationSuggestions = [];
+                        return;
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newRule.location)}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.ruleLocationSuggestions = data.suggestions;
+                            } else {
+                                this.ruleLocationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+
+                selectRuleLocation(loc) {
+                    this.newRule.location = loc;
+                    this.ruleLocationSuggestions = [];
+                },
+
+                async handlePriorityRuleLocationInput() {
+                    if (!this.newPriorityRule.location || this.newPriorityRule.location.length < 3) {
+                        this.priorityRuleLocationSuggestions = [];
+                        return;
+                    }
+                    clearTimeout(this.autocompleteTimeout);
+                    this.autocompleteTimeout = setTimeout(async () => {
+                        try {
+                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newPriorityRule.location)}`);
+                            const data = await res.json();
+                            if (data.suggestions) {
+                                this.priorityRuleLocationSuggestions = data.suggestions;
+                            } else {
+                                this.priorityRuleLocationSuggestions = [];
+                            }
+                        } catch (e) {
+                            console.error("Autocomplete failed", e);
+                        }
+                    }, 300);
+                },
+
+                selectPriorityRuleLocation(loc) {
+                    this.newPriorityRule.location = loc;
+                    this.priorityRuleLocationSuggestions = [];
                 },
 
                 async fetchCalendarMetadata(ids) {
