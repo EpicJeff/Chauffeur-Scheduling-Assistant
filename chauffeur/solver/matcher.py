@@ -395,12 +395,34 @@ def solve_schedule(
         
     return assignments, unassigned, lateness_warnings
 
-def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None) -> Tuple[Dict[str, str], List[dict]]:
+def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, str], List[dict]]:
     if not events:
         return {}, []
         
     if assigned_events is None:
         assigned_events = []
+    if rules is None:
+        rules = []
+    if passengers is None:
+        passengers = []
+        
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
+    from collections import defaultdict
+    mut_ex_counts = defaultdict(int)
+    
+    for r in mut_ex_rules:
+        for ae in assigned_events:
+            if does_event_match_rule(ae, r, passengers):
+                period = getattr(r, 'grouping_period', 'daily')
+                if period == 'daily':
+                    key = (ae.start.strftime('%Y-%m-%d'), r.id)
+                elif period == 'weekly':
+                    key = (ae.start.strftime('%Y-%W'), r.id)
+                elif period == 'monthly':
+                    key = (ae.start.strftime('%Y-%m'), r.id)
+                else:
+                    key = r.id
+                mut_ex_counts[key] += 1
     
     valid_events = []
     for e in events:
@@ -419,6 +441,26 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None)
                 if (second.start - first.end).total_seconds() < total_needed_seconds:
                     is_impossible = True
                     break
+                    
+        if not is_impossible:
+            for r in mut_ex_rules:
+                if does_event_match_rule(e, r, passengers):
+                    period = getattr(r, 'grouping_period', 'daily')
+                    if period == 'daily':
+                        key = (e.start.strftime('%Y-%m-%d'), r.id)
+                    elif period == 'weekly':
+                        key = (e.start.strftime('%Y-%W'), r.id)
+                    elif period == 'monthly':
+                        key = (e.start.strftime('%Y-%m'), r.id)
+                    else:
+                        key = r.id
+                        
+                    if mut_ex_counts[key] >= 1:
+                        is_impossible = True
+                        break
+                    else:
+                        mut_ex_counts[key] += 1
+                        
         if not is_impossible:
             valid_events.append(e)
             
