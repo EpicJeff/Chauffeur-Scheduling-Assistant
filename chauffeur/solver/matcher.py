@@ -797,11 +797,18 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             
                 home_waypoint = None
                 travel_gap = (e2.start.timestamp() - dep_time) / 60
-                pickup_location = pickup_event.location if (not shares_calendar and pickup_event) else e2.location
+                
+                if pickup_waypoint:
+                    next_dest = pickup_waypoint["pickup_location"]
+                else:
+                    next_dest = e2.location
+                    
                 if (travel_gap > 45 or wait > 15) and driver_home and driver_home.strip() != "":
                     travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(dep_time), return_traffic=True)
-                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, pickup_location, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
-                    layover = travel_gap - travel_to_home - travel_from_home - 5
+                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, next_dest, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
+                    
+                    extra_drive = pickup_waypoint["from_pickup_mins"] if pickup_waypoint else 0
+                    layover = travel_gap - travel_to_home - travel_from_home - extra_drive - 5
                     
                     if layover >= 20 or (wait > 15 and layover >= 0):
                         home_waypoint = {
@@ -811,10 +818,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             "from_home_delay_mins": from_delay,
                             "layover_mins": int(max(0, layover))
                         }
-                        travel = travel_to_home + travel_from_home
+                        travel = travel_to_home + travel_from_home + extra_drive
                         delay = to_delay + from_delay
                         # Arrive precisely on time
-                        arr_time = dep_time + ((travel_to_home + max(0, layover) + travel_from_home) * 60)
+                        arr_time = dep_time + ((travel_to_home + max(0, layover) + travel_from_home + extra_drive) * 60)
                         wait = 0
 
                 late = max(0, (arr_time - e2.start.timestamp()) / 60)
