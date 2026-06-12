@@ -52,7 +52,7 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
                 <span id="notif-badge" class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
-            <button id="btn-sync" onclick="fetchData()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
+            <button id="btn-sync" onclick="fetchSchedule(true)" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             </button>
             <button id="btn-switch-driver" onclick="clearDriver()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors hidden">
@@ -304,7 +304,7 @@
             document.getElementById('btn-notif').classList.remove('hidden');
             await checkNotificationStatus();
             
-            await fetchData();
+            await fetchSchedule();
             fetchNotifications();
         }
 
@@ -500,7 +500,7 @@
                         status: 'completed'
                     })
                 });
-                await fetchData();
+                await fetchSchedule();
                 closeActionSheet();
             } catch (e) {
                 console.error("Failed to mark completed", e);
