@@ -769,6 +769,8 @@ custom_schedule_cache = {}
 
 from fastapi import BackgroundTasks
 
+last_bg_refresh = {}
+
 @app.get("/api/schedule")
 def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False):
     try:
@@ -784,8 +786,15 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 
             if cached:
                 cached["completed_drives"] = completed
-                # Fire an async background refresh so Google Calendar latency (1-5s) doesn't block the UI
-                background_tasks.add_task(refresh_schedule_logic, start_date, end_date, False)
+                # Rate limit background refreshes to every 5 minutes per date range
+                import time
+                global last_bg_refresh
+                cache_key = f"{start_date}_{end_date}"
+                now = time.time()
+                if now - last_bg_refresh.get(cache_key, 0) > 300:
+                    last_bg_refresh[cache_key] = now
+                    # Fire an async background refresh so Google Calendar latency (1-5s) doesn't block the UI
+                    background_tasks.add_task(refresh_schedule_logic, start_date, end_date, False)
                 return cached
 
         # Fetch fresh and block if no cache exists or forced
