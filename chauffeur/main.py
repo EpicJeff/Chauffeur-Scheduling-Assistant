@@ -440,7 +440,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if cid and cid.strip():
                 passenger_calendar_ids.add(cid.strip())
                 
-    all_cals_to_fetch = list(set(calendar_ids) | driver_calendar_ids | passenger_calendar_ids)
+    all_cals_to_fetch = sorted(list(set(calendar_ids) | driver_calendar_ids | passenger_calendar_ids))
     
     # If there are no calendars to fetch at all, return an error
     if not all_cals_to_fetch:
@@ -455,14 +455,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
         
-    # Lazy Solving Check
-    current_events_hash = hash_events(all_fetched_events)
-    if start_date_str and end_date_str and not force_refresh:
-        cached_custom = storage.get_custom_schedule(start_date_str, end_date_str)
-        if cached_custom and cached_custom.get('events_hash') == current_events_hash:
-            return cached_custom['schedule']
-
-        
+    # Removed global hash check. We now do day-by-day hashing and caching below.
     events = []
     all_events_for_ui = {} # To avoid duplicates in payload
     import difflib
@@ -552,31 +545,122 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
             
-    assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-        events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers
-    )
-    
-    # Ghost Routes
-    unassigned_events = [e for e in events_to_solve if e.id in unassigned]
-    
-    # Pass the events that were successfully assigned to real drivers
-    assigned_events = [e for e in events_to_solve if e.id in assignments]
-    ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
-    
-    # Split Staggered Events
-    events_to_solve = matcher.split_staggered_events(assignments, ghost_assignments, events_to_solve)
+    from collections import defaultdict
+    import datetime
 
-    # Route Edges
-    all_assignments = {**assignments, **ghost_assignments}
+    # Group events to solve by local date
+    events_to_solve_by_date = defaultdict(list)
+    for e in events_to_solve:
+        date_str = e.start.astimezone().strftime("%Y-%m-%d")
+        events_to_solve_by_date[date_str].append(e)
+
+    # Group all fetched events by local date (for hashing)
+    fetched_by_date = defaultdict(list)
+    for e in all_fetched_events:
+        date_str = e.start.astimezone().strftime("%Y-%m-%d")
+        fetched_by_date[date_str].append(e)
+
+    old_cache = storage.get_cached_schedule()
+    previous_assignments = old_cache.get("assignments", {})
+    
+    combined_assignments = {}
+    combined_unassigned = []
+    combined_lateness_warnings = []
+    combined_ghost_assignments = {}
+    combined_ghost_drivers = []
+    combined_events_to_solve = []
+    combined_route_edges = []
+    combined_initial_edges = []
+    combined_final_edges = []
+    combined_true_unassigned = []
+    combined_conflicts = []
+    
     home_location = maps.get_home_location()
-    route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, events_to_solve, drivers, home_location=home_location, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
-    
-    # True Unassigned (dropped due to passenger conflicts)
-    true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
-    
-    # Conflicts
-    conflicts = matcher.compute_conflicts(assignments, ghost_assignments, events_to_solve)
-    
+
+    for date_str, daily_fetched in fetched_by_date.items():
+        daily_hash = hash_events(daily_fetched)
+        daily_events_to_solve = events_to_solve_by_date[date_str]
+        
+        # Check cache
+        daily_cache = storage.get_cached_daily_schedule(date_str)
+        if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh:
+            sched = daily_cache['schedule']
+            combined_assignments.update(sched.get('assignments', {}))
+            combined_unassigned.extend(sched.get('unassigned', []))
+            combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
+            combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
+            
+            existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
+            for g in sched.get('ghost_drivers', []):
+                if g['id'] not in existing_ghost_ids:
+                    combined_ghost_drivers.append(g)
+                    existing_ghost_ids.add(g['id'])
+                    
+            combined_events_to_solve.extend(sched.get('events', []))
+            combined_route_edges.extend(sched.get('route_edges', []))
+            combined_initial_edges.extend(sched.get('initial_edges', []))
+            combined_final_edges.extend(sched.get('final_edges', []))
+            combined_true_unassigned.extend(sched.get('true_unassigned', []))
+            combined_conflicts.extend(sched.get('conflicts', []))
+            continue
+            
+        # Else, solve for this day!
+        assignments, unassigned, lateness_warnings = matcher.solve_schedule(
+            daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers
+        )
+        
+        # Ghost Routes
+        unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
+        assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
+        ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
+        
+        # Split Staggered Events
+        daily_events_to_solve = matcher.split_staggered_events(assignments, ghost_assignments, daily_events_to_solve)
+        
+        # Route Edges
+        all_assignments = {**assignments, **ghost_assignments}
+        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
+        
+        # True Unassigned
+        true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
+        
+        # Conflicts
+        conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
+        
+        daily_schedule = {
+            "assignments": assignments,
+            "unassigned": unassigned,
+            "lateness_warnings": lateness_warnings,
+            "ghost_assignments": ghost_assignments,
+            "ghost_drivers": ghost_drivers,
+            "route_edges": [e.dict() if hasattr(e, 'dict') else e for e in route_edges],
+            "initial_edges": [e.dict() if hasattr(e, 'dict') else e for e in initial_edges],
+            "final_edges": [e.dict() if hasattr(e, 'dict') else e for e in final_edges],
+            "events": [e.dict() if hasattr(e, 'dict') else e for e in daily_events_to_solve],
+            "true_unassigned": true_unassigned,
+            "conflicts": conflicts
+        }
+        
+        storage.save_cached_daily_schedule(date_str, daily_schedule, daily_hash)
+        
+        combined_assignments.update(assignments)
+        combined_unassigned.extend(unassigned)
+        combined_lateness_warnings.extend(lateness_warnings)
+        combined_ghost_assignments.update(ghost_assignments)
+        
+        existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
+        for g in ghost_drivers:
+            if g['id'] not in existing_ghost_ids:
+                combined_ghost_drivers.append(g)
+                existing_ghost_ids.add(g['id'])
+                
+        combined_events_to_solve.extend(daily_schedule["events"])
+        combined_route_edges.extend(daily_schedule["route_edges"])
+        combined_initial_edges.extend(daily_schedule["initial_edges"])
+        combined_final_edges.extend(daily_schedule["final_edges"])
+        combined_true_unassigned.extend(true_unassigned)
+        combined_conflicts.extend(conflicts)
+        
     calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
     
     PALETTE = [
@@ -607,7 +691,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     overridden_event_ids = [o.event_id for o in overrides]
     
     diagnostics = matcher.compute_diagnostics(
-        true_unassigned, all_fetched_events, drivers, driver_events_map, assignments, overrides, rules, passengers=passengers
+        combined_true_unassigned, all_fetched_events, drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
     )
     
     duplicate_groups = []
@@ -620,9 +704,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 mut_ex_keywords.extend([kw.lower() for kw in r.keywords])
     from collections import defaultdict
     dup_groups = defaultdict(list)
-    for e in events_to_solve:
-        date_str = e.start.strftime('%Y-%m-%d')
-        core_title = e.title.split(' - ')[0].split(':')[0].strip()
+    for e in combined_events_to_solve:
+        # e might be a dict or an Event object depending on whether it came from cache
+        if isinstance(e, dict):
+            date_str = e['start'][:10] if 'start' in e and isinstance(e['start'], str) else e['start'].strftime('%Y-%m-%d')
+            core_title = e.get('title', '').split(' - ')[0].split(':')[0].strip()
+            cal_ids = tuple(sorted(e.get('calendar_ids', [])))
+            e_id = e.get('id')
+            e_title = e.get('title')
+        else:
+            date_str = e.start.strftime('%Y-%m-%d')
+            core_title = e.title.split(' - ')[0].split(':')[0].strip()
+            cal_ids = tuple(sorted(e.calendar_ids))
+            e_id = e.id
+            e_title = e.title
+            
         core_title_lower = core_title.lower()
         
         if any(kw in core_title_lower for kw in mut_ex_keywords):
@@ -631,33 +727,33 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if len(core_title) > 3:
             # Group by date, core title, and calendars. Ignore duration.
             # This catches duplicates for the same attendee, while keeping separate events for different attendees distinct.
-            key = (date_str, core_title, tuple(sorted(e.calendar_ids)))
-            dup_groups[key].append(e)
+            key = (date_str, core_title, cal_ids)
+            dup_groups[key].append((e_title, e_id))
             
     for key, evs in dup_groups.items():
         if len(evs) > 1:
             duplicate_groups.append({
                 "date": key[0],
                 "keyword": key[1],
-                "original_titles": [e.title for e in evs],
-                "event_ids": [e.id for e in evs]
+                "original_titles": [e[0] for e in evs],
+                "event_ids": [e[1] for e in evs]
             })
 
     data = jsonable_encoder({
         "duplicate_groups": duplicate_groups,
         "events": list(all_events_for_ui.values()),
-        "assignments": assignments,
-        "ghost_assignments": ghost_assignments,
-        "ghost_drivers": ghost_drivers,
-        "route_edges": route_edges,
-        "initial_edges": initial_edges,
-        "final_edges": final_edges,
-        "conflicts": conflicts,
-        "unassigned": true_unassigned,
+        "assignments": combined_assignments,
+        "ghost_assignments": combined_ghost_assignments,
+        "ghost_drivers": combined_ghost_drivers,
+        "route_edges": combined_route_edges,
+        "initial_edges": combined_initial_edges,
+        "final_edges": combined_final_edges,
+        "conflicts": combined_conflicts,
+        "unassigned": combined_true_unassigned,
         "no_location": no_location_events,
         "overridden_events": overridden_event_ids,
         "calendar_metadata": calendar_metadata,
-        "lateness_warnings": lateness_warnings,
+        "lateness_warnings": combined_lateness_warnings,
         "passenger_calendar_ids": calendar_ids,
         "driver_events": driver_events_ids,
         "home_location": home_location or "",
@@ -669,7 +765,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     if not start_date_str and not end_date_str:
         storage.set_cached_schedule(data)
     else:
-        storage.save_custom_schedule(start_date_str, end_date_str, data, current_events_hash)
+        storage.save_custom_schedule(start_date_str, end_date_str, data, "")
 
     if start_date_str is None and end_date_str is None:
         # --- Generate Pending Notifications ---

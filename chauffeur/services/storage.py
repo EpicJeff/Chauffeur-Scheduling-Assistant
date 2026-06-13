@@ -40,6 +40,7 @@ with db_lock:
     overrides_table = db.table('overrides')
     cache_table = db.table('schedule_cache')
     custom_schedules_table = db.table('custom_schedules')
+    daily_schedules_table = db.table('daily_schedules')
     settings_table = db.table('settings')
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
@@ -201,6 +202,7 @@ def add_passenger(passenger_data: dict) -> int:
 def update_passenger(doc_id: int, passenger_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         passengers_table.update(passenger_data, doc_ids=[doc_id])
 
 def delete_passenger(doc_id: int):
@@ -264,6 +266,7 @@ def add_rule(rule_data: dict) -> int:
 def update_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_rule(doc_id: int):
@@ -320,6 +323,7 @@ def add_priority_rule(rule_data: dict) -> int:
 def update_priority_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         priority_rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_priority_rule(doc_id: int):
@@ -339,6 +343,7 @@ def get_all_overrides() -> List[dict]:
 def add_override(override_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         # Overrides are unique per event_id, so remove existing if present
         overrides_table.remove(Query().event_id == override_data['event_id'])
         return overrides_table.insert(override_data)
@@ -346,12 +351,14 @@ def add_override(override_data: dict) -> int:
 def delete_override(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         overrides_table.remove(doc_ids=[doc_id])
 
 def delete_override_by_event(event_id: str):
     from tinydb import Query
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         overrides_table.remove(Query().event_id == event_id)
 
 # Schedule Cache
@@ -390,6 +397,22 @@ def get_all_custom_schedule_keys():
 def clear_custom_schedules():
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+
+def get_cached_daily_schedule(date_str: str):
+    with db_lock:
+        res = daily_schedules_table.search(Query().date_str == date_str)
+        if res:
+            return res[0]
+        return None
+
+def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str):
+    with db_lock:
+        daily_schedules_table.upsert({
+            'date_str': date_str,
+            'schedule': schedule_data,
+            'events_hash': events_hash
+        }, Query().date_str == date_str)
 
 
 # Settings CRUD
@@ -403,6 +426,7 @@ def get_settings() -> dict:
 def update_settings(settings_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
         settings_table.truncate()
         settings_table.insert(settings_data)
 
