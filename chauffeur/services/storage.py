@@ -103,7 +103,7 @@ def migrate_passengers_from_settings():
 
 migrate_passengers_from_settings()
 
-def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10) -> Optional[dict]:
+def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[dict]:
     import time
     with db_lock:
         QueryObj = Query()
@@ -111,7 +111,7 @@ def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10)
         if result:
             cached_data = result[0]
             timestamp = cached_data.get('timestamp', 0)
-            if time.time() - timestamp <= max_age_mins * 60:
+            if ignore_age or time.time() - timestamp <= max_age_mins * 60:
                 return cached_data.get('info')
         return None
 
@@ -122,7 +122,7 @@ def set_cached_route_info(origin: str, destination: str, info: dict):
         polyline_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
         polyline_cache_table.insert({'origin': origin, 'destination': destination, 'info': info, 'timestamp': time.time()})
 
-def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10) -> Optional[int]:
+def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[int]:
     import time
     with db_lock:
         QueryObj = Query()
@@ -130,7 +130,7 @@ def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10
         if result:
             cached_data = result[0]
             timestamp = cached_data.get('timestamp', 0)
-            if time.time() - timestamp <= max_age_mins * 60:
+            if ignore_age or time.time() - timestamp <= max_age_mins * 60:
                 return cached_data['minutes']
         return None
 

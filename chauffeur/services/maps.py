@@ -31,12 +31,12 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     cache_duration = get_cache_duration()
     
     # 1. Check cache first
-    cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration)
+    cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
         return (cached, 0) if return_traffic else cached
         
     # 2. Call get_route_info to guarantee identical times for the scheduler and the map displays
-    info = get_route_info(origin, destination)
+    info = get_route_info(origin, destination, ignore_age=not return_traffic)
     if info and "duration" in info:
         import re
         dur_str = info["duration"]
@@ -58,7 +58,7 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
-def get_route_info(origin: str, destination: str) -> Optional[dict]:
+def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> Optional[dict]:
     """
     Returns a dictionary with the encoded polyline string, distance, and duration for the route.
     """
@@ -70,7 +70,7 @@ def get_route_info(origin: str, destination: str) -> Optional[dict]:
     cache_duration = get_cache_duration()
     
     # 1. Check cache
-    cached = storage.get_cached_route_info(origin.lower(), destination.lower(), max_age_mins=cache_duration)
+    cached = storage.get_cached_route_info(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=ignore_age)
     if cached is not None:
         return cached
         
