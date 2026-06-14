@@ -45,6 +45,7 @@ with db_lock:
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
     geocode_cache_table = db.table('geocode_cache')
+    api_usage_table = db.table('api_usage')
     passengers_table = db.table('passengers')
     telemetry_table = db.table('telemetry')
     push_subscriptions_table = db.table('push_subscriptions')
@@ -448,6 +449,24 @@ def update_settings(settings_data: dict):
         daily_schedules_table.truncate()
         settings_table.truncate()
         settings_table.insert(settings_data)
+
+# API Usage Tracker
+def get_mapbox_usage(month: str, endpoint: str) -> int:
+    """Returns the usage count for the given month (YYYY-MM) and endpoint ('directions' or 'geocode')"""
+    with db_lock:
+        res = api_usage_table.search((Query().month == month) & (Query().endpoint == endpoint))
+        if res:
+            return res[0].get('count', 0)
+        return 0
+
+def increment_mapbox_usage(month: str, endpoint: str):
+    with db_lock:
+        res = api_usage_table.search((Query().month == month) & (Query().endpoint == endpoint))
+        if res:
+            new_count = res[0].get('count', 0) + 1
+            api_usage_table.update({'count': new_count}, (Query().month == month) & (Query().endpoint == endpoint))
+        else:
+            api_usage_table.insert({'month': month, 'endpoint': endpoint, 'count': 1})
 
 # Push Subscriptions
 def save_push_subscription(driver_id: str, subscription_info: dict):

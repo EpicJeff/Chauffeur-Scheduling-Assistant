@@ -88,8 +88,48 @@ def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> O
     orig_lat, orig_lon = orig_coords
     dest_lat, dest_lon = dest_coords
     
-    # 3. Call OSRM API
-    # Format: lon,lat;lon,lat
+    # 3. Try Mapbox Directions API first
+    import datetime
+    mapbox_key = get_mapbox_api_key()
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    mapbox_directions_usage = storage.get_mapbox_usage(current_month, 'directions')
+    
+    if mapbox_key and mapbox_directions_usage < 90000:
+        url = f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
+        params = {
+            "access_token": mapbox_key,
+            "geometries": "polyline",
+            "overview": "full",
+            "steps": "false",
+            "annotations": "duration,distance"
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                storage.increment_mapbox_usage(current_month, 'directions')
+                data = resp.json()
+                routes = data.get("routes", [])
+                if routes:
+                    route = routes[0]
+                    polyline = route.get("geometry")
+                    duration_sec = route.get("duration", 0)
+                    distance_m = route.get("distance", 0)
+                    
+                    if polyline:
+                        info = {
+                            "polyline": polyline,
+                            "distanceMeters": distance_m,
+                            "duration": f"{int(duration_sec)}s",
+                            "staticDuration": f"{int(duration_sec)}s"
+                        }
+                        storage.set_cached_route_info(origin.lower(), destination.lower(), info)
+                        return info
+            else:
+                print(f"Mapbox API failed: status={resp.status_code}, body={resp.text}")
+        except Exception as ex:
+            print(f"Mapbox API exception: {ex}")
+            
+    # 4. Fallback to OSRM API
     url = f"http://router.project-osrm.org/route/v1/driving/{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
     params = {
         "overview": "full",
@@ -117,8 +157,6 @@ def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> O
                     }
                     storage.set_cached_route_info(origin.lower(), destination.lower(), info)
                     return info
-            else:
-                print(f"OSRM API: No routes found for {origin} -> {destination}")
         else:
             print(f"OSRM API failed: status={resp.status_code}, body={resp.text}")
     except Exception as ex:
@@ -126,8 +164,30 @@ def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> O
             
     return None
 
-# Deleted get_api_key
+def get_mapbox_api_key() -> Optional[str]:
+    import os
+    import json
+    
+    api_key = None
+    options_file = '/data/options.json'
+    if os.path.exists(options_file):
+        try:
+            with open(options_file, 'r') as f:
+                options = json.load(f)
+            api_key = options.get('mapbox_api_key')
+        except Exception:
+            pass
 
+    if not api_key:
+        api_key = os.environ.get('MAPBOX_API_KEY')
+
+    if not api_key:
+        api_key_file = os.path.join(os.path.dirname(__file__), '..', 'mapbox_api_key.txt')
+        if os.path.exists(api_key_file):
+            with open(api_key_file, 'r') as f:
+                api_key = f.read().strip()
+                
+    return api_key
 def get_home_location() -> Optional[str]:
     from services import storage
     home_loc = None
@@ -164,6 +224,35 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
     if cached:
         return cached.get('lat'), cached.get('lon')
         
+    import datetime
+    import urllib.parse
+    mapbox_key = get_mapbox_api_key()
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
+    
+    if mapbox_key and mapbox_geocode_usage < 90000:
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(address)}.json"
+        params = {
+            "access_token": mapbox_key,
+            "limit": 1
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                storage.increment_mapbox_usage(current_month, 'geocode')
+                data = resp.json()
+                features = data.get("features", [])
+                if features:
+                    lon, lat = features[0]["center"]
+                    display_name = features[0].get("place_name", "")
+                    storage.set_cached_geocode(address, lat, lon, display_name)
+                    return lat, lon
+            else:
+                print(f"Mapbox Geocoding API failed: {resp.status_code}")
+        except Exception as ex:
+            print(f"Mapbox Geocoding API exception: {ex}")
+            
+    # Fallback to Nominatim
     with geocode_lock:
         # Check cache again inside the lock in case another thread just fetched it
         cached = storage.get_cached_geocode(address)
@@ -194,20 +283,48 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
                     display_name = data[0].get("display_name", "")
                     storage.set_cached_geocode(address, lat, lon, display_name)
                     return lat, lon
-            print(f"Geocoding failed for {address}: {resp.status_code} {resp.text}")
+            print(f"Nominatim Geocoding failed for {address}: {resp.status_code} {resp.text}")
         except Exception as ex:
-            print(f"Geocoding error for {address}: {ex}")
+            print(f"Nominatim Geocoding error for {address}: {ex}")
             
     return None
 
 def autocomplete_location(input_text: str) -> list[dict]:
     """
-    Calls the Photon API (based on OpenStreetMap) for autocomplete.
+    Calls Mapbox Geocoding API for autocomplete if safe limit.
+    Falls back to Photon API (based on OpenStreetMap).
     Returns a list of dicts: {"description": "123 Main St..."}
     """
     if not input_text or len(input_text) < 3:
         return []
         
+    import datetime
+    import urllib.parse
+    mapbox_key = get_mapbox_api_key()
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
+    
+    if mapbox_key and mapbox_geocode_usage < 90000:
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(input_text)}.json"
+        params = {
+            "access_token": mapbox_key,
+            "autocomplete": "true",
+            "limit": 5,
+            "types": "address,poi"
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                storage.increment_mapbox_usage(current_month, 'geocode')
+                data = resp.json()
+                features = data.get("features", [])
+                return [{"description": f.get("place_name")} for f in features if f.get("place_name")]
+            else:
+                print(f"Mapbox Autocomplete API failed: {resp.status_code}")
+        except Exception as ex:
+            print(f"Mapbox Autocomplete API exception: {ex}")
+            
+    # Fallback to Photon
     url = "https://photon.komoot.io/api/"
     params = {
         "q": input_text,

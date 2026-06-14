@@ -1092,70 +1092,19 @@ def get_route_info(origin: str, destination: str):
         return {"error": "No route found"}
     return info
 
-@app.get("/api/maps/static")
-def get_static_map(location: str, origin: str = None, theme: str = "dark"):
-    """Proxy Google Static Maps API to keep the API key server-side."""
-    import requests
-    api_key = maps.get_api_key()
-    if not api_key:
-        return Response(content="No API key configured", status_code=503)
-
-    params = [
-        ("size", "600x300"),
-        ("scale", "2"),
-        ("maptype", "roadmap"),
-        ("key", api_key),
-        ("markers", f"color:red|{location}")
-    ]
-
-    if theme == "dark":
-        params.extend([
-            ("style", "feature:all|element:geometry|color:0x242f3e"),
-            ("style", "feature:all|element:labels.text.fill|color:0x746855"),
-            ("style", "feature:all|element:labels.text.stroke|color:0x242f3e"),
-            ("style", "feature:water|element:geometry|color:0x17263c"),
-            ("style", "feature:road|element:geometry|color:0x38414e"),
-            ("style", "feature:road|element:geometry.stroke|color:0x212a37"),
-            ("style", "feature:poi|element:geometry|color:0x283d6a"),
-        ])
-
-    if origin:
-        info = maps.get_route_info(origin, location)
-        polyline = info.get("polyline") if info else None
-        if polyline:
-            params.append(("path", f"color:0x4A90D9|weight:4|enc:{polyline}"))
+@app.post("/api/test/set_mapbox_usage")
+def test_set_mapbox_usage(endpoint: str, count: int):
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    
+    with storage.db_lock:
+        res = storage.api_usage_table.search((storage.Query().month == current_month) & (storage.Query().endpoint == endpoint))
+        if res:
+            storage.api_usage_table.update({'count': count}, (storage.Query().month == current_month) & (storage.Query().endpoint == endpoint))
         else:
-            params.append(("path", f"color:0x4A90D9|weight:4|{origin}|{location}"))
+            storage.api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': count})
             
-        # Replace the single marker with origin + destination markers
-        params = [(k, v) for k, v in params if k != "markers"]
-        params.append(("markers", f"color:green|label:A|{origin}"))
-        params.append(("markers", f"color:red|label:B|{location}"))
-
-    try:
-        import urllib.parse
-        query_parts = []
-        for k, v in params:
-            if k == "path" and "enc:" in v:
-                query_parts.append(f"{k}={v}")
-            else:
-                query_parts.append(f"{k}={urllib.parse.quote(str(v), safe=':|')}")
-        
-        url = "https://maps.googleapis.com/maps/api/staticmap?" + "&".join(query_parts)
-        import urllib.request
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            content = resp.read()
-            status_code = resp.getcode()
-            content_type = resp.headers.get("Content-Type", "")
-            
-        if status_code == 200 and content_type.startswith("image"):
-            return Response(content=content, media_type="image/png")
-        print(f"Static Maps API error: status={status_code}, body={content[:500]}")
-        return Response(content="Map unavailable", status_code=status_code)
-    except Exception as ex:
-        print(f"Static Maps API error: {ex}")
-        return Response(content="Map unavailable", status_code=500)
+    return {"status": "ok", "message": f"Set {endpoint} usage to {count} for {current_month}"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
