@@ -85,6 +85,7 @@ class Settings(BaseModel):
     calendar_ids: List[str]
     days_to_show: int = 7
     home_location: Optional[str] = None
+    trip_hashtags: List[str] = Field(default_factory=list)
     route_cache_duration_mins: int = 10
 
 class TelemetryEvent(BaseModel):

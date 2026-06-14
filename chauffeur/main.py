@@ -450,15 +450,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Fetch 30 days of data by default so the app has a full schedule. The dashboard will filter this down to days_to_show.
     days_to_fetch = 30
     
-    try:
-        raw_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_fetch, start_date_str=start_date_str, end_date_str=end_date_str)
-        all_fetched_events = [e for e in raw_events if not getattr(e, 'all_day', False)]
-    except Exception as e:
-        return {"error": f"Failed to fetch events: {str(e)}"}
-        
-    # Removed global hash check. We now do day-by-day hashing and caching below.
-    events = []
-    all_events_for_ui = {} # To avoid duplicates in payload
     import difflib
     
     def fuzzy_has_hashtag(text, target_tag):
@@ -471,6 +462,44 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 if ratio >= 0.8:
                     return True
         return False
+
+    try:
+        raw_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_fetch, start_date_str=start_date_str, end_date_str=end_date_str)
+        
+        trip_hashtags = settings.get('trip_hashtags', [])
+        daily_home_locations = {}
+        import datetime
+        
+        for e in raw_events:
+            if getattr(e, 'all_day', False) and getattr(e, 'location', ''):
+                if any(fuzzy_has_hashtag(e.title, t) or fuzzy_has_hashtag(e.description, t) for t in trip_hashtags):
+                    applicable_entities = set()
+                    for p in passengers:
+                        if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
+                            applicable_entities.add(f"passenger_{p.id}")
+                    for d in drivers:
+                        if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d.hashtags):
+                            applicable_entities.add(f"driver_{d.id}")
+                    if not applicable_entities:
+                        applicable_entities.add('global')
+                        
+                    current = e.start.date()
+                    end_date = e.end.date()
+                    while current < end_date:
+                        date_str = current.strftime('%Y-%m-%d')
+                        if date_str not in daily_home_locations:
+                            daily_home_locations[date_str] = {}
+                        for entity in applicable_entities:
+                            daily_home_locations[date_str][entity] = e.location
+                        current += datetime.timedelta(days=1)
+                        
+        all_fetched_events = [e for e in raw_events if not getattr(e, 'all_day', False)]
+    except Exception as e:
+        return {"error": f"Failed to fetch events: {str(e)}"}
+        
+    # Removed global hash check. We now do day-by-day hashing and caching below.
+    events = []
+    all_events_for_ui = {} # To avoid duplicates in payload
 
     driver_events_map = {d.id: [] for d in drivers}
     driver_events_ids = {d.id: [] for d in drivers}
@@ -627,7 +656,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
         # Route Edges
         all_assignments = {**assignments, **ghost_assignments}
-        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
+        trip_locs = daily_home_locations.get(date_str, {})
+        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_locations=trip_locs, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
         
         # True Unassigned
         true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]

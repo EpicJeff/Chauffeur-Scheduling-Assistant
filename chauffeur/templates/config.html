@@ -115,6 +115,27 @@
                 </div>
                 <p class="text-gray-500 text-sm mt-1">Used to calculate layover routing logic.</p>
             </div>
+
+            <!-- Trip Hashtags -->
+            <div class="mb-6">
+                <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Trip Hashtags (Temporary Home Locations)</label>
+                <div class="flex gap-2 mb-2 max-w-lg">
+                    <input type="text" x-model="newTripHashtagInput" @keydown.enter="addTripHashtag()" placeholder="e.g. #trip" class="flex-1 bg-gray-800 border border-gray-600 rounded p-3 text-white font-mono focus:outline-none focus:border-blue-500">
+                    <button @click="addTripHashtag()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md">Add</button>
+                </div>
+                <div class="flex flex-wrap gap-2 max-w-lg mb-2">
+                    <template x-for="(tag, index) in tripHashtags" :key="index">
+                        <div class="flex items-center bg-gray-700 border border-gray-600 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm text-blue-200">
+                            <span x-text="tag" class="mr-2"></span>
+                            <button @click="removeTripHashtag(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+                <p class="text-gray-500 text-sm mt-1">If an all-day event contains any of these hashtags, its location will be used as a temporary Home Location for the event's duration.</p>
+            </div>
+
             <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
                 <div>
                     <h4 class="font-bold text-white">System Cache</h4>
@@ -757,6 +778,7 @@
                 priorityRuleLocationSuggestions: [],
                 autocompleteTimeout: null,
                 newCalendarIdInput: '',
+                newTripHashtagInput: '',
                 calendarMetadata: {},
                 isHomeAssistant: false,
                 drivers: [],
@@ -914,6 +936,7 @@
                     this.daysToShow = data.days_to_show || 7;
                     this.routeCacheDurationMins = data.route_cache_duration_mins || 10;
                     this.homeLocation = data.home_location || '';
+                    this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -931,6 +954,21 @@
                     this.calendarIds.splice(index, 1);
                     await this.saveSettings();
                 },
+                async addTripHashtag() {
+                    let val = this.newTripHashtagInput.trim().toLowerCase();
+                    if (val) {
+                        if (!val.startsWith('#')) val = '#' + val;
+                        if (!this.tripHashtags.includes(val)) {
+                            this.tripHashtags.push(val);
+                            await this.saveSettings();
+                        }
+                    }
+                    this.newTripHashtagInput = '';
+                },
+                async removeTripHashtag(index) {
+                    this.tripHashtags.splice(index, 1);
+                    await this.saveSettings();
+                },
                 async saveSettings() {
                     this.saving = true;
                     try {
@@ -938,7 +976,8 @@
                             calendar_ids: this.calendarIds,
                             days_to_show: parseInt(this.daysToShow) || 7,
                             route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 10,
-                            home_location: this.homeLocation || ''
+                            home_location: this.homeLocation || '',
+                            trip_hashtags: this.tripHashtags || []
                         };
                         
                         await fetch('api/settings', {
