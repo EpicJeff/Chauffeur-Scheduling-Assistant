@@ -1303,8 +1303,8 @@
                                         </div>
                                     </div>
                                     <div class="flex-shrink-0 flex items-center h-full gap-2">
-                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'duplicate', 0, this, 'schedule_all')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
-                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'duplicate', 0, this, 'schedule_one')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, this, 'schedule_all')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, this, 'schedule_one')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
                                     </div>
                                 </div>
                             `;
@@ -1724,13 +1724,24 @@
                 btnElement.innerHTML = '<span class="animate-pulse flex items-center gap-2"><svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving...</span>';
             }
             keyword = decodeURIComponent(keyword);
-            // Extract the core part of the title before a dash or colon if it exists, to make the rule more general
-            let coreKeyword = keyword.split(' - ')[0].split(':')[0].trim();
+            let keywordsToUse = [];
+            try {
+                let parsed = JSON.parse(keyword);
+                if (Array.isArray(parsed)) {
+                    keywordsToUse = parsed;
+                } else {
+                    keywordsToUse = [parsed.split(' - ')[0].split(':')[0].trim()];
+                }
+            } catch (e) {
+                // Not JSON, fall back to old behavior
+                keywordsToUse = [keyword.split(' - ')[0].split(':')[0].trim()];
+            }
+
             const payload = {
                 driver_id: driverId,
                 constraint_type: constraintType,
                 tolerance_mins: toleranceMins,
-                keywords: [coreKeyword],
+                keywords: keywordsToUse,
                 passenger_ids: [],
                 days_of_week: [],
                 time_start: null,
