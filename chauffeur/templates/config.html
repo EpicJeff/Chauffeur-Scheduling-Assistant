@@ -947,8 +947,8 @@
                     }
                 },
                 async clearCaches() {
-                    if(confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google.")) {
-                        fetch('api/cache', { method: 'DELETE' })
+                    if(confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google/Mapbox.")) {
+                        fetch('api/admin/clear_cache')
                             .then(r => r.json())
                             .then(() => {
                                 alert("Caches cleared successfully.");
