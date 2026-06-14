@@ -454,7 +454,8 @@
             if (provider === 'google') {
                 url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}&dir_action=navigate`;
             } else if (provider === 'apple') {
-                url = `maps://?daddr=${destEnc}&dirflg=d`;
+                const saddrEnc = routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : '';
+                url = `maps://?daddr=${destEnc}${saddrEnc}&dirflg=d`;
             } else if (provider === 'waze') {
                 url = `waze://?q=${destEnc}&navigate=yes`;
             }
