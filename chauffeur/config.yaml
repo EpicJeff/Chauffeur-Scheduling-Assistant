@@ -1,6 +1,6 @@
 name: "Chauffeur"
 description: "A smart Graph-based Calendar Assistant for mapping overlapping family driving routes."
-version: "1.7.101"
+version: "1.7.102"
 slug: "chauffeur"
 init: false
 arch:
@@ -16,11 +16,11 @@ ports:
   8000/tcp: null
 options:
   google_service_account_json: ""
-  google_maps_api_key: ""
+  mapbox_api_key: ""
   route_cache_duration_mins: 10
 schema:
   google_service_account_json: str
-  google_maps_api_key: str?
+  mapbox_api_key: str?
   route_cache_duration_mins: int
 ingress: true
 ingress_port: 8000
