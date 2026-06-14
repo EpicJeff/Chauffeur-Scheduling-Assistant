@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any
+from fastapi.encoders import jsonable_encoder
 
 class PushSubscription(BaseModel):
     driver_id: str
@@ -648,7 +649,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": conflicts
         }
         
-        from fastapi.encoders import jsonable_encoder
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash)
         
