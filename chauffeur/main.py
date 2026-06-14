@@ -1106,7 +1106,9 @@ def get_route_info(origin: str, destination: str):
 def clear_geocache():
     storage.geocode_cache_table.truncate()
     storage.route_cache_table.truncate()
-    return {"status": "ok", "message": "Geocode and routing caches wiped successfully"}
+    storage.daily_schedules_table.truncate()
+    storage.custom_schedules_table.truncate()
+    return {"status": "ok", "message": "Geocode, routing, and schedule caches wiped successfully"}
 
 @app.post("/api/test/set_mapbox_usage")
 def test_set_mapbox_usage(endpoint: str, count: int):
