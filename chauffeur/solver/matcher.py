@@ -128,29 +128,31 @@ def solve_schedule(
     
     # 1. Variables: assign[e.id, d.id]
     assign_vars = {}
-    for e in events:
+    assignable_events = [e for e in events if getattr(e, 'event_type', '') != 'background_trip']
+    
+    for e in assignable_events:
         for d in drivers:
             assign_vars[(e.id, d.id)] = model.NewBoolVar(f'assign_{e.id}_{d.id}')
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
-    for e in events:
+    for e in assignable_events:
         model.AddAtMostOne(assign_vars[(e.id, d.id)] for d in drivers)
 
     # 3. Constraint: No Overlap + Travel Time
     objective_terms = []
     
     e_tolerances = {}
-    for e in events:
+    for e in assignable_events:
         tol = 0
         for r in rules:
             if r.constraint_type == 'tolerance' and does_event_match_rule(e, r, passengers):
                 tol = max(tol, getattr(r, 'tolerance_mins', 0))
         e_tolerances[e.id] = tol
         
-    grouped_event_pairs = get_grouped_event_pairs(events, rules, passengers)
+    grouped_event_pairs = get_grouped_event_pairs(assignable_events, rules, passengers)
 
     # Sort events by start time to easily check pairs
-    sorted_events = sorted(events, key=lambda x: x.start)
+    sorted_events = sorted(assignable_events, key=lambda x: x.start)
     for i in range(len(sorted_events)):
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
@@ -225,8 +227,10 @@ def solve_schedule(
     # 3c. Driver Personal Calendar Overlaps
     for d in drivers:
         d_events = driver_events.get(d.id, [])
-        for e in events:
+        for e in assignable_events:
             for de in d_events:
+                if getattr(de, 'event_type', '') == 'background_trip':
+                    continue
                 if e.id == de.id:
                     continue # Driver is an attendee of this event, do not block
                 
@@ -247,7 +251,7 @@ def solve_schedule(
 
     # 4. Rules & Objective
     
-    for e in events:
+    for e in assignable_events:
         # Calculate dynamic base weight for the event
         base_event_weight = 100
         for pr in priority_rules:
@@ -351,7 +355,7 @@ def solve_schedule(
     for r in mut_ex_rules:
         from collections import defaultdict
         groups = defaultdict(list)
-        for e in events:
+        for e in assignable_events:
             if does_event_match_rule(e, r, passengers):
                 period = getattr(r, 'grouping_period', 'daily')
                 if period == 'daily':
@@ -393,7 +397,7 @@ def solve_schedule(
     import time
     base_time = time.time()
     for o in overrides:
-        if any(e.id == o.event_id for e in events):
+        if any(e.id == o.event_id for e in assignable_events):
             if o.driver_id == 'unassigned':
                 for d in drivers:
                     model.Add(assign_vars[(o.event_id, d.id)] == 0)
@@ -421,7 +425,7 @@ def solve_schedule(
     lateness_warnings = {}
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        for e in events:
+        for e in assignable_events:
             assigned = False
             for d in drivers:
                 if solver.BooleanValue(assign_vars[(e.id, d.id)]):
@@ -638,7 +642,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     # Default 30 min buffer
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
-def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_locations: Dict[str, str] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
+def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_metadata: List[dict] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
     driver_event_ids = defaultdict(set)
     event_map = {e.id: e for e in events}
@@ -661,14 +665,23 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
     final_edges = defaultdict(dict)
     driver_map = {d.id: d for d in drivers}
     
+    if trip_metadata is None: trip_metadata = []
+    
+    def get_active_home(entity_id: str, ts: float, default_home: str) -> str:
+        for trip in trip_metadata:
+            if entity_id in trip['entities'] or 'global' in trip['entities']:
+                start_ts = trip['start'].timestamp()
+                end_ts = trip['end'].timestamp()
+                if start_ts <= ts <= end_ts:
+                    return trip['location']
+        return default_home
+
     for d_id, evs in driver_events.items():
         evs.sort(key=lambda x: x.start)
         
-        if trip_locations is None: trip_locations = {}
-        daily_global_home = trip_locations.get('global', home_location)
-        driver_home = trip_locations.get(f'driver_{d_id}', daily_global_home)
-        if d_id in driver_map and driver_map[d_id].home_location and f'driver_{d_id}' not in trip_locations and 'global' not in trip_locations:
-            driver_home = driver_map[d_id].home_location
+        driver_default_home = home_location
+        if d_id in driver_map and driver_map[d_id].home_location:
+            driver_default_home = driver_map[d_id].home_location
             
         grouped_event_pairs = get_grouped_event_pairs(events, rules, passengers) if rules and passengers else set()
         
@@ -679,13 +692,17 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             if not date_evs:
                 continue
                 
-            if driver_home and driver_home.strip() != "":
+            if driver_default_home and driver_default_home.strip() != "":
                 first_ev = date_evs[0]
                 is_passenger_ev = first_ev.id in assignments
                 
-                if is_passenger_ev and daily_global_home and driver_home != daily_global_home:
-                    travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, daily_global_home, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
-                    travel_to_ev, delay_to_ev = get_travel_time_minutes(daily_global_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                start_ts = first_ev.start.timestamp()
+                driver_home = get_active_home(f'driver_{d_id}', start_ts, driver_default_home)
+                global_home_at_start = get_active_home('global', start_ts, home_location)
+                
+                if is_passenger_ev and global_home_at_start and driver_home != global_home_at_start:
+                    travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, global_home_at_start, departure_time=int(start_ts), return_traffic=True)
+                    travel_to_ev, delay_to_ev = get_travel_time_minutes(global_home_at_start, first_ev.location, departure_time=int(start_ts), return_traffic=True)
                     initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel_to_pickup + travel_to_ev,
@@ -696,7 +713,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         }
                     }
                 else:
-                    travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(first_ev.start.timestamp()), return_traffic=True)
+                    travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(start_ts), return_traffic=True)
                     initial_edges[d_id][first_ev.id] = {
                         "to_event": first_ev.id,
                         "travel_mins": travel,
@@ -706,9 +723,13 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 last_ev = date_evs[-1]
                 is_last_passenger_ev = last_ev.id in assignments
                 
-                if is_last_passenger_ev and daily_global_home and driver_home != daily_global_home:
-                    travel_to_dropoff, delay_to_dropoff = get_travel_time_minutes(last_ev.location, daily_global_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
-                    travel_to_home, delay_to_home = get_travel_time_minutes(daily_global_home, driver_home, departure_time=int(last_ev.end.timestamp() + travel_to_dropoff*60), return_traffic=True)
+                end_ts = last_ev.end.timestamp()
+                driver_home_at_end = get_active_home(f'driver_{d_id}', end_ts, driver_default_home)
+                global_home_at_end = get_active_home('global', end_ts, home_location)
+                
+                if is_last_passenger_ev and global_home_at_end and driver_home_at_end != global_home_at_end:
+                    travel_to_dropoff, delay_to_dropoff = get_travel_time_minutes(last_ev.location, global_home_at_end, departure_time=int(end_ts), return_traffic=True)
+                    travel_to_home, delay_to_home = get_travel_time_minutes(global_home_at_end, driver_home_at_end, departure_time=int(end_ts + travel_to_dropoff*60), return_traffic=True)
                     final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_to_dropoff + travel_to_home,
@@ -719,7 +740,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         }
                     }
                 else:
-                    travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home, departure_time=int(last_ev.end.timestamp()), return_traffic=True)
+                    travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home_at_end, departure_time=int(end_ts), return_traffic=True)
                     final_edges[d_id][last_ev.id] = {
                         "from_event": last_ev.id,
                         "travel_mins": travel_home,
@@ -759,6 +780,9 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     travel = drive_from_pickup
                     delay = delay_from
                 else:
+                    # If e2 starts before e1 ends, we must depart from e1 right after dropoff (e1.start)
+                    dep_time = min(e1.end.timestamp(), e2.start.timestamp())
+
                     if new_passengers:
                         assigned_events = [ev for ev in events if ev.id in assignments]
                         pickup_event = get_passenger_pickup_event_for_subset(e2, new_passengers, assigned_events)
@@ -766,18 +790,16 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             pickup_location = pickup_event.location
                             pickup_title = pickup_event.title
                         else:
-                            pax_home = daily_global_home
+                            global_home_at_dep = get_active_home('global', dep_time, home_location)
+                            pax_home = global_home_at_dep
                             if new_passengers:
-                                # Pick the first passenger's specific home location if available
                                 first_pax_id = list(new_passengers)[0]
-                                pax_home = trip_locations.get(f'passenger_{first_pax_id}', daily_global_home)
+                                pax_home = get_active_home(f'passenger_{first_pax_id}', dep_time, global_home_at_dep)
                                 
-                            pickup_location = pax_home if pax_home else driver_home
+                            driver_home_at_dep = get_active_home(f'driver_{d_id}', dep_time, driver_default_home)
+                            pickup_location = pax_home if pax_home else driver_home_at_dep
                             pickup_title = "Home"
-                        
-                        # If e2 starts before e1 ends, we must depart from e1 right after dropoff (e1.start)
-                        dep_time = min(e1.end.timestamp(), e2.start.timestamp())
-                        
+                            
                         drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
                         drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
                         

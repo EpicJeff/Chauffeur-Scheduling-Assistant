@@ -467,12 +467,16 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         raw_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_fetch, start_date_str=start_date_str, end_date_str=end_date_str)
         
         trip_hashtags = settings.get('trip_hashtags', [])
-        daily_home_locations = {}
-        import datetime
+        trip_events = []
         
+        all_fetched_events = []
         for e in raw_events:
-            if getattr(e, 'all_day', False) and getattr(e, 'location', ''):
+            is_trip = False
+            if getattr(e, 'location', ''):
                 if any(fuzzy_has_hashtag(e.title, t) or fuzzy_has_hashtag(e.description, t) for t in trip_hashtags):
+                    is_trip = True
+                    e.event_type = 'background_trip'
+                    
                     applicable_entities = set()
                     for p in passengers:
                         if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
@@ -483,17 +487,39 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     if not applicable_entities:
                         applicable_entities.add('global')
                         
-                    current = e.start.date()
-                    end_date = e.end.date()
-                    while current < end_date:
-                        date_str = current.strftime('%Y-%m-%d')
-                        if date_str not in daily_home_locations:
-                            daily_home_locations[date_str] = {}
-                        for entity in applicable_entities:
-                            daily_home_locations[date_str][entity] = e.location
-                        current += datetime.timedelta(days=1)
-                        
-        all_fetched_events = [e for e in raw_events if not getattr(e, 'all_day', False)]
+                    # We store the applicable entities in the description or a new field so we can access it later.
+                    # Since Event schema doesn't have an applicable_entities field, we can attach it dynamically.
+                    # Pydantic models might strip it if not in schema. Let's add it to schema or just use a separate map.
+                    # Wait, we can just pass `trip_events` down! But wait, `trip_events` is a list of events. 
+                    # We also need the entities map.
+                    # Let's just create `active_trips` array of dicts.
+                    
+            if getattr(e, 'all_day', False) and not is_trip:
+                continue
+                
+            all_fetched_events.append(e)
+            
+        # We need a separate list of trip metadata to pass to matcher
+        trip_metadata = []
+        for e in all_fetched_events:
+            if getattr(e, 'event_type', '') == 'background_trip':
+                applicable_entities = set()
+                for p in passengers:
+                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
+                        applicable_entities.add(f"passenger_{p.id}")
+                for d in drivers:
+                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d.hashtags):
+                        applicable_entities.add(f"driver_{d.id}")
+                if not applicable_entities:
+                    applicable_entities.add('global')
+                    
+                trip_metadata.append({
+                    "start": e.start,
+                    "end": e.end,
+                    "location": e.location,
+                    "entities": applicable_entities,
+                    "all_day": e.all_day
+                })
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
         
@@ -656,8 +682,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
         # Route Edges
         all_assignments = {**assignments, **ghost_assignments}
-        trip_locs = daily_home_locations.get(date_str, {})
-        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_locations=trip_locs, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
+        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
         
         # True Unassigned
         true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
