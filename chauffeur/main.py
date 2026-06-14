@@ -458,10 +458,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     import difflib
     
+    import re
     def fuzzy_has_hashtag(text, target_tag):
         if not target_tag or not text: return False
-        words = [w.lower().strip() for w in text.split()]
-        target = target_tag.lower().strip()
+        
+        # Strip HTML tags that Google Calendar often inserts in descriptions
+        clean_text = re.sub(r'<[^>]+>', ' ', text)
+        
+        words = [w.lower().strip('.,;?!()[]{}""\'\'') for w in clean_text.split()]
+        target = target_tag.lower().strip('.,;?!()[]{}""\'\'')
         for w in words:
             if w.startswith('#'):
                 ratio = difflib.SequenceMatcher(None, w, target).ratio()
