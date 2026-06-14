@@ -44,6 +44,7 @@ with db_lock:
     settings_table = db.table('settings')
     distance_cache_table = db.table('distance_cache')
     polyline_cache_table = db.table('polyline_cache')
+    geocode_cache_table = db.table('geocode_cache')
     passengers_table = db.table('passengers')
     telemetry_table = db.table('telemetry')
     push_subscriptions_table = db.table('push_subscriptions')
@@ -104,24 +105,42 @@ def migrate_passengers_from_settings():
 
 migrate_passengers_from_settings()
 
-def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[dict]:
+def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False):
     import time
     with db_lock:
-        QueryObj = Query()
-        result = polyline_cache_table.search((QueryObj.origin == origin) & (QueryObj.destination == destination))
-        if result:
-            cached_data = result[0]
-            timestamp = cached_data.get('timestamp', 0)
-            if ignore_age or time.time() - timestamp <= max_age_mins * 60:
-                return cached_data.get('info')
+        res = polyline_cache_table.search((Query().origin == origin) & (Query().destination == destination))
+        if res:
+            doc = res[0]
+            if ignore_age or (time.time() - doc.get('timestamp', 0)) < (max_age_mins * 60):
+                return doc.get('info')
         return None
 
 def set_cached_route_info(origin: str, destination: str, info: dict):
     import time
     with db_lock:
-        QueryObj = Query()
-        polyline_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
-        polyline_cache_table.insert({'origin': origin, 'destination': destination, 'info': info, 'timestamp': time.time()})
+        polyline_cache_table.upsert({
+            'origin': origin,
+            'destination': destination,
+            'info': info,
+            'timestamp': time.time()
+        }, (Query().origin == origin) & (Query().destination == destination))
+
+# Geocode Cache
+def get_cached_geocode(address: str):
+    with db_lock:
+        res = geocode_cache_table.search(Query().address == address.strip().lower())
+        if res:
+            return res[0]
+        return None
+
+def set_cached_geocode(address: str, lat: float, lon: float, display_name: str = ""):
+    with db_lock:
+        geocode_cache_table.upsert({
+            'address': address.strip().lower(),
+            'lat': lat,
+            'lon': lon,
+            'display_name': display_name
+        }, Query().address == address.strip().lower())
 
 def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[int]:
     import time

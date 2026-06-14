@@ -1080,37 +1080,10 @@ def force_refresh_schedule(start_date: str = None, end_date: str = None):
 
 @app.get("/api/maps/test_polyline")
 def test_polyline(origin: str, destination: str):
-    import requests
-    api_key = maps.get_api_key()
-    if not api_key:
-        return {"error": "No API key"}
-    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "routes.polyline.encodedPolyline"
-    }
-    payload = {
-        "origin": {
-            "address": origin
-        },
-        "destination": {
-            "address": destination
-        },
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "computeAlternativeRoutes": "true",
-        "routeModifiers": {
-            "avoidTolls": "true",
-            "avoidHighways": "false",
-            "avoidFerries": "true"
-        }
-    }
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=5)
-        return resp.json()
-    except Exception as e:
-        return {"error": str(e)}
+    info = maps.get_route_info(origin, destination)
+    if info and "polyline" in info:
+        return {"routes": [{"polyline": {"encodedPolyline": info["polyline"]}}]}
+    return {"error": "Failed to compute route"}
 
 @app.get("/api/maps/route_info")
 def get_route_info(origin: str, destination: str):

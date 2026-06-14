@@ -74,85 +74,56 @@ def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> O
     if cached is not None:
         return cached
         
-    # 2. Call Google Routes API
-    api_key = get_api_key()
-    if api_key:
-        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-        headers = {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": api_key,
-            "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.duration,routes.staticDuration,routes.distanceMeters"
-        }
-        payload = {
-            "origin": {
-                "address": origin
-            },
-            "destination": {
-                "address": destination
-            },
-            "travelMode": "DRIVE",
-            "routingPreference": "TRAFFIC_AWARE",
-            "computeAlternativeRoutes": True,
-            "routeModifiers": {
-                "avoidTolls": True,
-                "avoidHighways": False,
-                "avoidFerries": True
-            }
-        }
+    # 2. Geocode origin and destination
+    orig_coords = geocode_address(origin)
+    dest_coords = geocode_address(destination)
+    
+    if not orig_coords or not dest_coords:
+        print(f"Could not geocode {origin} or {destination}")
+        return None
         
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                routes = data.get("routes", [])
-                if routes:
-                    route = routes[0]
-                    polyline = route.get("polyline", {}).get("encodedPolyline")
-                    if polyline:
-                        info = {
-                            "polyline": polyline,
-                            "distanceMeters": route.get("distanceMeters"),
-                            "duration": route.get("duration"),
-                            "staticDuration": route.get("staticDuration")
-                        }
-                        storage.set_cached_route_info(origin.lower(), destination.lower(), info)
-                        return info
-                else:
-                    print(f"Routes API: No routes found for {origin} -> {destination}")
+    orig_lat, orig_lon = orig_coords
+    dest_lat, dest_lon = dest_coords
+    
+    # 3. Call OSRM API
+    # Format: lon,lat;lon,lat
+    url = f"http://router.project-osrm.org/route/v1/driving/{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
+    params = {
+        "overview": "full",
+        "steps": "false",
+        "annotations": "false"
+    }
+    
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            routes = data.get("routes", [])
+            if routes:
+                route = routes[0]
+                polyline = route.get("geometry")
+                duration_sec = route.get("duration", 0)
+                distance_m = route.get("distance", 0)
+                
+                if polyline:
+                    info = {
+                        "polyline": polyline,
+                        "distanceMeters": distance_m,
+                        "duration": f"{int(duration_sec)}s",
+                        "staticDuration": f"{int(duration_sec)}s"
+                    }
+                    storage.set_cached_route_info(origin.lower(), destination.lower(), info)
+                    return info
             else:
-                print(f"Routes API failed: status={resp.status_code}, body={resp.text}")
-        except Exception as ex:
-            print(f"Routes API exception for route info: {ex}")
+                print(f"OSRM API: No routes found for {origin} -> {destination}")
+        else:
+            print(f"OSRM API failed: status={resp.status_code}, body={resp.text}")
+    except Exception as ex:
+        print(f"OSRM API exception for route info: {ex}")
             
     return None
 
-def get_api_key() -> Optional[str]:
-    api_key = None
-    
-    # 1. Try to load from Home Assistant Add-on options
-    import os
-    import json
-    options_file = '/data/options.json'
-    if os.path.exists(options_file):
-        try:
-            with open(options_file, 'r') as f:
-                options = json.load(f)
-            api_key = options.get('google_maps_api_key')
-        except Exception:
-            pass
-
-    # 2. Try to load from environment variable
-    if not api_key:
-        api_key = os.environ.get('GOOGLE_MAPS_API_KEY')
-
-    # 3. Try to load from local file
-    if not api_key:
-        api_key_file = os.path.join(os.path.dirname(__file__), '..', 'maps_api_key.txt')
-        if os.path.exists(api_key_file):
-            with open(api_key_file, 'r') as f:
-                api_key = f.read().strip()
-                
-    return api_key
+# Deleted get_api_key
 
 def get_home_location() -> Optional[str]:
     from services import storage
@@ -182,31 +153,71 @@ def get_home_location() -> Optional[str]:
         
     return home_loc if home_loc and str(home_loc).strip() != "" else None
 
-def autocomplete_location(input_text: str) -> list[dict]:
-    """
-    Calls the Google Maps Places Autocomplete API.
-    Returns a list of dicts: {"description": "123 Main St..."}
-    """
-    api_key = get_api_key()
-    
-    if not api_key:
-        return []
+def geocode_address(address: str) -> Optional[tuple[float, float]]:
+    if not address or not address.strip():
+        return None
         
-    url = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
+    cached = storage.get_cached_geocode(address)
+    if cached:
+        return cached.get('lat'), cached.get('lon')
+        
+    # Rate limit: Nominatim requires max 1 request per second
+    import time
+    time.sleep(1.1)
+    
+    url = "https://nominatim.openstreetmap.org/search"
     params = {
-        "input": input_text,
-        "key": api_key,
-        "types": "geocode|establishment" # standard places
+        "q": address,
+        "format": "json",
+        "limit": 1
+    }
+    headers = {
+        "User-Agent": "ChauffeurScheduleAssistant/1.0"
     }
     
     try:
-        resp = requests.get(url, params=params, timeout=5)
-        data = resp.json()
-        if data.get("status") == "OK":
-            return [{"description": p["description"]} for p in data.get("predictions", [])]
+        resp = requests.get(url, params=params, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data:
+                lat = float(data[0]["lat"])
+                lon = float(data[0]["lon"])
+                display_name = data[0].get("display_name", "")
+                storage.set_cached_geocode(address, lat, lon, display_name)
+                return lat, lon
+        print(f"Geocoding failed for {address}: {resp.status_code} {resp.text}")
+    except Exception as ex:
+        print(f"Geocoding error for {address}: {ex}")
+        
+    return None
+
+def autocomplete_location(input_text: str) -> list[dict]:
+    """
+    Calls the Nominatim OpenStreetMap API for autocomplete.
+    Returns a list of dicts: {"description": "123 Main St..."}
+    """
+    if not input_text or len(input_text) < 3:
+        return []
+        
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": input_text,
+        "format": "json",
+        "addressdetails": 1,
+        "limit": 5
+    }
+    headers = {
+        "User-Agent": "ChauffeurScheduleAssistant/1.0"
+    }
+    
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return [{"description": p["display_name"]} for p in data]
         return []
     except Exception as ex:
-        print(f"Places API error: {ex}")
+        print(f"Nominatim autocomplete error: {ex}")
         return []
 
 def get_google_maps_url(locations: list[str]) -> str:
