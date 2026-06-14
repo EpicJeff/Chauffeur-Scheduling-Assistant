@@ -773,7 +773,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # --- Generate Pending Notifications ---
         pending_notifications = []
         events_by_id = {e.id: e for e in all_events_for_ui.values()}
-        now_ts = datetime.now().timestamp()
+        import datetime
+        now_ts = datetime.datetime.now().timestamp()
         
         # Preserve fired status
         existing_notifs = storage.get_pending_notifications()
@@ -791,7 +792,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             for ev_id, edge in data.get("initial_edges", {}).get(d_id, {}).items():
                 ev = events_by_id.get(ev_id)
                 if not ev: continue
-                dep_time = datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
+                dep_time = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5) * 60
                 if now_ts <= dep_time + 600:
                     notif_id = f"init_{ev_id}"
                     pending_notifications.append({
@@ -808,7 +809,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 ev = events_by_id.get(ev_id)
                 next_ev = events_by_id.get(edge.get("to_event", ""))
                 if not ev or not next_ev: continue
-                dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
+                dep_time = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp()
                 if now_ts <= dep_time + 600:
                     notif_id = f"route_{ev_id}_{next_ev.id}"
                     pending_notifications.append({
@@ -824,7 +825,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             for ev_id, edge in data.get("final_edges", {}).get(d_id, {}).items():
                 ev = events_by_id.get(ev_id)
                 if not ev: continue
-                dep_time = datetime.fromisoformat(ev.end.isoformat()).timestamp()
+                dep_time = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp()
                 if now_ts <= dep_time + 600:
                     notif_id = f"final_{ev_id}"
                     pending_notifications.append({
