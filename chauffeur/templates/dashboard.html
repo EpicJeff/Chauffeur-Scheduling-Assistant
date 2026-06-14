@@ -1303,8 +1303,8 @@
                                         </div>
                                     </div>
                                     <div class="flex-shrink-0 flex items-center h-full gap-2">
-                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'ignore_mutually_exclusive', 0, this)" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss</button>
-                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'mutually_exclusive', 0, this)" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'duplicate', 0, this, 'schedule_all')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(group.keyword)}', 'duplicate', 0, this, 'schedule_one')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
                                     </div>
                                 </div>
                             `;
@@ -1717,7 +1717,7 @@
             }
         }, 15000);
 
-        async function createRule(driverId, keyword, constraintType, toleranceMins, btnElement = null) {
+        async function createRule(driverId, keyword, constraintType, toleranceMins, btnElement = null, duplicateAction = null) {
             if (btnElement) {
                 btnElement.disabled = true;
                 const originalText = btnElement.innerHTML;
@@ -1736,6 +1736,9 @@
                 time_start: null,
                 time_end: null
             };
+            if (constraintType === 'duplicate' && duplicateAction) {
+                payload.duplicate_action = duplicateAction;
+            }
 
             try {
                 const res = await fetch('api/rules', {

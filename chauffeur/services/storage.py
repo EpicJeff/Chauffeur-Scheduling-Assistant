@@ -106,6 +106,20 @@ def migrate_passengers_from_settings():
 
 migrate_passengers_from_settings()
 
+def migrate_duplicate_rules():
+    with db_lock:
+        rules = rules_table.all()
+        for r in rules:
+            if r.get('constraint_type') == 'mutually_exclusive':
+                r['constraint_type'] = 'duplicate'
+                r['duplicate_action'] = 'schedule_one'
+                rules_table.update(r, doc_ids=[r.doc_id])
+            elif r.get('constraint_type') == 'ignore_mutually_exclusive':
+                r['constraint_type'] = 'duplicate'
+                r['duplicate_action'] = 'schedule_all'
+                rules_table.update(r, doc_ids=[r.doc_id])
+
+migrate_duplicate_rules()
 def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False):
     import time
     with db_lock:

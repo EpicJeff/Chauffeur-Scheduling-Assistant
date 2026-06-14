@@ -393,13 +393,13 @@
                                 <span class="text-lg">Driver</span> 
                                 <span class="font-extrabold text-blue-400 px-2 py-1 bg-blue-900/30 rounded text-lg" x-text="getDriverName(rule.driver_id)"></span> 
                                 <span class="text-lg">is</span> 
-                                <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type"></span> 
+                                <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : rule.constraint_type"></span> 
                             </div>
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
                                 <template x-if="rule.constraint_type === 'tolerance'">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance: ' + rule.tolerance_mins + 'm'"></span>
                                 </template>
-                                <template x-if="rule.constraint_type === 'mutually_exclusive'">
+                                <template x-if="rule.constraint_type === 'duplicate'">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-teal-300 italic" x-text="'Period: ' + (rule.grouping_period || 'daily')"></span>
                                 </template>
                                 <template x-if="rule.constraint_type === 'group'">
@@ -451,8 +451,7 @@
                             <option value="required">Required</option>
                             <option value="preferred">Preferred</option>
                             <option value="unavailable">Unavailable</option>
-                            <option value="mutually_exclusive">Mutually Exclusive</option>
-                            <option value="ignore_mutually_exclusive">Ignore Mutually Exclusive</option>
+                            <option value="duplicate">Duplicate Event Handling</option>
                             <option value="tolerance">Late Arrival (Tolerance)</option>
                             <option value="group">Group Events</option>
                         </select>
@@ -461,7 +460,14 @@
                         <label class="block text-gray-400 mb-1 text-sm">Tolerance (mins)</label>
                         <input type="number" x-model.number="newRule.tolerance_mins" min="0" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                     </div>
-                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'mutually_exclusive'">
+                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">
+                        <label class="block text-gray-400 mb-1 text-sm">Action</label>
+                        <select x-model="newRule.duplicate_action" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="schedule_one">Schedule One</option>
+                            <option value="schedule_all">Schedule All</option>
+                        </select>
+                    </div>
+                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">
                         <label class="block text-gray-400 mb-1 text-sm">Grouping Period</label>
                         <select x-model="newRule.grouping_period" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
                             <option value="daily">Daily</option>
@@ -1150,6 +1156,7 @@
                     this.newRule = { 
                         driver_id: rule.driver_id, 
                         constraint_type: rule.constraint_type, 
+                        duplicate_action: rule.duplicate_action || 'schedule_one',
                         tolerance_mins: rule.tolerance_mins || 0,
                         grouping_period: rule.grouping_period || 'daily',
                         keywords: [...(rule.keywords || [])], 
@@ -1170,7 +1177,7 @@
                 cancelEditRule() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', tolerance_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', tolerance_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
                 },
                 async submitRule() {
                     this.saving = true;
