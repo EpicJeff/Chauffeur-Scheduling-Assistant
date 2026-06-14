@@ -502,7 +502,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
                         applicable_entities.add(f"passenger_{p.id}")
                 for d in drivers:
-                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d.hashtags):
+                    d_tags = d.hashtags
+                    if not d_tags:
+                        d_tags = ['#' + ''.join(c.lower() for c in d.name if c.isalnum())]
+                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d_tags):
                         applicable_entities.add(f"driver_{d.id}")
                         
                 if hasattr(e, 'calendar_ids') and e.calendar_ids:
