@@ -864,9 +864,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 else:
                     next_dest = e2.location
                     
-                if (travel_gap > 45 or wait > 15) and driver_home and driver_home.strip() != "":
-                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home, departure_time=int(dep_time), return_traffic=True)
-                    travel_from_home, from_delay = get_travel_time_minutes(driver_home, next_dest, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
+                driver_home_at_layover = get_active_home(f'driver_{d_id}', dep_time, driver_default_home)
+                if (travel_gap > 45 or wait > 15) and driver_home_at_layover and driver_home_at_layover.strip() != "":
+                    travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home_at_layover, departure_time=int(dep_time), return_traffic=True)
+                    travel_from_home, from_delay = get_travel_time_minutes(driver_home_at_layover, next_dest, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
                     
                     extra_drive = pickup_waypoint["from_pickup_mins"] if pickup_waypoint else 0
                     layover = travel_gap - travel_to_home - travel_from_home - extra_drive - 5
@@ -877,7 +878,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             "to_home_delay_mins": to_delay,
                             "from_home_mins": travel_from_home,
                             "from_home_delay_mins": from_delay,
-                            "layover_mins": int(max(0, layover))
+                            "layover_mins": int(max(0, layover)),
+                            "driver_home_location": driver_home_at_layover
                         }
                         travel = travel_to_home + travel_from_home + extra_drive
                         delay = to_delay + from_delay

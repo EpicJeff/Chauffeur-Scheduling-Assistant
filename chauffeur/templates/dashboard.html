@@ -1427,7 +1427,7 @@
                             const prevEv = uniqueColEvents[index - 1];
                             const edgeFromPrev = routeEdges[c_id] ? routeEdges[c_id][prevEv.id] : null;
                             if (edgeFromPrev && edgeFromPrev.home_waypoint) {
-                                computedOrigin = currentData.home_location || '';
+                                computedOrigin = edgeFromPrev.home_waypoint.driver_home_location || currentData.home_location || '';
                             } else if (edgeFromPrev && edgeFromPrev.pickup_waypoint) {
                                 computedOrigin = edgeFromPrev.pickup_waypoint.pickup_location;
                             } else {
