@@ -641,7 +641,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": conflicts
         }
         
-        storage.save_cached_daily_schedule(date_str, daily_schedule, daily_hash)
+        from fastapi.encoders import jsonable_encoder
+        encoded_schedule = jsonable_encoder(daily_schedule)
+        storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash)
         
         combined_assignments.update(assignments)
         combined_unassigned.extend(unassigned)
