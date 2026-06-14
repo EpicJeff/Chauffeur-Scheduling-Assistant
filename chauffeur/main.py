@@ -1095,6 +1095,12 @@ def get_route_info(origin: str, destination: str):
         return {"error": "No route found"}
     return info
 
+@app.get("/api/admin/clear_cache")
+def clear_geocache():
+    storage.geocode_cache_table.truncate()
+    storage.route_cache_table.truncate()
+    return {"status": "ok", "message": "Geocode and routing caches wiped successfully"}
+
 @app.post("/api/test/set_mapbox_usage")
 def test_set_mapbox_usage(endpoint: str, count: int):
     import datetime
