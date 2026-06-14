@@ -1176,7 +1176,13 @@
 
                 let allEventsForDate = [];
                 colIds.forEach(c_id => {
-                    if (colsObj[c_id]) allEventsForDate.push(...colsObj[c_id]);
+                    if (colsObj[c_id]) {
+                        colsObj[c_id].forEach(e => {
+                            if (e.event_type !== 'background_trip') {
+                                allEventsForDate.push(e);
+                            }
+                        });
+                    }
                 });
 
                 // Active periods
@@ -1191,6 +1197,7 @@
                 colIds.forEach(c_id => {
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(ev => {
+                            if (ev.event_type === 'background_trip') return;
                             const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.travel_mins > 0) {
                                 const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
@@ -1244,14 +1251,26 @@
 
                 function getTimeY(dateStr) {
                     const t = new Date(dateStr).getTime();
+                    if (blocks.length === 0) return 0;
+                    if (t <= blocks[0].start) return 0;
+                    
                     for (let i = 0; i < blocks.length; i++) {
                         const b = blocks[i];
                         if (t >= b.start && t <= b.end) {
                             const offsetMins = (t - b.start) / 60000;
                             return b.startY + (offsetMins * PIXELS_PER_MINUTE);
                         }
+                        if (i < blocks.length - 1) {
+                            const nextB = blocks[i + 1];
+                            if (t > b.end && t < nextB.start) {
+                                // In a gap, map it proportionally inside the GAP_HEIGHT
+                                const gapDuration = nextB.start - b.end;
+                                const gapOffset = t - b.end;
+                                return b.endY + (gapOffset / gapDuration) * GAP_HEIGHT;
+                            }
+                        }
                     }
-                    return 0; // Fallback
+                    return blocks[blocks.length - 1].endY;
                 }
 
                 // Build HTML
