@@ -1436,6 +1436,13 @@
                             if (edgeFromPrev && edgeFromPrev.to_event === ev.id) {
                                 lateMins = edgeFromPrev.late_mins || 0;
                             }
+                        } else {
+                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
+                            if (initEdge && initEdge.pickup_waypoint && initEdge.pickup_waypoint.driver_home_location) {
+                                computedOrigin = initEdge.pickup_waypoint.driver_home_location;
+                            } else if (initEdge && initEdge.driver_home_location) {
+                                computedOrigin = initEdge.driver_home_location;
+                            }
                         }
                         const originLocationEnc = computedOrigin ? encodeURIComponent(computedOrigin).replace(/'/g, "\\'") : '';
                         const clickAttr = `onclick="openEventModal('${ev.id}', '${originLocationEnc}')"`;
