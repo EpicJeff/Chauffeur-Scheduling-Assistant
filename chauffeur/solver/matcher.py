@@ -679,7 +679,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
     def get_pax_id(cal_id: str) -> Optional[str]:
         if not passengers: return None
         for p in passengers:
-            if cal_id in p.calendar_ids:
+            if cal_id == p.id or cal_id in p.calendar_ids:
                 return p.id
         return None
 
