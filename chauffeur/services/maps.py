@@ -2,7 +2,10 @@ import os
 from typing import Optional
 
 import requests
+import threading
 from services import storage
+
+geocode_lock = threading.Lock()
 
 def get_cache_duration() -> int:
     import json
@@ -161,49 +164,53 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
     if cached:
         return cached.get('lat'), cached.get('lon')
         
-    # Rate limit: Nominatim requires max 1 request per second
-    import time
-    time.sleep(1.1)
-    
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": address,
-        "format": "json",
-        "limit": 1
-    }
-    headers = {
-        "User-Agent": "ChauffeurScheduleAssistant/1.0"
-    }
-    
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data:
-                lat = float(data[0]["lat"])
-                lon = float(data[0]["lon"])
-                display_name = data[0].get("display_name", "")
-                storage.set_cached_geocode(address, lat, lon, display_name)
-                return lat, lon
-        print(f"Geocoding failed for {address}: {resp.status_code} {resp.text}")
-    except Exception as ex:
-        print(f"Geocoding error for {address}: {ex}")
+    with geocode_lock:
+        # Check cache again inside the lock in case another thread just fetched it
+        cached = storage.get_cached_geocode(address)
+        if cached:
+            return cached.get('lat'), cached.get('lon')
+            
+        # Rate limit: Nominatim requires max 1 request per second
+        import time
+        time.sleep(1.1)
         
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": address,
+            "format": "json",
+            "limit": 1
+        }
+        headers = {
+            "User-Agent": "ChauffeurScheduleAssistant/1.0"
+        }
+        
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    lat = float(data[0]["lat"])
+                    lon = float(data[0]["lon"])
+                    display_name = data[0].get("display_name", "")
+                    storage.set_cached_geocode(address, lat, lon, display_name)
+                    return lat, lon
+            print(f"Geocoding failed for {address}: {resp.status_code} {resp.text}")
+        except Exception as ex:
+            print(f"Geocoding error for {address}: {ex}")
+            
     return None
 
 def autocomplete_location(input_text: str) -> list[dict]:
     """
-    Calls the Nominatim OpenStreetMap API for autocomplete.
+    Calls the Photon API (based on OpenStreetMap) for autocomplete.
     Returns a list of dicts: {"description": "123 Main St..."}
     """
     if not input_text or len(input_text) < 3:
         return []
         
-    url = "https://nominatim.openstreetmap.org/search"
+    url = "https://photon.komoot.io/api/"
     params = {
         "q": input_text,
-        "format": "json",
-        "addressdetails": 1,
         "limit": 5
     }
     headers = {
@@ -214,10 +221,27 @@ def autocomplete_location(input_text: str) -> list[dict]:
         resp = requests.get(url, params=params, headers=headers, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
-            return [{"description": p["display_name"]} for p in data]
+            results = []
+            for feature in data.get("features", []):
+                p = feature.get("properties", {})
+                
+                parts = []
+                if p.get("name"): parts.append(p.get("name"))
+                elif p.get("street"):
+                    s = p.get("street")
+                    if p.get("housenumber"):
+                        s = f"{p.get('housenumber')} {s}"
+                    parts.append(s)
+                    
+                if p.get("city"): parts.append(p.get("city"))
+                if p.get("state"): parts.append(p.get("state"))
+                
+                if parts:
+                    results.append({"description": ", ".join(parts)})
+            return results
         return []
     except Exception as ex:
-        print(f"Nominatim autocomplete error: {ex}")
+        print(f"Photon autocomplete error: {ex}")
         return []
 
 def get_google_maps_url(locations: list[str]) -> str:
