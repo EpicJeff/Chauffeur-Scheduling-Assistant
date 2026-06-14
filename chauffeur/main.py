@@ -569,13 +569,20 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     combined_ghost_assignments = {}
     combined_ghost_drivers = []
     combined_events_to_solve = []
-    combined_route_edges = []
-    combined_initial_edges = []
-    combined_final_edges = []
+    combined_route_edges = {}
+    combined_initial_edges = {}
+    combined_final_edges = {}
     combined_true_unassigned = []
     combined_conflicts = []
     
     home_location = maps.get_home_location()
+
+    def merge_edges(target, source):
+        if not source: return
+        for d_id, edges in source.items():
+            if d_id not in target:
+                target[d_id] = {}
+            target[d_id].update(edges)
 
     for date_str, daily_fetched in fetched_by_date.items():
         daily_hash = hash_events(daily_fetched)
@@ -597,9 +604,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     existing_ghost_ids.add(g['id'])
                     
             combined_events_to_solve.extend(sched.get('events', []))
-            combined_route_edges.extend(sched.get('route_edges', []))
-            combined_initial_edges.extend(sched.get('initial_edges', []))
-            combined_final_edges.extend(sched.get('final_edges', []))
+            merge_edges(combined_route_edges, sched.get('route_edges', {}))
+            merge_edges(combined_initial_edges, sched.get('initial_edges', {}))
+            merge_edges(combined_final_edges, sched.get('final_edges', {}))
             combined_true_unassigned.extend(sched.get('true_unassigned', []))
             combined_conflicts.extend(sched.get('conflicts', []))
             continue
@@ -633,9 +640,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "lateness_warnings": lateness_warnings,
             "ghost_assignments": ghost_assignments,
             "ghost_drivers": ghost_drivers,
-            "route_edges": [e.dict() if hasattr(e, 'dict') else e for e in route_edges],
-            "initial_edges": [e.dict() if hasattr(e, 'dict') else e for e in initial_edges],
-            "final_edges": [e.dict() if hasattr(e, 'dict') else e for e in final_edges],
+            "route_edges": route_edges,
+            "initial_edges": initial_edges,
+            "final_edges": final_edges,
             "events": [e.dict() if hasattr(e, 'dict') else e for e in daily_events_to_solve],
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
@@ -657,9 +664,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 existing_ghost_ids.add(g['id'])
                 
         combined_events_to_solve.extend(daily_schedule["events"])
-        combined_route_edges.extend(daily_schedule["route_edges"])
-        combined_initial_edges.extend(daily_schedule["initial_edges"])
-        combined_final_edges.extend(daily_schedule["final_edges"])
+        merge_edges(combined_route_edges, daily_schedule["route_edges"])
+        merge_edges(combined_initial_edges, daily_schedule["initial_edges"])
+        merge_edges(combined_final_edges, daily_schedule["final_edges"])
         combined_true_unassigned.extend(true_unassigned)
         combined_conflicts.extend(conflicts)
         
