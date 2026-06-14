@@ -51,7 +51,8 @@ class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     driver_id: str
     event_keyword: Optional[str] = None # Deprecated
-    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'mutually_exclusive', 'group'
+    constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'duplicate', 'group'
+    duplicate_action: Optional[str] = None
     tolerance_mins: int = 0
     grouping_period: str = 'daily'
     keywords: List[str] = Field(default_factory=list)
