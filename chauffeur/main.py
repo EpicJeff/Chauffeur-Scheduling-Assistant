@@ -426,20 +426,26 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
     drivers = [Driver(**d) for d in drivers_data if not d.get('is_disabled', False)]
     
+    driver_calendar_map = {}
     driver_calendar_ids = set()
     for d in drivers:
         for cid in d.calendar_ids:
             if cid and cid.strip():
-                driver_calendar_ids.add(cid.strip())
+                c = cid.strip()
+                driver_calendar_ids.add(c)
+                driver_calendar_map[c] = d
                 
     passengers_data = storage.get_all_passengers()
     passengers = [Passenger(**p) for p in passengers_data]
     
+    passenger_calendar_map = {}
     passenger_calendar_ids = set()
     for p in passengers:
         for cid in p.calendar_ids:
             if cid and cid.strip():
-                passenger_calendar_ids.add(cid.strip())
+                c = cid.strip()
+                passenger_calendar_ids.add(c)
+                passenger_calendar_map[c] = p
                 
     all_cals_to_fetch = sorted(list(set(calendar_ids) | driver_calendar_ids | passenger_calendar_ids))
     
@@ -477,23 +483,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     is_trip = True
                     e.event_type = 'background_trip'
                     
-                    applicable_entities = set()
-                    for p in passengers:
-                        if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
-                            applicable_entities.add(f"passenger_{p.id}")
-                    for d in drivers:
-                        if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d.hashtags):
-                            applicable_entities.add(f"driver_{d.id}")
-                    if not applicable_entities:
-                        applicable_entities.add('global')
-                        
-                    # We store the applicable entities in the description or a new field so we can access it later.
-                    # Since Event schema doesn't have an applicable_entities field, we can attach it dynamically.
-                    # Pydantic models might strip it if not in schema. Let's add it to schema or just use a separate map.
-                    # Wait, we can just pass `trip_events` down! But wait, `trip_events` is a list of events. 
-                    # We also need the entities map.
-                    # Let's just create `active_trips` array of dicts.
-                    
             if getattr(e, 'all_day', False) and not is_trip:
                 continue
                 
@@ -510,6 +499,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 for d in drivers:
                     if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d.hashtags):
                         applicable_entities.add(f"driver_{d.id}")
+                        
+                if hasattr(e, 'calendar_ids') and e.calendar_ids:
+                    for cid in e.calendar_ids:
+                        if cid in passenger_calendar_map:
+                            applicable_entities.add(f"passenger_{passenger_calendar_map[cid].id}")
+                        if cid in driver_calendar_map:
+                            applicable_entities.add(f"driver_{driver_calendar_map[cid].id}")
+                            
                 if not applicable_entities:
                     applicable_entities.add('global')
                     
