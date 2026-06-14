@@ -705,12 +705,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     duplicate_groups = []
     mut_ex_keywords = []
+    ignored_mut_ex_keywords = []
     for r in rules:
         if r.constraint_type == 'mutually_exclusive':
             if getattr(r, 'event_keyword', None):
                 mut_ex_keywords.append(r.event_keyword.lower())
             if hasattr(r, 'keywords') and r.keywords:
                 mut_ex_keywords.extend([kw.lower() for kw in r.keywords])
+        elif r.constraint_type == 'ignore_mutually_exclusive':
+            if getattr(r, 'event_keyword', None):
+                ignored_mut_ex_keywords.append(r.event_keyword.lower())
+            if hasattr(r, 'keywords') and r.keywords:
+                ignored_mut_ex_keywords.extend([kw.lower() for kw in r.keywords])
     from collections import defaultdict
     dup_groups = defaultdict(list)
     for e in combined_events_to_solve:
@@ -731,6 +737,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         core_title_lower = core_title.lower()
         
         if any(kw in core_title_lower for kw in mut_ex_keywords):
+            continue
+            
+        if any(kw in core_title_lower for kw in ignored_mut_ex_keywords):
             continue
             
         if len(core_title) > 3:
