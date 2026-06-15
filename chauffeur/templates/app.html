@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -24,39 +25,82 @@
         }
     </script>
     <style>
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .snap-x-mandatory { scroll-snap-type: x mandatory; }
-        .snap-center { scroll-snap-align: center; }
-        body { -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .snap-x-mandatory {
+            scroll-snap-type: x mandatory;
+        }
+
+        .snap-center {
+            scroll-snap-align: center;
+        }
+
+        body {
+            -webkit-tap-highlight-color: transparent;
+        }
     </style>
 </head>
+
 <body class="bg-gray-950 text-gray-100 font-sans h-screen flex flex-col overflow-hidden">
 
     <!-- Header -->
-    <header class="bg-gray-900 border-b border-gray-800 p-4 flex items-center justify-between shrink-0 shadow-md relative z-20">
+    <header
+        class="bg-gray-900 border-b border-gray-800 p-4 flex items-center justify-between shrink-0 shadow-md relative z-20">
         <div class="flex items-center gap-3">
-            <div id="driver-avatar" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">?</div>
+            <div id="driver-avatar"
+                class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
+                ?</div>
             <div class="flex flex-col">
                 <h1 id="driver-name" class="text-lg font-bold text-white leading-tight">Select Driver</h1>
                 <span id="date-subtitle" class="text-xs text-blue-400 font-medium tracking-wide uppercase">Today</span>
             </div>
         </div>
         <div class="flex items-center gap-2">
-            <button id="btn-push" onclick="enableNotifications()" class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-white transition-colors relative hidden" title="Enable Push Notifications">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                <span class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2 animate-ping"></span>
-                <span class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
+            <button id="btn-push" onclick="enableNotifications()"
+                class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-white transition-colors relative hidden"
+                title="Enable Push Notifications">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+                    </path>
+                </svg>
+                <span
+                    class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2 animate-ping"></span>
+                <span
+                    class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
             </button>
-            <button id="btn-notif" onclick="toggleNotifications()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors relative hidden">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                <span id="notif-badge" class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
+            <button id="btn-notif" onclick="toggleNotifications()"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors relative hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+                    </path>
+                </svg>
+                <span id="notif-badge"
+                    class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
-            <button id="btn-sync" onclick="fetchSchedule(true)" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <button id="btn-sync" onclick="fetchSchedule(true)"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                    </path>
+                </svg>
             </button>
-            <button id="btn-switch-driver" onclick="clearDriver()" class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors hidden">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+            <button id="btn-switch-driver" onclick="clearDriver()"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1">
+                    </path>
+                </svg>
             </button>
         </div>
     </header>
@@ -71,35 +115,57 @@
 
     <!-- Main Schedule Screen -->
     <div id="screen-schedule" class="flex-1 flex flex-col hidden overflow-hidden relative">
-        
+
         <!-- Day Navigation -->
-        <div class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
-            <button onclick="prevDay()" class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors" id="btn-prev-day">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path></svg>
+        <div
+            class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
+            <button onclick="prevDay()"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
+                id="btn-prev-day">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path>
+                </svg>
             </button>
-            <div id="current-day-label" class="font-bold text-center text-white tracking-wide text-lg drop-shadow-md">Loading...</div>
-            <button onclick="nextDay()" class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors" id="btn-next-day">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path></svg>
+            <div id="current-day-label" class="font-bold text-center text-white tracking-wide text-lg drop-shadow-md">
+                Loading...</div>
+            <button onclick="nextDay()"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
+                id="btn-next-day">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
+                </svg>
             </button>
         </div>
 
         <!-- Schedule Container (Swipeable) -->
-        <div id="days-container" class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
+        <div id="days-container"
+            class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
             <!-- Day panes injected here -->
         </div>
     </div>
 
     <!-- Notifications Modal -->
-    <div id="notif-modal" class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
-        <div id="notif-modal-content" class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
+    <div id="notif-modal"
+        class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
+        <div id="notif-modal-content"
+            class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
             <div class="flex justify-between items-center mb-6 shrink-0">
                 <div class="flex justify-between items-center w-full pb-2 border-b border-gray-800">
-                <h2 class="text-xl font-bold text-white">Notifications</h2>
-                <button onclick="clearNotifications()" class="text-sm font-bold text-red-400 bg-red-400/10 px-3 py-1 rounded-lg active:bg-red-400/20 transition-colors">Clear All</button>
-            </div>
-            
-            <button onclick="testPushNotification()" class="mb-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg active:scale-95 transition-all">Send Test Push Notification</button>
-                <button onclick="toggleNotifications()" class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                    <h2 class="text-xl font-bold text-white">Notifications</h2>
+                    <button onclick="clearNotifications()"
+                        class="text-sm font-bold text-red-400 bg-red-400/10 px-3 py-1 rounded-lg active:bg-red-400/20 transition-colors">Clear
+                        All</button>
+                </div>
+
+                <button onclick="testPushNotification()"
+                    class="mb-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg active:scale-95 transition-all">Send
+                    Test Push Notification</button>
+                <button onclick="toggleNotifications()"
+                    class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg></button>
             </div>
             <div id="notif-list" class="flex-1 overflow-y-auto space-y-3 no-scrollbar pb-6">
                 <p class="text-center text-gray-500 italic py-4">No recent notifications</p>
@@ -108,30 +174,49 @@
     </div>
 
     <!-- Action Sheet Modal -->
-    <div id="action-sheet" class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
-        <div id="action-sheet-content" class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+    <div id="action-sheet"
+        class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
+        <div id="action-sheet-content"
+            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
             <div class="w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
             <h3 class="text-xl font-bold mb-4 text-white" id="sheet-title">Open in Maps</h3>
             <p class="text-sm text-gray-400 mb-6 font-medium" id="sheet-subtitle"></p>
             <div class="flex flex-col gap-3">
-                <button onclick="openMaps('google')" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/></svg>
+                <button onclick="openMaps('google')"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-lg shadow-lg">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z" />
+                    </svg>
                     Google Maps
                 </button>
-                <button onclick="openMaps('apple')" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.05 2.46.82 3.12.82.68 0 2.05-.92 3.57-.79 1.45.05 2.56.59 3.26 1.48-2.61 1.63-2.18 4.7.42 5.59-.62 1.77-1.48 3.32-2.37 4.22v1.65zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.02 4.45-3.74 4.25z"/></svg>
+                <button onclick="openMaps('apple')"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-white font-bold text-lg shadow-lg">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.05 2.46.82 3.12.82.68 0 2.05-.92 3.57-.79 1.45.05 2.56.59 3.26 1.48-2.61 1.63-2.18 4.7.42 5.59-.62 1.77-1.48 3.32-2.37 4.22v1.65zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.02 4.45-3.74 4.25z" />
+                    </svg>
                     Apple Maps
                 </button>
-                <button onclick="openMaps('waze')" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 13a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-2.5-6.5a4 4 0 00-4 4h-2c0-3.31 2.69-6 6-6v2z"/></svg>
+                <button onclick="openMaps('waze')"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold text-lg shadow-lg">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 13a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-2.5-6.5a4 4 0 00-4 4h-2c0-3.31 2.69-6 6-6v2z" />
+                    </svg>
                     Waze
                 </button>
                 <div class="w-full h-px bg-gray-800 my-2"></div>
-                <button onclick="markCompleted()" id="btn-mark-completed" class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                <button onclick="markCompleted()" id="btn-mark-completed"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 6L9 17l-5-5" />
+                    </svg>
                     Mark as Completed
                 </button>
-                <button onclick="closeActionSheet()" class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
+                <button onclick="closeActionSheet()"
+                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
                     Cancel
                 </button>
             </div>
@@ -181,7 +266,7 @@
             document.getElementById('btn-switch-driver').classList.add('hidden');
             document.getElementById('btn-push').classList.add('hidden');
             document.getElementById('screen-select-driver').classList.remove('hidden');
-            
+
             document.getElementById('driver-name').textContent = "Select Driver";
             document.getElementById('date-subtitle').textContent = "Chauffeur App";
             document.getElementById('driver-avatar').textContent = "?";
@@ -213,7 +298,7 @@
             const modal = document.getElementById('notif-modal');
             const content = document.getElementById('notif-modal-content');
             isNotifOpen = !isNotifOpen;
-            
+
             if (isNotifOpen) {
                 modal.classList.remove('hidden');
                 modal.style.display = 'flex';
@@ -239,7 +324,7 @@
                 console.error(err);
             }
         }
-        
+
         async function testPushNotification() {
             try {
                 if (!currentDriverId) return alert("Select a driver first");
@@ -256,17 +341,17 @@
                 const events = await res.json();
                 const list = document.getElementById('notif-list');
                 const badge = document.getElementById('notif-badge');
-                
+
                 if (events.length === 0) {
                     list.innerHTML = '<p class="text-gray-500 text-center py-4 italic">No recent notifications</p>';
                     badge.classList.add('hidden');
                 } else {
                     badge.textContent = events.length;
                     badge.classList.remove('hidden');
-                    
+
                     list.innerHTML = events.map(ev => {
                         const dName = driversData.find(d => d.id === ev.driver_id)?.name || 'Unknown Driver';
-                        const timeStr = new Date(ev.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        const timeStr = new Date(ev.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                         const colorClass = ev.action === 'arrived' ? 'text-blue-400' : 'text-green-400';
                         return `
                             <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
@@ -289,7 +374,7 @@
             currentDriverId = id;
             selectedDriverId = id;
             localStorage.setItem('chauffeur_driver_id', id);
-            
+
             const d = driversData.find(d => d.id === id);
             if (d) {
                 document.getElementById('driver-name').textContent = d.name;
@@ -297,18 +382,18 @@
                 document.getElementById('driver-avatar').style.borderColor = d.color_code;
                 document.getElementById('driver-avatar').style.color = d.color_code;
             }
-            
+
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
             document.getElementById('btn-switch-driver').classList.remove('hidden');
             document.getElementById('btn-notif').classList.remove('hidden');
             await checkNotificationStatus();
-            
+
             await fetchSchedule();
             fetchNotifications();
         }
 
-        
+
         function urlB64ToUint8Array(base64String) {
             const padding = '='.repeat((4 - base64String.length % 4) % 4);
             const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
@@ -330,17 +415,17 @@
                 alert("Permission not granted.");
                 return;
             }
-            
+
             try {
                 const reg = await navigator.serviceWorker.register('/sw.js');
                 const response = await fetch('api/vapid_public_key');
                 const data = await response.json();
-                
+
                 const subscription = await reg.pushManager.subscribe({
                     userVisibleOnly: true,
                     applicationServerKey: urlB64ToUint8Array(data.public_key)
                 });
-                
+
                 await fetch('api/push_subscribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -365,7 +450,7 @@
         async function fetchSchedule(refresh = false) {
             const container = document.getElementById('days-container');
             const btnSync = document.getElementById('btn-sync');
-            
+
             const cached = localStorage.getItem('chauffeur_schedule');
             let hasCachedData = false;
             if (cached && !refresh) {
@@ -374,22 +459,22 @@
                     buildTimeline();
                     hasCachedData = true;
                     // Do not return here, let it fetch fresh data in the background
-                } catch(e) {}
+                } catch (e) { }
             }
 
             if (refresh) {
                 // If it's a manual refresh, clear the start date to reset the view
                 window.globalStartDate = null;
             }
-            
+
             if (!hasCachedData || refresh) {
                 btnSync.classList.add('animate-spin');
             }
-            
+
             try {
                 let url = 'api/schedule';
                 if (refresh) url += '?force_refresh=true';
-                
+
                 const res = await fetch(url);
                 scheduleData = await res.json();
                 localStorage.setItem('chauffeur_schedule', JSON.stringify(scheduleData));
@@ -407,10 +492,10 @@
         function formatTime(isoStr) {
             return new Date(isoStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         }
-        
+
         function formatDuration(mins) {
             if (mins < 60) return `${mins}m`;
-            const h = Math.floor(mins/60);
+            const h = Math.floor(mins / 60);
             const m = mins % 60;
             return m > 0 ? `${h}h ${m}m` : `${h}h`;
         }
@@ -418,15 +503,15 @@
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
-            
+
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
             sheet.classList.remove('hidden');
             sheet.style.display = 'flex';
-            
+
             // Trigger reflow
             void sheet.offsetWidth;
-            
+
             sheet.classList.remove('opacity-0');
             content.classList.remove('translate-y-full');
         }
@@ -434,10 +519,10 @@
         function closeActionSheet() {
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
-            
+
             sheet.classList.add('opacity-0');
             content.classList.add('translate-y-full');
-            
+
             setTimeout(() => {
                 sheet.classList.add('hidden');
                 sheet.style.display = 'none';
@@ -449,7 +534,7 @@
             if (!routeContext) return;
             const originEnc = routeContext.origin ? `&origin=${encodeURIComponent(routeContext.origin)}` : '';
             const destEnc = encodeURIComponent(routeContext.destination);
-            
+
             let url = '';
             if (provider === 'google') {
                 url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}&dir_action=navigate`;
@@ -459,7 +544,7 @@
             } else if (provider === 'waze') {
                 url = `waze://?q=${destEnc}&navigate=yes`;
             }
-            
+
             closeActionSheet();
             const a = document.createElement('a');
             a.href = url;
@@ -473,13 +558,13 @@
             const btn = document.getElementById('btn-mark-completed');
             btn.disabled = true;
             btn.innerHTML = '<svg class="w-6 h-6 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Saving...';
-            
+
             try {
                 let actionStr = 'completed';
                 if (routeContext.legTitle.includes('Pickup')) actionStr = 'picked up';
                 if (routeContext.legTitle.includes('Dropoff')) actionStr = 'dropped off';
                 if (routeContext.legTitle.includes('Home')) actionStr = 'arrived';
-                
+
                 await fetch('api/telemetry', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -491,7 +576,7 @@
                         leg_id: routeContext.legId
                     })
                 });
-                
+
                 // ALSO mark it in drive_status backend
                 await fetch('api/drive_status', {
                     method: 'POST',
@@ -517,7 +602,7 @@
             document.getElementById('em-time').textContent = ev.timeStr;
             document.getElementById('em-location').textContent = ev.location || 'No location provided';
             document.getElementById('em-passengers').innerHTML = ev.passengerHtml || '<span class="text-gray-500 italic">None</span>';
-            
+
             const mapBtn = document.getElementById('em-map-btn');
             if (ev.location) {
                 mapBtn.style.display = 'flex';
@@ -528,7 +613,7 @@
             } else {
                 mapBtn.style.display = 'none';
             }
-            
+
             const modal = document.getElementById('event-modal');
             const content = document.getElementById('event-modal-content');
             modal.classList.remove('hidden');
@@ -565,10 +650,10 @@
                     </div>`;
             }
 
-            const iconSvg = colorTheme === 'blue' 
+            const iconSvg = colorTheme === 'blue'
                 ? `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>`
                 : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
-            
+
             const colorClassBg = colorTheme === 'blue' ? 'bg-blue-900' : 'bg-green-900';
             const colorClassText = colorTheme === 'blue' ? 'text-blue-300' : 'text-green-300';
             const timeColorClassText = colorTheme === 'blue' ? 'text-blue-400' : 'text-green-400';
@@ -601,7 +686,7 @@
             if (!scheduleData || !dId) return;
 
             const { events, assignments, ghost_assignments, route_edges, initial_edges, final_edges } = scheduleData;
-            
+
             const myEvents = events.filter(ev => {
                 const assigned = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
                 if (assigned === dId) return true;
@@ -619,18 +704,18 @@
             currentDates = [];
             if (!window.globalStartDate) {
                 window.globalStartDate = new Date();
-                window.globalStartDate.setHours(0,0,0,0);
+                window.globalStartDate.setHours(0, 0, 0, 0);
                 window.globalDaysToShow = 7;
             }
-            
-            for (let i=0; i<window.globalDaysToShow; i++) {
+
+            for (let i = 0; i < window.globalDaysToShow; i++) {
                 const d = new Date(window.globalStartDate);
                 d.setDate(d.getDate() + i);
                 currentDates.push(d.toLocaleDateString('en-CA'));
             }
 
             container.innerHTML = '';
-            
+
             currentDates.forEach((dateStr, index) => {
                 const evs = byDate[dateStr] || [];
                 evs.sort((a, b) => new Date(a.start) - new Date(b.start));
@@ -652,7 +737,7 @@
                 }
 
                 let html = '<div class="flex flex-col relative before:absolute before:left-[19px] before:top-4 before:bottom-4 before:w-1 before:bg-gray-800 before:z-0">';
-                
+
                 const driverConfig = driversData.find(d => d.id === dId) || {};
                 const globalHome = scheduleData.home_location || '';
                 const calendar_metadata = scheduleData.calendar_metadata || {};
@@ -665,15 +750,18 @@
                 function getHomeLabel(loc) {
                     if (!loc) return "Drive home";
                     const l = loc.toLowerCase();
-                    if (l.includes("hotel") || l.includes("resort") || l.includes("motel") || l.includes("suites") || l.includes("lodge") || l.includes(" inn") || l.startsWith("inn ") || l.includes("airbnb") || l.includes("vrbo")) {
-                        return "Drive to Hotel/Rental";
+                    if (l.includes("hotel") || l.includes("resort") || l.includes("motel") || l.includes("suites") || l.includes("lodge") || l.includes(" inn") || l.startsWith("inn ")) {
+                        return "Drive to Hotel";
+                    }
+                    else if (l.includes("airbnb") || l.includes("vrbo")) {
+                        return "Drive to Rental";
                     }
                     return "Drive home";
                 }
-                
+
                 evs.forEach((ev, evIdx) => {
                     const isDriverOnly = !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]);
-                    
+
                     // --- Initial Edge ---
                     if (initial_edges[dId] && initial_edges[dId][ev.id]) {
                         const edge = initial_edges[dId] ? initial_edges[dId][ev.id] : null;
@@ -682,16 +770,16 @@
                             const destinationLocation = ev.location;
                             const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5 + (edge.buffer_before_mins || 0)) * 60000);
                             const badges = getPassengerBadges(ev);
-                            
+
                             if (edge.pickup_waypoint) {
                                 const leg1Mins = edge.pickup_waypoint.from_driver_home_mins;
                                 const leg2Mins = edge.pickup_waypoint.from_global_home_mins;
                                 const leg2DepTime = new Date(depTime.getTime() + leg1Mins * 60000);
                                 const paxPickupLoc = edge.pickup_waypoint.pickup_location || globalHome;
-                                
+
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxPickupLoc.replace(/'/g, "\\'")}', 'Drive to Pickup', '${ev.id}'`;
                                 html += renderLegPill(formatTime(depTime.toISOString()), "Drive to Pickup", leg1Mins, 0, args1 + `, 'init_${ev.id}_1'`, 'blue', badges, `init_${ev.id}_1`, depTime < new Date());
-                                
+
                                 let args2 = `'${paxPickupLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'init_${ev.id}_2'`, 'blue', '', `init_${ev.id}_2`, leg2DepTime < new Date());
                             } else {
@@ -705,7 +793,7 @@
                     let bgColor = isDriverOnly ? 'bg-gray-800/50 border-gray-700 border-dashed border' : 'bg-gray-800 border-gray-700 border';
                     let titleClass = isDriverOnly ? 'text-gray-400' : 'text-white';
                     const badges = getPassengerBadges(ev);
-                    
+
                     let lateMins = 0;
                     if (route_edges[dId]) {
                         const incomingEdge = Object.values(route_edges[dId]).find(edge => edge.to_event === ev.id);
@@ -713,7 +801,7 @@
                             lateMins = incomingEdge.late_mins;
                         }
                     }
-                    
+
                     const eventData = {
                         title: ev.event_type === 'dropoff' ? 'Dropoff: ' + ev.title : (ev.event_type === 'pickup' ? 'Pickup: ' + ev.title : ev.title),
                         timeStr: (ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
@@ -746,40 +834,40 @@
                         const edge = route_edges[dId] ? route_edges[dId][ev.id] : null;
                         const nextEv = evs.find(e => e.id === edge.to_event);
                         if (nextEv) {
-                        
-                        let computedOrigin = ev.location;
-                        const destinationLocation = nextEv.location;
-                        const nextBadges = getPassengerBadges(nextEv);
 
-                        if (edge.home_waypoint) {
-                            const leg1Mins = edge.home_waypoint.to_home_mins;
-                            const leg2Mins = edge.home_waypoint.from_home_mins;
-                            const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
-                            const driverHomeLoc = edge.home_waypoint.driver_home_location || globalHome;
-                            
-                            const homeLabel = getHomeLabel(driverHomeLoc);
-                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
-                            
-                            let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
-                        } else if (edge.pickup_waypoint) {
-                            const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
-                            const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
-                            const pickupLocation = edge.pickup_waypoint.pickup_location || globalHome;
-                            const pickupTitle = edge.pickup_waypoint.pickup_event_title ? `Pickup at ${edge.pickup_waypoint.pickup_event_title}` : 'Pickup';
-                            const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
-                            
-                            let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, new Date(ev.end) < new Date());
-                            
-                            let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
-                        } else {
-                            let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
-                            let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
-                            html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, new Date(ev.end) < new Date(), edge.late_mins || 0);
-                        }
+                            let computedOrigin = ev.location;
+                            const destinationLocation = nextEv.location;
+                            const nextBadges = getPassengerBadges(nextEv);
+
+                            if (edge.home_waypoint) {
+                                const leg1Mins = edge.home_waypoint.to_home_mins;
+                                const leg2Mins = edge.home_waypoint.from_home_mins;
+                                const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
+                                const driverHomeLoc = edge.home_waypoint.driver_home_location || globalHome;
+
+                                const homeLabel = getHomeLabel(driverHomeLoc);
+                                let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                html += renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
+
+                                let args2 = `'${driverHomeLoc.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', nextBadges, `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                            } else if (edge.pickup_waypoint) {
+                                const leg1Mins = edge.pickup_waypoint.to_pickup_mins;
+                                const leg2Mins = edge.pickup_waypoint.from_pickup_mins;
+                                const pickupLocation = edge.pickup_waypoint.pickup_location || globalHome;
+                                const pickupTitle = edge.pickup_waypoint.pickup_event_title ? `Pickup at ${edge.pickup_waypoint.pickup_event_title}` : 'Pickup';
+                                const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
+
+                                let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${pickupLocation.replace(/'/g, "\\'")}', '${pickupTitle.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                html += renderLegPill(formatTime(ev.end), pickupTitle, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', nextBadges, `route_${ev.id}_1`, new Date(ev.end) < new Date());
+
+                                let args2 = `'${pickupLocation.replace(/'/g, "\\'")}', '${destinationLocation.replace(/'/g, "\\'")}', 'Drive to ${destinationLocation.split(',')[0].replace(/'/g, "\\'")}', '${ev.id}'`;
+                                html += renderLegPill(formatTime(leg2DepTime.toISOString()), `Drive to ${destinationLocation.split(',')[0]}`, leg2Mins, edge.delay_mins, args2 + `, 'route_${ev.id}_2'`, 'blue', '', `route_${ev.id}_2`, leg2DepTime < new Date(), edge.late_mins || 0);
+                            } else {
+                                let destStr = destinationLocation ? destinationLocation.split(',')[0] : 'Next Event';
+                                let args = `'${(computedOrigin || '').replace(/'/g, "\\'")}', '${(destinationLocation || '').replace(/'/g, "\\'")}', 'Drive to ${destStr.replace(/'/g, "\\'")}', '${ev.id}'`;
+                                html += renderLegPill(formatTime(ev.end), `Drive to ${destStr}`, edge.travel_mins, edge.delay_mins, args + `, 'route_${ev.id}_${nextEv.id}'`, 'blue', nextBadges, `route_${ev.id}_${nextEv.id}`, new Date(ev.end) < new Date(), edge.late_mins || 0);
+                            }
                         }
                     }
 
@@ -791,19 +879,19 @@
                             const originLocation = ev.location;
                             const destinationLocation = edge.driver_home_location || driverConfig.home_location || globalHome;
                             const badges = getPassengerBadges(ev);
-                            
+
                             if (edge.dropoff_waypoint) {
                                 const leg1Mins = edge.dropoff_waypoint.to_global_home_mins;
                                 const leg2Mins = edge.dropoff_waypoint.to_driver_home_mins;
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + leg1Mins * 60000);
                                 const leg2ArrTime = arriveDate;
-                                
+
                                 const paxDropoffLoc = edge.dropoff_waypoint.dropoff_location || globalHome;
                                 const driverHomeLoc = edge.dropoff_waypoint.driver_home_location || destinationLocation;
-                                
+
                                 let args1 = `'${originLocation.replace(/'/g, "\\'")}', '${paxDropoffLoc.replace(/'/g, "\\'")}', 'Drive to Dropoff', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2DepTime.toISOString()), "Drive to Dropoff", leg1Mins, 0, args1 + `, 'final_${ev.id}_1'`, 'green', badges, `final_${ev.id}_1`, leg2DepTime < new Date());
-                                
+
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 let args2 = `'${paxDropoffLoc.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += renderLegPill(formatTime(leg2ArrTime.toISOString()), homeLabel, leg2Mins, edge.delay_mins, args2 + `, 'final_${ev.id}'`, 'green', '', `final_${ev.id}`, leg2ArrTime < new Date());
@@ -838,19 +926,19 @@
         function updateHeaderDate() {
             if (currentDates.length === 0) return;
             const dStr = currentDates[activeDateIndex];
-            
+
             const today = new Date();
             const tomorrow = new Date();
             tomorrow.setDate(today.getDate() + 1);
-            
+
             const todayStr = today.toLocaleDateString('en-CA');
             const tomorrowStr = tomorrow.toLocaleDateString('en-CA');
-            
+
             let label = "";
             let subLabel = "";
             const options = { weekday: 'long', month: 'short', day: 'numeric' };
             const dDate = new Date(dStr + 'T12:00:00');
-            
+
             if (dStr === todayStr) {
                 label = "Today";
             } else if (dStr === tomorrowStr) {
@@ -858,10 +946,10 @@
             } else {
                 label = dDate.toLocaleDateString(undefined, options);
             }
-            
+
             document.getElementById('current-day-label').textContent = label;
             document.getElementById('date-subtitle').textContent = dDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-            
+
             // document.getElementById('btn-prev-day').disabled = activeDateIndex === 0;
             // document.getElementById('btn-next-day').disabled = activeDateIndex === currentDates.length - 1;
         }
@@ -872,7 +960,7 @@
             btnPrev.disabled = true;
             btnNext.disabled = true;
             document.getElementById('current-day-label').textContent = 'Loading...';
-            
+
             let queryStart, queryEnd;
             if (direction === 'next') {
                 queryStart = new Date(window.globalStartDate);
@@ -886,21 +974,21 @@
                 window.globalStartDate = queryStart;
                 window.globalDaysToShow += 1;
             }
-            
+
             const startStr = queryStart.toISOString().split('T')[0];
             const endStr = queryEnd.toISOString().split('T')[0];
-            
+
             try {
                 const res = await fetch(`api/schedule?start_date=${startStr}&end_date=${endStr}`);
                 if (res.ok) {
                     const data = await res.json();
-                    
+
                     // Merge events
                     const existingIds = new Set(scheduleData.events.map(e => e.id));
                     (data.events || []).forEach(e => {
                         if (!existingIds.has(e.id)) scheduleData.events.push(e);
                     });
-                    
+
                     // Merge assignments and edges
                     if (data.assignments) {
                         Object.assign(scheduleData.assignments, data.assignments);
@@ -932,9 +1020,9 @@
                             scheduleData.driver_events[dId] = [...new Set([...scheduleData.driver_events[dId], ...data.driver_events[dId]])];
                         }
                     }
-                    
+
                     buildTimeline();
-                    
+
                     // Restore scroll position
                     const container = document.getElementById('days-container');
                     if (direction === 'next') {
@@ -982,7 +1070,7 @@
 
         window.onload = () => {
             init();
-            
+
             // Check for navigation URL parameters
             const params = new URLSearchParams(window.location.search);
             const navDest = params.get('navigate_dest');
@@ -992,7 +1080,7 @@
                 setTimeout(() => {
                     openActionSheet('', navDest, navTitle, null, navLeg);
                 }, 500); // Give UI time to render
-                
+
                 // Clean up the URL so it doesn't pop up again on refresh
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
@@ -1000,11 +1088,18 @@
     </script>
 
     <!-- Event Details Modal -->
-    <div id="event-modal" class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex items-end sm:items-center justify-center p-4">
-        <div id="event-modal-content" class="bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
+    <div id="event-modal"
+        class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex items-end sm:items-center justify-center p-4">
+        <div id="event-modal-content"
+            class="bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
             <div class="flex justify-between items-start mb-4">
                 <h3 id="em-title" class="text-2xl font-bold text-white pr-4">Event Title</h3>
-                <button onclick="closeEventModal()" class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                <button onclick="closeEventModal()"
+                    class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg></button>
             </div>
             <p id="em-time" class="text-blue-400 font-bold mb-4">Time</p>
             <div class="mb-4">
@@ -1015,8 +1110,12 @@
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Location</p>
                 <p id="em-location" class="text-gray-300 text-sm break-words"></p>
             </div>
-            <button id="em-map-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md">
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/></svg>
+            <button id="em-map-btn"
+                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path
+                        d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z" />
+                </svg>
                 Open in Maps
             </button>
         </div>
