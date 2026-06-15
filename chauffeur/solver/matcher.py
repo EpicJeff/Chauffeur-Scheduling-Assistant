@@ -1118,6 +1118,8 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if not getattr(ae, 'location', '') or not str(ae.location).strip(): continue
                     if ae.id == e.id: continue
                     if ae.start.date() != e.start.date(): continue
+                    needs_driver = getattr(ae, 'event_type', '') != 'background_trip'
+                    if needs_driver and ae.id not in assignments: continue
                     if e_cals.intersection(ae.calendar_ids):
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
                         needed_secs = (travel + 5) * 60
