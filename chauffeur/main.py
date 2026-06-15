@@ -441,6 +441,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     passenger_calendar_map = {}
     passenger_calendar_ids = set()
     for p in passengers:
+        passenger_calendar_map[str(p.id)] = p
         for cid in p.calendar_ids:
             if cid and cid.strip():
                 c = cid.strip()
