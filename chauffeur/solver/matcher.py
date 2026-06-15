@@ -323,14 +323,18 @@ def solve_schedule(
                 needed_secs_e_to_de = (travel + (5 if travel > 2 else 0)) * 60 + e_buffer_after.get(e.id, 0) * 60
                 needed_secs_de_to_e = (travel + (5 if travel > 2 else 0)) * 60 + e_buffer_before.get(e.id, 0) * 60
                 
-                # Check for overlap
-                e_before_de = (de.start - e.end).total_seconds() >= needed_secs_e_to_de
-                de_before_e = (e.start - de.end).total_seconds() >= needed_secs_de_to_e
+                # Check for overlap, allowing for tolerance
+                e_before_de = (de.start - e.end).total_seconds() + (e_tolerances.get(e.id, 0) * 60) >= needed_secs_e_to_de
+                de_before_e = (e.start - de.end).total_seconds() + (e_tolerances.get(e.id, 0) * 60) >= needed_secs_de_to_e
                 
-                if not e_before_de and not de_before_e:
-                    # They physically overlap, driver cannot do this event
-                    # Unavailability STRICTLY overrides pins
+                # True physical overlap in time
+                if e.start < de.end and e.end > de.start:
                     model.Add(assign_vars[(e.id, d.id)] == 0)
+                else:
+                    # Transit overlap
+                    if not e_before_de and not de_before_e:
+                        # Transit impossible. Severely penalize instead of banning so least-bad driver is picked if forced
+                        objective_terms.append(assign_vars[(e.id, d.id)] * -1000000)
 
     # 4. Rules & Objective
     
