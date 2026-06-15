@@ -142,12 +142,22 @@ def solve_schedule(
     objective_terms = []
     
     e_tolerances = {}
+    e_buffer_before = {}
+    e_buffer_after = {}
     for e in assignable_events:
         tol = 0
+        bb = 0
+        ba = 0
         for r in rules:
-            if r.constraint_type == 'tolerance' and does_event_match_rule(e, r, passengers):
-                tol = max(tol, getattr(r, 'tolerance_mins', 0))
+            if does_event_match_rule(e, r, passengers):
+                if r.constraint_type == 'tolerance':
+                    tol = max(tol, getattr(r, 'tolerance_mins', 0))
+                elif r.constraint_type == 'buffer':
+                    bb = max(bb, getattr(r, 'buffer_before_mins', 0))
+                    ba = max(ba, getattr(r, 'buffer_after_mins', 0))
         e_tolerances[e.id] = tol
+        e_buffer_before[e.id] = bb
+        e_buffer_after[e.id] = ba
         
     grouped_event_pairs = get_grouped_event_pairs(assignable_events, rules, passengers)
 
@@ -161,15 +171,16 @@ def solve_schedule(
             
             if shares_calendar:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                total_needed_seconds = (travel_time_mins + 5) * 60
+                min_needed_seconds = (travel_time_mins + 5) * 60
+                desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
                 
                 # Check attendance constraints
                 attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                 
                 gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
-                if gap_seconds_with_tolerance < total_needed_seconds:
-                    # Passenger conflict soft penalty
+                if gap_seconds_with_tolerance < min_needed_seconds:
+                    # Passenger conflict hard penalty (impossible)
                     for d1 in drivers:
                         for d2 in drivers:
                             both = model.NewBoolVar(f'pass_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
@@ -177,9 +188,19 @@ def solve_schedule(
                             model.AddImplication(both, assign_vars[(e2.id, d2.id)])
                             model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
                             objective_terms.append(both * -2000000)
+                elif gap_seconds < desired_needed_seconds:
+                    # Passenger conflict soft penalty (buffer eaten into)
+                    for d1 in drivers:
+                        for d2 in drivers:
+                            both = model.NewBoolVar(f'pass_buffer_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
+                            model.AddImplication(both, assign_vars[(e1.id, d1.id)])
+                            model.AddImplication(both, assign_vars[(e2.id, d2.id)])
+                            model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
+                            objective_terms.append(both * -50)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
-                total_needed_seconds = (travel_time_mins + 5) * 60
+                min_needed_seconds = (travel_time_mins + 5) * 60
+                desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
                 
                 if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
@@ -190,6 +211,7 @@ def solve_schedule(
                         req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
                         late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
                         
+                        # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
                         req_e1_e2 = get_travel_time_minutes(e1.location, e2.location) * 60 + 5 * 60
                         req_e2_e1 = get_travel_time_minutes(e2.location, e1.location) * 60 + 5 * 60
                         
@@ -212,14 +234,22 @@ def solve_schedule(
                     gap_seconds = float('inf')
 
                 gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
-                if gap_seconds_with_tolerance < total_needed_seconds:
-                    # Driver conflict soft penalty
+                if gap_seconds_with_tolerance < min_needed_seconds:
+                    # Driver conflict hard penalty (impossible)
                     for d in drivers:
                         both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
                         model.AddImplication(both, assign_vars[(e1.id, d.id)])
                         model.AddImplication(both, assign_vars[(e2.id, d.id)])
                         model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
                         objective_terms.append(both * -1000000)
+                elif gap_seconds < desired_needed_seconds:
+                    # Driver conflict soft penalty (buffer eaten into)
+                    for d in drivers:
+                        both = model.NewBoolVar(f'drv_buffer_conf_{e1.id}_{e2.id}_{d.id}')
+                        model.AddImplication(both, assign_vars[(e1.id, d.id)])
+                        model.AddImplication(both, assign_vars[(e2.id, d.id)])
+                        model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                        objective_terms.append(both * -50)
 
     # 3b. Overridden pairs
     overridden_pairs = set((o.event_id, o.driver_id) for o in overrides)
@@ -238,11 +268,12 @@ def solve_schedule(
                     travel = get_travel_time_minutes(e.location, de.location)
                 else:
                     travel = 20
-                needed_secs = (travel + 5) * 60
+                needed_secs_e_to_de = (travel + 5) * 60 + e_buffer_after.get(e.id, 0) * 60
+                needed_secs_de_to_e = (travel + 5) * 60 + e_buffer_before.get(e.id, 0) * 60
                 
                 # Check for overlap
-                e_before_de = (de.start - e.end).total_seconds() >= needed_secs
-                de_before_e = (e.start - de.end).total_seconds() >= needed_secs
+                e_before_de = (de.start - e.end).total_seconds() >= needed_secs_e_to_de
+                de_before_e = (e.start - de.end).total_seconds() >= needed_secs_de_to_e
                 
                 if not e_before_de and not de_before_e:
                     # They physically overlap, driver cannot do this event
@@ -351,6 +382,18 @@ def solve_schedule(
                             objective_terms.append(both_assigned * (-int(travel_mins)))
                     
     # 4c. Mutually Exclusive Event Groups
+    e_buffer_before = {}
+    e_buffer_after = {}
+    for e in events + assigned_events:
+        bb = 0
+        ba = 0
+        for r in rules:
+            if r.constraint_type == 'buffer' and does_event_match_rule(e, r, passengers):
+                bb = max(bb, getattr(r, 'buffer_before_mins', 0))
+                ba = max(ba, getattr(r, 'buffer_after_mins', 0))
+        e_buffer_before[e.id] = bb
+        e_buffer_after[e.id] = ba
+        
     mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
     for r in mut_ex_rules:
         from collections import defaultdict
@@ -447,7 +490,7 @@ def solve_schedule(
                     shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
                     if shares_calendar:
                         travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                        total_needed_seconds = (travel_time_mins + 5) * 60
+                        total_needed_seconds = (travel_time_mins + 5) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < total_needed_seconds:
                             mins_late = int((total_needed_seconds - gap_seconds) / 60)
@@ -455,7 +498,7 @@ def solve_schedule(
                             lateness_warnings[e2.id] = f"Passenger will be {mins_late}m late (arriving from {e1.title})"
                     elif d1_id == d2_id:
                         travel_time_mins = get_switch_travel_time(e1, e2, events)
-                        total_needed_seconds = (travel_time_mins + 5) * 60
+                        total_needed_seconds = (travel_time_mins + 5) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < total_needed_seconds:
                             mins_late = int((total_needed_seconds - gap_seconds) / 60)
@@ -477,6 +520,18 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
         rules = []
     if passengers is None:
         passengers = []
+        
+    e_buffer_before = {}
+    e_buffer_after = {}
+    for e in events + assigned_events:
+        bb = 0
+        ba = 0
+        for r in rules:
+            if r.constraint_type == 'buffer' and does_event_match_rule(e, r, passengers):
+                bb = max(bb, getattr(r, 'buffer_before_mins', 0))
+                ba = max(ba, getattr(r, 'buffer_after_mins', 0))
+        e_buffer_before[e.id] = bb
+        e_buffer_after[e.id] = ba
         
     mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
     from collections import defaultdict
@@ -503,13 +558,12 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             shares_calendar = bool(set(e.calendar_ids).intersection(set(ae.calendar_ids)))
             if shares_calendar:
                 travel_time_mins = get_travel_time_minutes(e.location, ae.location)
-                total_needed_seconds = (travel_time_mins + 5) * 60
                 
                 if e.start <= ae.start:
                     first, second = e, ae
                 else:
                     first, second = ae, e
-                    
+                total_needed_seconds = (travel_time_mins + 5) * 60 + e_buffer_after.get(first.id, 0) * 60 + e_buffer_before.get(second.id, 0) * 60    
                 if (second.start - first.end).total_seconds() < total_needed_seconds:
                     is_impossible = True
                     break
@@ -563,7 +617,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             
             if shares_calendar:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                total_needed_seconds = (travel_time_mins + 5) * 60
+                total_needed_seconds = (travel_time_mins + 5) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 if (e2.start - e1.end).total_seconds() < total_needed_seconds:
                     # Passenger conflict
                     is_assigned_e1 = sum(assign_vars[(e1.id, g_id)] for g_id in ghost_ids)
@@ -571,7 +625,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                     model.Add(is_assigned_e1 + is_assigned_e2 <= 1)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
-                total_needed_seconds = (travel_time_mins + 5) * 60
+                total_needed_seconds = (travel_time_mins + 5) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 if (e2.start - e1.end).total_seconds() < total_needed_seconds:
                     # Driver conflict
                     for g_id in ghost_ids:
@@ -644,6 +698,20 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
 
 def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_metadata: List[dict] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
+    
+    e_buffer_before = {}
+    e_buffer_after = {}
+    for e in events:
+        bb = 0
+        ba = 0
+        if rules:
+            for r in rules:
+                if getattr(r, 'constraint_type', None) == 'buffer' and does_event_match_rule(e, r, passengers):
+                    bb = max(bb, getattr(r, 'buffer_before_mins', 0))
+                    ba = max(ba, getattr(r, 'buffer_after_mins', 0))
+        e_buffer_before[e.id] = bb
+        e_buffer_after[e.id] = ba
+        
     driver_event_ids = defaultdict(set)
     event_map = {e.id: e for e in events}
     
@@ -722,6 +790,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "to_event": first_ev.id,
                         "travel_mins": travel_to_pickup + travel_to_ev,
                         "delay_mins": delay_to_pickup + delay_to_ev,
+                        "buffer_before_mins": e_buffer_before.get(first_ev.id, 0),
                         "pickup_waypoint": {
                             "from_driver_home_mins": travel_to_pickup,
                             "from_global_home_mins": travel_to_ev,
@@ -735,6 +804,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "to_event": first_ev.id,
                         "travel_mins": travel,
                         "delay_mins": delay,
+                        "buffer_before_mins": e_buffer_before.get(first_ev.id, 0),
                         "driver_home_location": driver_home
                     }
                 
@@ -760,6 +830,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "from_event": last_ev.id,
                         "travel_mins": travel_to_dropoff + travel_to_home,
                         "delay_mins": delay_to_dropoff + delay_to_home,
+                        "buffer_after_mins": e_buffer_after.get(last_ev.id, 0),
                         "dropoff_waypoint": {
                             "to_global_home_mins": travel_to_dropoff,
                             "to_driver_home_mins": travel_to_home,
@@ -773,6 +844,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "from_event": last_ev.id,
                         "travel_mins": travel_home,
                         "delay_mins": delay_home,
+                        "buffer_after_mins": e_buffer_after.get(last_ev.id, 0),
                         "driver_home_location": driver_home_at_end
                     }
                 
@@ -889,12 +961,28 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
 
                 late = max(0, (arr_time - e2.start.timestamp()) / 60)
                 
+                ba = e_buffer_after.get(e1.id, 0)
+                bb = e_buffer_before.get(e2.id, 0)
+                slack = max(0, (e2.start.timestamp() - e1.end.timestamp()) / 60 - travel)
+                if ba + bb > slack:
+                    if ba + bb > 0:
+                        actual_ba = int(slack * ba / (ba + bb))
+                        actual_bb = int(slack * bb / (ba + bb))
+                    else:
+                        actual_ba = 0
+                        actual_bb = 0
+                else:
+                    actual_ba = ba
+                    actual_bb = bb
+
                 edges[d_id][e1.id] = {
                     "to_event": e2.id,
                     "travel_mins": travel,
                     "delay_mins": delay,
                     "wait_mins": int(wait),
-                    "late_mins": int(late)
+                    "late_mins": int(late),
+                    "buffer_after_mins": actual_ba,
+                    "buffer_before_mins": actual_bb
                 }
                 if pickup_waypoint:
                     edges[d_id][e1.id]["pickup_waypoint"] = pickup_waypoint

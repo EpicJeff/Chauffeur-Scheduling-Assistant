@@ -671,7 +671,7 @@
                         if (edge && edge.travel_mins > 0) {
                             const originLocation = edge.driver_home_location || driverConfig.home_location || globalHome;
                             const destinationLocation = ev.location;
-                            const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5) * 60000);
+                            const depTime = new Date(new Date(ev.start).getTime() - (edge.travel_mins + 5 + (edge.buffer_before_mins || 0)) * 60000);
                             const badges = getPassengerBadges(ev);
                             
                             if (edge.pickup_waypoint) {
