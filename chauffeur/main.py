@@ -601,7 +601,29 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if not e.location or not e.location.strip():
             no_location_events.append(e.id)
         else:
-            events_to_solve.append(e)
+            duration_seconds = (e.end - e.start).total_seconds()
+            if duration_seconds >= 7200 and e.event_type != 'background_trip':
+                # Split into dropoff and pickup
+                e_drop = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                e_drop.id = f"{e.id}_dropoff"
+                e_drop.event_type = 'dropoff'
+                e_drop.title = f"Dropoff: {e.title}"
+                e_drop.end = e.start
+                events_to_solve.append(e_drop)
+                all_events_for_ui[e_drop.id] = e_drop
+                
+                e_pick = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                e_pick.id = f"{e.id}_pickup"
+                e_pick.event_type = 'pickup'
+                e_pick.title = f"Pickup: {e.title}"
+                e_pick.start = e.end
+                events_to_solve.append(e_pick)
+                all_events_for_ui[e_pick.id] = e_pick
+                
+                # Note: We do NOT remove the original event from all_events_for_ui 
+                # because the UI still needs it to render driver_events blocks (e.g. if a driver is attending the full camp).
+            else:
+                events_to_solve.append(e)
             
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
@@ -681,9 +703,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
         assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
         ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
-        
-        # Split Staggered Events
-        daily_events_to_solve = matcher.split_staggered_events(assignments, ghost_assignments, daily_events_to_solve)
         
         # Route Edges
         all_assignments = {**assignments, **ghost_assignments}
