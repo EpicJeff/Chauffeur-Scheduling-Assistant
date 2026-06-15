@@ -170,10 +170,16 @@ def solve_schedule(
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
             
             if shares_calendar:
+                if getattr(e1, 'original_event_id', None) and getattr(e1, 'original_event_id', None) == getattr(e2, 'original_event_id', None):
+                    continue
+                
+                e1_end_time = getattr(e1, 'original_end', None) or e1.end
+                e2_start_time = getattr(e2, 'original_start', None) or e2.start
+
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
                 min_needed_seconds = (travel_time_mins + 5) * 60
                 desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
-                gap_seconds = (e2.start - e1.end).total_seconds()
+                gap_seconds = (e2_start_time - e1_end_time).total_seconds()
                 
                 # Check attendance constraints
                 attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)

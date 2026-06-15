@@ -15,6 +15,9 @@ class Event(BaseModel):
     source_event_ids: List[str]
     all_day: bool = False
     event_type: str = "standard"
+    original_start: Optional[datetime] = None
+    original_end: Optional[datetime] = None
+    original_event_id: Optional[str] = None
 
 class Driver(BaseModel):
     id: str

@@ -611,6 +611,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 e_drop.event_type = 'dropoff'
                 e_drop.title = f"Dropoff: {e.title}"
                 e_drop.end = e.start
+                e_drop.original_start = e.start
+                e_drop.original_end = e.end
+                e_drop.original_event_id = e.id
                 events_to_solve.append(e_drop)
                 all_events_for_ui[e_drop.id] = e_drop
                 
@@ -618,6 +621,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 e_pick.id = f"{e.id}_pickup"
                 e_pick.event_type = 'pickup'
                 e_pick.title = f"Pickup: {e.title}"
+                e_pick.start = e.end
+                e_pick.original_start = e.start
+                e_pick.original_end = e.end
+                e_pick.original_event_id = e.id
                 e_pick.start = e.end
                 events_to_solve.append(e_pick)
                 all_events_for_ui[e_pick.id] = e_pick
