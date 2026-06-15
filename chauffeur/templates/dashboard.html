@@ -1532,7 +1532,7 @@
                         if (initialEdges[c_id] && initialEdges[c_id][ev.id]) {
                             const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
-                                const bufferMins = 5; // Add a 5 minute buffer to all departures
+                                const bufferMins = 5 + (initEdge.buffer_before_mins || 0); // Add standard 5m buffer + rule buffer
                                 const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
                                 const departureStr = formatTime(departureDate.toISOString());
                                 const departureY = getTimeY(departureDate.toISOString());
@@ -1580,7 +1580,7 @@
                                     const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
 
                                     if (edge.home_waypoint && edge.pickup_waypoint) {
-                                        const bufferMins = 5;
+                                        const bufferMins = 5 + (edge.buffer_before_mins || 0);
                                         const driveFromHome = edge.home_waypoint.from_home_mins + edge.pickup_waypoint.from_pickup_mins;
                                         const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
 
@@ -1599,7 +1599,7 @@
                                         }
                                         pills.push(`<span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm -my-0.5">Leave at ${formatTime(leaveHomeDate.toISOString())}</span>`);
                                     } else if (edge.home_waypoint) {
-                                        const bufferMins = 5;
+                                        const bufferMins = 5 + (edge.buffer_before_mins || 0);
                                         const driveFromHome = edge.home_waypoint.from_home_mins;
                                         const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
 
@@ -1660,7 +1660,7 @@
                         if (finalEdges[c_id] && finalEdges[c_id][ev.id]) {
                             const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
-                                const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins) * 60000);
+                                const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins + (finalEdge.buffer_after_mins || 0)) * 60000);
                                 const arriveStr = formatTime(arriveDate.toISOString());
                                 const arriveY = getTimeY(arriveDate.toISOString());
                                 const distance = arriveY - endY;
