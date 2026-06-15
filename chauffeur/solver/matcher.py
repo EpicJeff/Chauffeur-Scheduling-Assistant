@@ -484,7 +484,7 @@ def solve_schedule(
             model.AddImplication(both_assigned, assign_vars[(e1_id, d.id)])
             model.AddImplication(both_assigned, assign_vars[(e2_id, d.id)])
             model.AddBoolOr([both_assigned, assign_vars[(e1_id, d.id)].Not(), assign_vars[(e2_id, d.id)].Not()])
-            objective_terms.append(both_assigned * 50000)
+            objective_terms.append(both_assigned * 1000)
     # 4e. Override weights
     import time
     base_time = time.time()
