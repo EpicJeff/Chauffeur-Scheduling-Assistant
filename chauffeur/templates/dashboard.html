@@ -1069,18 +1069,35 @@
 
                 if (targetCols.length === 0) return;
 
-                let eventStartD = new Date(ev.start);
-                if (currentStartDate && eventStartD < currentStartDate) {
-                    eventStartD = new Date(currentStartDate);
-                    eventStartD.setHours(0, 0, 0, 0);
+                let currDate = new Date(ev.start);
+                if (currentStartDate && currDate < currentStartDate) {
+                    currDate = new Date(currentStartDate);
                 }
-                const dateKey = formatDateStr(eventStartD);
-                if (!scheduleByDate[dateKey]) scheduleByDate[dateKey] = {};
+                currDate.setHours(0, 0, 0, 0);
 
-                targetCols.forEach(col_id => {
-                    if (!scheduleByDate[dateKey][col_id]) scheduleByDate[dateKey][col_id] = [];
-                    scheduleByDate[dateKey][col_id].push(ev);
-                });
+                let endDate = new Date(ev.end);
+                endDate.setHours(0, 0, 0, 0);
+                
+                // If the event ends at midnight, don't include the end date unless it's the same as the start date
+                if (new Date(ev.end).getHours() === 0 && new Date(ev.end).getMinutes() === 0 && currDate < endDate) {
+                    endDate.setDate(endDate.getDate() - 1);
+                }
+
+                while (currDate <= endDate) {
+                    const year = currDate.getFullYear();
+                    const month = String(currDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(currDate.getDate()).padStart(2, '0');
+                    const dateKey = `${year}-${month}-${day}`;
+
+                    if (!scheduleByDate[dateKey]) scheduleByDate[dateKey] = {};
+
+                    targetCols.forEach(col_id => {
+                        if (!scheduleByDate[dateKey][col_id]) scheduleByDate[dateKey][col_id] = [];
+                        scheduleByDate[dateKey][col_id].push(ev);
+                    });
+                    
+                    currDate.setDate(currDate.getDate() + 1);
+                }
             });
 
             const scheduleContainer = document.getElementById('schedule-container');
@@ -1172,6 +1189,18 @@
                     const h = Math.floor(totalMins / 60);
                     const m = totalMins % 60;
                     return m > 0 ? `${h}h ${m}m` : `${h}h`;
+                }
+
+                function getHomeIcon(loc) {
+                    if (!loc) return `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+                    const l = loc.toLowerCase();
+                    if (l.includes("hotel") || l.includes("resort") || l.includes("motel") || l.includes("suites") || l.includes("lodge") || l.includes(" inn") || l.startsWith("inn ") || l.includes("hyatt") || l.includes("hilton") || l.includes("ritz") || l.includes("marriott")) {
+                        return `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/></svg>`;
+                    }
+                    else if (l.includes("airbnb") || l.includes("vrbo") || l.includes("rental")) {
+                        return `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>`;
+                    }
+                    return `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
                 }
 
                 let allEventsForDate = [];
@@ -1507,7 +1536,7 @@
                                 const departureY = getTimeY(departureDate.toISOString());
                                 const distance = startY - departureY;
                                 const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
-                                const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+                                const iconHome = getHomeIcon(initEdge.pickup_waypoint ? initEdge.pickup_waypoint.driver_home_location : initEdge.driver_home_location);
                                 const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
                                 const trafficWarn = initEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${initEdge.delay_mins}min traffic delay">⚠</span>` : '';
 
@@ -1543,7 +1572,7 @@
                                     let pills = [];
 
                                     const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
-                                    const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+                                    const iconHome = getHomeIcon(edgeFromPrev.home_waypoint ? edgeFromPrev.home_waypoint.driver_home_location : '');
                                     const iconPerson = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`;
                                     const iconHourglass = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z"/></svg>`;
                                     const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
@@ -1635,7 +1664,7 @@
                                 const distance = arriveY - endY;
 
                                 const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
-                                const iconHome = `<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+                                const iconHome = getHomeIcon(finalEdge.dropoff_waypoint ? finalEdge.dropoff_waypoint.driver_home_location : finalEdge.driver_home_location);
                                 const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
                                 const trafficWarn = finalEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${finalEdge.delay_mins}min traffic delay">⚠</span>` : '';
 
