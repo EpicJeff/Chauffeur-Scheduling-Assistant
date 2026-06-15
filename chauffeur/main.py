@@ -603,7 +603,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         else:
             duration_seconds = (e.end - e.start).total_seconds()
             has_stay_hashtag = fuzzy_has_hashtag(e.title, '#stay') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#stay') or fuzzy_has_hashtag(e.title, '#wait') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#wait')
-            if duration_seconds >= 7200 and e.event_type != 'background_trip' and not has_stay_hashtag:
+            has_no_split_rule = any(r.constraint_type == 'no_split' and matcher.does_event_match_rule(e, r, passengers) for r in rules)
+            if duration_seconds >= 7200 and e.event_type != 'background_trip' and not has_stay_hashtag and not has_no_split_rule:
                 # Split into dropoff and pickup
                 e_drop = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
                 e_drop.id = f"{e.id}_dropoff"
