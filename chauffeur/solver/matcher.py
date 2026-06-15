@@ -156,14 +156,14 @@ def solve_schedule(
             assign_vars[(e.id, d.id)] = model.NewBoolVar(f'assign_{e.id}_{d.id}')
             
             # Trip Assignment Constraint
-        if trip_metadata:
-            e_ents = e_entities_map.get(e.id, set())
-            for trip in trip_metadata:
-                if f"driver_{d.id}" in trip.get('entities', set()) or 'global' in trip.get('entities', set()):
-                    if e.start < trip['end'] and e.end > trip['start']:
-                        if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
-                            model.Add(assign_vars[(e.id, d.id)] == 0)
-                            break
+            if trip_metadata:
+                e_ents = e_entities_map.get(e.id, set())
+                for trip in trip_metadata:
+                    if f"driver_{d.id}" in trip.get('entities', set()) or 'global' in trip.get('entities', set()):
+                        if e.start < trip['end'] and e.end > trip['start']:
+                            if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
+                                model.Add(assign_vars[(e.id, d.id)] == 0)
+                                break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:
