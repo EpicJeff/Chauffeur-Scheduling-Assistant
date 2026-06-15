@@ -411,7 +411,7 @@ def solve_schedule(
                         if shares_calendar:
                             objective_terms.append(both_assigned * 50)
                             
-                        if same_loc and travel_mins <= 5:
+                        if same_loc and travel_mins <= 5 and shares_calendar:
                             # Higher bonus for doing things at the exact same location (reduces travel)
                             objective_terms.append(both_assigned * 5000)
                             
