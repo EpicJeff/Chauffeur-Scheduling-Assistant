@@ -250,9 +250,9 @@ def solve_schedule(
                         
                         # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
                         t1 = get_travel_time_minutes(e1.location, e2.location)
-                    req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 0 else 0)
+                        req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 0 else 0)
                         t2 = get_travel_time_minutes(e2.location, e1.location)
-                    req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 0 else 0)
+                        req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 0 else 0)
                         
                         tol_e1 = e_tolerances.get(e1.id, 0) * 60
                         tol_e2 = e_tolerances.get(e2.id, 0) * 60
