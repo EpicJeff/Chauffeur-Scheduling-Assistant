@@ -499,7 +499,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if getattr(e, 'event_type', '') == 'background_trip':
                 applicable_entities = set()
                 for p in passengers:
-                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in p.hashtags):
+                    p_tags = p.hashtags
+                    if not p_tags:
+                        p_tags = ['#' + ''.join(c.lower() for c in getattr(p, 'name', '') if c.isalnum())]
+                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(getattr(e, 'description', ''), tag) for tag in p_tags):
                         applicable_entities.add(f"passenger_{p.id}")
                 for d in drivers:
                     d_tags = d.hashtags

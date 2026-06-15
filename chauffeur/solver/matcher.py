@@ -137,9 +137,12 @@ def solve_schedule(
         for e in assignable_events:
             entities = set()
             for p in passengers:
+                p_tags = p.hashtags
+                if not p_tags:
+                    p_tags = ['#' + ''.join(c.lower() for c in getattr(p, 'name', '') if c.isalnum())]
                 e_title = (e.title or "").lower()
                 e_desc = (getattr(e, 'description', '') or "").lower()
-                if any(p.hashtags and (t in e_title or t in e_desc) for t in p.hashtags):
+                if any(p_tags and (t in e_title or t in e_desc) for t in p_tags):
                     entities.add(f"passenger_{p.id}")
             if hasattr(e, 'calendar_ids') and e.calendar_ids:
                 for cid in e.calendar_ids:
