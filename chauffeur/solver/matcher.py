@@ -93,7 +93,8 @@ def solve_schedule(
     overrides: List[ManualOverride] = None,
     previous_assignments: Dict[str, str] = None,
     driver_events: Dict[str, List[Event]] = None,
-    passengers: List[Passenger] = None
+    passengers: List[Passenger] = None,
+    trip_metadata: List[dict] = None
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -130,9 +131,36 @@ def solve_schedule(
     assign_vars = {}
     assignable_events = [e for e in events if getattr(e, 'event_type', '') != 'background_trip']
     
+    # Pre-calculate e_entities for trip constraints
+    e_entities_map = {}
+    if trip_metadata:
+        for e in assignable_events:
+            entities = set()
+            for p in passengers:
+                if any(p.hashtags and (t in e.title.lower() or t in getattr(e, 'description', '').lower()) for t in p.hashtags):
+                    entities.add(f"passenger_{p.id}")
+            if hasattr(e, 'calendar_ids') and e.calendar_ids:
+                for cid in e.calendar_ids:
+                    for p in passengers:
+                        if cid in p.calendar_ids:
+                            entities.add(f"passenger_{p.id}")
+            e_entities_map[e.id] = entities
+
     for e in assignable_events:
         for d in drivers:
             assign_vars[(e.id, d.id)] = model.NewBoolVar(f'assign_{e.id}_{d.id}')
+            
+            # Trip Assignment Constraint
+            if trip_metadata:
+                e_ents = e_entities_map.get(e.id, set())
+                for trip in trip_metadata:
+                    if f"driver_{d.id}" in trip.get('entities', set()) or 'global' in trip.get('entities', set()):
+                        # Check overlap
+                        if e.start < trip['end'] and e.end > trip['start']:
+                            # Overlaps with driver's trip. Are any of the event's passengers on this trip?
+                            if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
+                                model.Add(assign_vars[(e.id, d.id)] == 0)
+                                break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:

@@ -718,7 +718,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
         # Else, solve for this day!
         assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-            daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers
+            daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata
         )
         
         # Ghost Routes
