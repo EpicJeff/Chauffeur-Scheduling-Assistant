@@ -328,7 +328,7 @@ def solve_schedule(
             
             # Stickiness
             if previous_assignments.get(e.id) == d.id:
-                weight += 20
+                weight += 5
                 
             # Apply Driver Rules
             for r in rules:
