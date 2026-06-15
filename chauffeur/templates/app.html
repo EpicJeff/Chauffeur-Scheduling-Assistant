@@ -532,15 +532,13 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            const originEnc = routeContext.origin ? `&origin=${encodeURIComponent(routeContext.origin)}` : '';
             const destEnc = encodeURIComponent(routeContext.destination);
 
             let url = '';
             if (provider === 'google') {
-                url = `https://www.google.com/maps/dir/?api=1${originEnc}&destination=${destEnc}&dir_action=navigate`;
+                url = `https://www.google.com/maps/dir/?api=1&destination=${destEnc}&dir_action=navigate`;
             } else if (provider === 'apple') {
-                const saddrEnc = routeContext.origin ? `&saddr=${encodeURIComponent(routeContext.origin)}` : '';
-                url = `maps://?daddr=${destEnc}${saddrEnc}&dirflg=d`;
+                url = `maps://?daddr=${destEnc}&dirflg=d`;
             } else if (provider === 'waze') {
                 url = `waze://?q=${destEnc}&navigate=yes`;
             }
