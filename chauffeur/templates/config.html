@@ -812,7 +812,7 @@
                 newPassenger: { name: '', hashtags: [], calendar_ids: [] },
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
-                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0 },
+                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
@@ -1217,6 +1217,7 @@
                         driver_id: rule.driver_id, 
                         constraint_type: rule.constraint_type, 
                         duplicate_action: rule.duplicate_action || 'schedule_one',
+                        attendance_action: rule.attendance_action || 'stay',
                         tolerance_mins: rule.tolerance_mins || 0,
                         buffer_before_mins: rule.buffer_before_mins || 0,
                         buffer_after_mins: rule.buffer_after_mins || 0,
@@ -1236,10 +1237,13 @@
                         this.newRuleKeywordInput = '';
                     }
                 },
-                cancelEditRule() {
+                resetRuleForm() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', tolerance_mins: 0, buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                },
+                cancelEditRule() {
+                    this.resetRuleForm();
                 },
                 async submitRule() {
                     this.saving = true;

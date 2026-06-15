@@ -605,7 +605,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             has_stay_hashtag = fuzzy_has_hashtag(e.title, '#stay') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#stay') or fuzzy_has_hashtag(e.title, '#wait') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#wait')
             has_split_hashtag = fuzzy_has_hashtag(e.title, '#dropoff') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#dropoff') or fuzzy_has_hashtag(e.title, '#pickup') or fuzzy_has_hashtag(getattr(e, 'description', ''), '#pickup')
             
-            has_stay_rule = any(((r.constraint_type == 'attendance' and r.attendance_action == 'stay') or r.constraint_type == 'no_split') and matcher.does_event_match_rule(e, r, passengers) for r in rules)
+            has_stay_rule = any(((r.constraint_type == 'attendance' and (r.attendance_action == 'stay' or r.attendance_action is None)) or r.constraint_type == 'no_split') and matcher.does_event_match_rule(e, r, passengers) for r in rules)
             has_split_rule = any(r.constraint_type == 'attendance' and r.attendance_action == 'dropoff_pickup' and matcher.does_event_match_rule(e, r, passengers) for r in rules)
             
             should_split = False

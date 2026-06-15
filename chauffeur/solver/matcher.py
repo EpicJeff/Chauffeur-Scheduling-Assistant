@@ -161,8 +161,16 @@ def solve_schedule(
                         if e.start < trip['end'] and e.end > trip['start']:
                             # Overlaps with driver's trip. Are any of the event's passengers on this trip?
                             if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
-                                model.Add(assign_vars[(e.id, d.id)] == 0)
-                                break
+                                # Allow assignment if the event is physically close to the trip location (local to the trip)
+                                trip_loc = trip.get('location')
+                                if trip_loc:
+                                    t_time = get_travel_time_minutes(e.location, trip_loc)
+                                    if t_time > 60:
+                                        model.Add(assign_vars[(e.id, d.id)] == 0)
+                                        break
+                                else:
+                                    model.Add(assign_vars[(e.id, d.id)] == 0)
+                                    break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:
