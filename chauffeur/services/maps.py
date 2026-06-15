@@ -44,12 +44,12 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
         import re
         dur_str = info["duration"]
         sec = int(re.sub(r'\D', '', dur_str)) if dur_str else (MOCK_TIME * 60)
-        minutes = max(1, sec // 60)
+        minutes = int(round(sec / 60.0))
         
         delay_mins = 0
         if info.get("staticDuration"):
             static_sec = int(re.sub(r'\D', '', info["staticDuration"]))
-            static_mins = max(1, static_sec // 60)
+            static_mins = int(round(static_sec / 60.0))
             delay_mins = max(0, minutes - static_mins)
             
         storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
