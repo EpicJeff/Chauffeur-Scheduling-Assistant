@@ -8,6 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
+import asyncio
+import time
+
+LAST_UPDATE_TIME = time.time()
 
 class PushSubscription(BaseModel):
     driver_id: str
@@ -212,6 +217,21 @@ def delete_driver(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_driver(doc_id)
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
+
+# --- SSE Stream API ---
+@app.get("/api/stream")
+async def stream_events():
+    async def event_generator():
+        last_seen = LAST_UPDATE_TIME
+        try:
+            while True:
+                await asyncio.sleep(1)
+                if LAST_UPDATE_TIME > last_seen:
+                    last_seen = LAST_UPDATE_TIME
+                    yield "data: update\n\n"
+        except asyncio.CancelledError:
+            pass
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # --- Passengers API ---
 @app.get("/api/passengers")
@@ -907,6 +927,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         storage.set_cached_schedule(data)
     else:
         storage.save_custom_schedule(start_date_str, end_date_str, data, "")
+        
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
 
     if start_date_str is None and end_date_str is None:
         # --- Generate Pending Notifications ---

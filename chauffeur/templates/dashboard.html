@@ -1777,15 +1777,17 @@
         // Fetch immediately (which will hit the cache instantly)
         fetchSchedule();
 
-        // Polling every 15 seconds to fetch the latest CACHED schedule from the backend
-        // (The backend itself polls Google Calendar every 5 minutes in the background)
-        setInterval(() => {
-            if (currentStartDate && currentEndDate) {
-                fetchSchedule(true);
-            } else {
-                fetchSchedule();
+        // Listen for real-time updates from the backend
+        const evtSource = new EventSource("/api/stream");
+        evtSource.onmessage = function(event) {
+            if (event.data === "update") {
+                if (currentStartDate && currentEndDate) {
+                    fetchSchedule(true);
+                } else {
+                    fetchSchedule();
+                }
             }
-        }, 15000);
+        };
 
         async function createRule(driverId, keyword, constraintType, toleranceMins, btnElement = null, duplicateAction = null) {
             if (btnElement) {

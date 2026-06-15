@@ -1129,6 +1129,16 @@
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         };
+
+        // Listen for real-time updates from the backend
+        const evtSource = new EventSource("/api/stream");
+        evtSource.onmessage = function(event) {
+            if (event.data === "update") {
+                if (selectedDriverId) {
+                    fetchSchedule(false);
+                }
+            }
+        };
     </script>
 
     <!-- Event Details Modal -->
