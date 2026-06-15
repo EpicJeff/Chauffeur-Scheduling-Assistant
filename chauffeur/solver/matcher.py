@@ -1,7 +1,20 @@
 from typing import List, Dict, Tuple, Optional
 from ortools.sat.python import cp_model
 from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Passenger
-from services.maps import get_travel_time_minutes
+from services.maps import get_travel_time_minutes as _raw_get_travel_time_minutes
+
+def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=False):
+    if return_traffic:
+        t, d = _raw_get_travel_time_minutes(origin, dest, departure_time, True)
+        if t <= 3:
+            return 0, 0
+        return t, d
+    else:
+        t = _raw_get_travel_time_minutes(origin, dest, departure_time, False)
+        if t <= 3:
+            return 0
+        return t
+
 from datetime import datetime
 import math
 
@@ -411,7 +424,7 @@ def solve_schedule(
                         if shares_calendar:
                             objective_terms.append(both_assigned * 50)
                             
-                        if same_loc and travel_mins <= 5 and shares_calendar:
+                        if (same_loc or travel_mins <= 5) and shares_calendar:
                             # Higher bonus for doing things at the exact same location (reduces travel)
                             objective_terms.append(both_assigned * 5000)
                             
