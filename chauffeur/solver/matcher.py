@@ -420,7 +420,7 @@ def solve_schedule(
                     
     # 4c. Mutually Exclusive Event Groups
 
-    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'duplicate' and getattr(r, 'duplicate_action', '') == 'schedule_one']
     for r in mut_ex_rules:
         from collections import defaultdict
         groups = defaultdict(list)
@@ -559,7 +559,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
         e_buffer_before[e.id] = bb
         e_buffer_after[e.id] = ba
         
-    mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
+    mut_ex_rules = [r for r in rules if r.constraint_type == 'duplicate' and getattr(r, 'duplicate_action', '') == 'schedule_one']
     from collections import defaultdict
     mut_ex_counts = defaultdict(int)
     
