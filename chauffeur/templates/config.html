@@ -414,7 +414,7 @@
                                 <span class="text-lg">Driver</span> 
                                 <span class="font-extrabold text-blue-400 px-2 py-1 bg-blue-900/30 rounded text-lg" x-text="getDriverName(rule.driver_id)"></span> 
                                 <span class="text-lg">is</span> 
-                                <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : (rule.constraint_type === 'no_split' ? 'DO NOT SPLIT' : rule.constraint_type)"></span> 
+                                <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : (rule.constraint_type === 'attendance' ? 'ATTENDANCE (' + (rule.attendance_action === 'dropoff_pickup' ? 'SPLIT' : 'STAY') + ')' : (rule.constraint_type === 'no_split' ? 'ATTENDANCE (STAY)' : rule.constraint_type))"></span> 
                             </div>
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
                                 <template x-if="rule.constraint_type === 'tolerance'">
@@ -459,7 +459,7 @@
             <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4">
                 <h3 class="text-xl font-bold text-white mb-2" x-text="editRuleId ? 'Edit Rule' : 'Create Routing Rule'"></h3>
                 <div class="flex gap-4 flex-wrap">
-                    <div class="w-full lg:flex-1" x-show="newRule.constraint_type !== 'no_split'">
+                    <div class="w-full lg:flex-1" x-show="newRule.constraint_type !== 'no_split' && newRule.constraint_type !== 'attendance'">
                         <label class="block text-gray-400 mb-1 text-sm">Driver</label>
                         <select x-model="newRule.driver_id" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
                             <option value="">Select Driver</option>
@@ -479,7 +479,7 @@
                             <option value="tolerance">Late Arrival (Tolerance)</option>
                             <option value="group">Group Events</option>
                             <option value="buffer">Buffer Time</option>
-                            <option value="no_split">Do Not Split Event</option>
+                            <option value="attendance">Event Attendance</option>
                         </select>
                     </div>
                     <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'tolerance'">
@@ -499,6 +499,13 @@
                         <select x-model="newRule.duplicate_action" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
                             <option value="schedule_one">Schedule One</option>
                             <option value="schedule_all">Schedule All</option>
+                        </select>
+                    </div>
+                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'attendance'">
+                        <label class="block text-gray-400 mb-1 text-sm">Action</label>
+                        <select x-model="newRule.attendance_action" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white appearance-none">
+                            <option value="stay">Stay for Event</option>
+                            <option value="dropoff_pickup">Drop-off / Pickup</option>
                         </select>
                     </div>
                     <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'duplicate'">

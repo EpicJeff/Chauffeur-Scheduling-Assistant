@@ -60,6 +60,7 @@ class Rule(BaseModel):
     grouping_period: str = 'daily'
     buffer_before_mins: int = 0
     buffer_after_mins: int = 0
+    attendance_action: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
     passenger_ids: List[str] = Field(default_factory=list)
     days_of_week: List[int] = Field(default_factory=list)
