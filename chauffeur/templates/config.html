@@ -1254,6 +1254,9 @@
                         }
                         this.newRuleKeywordInput = '';
                         
+                        if (this.newRule.constraint_type === 'attendance' || this.newRule.constraint_type === 'no_split') {
+                            this.newRule.driver_id = 'any';
+                        }
                         if (!this.newRule.driver_id) return alert('Driver is required');
                         
                         if (this.newRule.constraint_type === 'group') {
