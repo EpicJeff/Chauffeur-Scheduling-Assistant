@@ -1149,11 +1149,17 @@
                     if (a.startsWith('g') && !b.startsWith('g')) return 1;
                     if (b.startsWith('g') && !a.startsWith('g')) return -1;
                     return a.localeCompare(b);
+                }).filter(id => {
+                    // Always hide ghost drivers if they have zero events for this day
+                    if (id.startsWith('g')) {
+                        return colsObj[id] && colsObj[id].length > 0;
+                    }
+                    // For regular drivers in read-only mode, hide empty columns
+                    if (isReadOnly) {
+                        return colsObj[id] && colsObj[id].length > 0;
+                    }
+                    return true;
                 });
-
-                if (isReadOnly) {
-                    colIds = colIds.filter(id => !id.startsWith('g') && colsObj[id] && colsObj[id].length > 0);
-                }
 
                 if (colIds.length === 0) {
                     return; // Skip rendering this entire date block if there are no columns
