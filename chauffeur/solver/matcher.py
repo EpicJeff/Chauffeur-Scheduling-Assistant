@@ -253,8 +253,9 @@ def solve_schedule(
                 desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
                 
-                if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
-                    gap_seconds = float('inf')
+                if (e1.location and e2.location and (e1.location.strip().lower() == e2.location.strip().lower() or get_travel_time_minutes(e1.location, e2.location) <= 5)):
+                    if travel_time_mins <= 5: # Only bypass if there's no long pickup involved
+                        gap_seconds = float('inf')
                 else:
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                     if not attendance_conflict and e1.location and e2.location:
