@@ -454,14 +454,22 @@ def solve_schedule(
         if pair_key in processed_pairs:
             continue
         processed_pairs.add(pair_key)
-        
+
         # Prevent splitting: if e1 is assigned to d1, e2 CANNOT be assigned to d2 (where d1 != d2).
         # This ensures that if both are assigned, they share the same driver.
         for d1 in drivers:
             for d2 in drivers:
                 if d1.id != d2.id:
                     model.AddImplication(assign_vars[(e1_id, d1.id)], assign_vars[(e2_id, d2.id)].Not())
-
+                    
+        # Add a massive bonus for assigning both grouped events to the SAME driver.
+        # This incentivizes the solver to pick an event that is part of a group over an ungrouped duplicate.
+        for d in drivers:
+            both_assigned = model.NewBoolVar(f'group_bonus_{e1_id}_{e2_id}_{d.id}')
+            model.AddImplication(both_assigned, assign_vars[(e1_id, d.id)])
+            model.AddImplication(both_assigned, assign_vars[(e2_id, d.id)])
+            model.AddBoolOr([both_assigned, assign_vars[(e1_id, d.id)].Not(), assign_vars[(e2_id, d.id)].Not()])
+            objective_terms.append(both_assigned * 50000)
     # 4e. Override weights
     import time
     base_time = time.time()
