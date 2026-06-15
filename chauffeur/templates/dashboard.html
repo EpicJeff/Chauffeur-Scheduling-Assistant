@@ -1160,7 +1160,8 @@
                     return; // Skip rendering this entire date block if there are no columns
                 }
 
-                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${date}</h2></div>`;
+                const formattedDateTitle = formatDateStr(date);
+                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${formattedDateTitle}</h2></div>`;
                 scheduleContainer.innerHTML += dateHtml;
 
                 // --- Timeline Constants & Logic ---
