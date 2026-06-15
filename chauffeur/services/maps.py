@@ -379,14 +379,24 @@ def get_google_maps_url(locations: list[str]) -> str:
 
 def get_apple_maps_url(locations: list[str]) -> str:
     import urllib.parse
+    import re
     if not locations:
         return ""
-    if len(locations) == 1:
-        return f"http://maps.apple.com/?daddr={urllib.parse.quote(locations[0])}"
+        
+    def clean_loc(loc: str) -> str:
+        parts = loc.split(',')
+        if len(parts) > 1 and not re.search(r'\d', parts[0]) and re.search(r'\d', parts[1]):
+            return ','.join(parts[1:]).strip()
+        return loc
+        
+    cleaned_locs = [clean_loc(l) for l in locations]
     
-    # Apple Maps doesn't support waypoints via URL scheme in the same way, 
-    # but we can set start (saddr) and destination (daddr). 
+    if len(cleaned_locs) == 1:
+        return f"http://maps.apple.com/?daddr={urllib.parse.quote(cleaned_locs[0])}"
+
+    # Apple Maps doesn't support waypoints via URL scheme in the same way,
+    # but we can set start (saddr) and destination (daddr).
     # For a multi-stop route on Apple Maps, we unfortunately just pass the origin and final destination.
-    origin = urllib.parse.quote(locations[0])
-    destination = urllib.parse.quote(locations[-1])
+    origin = urllib.parse.quote(cleaned_locs[0])
+    destination = urllib.parse.quote(cleaned_locs[-1])
     return f"http://maps.apple.com/?saddr={origin}&daddr={destination}"

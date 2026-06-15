@@ -532,7 +532,20 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            const destEnc = encodeURIComponent(routeContext.destination);
+            
+            let destStr = routeContext.destination;
+            
+            // Apple Maps fuzzy matches poorly on named places (like "Ancient Oaks pool, 8400...").
+            // If the first part before a comma contains no numbers but the second part does,
+            // we strip the name part so Apple Maps gets a clean street address.
+            if (provider === 'apple') {
+                const parts = destStr.split(',');
+                if (parts.length > 1 && !/\\d/.test(parts[0]) && /\\d/.test(parts[1])) {
+                    destStr = parts.slice(1).join(',').trim();
+                }
+            }
+
+            const destEnc = encodeURIComponent(destStr);
 
             let url = '';
             if (provider === 'google') {
