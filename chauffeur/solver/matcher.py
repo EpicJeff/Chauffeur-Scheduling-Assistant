@@ -382,18 +382,7 @@ def solve_schedule(
                             objective_terms.append(both_assigned * (-int(travel_mins)))
                     
     # 4c. Mutually Exclusive Event Groups
-    e_buffer_before = {}
-    e_buffer_after = {}
-    for e in events + assigned_events:
-        bb = 0
-        ba = 0
-        for r in rules:
-            if r.constraint_type == 'buffer' and does_event_match_rule(e, r, passengers):
-                bb = max(bb, getattr(r, 'buffer_before_mins', 0))
-                ba = max(ba, getattr(r, 'buffer_after_mins', 0))
-        e_buffer_before[e.id] = bb
-        e_buffer_after[e.id] = ba
-        
+
     mut_ex_rules = [r for r in rules if r.constraint_type == 'mutually_exclusive']
     for r in mut_ex_rules:
         from collections import defaultdict
