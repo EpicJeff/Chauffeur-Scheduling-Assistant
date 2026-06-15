@@ -789,7 +789,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
         # Group events by date to correctly compute initial edges per day and prevent cross-day routing
         from itertools import groupby
         for date_obj, date_evs_iter in groupby(evs, key=lambda x: x.start.date()):
-            date_evs = list(date_evs_iter)
+            date_evs = [e for e in date_evs_iter if getattr(e, 'event_type', '') != 'background_trip']
             if not date_evs:
                 continue
                 

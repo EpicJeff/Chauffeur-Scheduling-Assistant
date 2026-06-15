@@ -694,9 +694,27 @@
 
             const byDate = {};
             myEvents.forEach(ev => {
-                const dStr = new Date(ev.start).toLocaleDateString('en-CA');
-                if (!byDate[dStr]) byDate[dStr] = [];
-                byDate[dStr].push(ev);
+                let currDate = new Date(ev.start);
+                currDate.setHours(0, 0, 0, 0);
+                let endDate = new Date(ev.end);
+                endDate.setHours(0, 0, 0, 0);
+                
+                // If the event ends at midnight, don't include the end date unless it's the same as the start date
+                if (new Date(ev.end).getHours() === 0 && new Date(ev.end).getMinutes() === 0 && currDate < endDate) {
+                    endDate.setDate(endDate.getDate() - 1);
+                }
+
+                while (currDate <= endDate) {
+                    // Manually construct YYYY-MM-DD in local time
+                    const year = currDate.getFullYear();
+                    const month = String(currDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(currDate.getDate()).padStart(2, '0');
+                    const dStr = `${year}-${month}-${day}`;
+                    
+                    if (!byDate[dStr]) byDate[dStr] = [];
+                    byDate[dStr].push(ev);
+                    currDate.setDate(currDate.getDate() + 1);
+                }
             });
 
             currentDates = [];

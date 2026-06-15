@@ -660,14 +660,28 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Group events to solve by local date
     events_to_solve_by_date = defaultdict(list)
     for e in events_to_solve:
-        date_str = e.start.astimezone().strftime("%Y-%m-%d")
-        events_to_solve_by_date[date_str].append(e)
+        curr = e.start.astimezone()
+        end = e.end.astimezone()
+        while curr.date() <= end.date():
+            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                break
+            date_str = curr.strftime("%Y-%m-%d")
+            if e not in events_to_solve_by_date[date_str]:
+                events_to_solve_by_date[date_str].append(e)
+            curr += datetime.timedelta(days=1)
 
     # Group all fetched events by local date (for hashing)
     fetched_by_date = defaultdict(list)
     for e in all_fetched_events:
-        date_str = e.start.astimezone().strftime("%Y-%m-%d")
-        fetched_by_date[date_str].append(e)
+        curr = e.start.astimezone()
+        end = e.end.astimezone()
+        while curr.date() <= end.date():
+            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                break
+            date_str = curr.strftime("%Y-%m-%d")
+            if e not in fetched_by_date[date_str]:
+                fetched_by_date[date_str].append(e)
+            curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
