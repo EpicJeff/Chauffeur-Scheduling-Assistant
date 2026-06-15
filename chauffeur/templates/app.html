@@ -665,8 +665,8 @@
                 function getHomeLabel(loc) {
                     if (!loc) return "Drive home";
                     const l = loc.toLowerCase();
-                    if (l.includes("hotel") || l.includes("resort") || l.includes("motel") || l.includes("suites") || l.includes("lodge") || l.includes(" inn") || l.startsWith("inn ")) {
-                        return "Drive to Hotel";
+                    if (l.includes("hotel") || l.includes("resort") || l.includes("motel") || l.includes("suites") || l.includes("lodge") || l.includes(" inn") || l.startsWith("inn ") || l.includes("airbnb") || l.includes("vrbo")) {
+                        return "Drive to Hotel/Rental";
                     }
                     return "Drive home";
                 }
