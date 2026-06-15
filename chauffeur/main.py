@@ -931,18 +931,31 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             for ev_id, edge in data.get("initial_edges", {}).get(d_id, {}).items():
                 ev = events_by_id.get(ev_id)
                 if not ev: continue
-                dep_time = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp() - (edge.get("travel_mins", 0) + 5 + edge.get("buffer_before_mins", 0)) * 60
-                if now_ts <= dep_time + 600:
-                    notif_id = f"init_{ev_id}"
-                    pending_notifications.append({
-                        "notif_id": notif_id,
-                        "driver_id": d_id,
-                        "trigger_timestamp": dep_time,
-                        "title": "Time to Leave!",
-                        "body": f"Drive to {ev.location.split(',')[0]}",
-                        "location": ev.location,
-                        "fired": notif_id in fired_notif_ids
-                    })
+                pickup_wp = edge.get("pickup_waypoint")
+                buffer_before = edge.get("buffer_before_mins", 0)
+                ev_start_ts = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp()
+                
+                def add_init_notif(nid, ts, body, loc):
+                    if now_ts <= ts + 600:
+                        pending_notifications.append({
+                            "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
+                            "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids
+                        })
+
+                if pickup_wp:
+                    pax_pickup_loc = pickup_wp.get("pickup_location", "")
+                    driver_home_loc = edge.get("driver_home_location", "")
+                    if pax_pickup_loc == driver_home_loc:
+                        dep_time = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                        add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
+                    else:
+                        dep1 = ev_start_ts - (pickup_wp.get("from_driver_home_mins", 0) + pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                        add_init_notif(f"init_{ev_id}_1", dep1, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
+                        dep2 = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                        add_init_notif(f"init_{ev_id}_2", dep2, f"Drive to {ev.location.split(',')[0]}", ev.location)
+                else:
+                    dep_time = ev_start_ts - (edge.get("travel_mins", 0) + 5 + buffer_before) * 60
+                    add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
                     
             for ev_id, edge in data.get("route_edges", {}).get(d_id, {}).items():
                 ev = events_by_id.get(ev_id)
@@ -964,10 +977,20 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         })
 
                 if home_wp and pickup_wp:
+                    pax_pickup_loc = pickup_wp.get("pickup_location", "")
+                    driver_home_loc = home_wp.get("driver_home_location", "")
+                    
                     dep1 = ev_end_ts + buffer_after * 60
                     add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
-                    dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                    add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Pickup at {pickup_wp.get('pickup_location', 'Location').split(',')[0]}", pickup_wp.get("pickup_location", ""))
+                    
+                    if pax_pickup_loc == driver_home_loc:
+                        dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                    else:
+                        dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
+                        dep3 = max(dep2, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}_3", dep3, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
                 elif home_wp:
                     dep1 = ev_end_ts + buffer_after * 60
                     add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
