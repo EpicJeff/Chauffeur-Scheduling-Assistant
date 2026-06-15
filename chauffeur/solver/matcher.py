@@ -208,7 +208,7 @@ def solve_schedule(
                 e2_start_time = getattr(e2, 'original_start', None) or e2.start
 
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60
+                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
                 desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 gap_seconds = (e2_start_time - e1_end_time).total_seconds()
                 
@@ -236,7 +236,7 @@ def solve_schedule(
                             objective_terms.append(both * -50)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
-                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60
+                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
                 desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 gap_seconds = (e2.start - e1.end).total_seconds()
                 
@@ -250,9 +250,9 @@ def solve_schedule(
                         
                         # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
                         t1 = get_travel_time_minutes(e1.location, e2.location)
-                        req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 0 else 0)
+                        req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 2 else 0)
                         t2 = get_travel_time_minutes(e2.location, e1.location)
-                        req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 0 else 0)
+                        req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 2 else 0)
                         
                         tol_e1 = e_tolerances.get(e1.id, 0) * 60
                         tol_e2 = e_tolerances.get(e2.id, 0) * 60
@@ -307,8 +307,8 @@ def solve_schedule(
                     travel = get_travel_time_minutes(e.location, de.location)
                 else:
                     travel = 20
-                needed_secs_e_to_de = (travel + (5 if travel > 0 else 0)) * 60 + e_buffer_after.get(e.id, 0) * 60
-                needed_secs_de_to_e = (travel + (5 if travel > 0 else 0)) * 60 + e_buffer_before.get(e.id, 0) * 60
+                needed_secs_e_to_de = (travel + (5 if travel > 2 else 0)) * 60 + e_buffer_after.get(e.id, 0) * 60
+                needed_secs_de_to_e = (travel + (5 if travel > 2 else 0)) * 60 + e_buffer_before.get(e.id, 0) * 60
                 
                 # Check for overlap
                 e_before_de = (de.start - e.end).total_seconds() >= needed_secs_e_to_de
@@ -526,7 +526,7 @@ def solve_schedule(
                     shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
                     if shares_calendar:
                         travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                        total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                        total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < total_needed_seconds:
                             mins_late = int((total_needed_seconds - gap_seconds) / 60)
@@ -534,7 +534,7 @@ def solve_schedule(
                             lateness_warnings[e2.id] = f"Passenger will be {mins_late}m late (arriving from {e1.title})"
                     elif d1_id == d2_id:
                         travel_time_mins = get_switch_travel_time(e1, e2, events)
-                        total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                        total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < total_needed_seconds:
                             mins_late = int((total_needed_seconds - gap_seconds) / 60)
@@ -599,7 +599,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                     first, second = e, ae
                 else:
                     first, second = ae, e
-                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60 + e_buffer_after.get(first.id, 0) * 60 + e_buffer_before.get(second.id, 0) * 60    
+                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60 + e_buffer_after.get(first.id, 0) * 60 + e_buffer_before.get(second.id, 0) * 60    
                 if (second.start - first.end).total_seconds() < total_needed_seconds:
                     is_impossible = True
                     break
@@ -653,7 +653,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             
             if shares_calendar:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 if (e2.start - e1.end).total_seconds() < total_needed_seconds:
                     # Passenger conflict
                     is_assigned_e1 = sum(assign_vars[(e1.id, g_id)] for g_id in ghost_ids)
@@ -661,7 +661,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                     model.Add(is_assigned_e1 + is_assigned_e2 <= 1)
             else:
                 travel_time_mins = get_switch_travel_time(e1, e2, events)
-                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 0 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                total_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 if (e2.start - e1.end).total_seconds() < total_needed_seconds:
                     # Driver conflict
                     for g_id in ghost_ids:
@@ -1038,7 +1038,7 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
     for a_ev in assigned_events:
         for g_ev in ghost_events:
             travel = get_travel_time_minutes(a_ev.location, g_ev.location)
-            needed_secs = (travel + (5 if travel > 0 else 0)) * 60
+            needed_secs = (travel + (5 if travel > 2 else 0)) * 60
             
             a_before_g = (g_ev.start - a_ev.end).total_seconds() >= needed_secs
             g_before_a = (a_ev.start - g_ev.end).total_seconds() >= needed_secs
@@ -1092,7 +1092,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 for de in driver_events.get(d.id, []):
                     if e.id == de.id: continue
                     travel = get_travel_time_minutes(e.location, de.location) if e.location and de.location else 20
-                    needed_secs = (travel + (5 if travel > 0 else 0)) * 60
+                    needed_secs = (travel + (5 if travel > 2 else 0)) * 60
                     e_before_de = (de.start - e.end).total_seconds() >= needed_secs
                     de_before_e = (e.start - de.end).total_seconds() >= needed_secs
                     if not e_before_de and not de_before_e:
@@ -1124,7 +1124,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if needs_driver and ae.id not in assignments: continue
                     if e_cals.intersection(ae.calendar_ids):
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
-                        needed_secs = (travel + (5 if travel > 0 else 0)) * 60
+                        needed_secs = (travel + (5 if travel > 2 else 0)) * 60
                         if e.start <= ae.start:
                             gap = (ae.start - e.end).total_seconds()
                         else:
@@ -1152,7 +1152,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                         if ae.start.date() != e.start.date(): continue
                         
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
-                        needed_secs = (travel + (5 if travel > 0 else 0)) * 60
+                        needed_secs = (travel + (5 if travel > 2 else 0)) * 60
                         if e.start <= ae.start:
                             gap = (ae.start - e.end).total_seconds()
                         else:
@@ -1194,7 +1194,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                 travel = get_travel_time_minutes(e.location, a_e.location) if e.location and a_e.location else 20
                             else:
                                 travel = get_switch_travel_time(e, a_e, events)
-                            needed_secs = (travel + (5 if travel > 0 else 0)) * 60
+                            needed_secs = (travel + (5 if travel > 2 else 0)) * 60
                             e_before_a = (a_e.start - e.end).total_seconds() >= needed_secs
                             a_before_e = (e.start - a_e.end).total_seconds() >= needed_secs
                             
