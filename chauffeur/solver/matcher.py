@@ -160,12 +160,13 @@ def solve_schedule(
                 e_ents = e_entities_map.get(e.id, set())
                 for trip in trip_metadata:
                     if f"driver_{d.id}" in trip.get('entities', set()) or 'global' in trip.get('entities', set()):
-                        # Check overlap
-                        if e.start < trip['end'] and e.end > trip['start']:
-                            # Overlaps with driver's trip. Are any of the event's passengers on this trip?
-                            if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
-                                model.Add(assign_vars[(e.id, d.id)] == 0)
-                                break
+                        # if e.start < trip['end'] and e.end > trip['start']:
+                        #     # Overlaps with driver's trip. Are any of the event's passengers on this trip?
+                        #     if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
+                        #         import logging
+                        #         logging.error(f"TRIP BLOCK: Driver {d.name} blocked from {e.title}. e_ents={e_ents}, trip_entities={trip.get('entities')}")
+                        #         model.Add(assign_vars[(e.id, d.id)] == 0)
+                        #         break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:
