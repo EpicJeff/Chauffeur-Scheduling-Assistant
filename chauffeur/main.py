@@ -729,6 +729,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         e_unrolled.end = e.end.replace(hour=h, minute=m, second=0, microsecond=0)
                     
                     unrolled_events.append(e_unrolled)
+                    all_events_for_ui[e_unrolled.id] = e_unrolled
                     idx += 1
         else:
             unrolled_events.append(e)
