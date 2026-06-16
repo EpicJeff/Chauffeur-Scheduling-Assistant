@@ -830,12 +830,19 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 global_home_at_start = get_active_home('global', start_ts, home_location)
                 
                 pax_home = global_home_at_start
+                pickup_title = "Home"
                 if is_passenger_ev:
-                    for cid in first_ev.calendar_ids:
-                        pid = get_pax_id(cid)
-                        if pid:
-                            pax_home = get_active_home(f'passenger_{pid}', start_ts, global_home_at_start)
-                            break
+                    assigned_events = [ev for ev in events if ev.id in assignments]
+                    pickup_event = get_passenger_pickup_event_for_subset(first_ev, set(first_ev.calendar_ids), assigned_events)
+                    if pickup_event:
+                        pax_home = pickup_event.location
+                        pickup_title = pickup_event.title
+                    else:
+                        for cid in first_ev.calendar_ids:
+                            pid = get_pax_id(cid)
+                            if pid:
+                                pax_home = get_active_home(f'passenger_{pid}', start_ts, global_home_at_start)
+                                break
                             
                 if is_passenger_ev and pax_home and driver_home != pax_home:
                     travel_to_pickup, delay_to_pickup = get_travel_time_minutes(driver_home, pax_home, departure_time=int(start_ts), return_traffic=True)
@@ -849,6 +856,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             "from_driver_home_mins": travel_to_pickup,
                             "from_global_home_mins": travel_to_ev,
                             "pickup_location": pax_home,
+                            "pickup_event_title": pickup_title,
                             "driver_home_location": driver_home
                         }
                     }
@@ -862,7 +870,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "driver_home_location": driver_home
                     }
                 
-                last_ev = date_evs[-1]
+                last_ev = max(date_evs, key=lambda x: x.end.timestamp())
                 is_last_passenger_ev = last_ev.id in assignments
                 
                 end_ts = last_ev.end.timestamp()

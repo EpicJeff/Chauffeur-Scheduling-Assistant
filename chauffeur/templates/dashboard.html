@@ -1416,9 +1416,52 @@
                     }
 
                     const colEvents = (colsObj[c_id] || []).sort((a, b) => new Date(a.start) - new Date(b.start));
-                    const uniqueColEventsMap = {};
-                    colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
-                    const uniqueColEvents = Object.values(uniqueColEventsMap);
+                    const evColData = {};
+                    const cols = [];
+                    uniqueColEvents.forEach(ev => {
+                        if (ev.event_type === 'background_trip') {
+                            evColData[ev.id] = { colIndex: 0, totalCols: 1 };
+                            return;
+                        }
+                        let placed = false;
+                        for (let i = 0; i < cols.length; i++) {
+                            let lastEv = cols[i][cols[i].length - 1];
+                            if (new Date(ev.start) >= new Date(lastEv.end)) {
+                                cols[i].push(ev);
+                                evColData[ev.id] = { colIndex: i };
+                                placed = true;
+                                break;
+                            }
+                        }
+                        if (!placed) {
+                            cols.push([ev]);
+                            evColData[ev.id] = { colIndex: cols.length - 1 };
+                        }
+                    });
+                    
+                    uniqueColEvents.forEach(ev => {
+                        if (ev.event_type === 'background_trip') return;
+                        
+                        const visited = new Set();
+                        const queue = [ev];
+                        visited.add(ev.id);
+                        
+                        let maxColIndex = evColData[ev.id].colIndex;
+                        
+                        while(queue.length > 0) {
+                            const current = queue.shift();
+                            uniqueColEvents.forEach(otherEv => {
+                                if (otherEv.event_type !== 'background_trip' && !visited.has(otherEv.id)) {
+                                    if (new Date(current.start) < new Date(otherEv.end) && new Date(current.end) > new Date(otherEv.start)) {
+                                        visited.add(otherEv.id);
+                                        queue.push(otherEv);
+                                        maxColIndex = Math.max(maxColIndex, evColData[otherEv.id].colIndex);
+                                    }
+                                }
+                            });
+                        }
+                        evColData[ev.id].totalCols = maxColIndex + 1;
+                    });
 
                     let colEventsHtml = '';
                     uniqueColEvents.forEach((ev, index) => {
@@ -1433,21 +1476,19 @@
                             badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
                         }
 
-
                         const isAssignedToThisColumn = (assignments && assignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
                         const isDriverOnly = !isAssignedToThisColumn;
 
-                        let overlapIndex = 0;
-                        for (let i = 0; i < index; i++) {
-                            const otherEv = uniqueColEvents[i];
-                            if (otherEv.event_type !== 'background_trip' && new Date(otherEv.end) > new Date(ev.start)) {
-                                overlapIndex++;
-                            }
+                        let leftStyle = '28px';
+                        let widthStyle = 'calc(100% - 32px)';
+                        
+                        if (ev.event_type !== 'background_trip' && evColData[ev.id] && evColData[ev.id].totalCols > 1) {
+                            const cIndex = evColData[ev.id].colIndex;
+                            const tCols = evColData[ev.id].totalCols;
+                            const colWidth = `((100% - 32px) / ${tCols})`;
+                            leftStyle = `calc(28px + ${colWidth} * ${cIndex})`;
+                            widthStyle = `calc(${colWidth} - 2px)`;
                         }
-                        if (ev.event_type === 'background_trip') {
-                            overlapIndex = 0;
-                        }
-                        const leftOffset = 28 + (overlapIndex * 15); // leave room for time labels
 
                         const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
                         const evColor = calMetas[0].backgroundColor;
@@ -1496,8 +1537,8 @@
                             `;
                         } else if (isDriverOnly) {
                             colEventsHtml += `
-                                <div class="absolute right-1 rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-700 transition-colors flex flex-col z-10 opacity-70"
-                                     style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; min-height: 20px;">
+                                <div class="absolute rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-700 transition-colors flex flex-col z-10 opacity-70"
+                                     style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; min-height: 20px;">
                                     <div class="px-1 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col justify-center items-center text-center" style="background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.3) 10px, rgba(0,0,0,0.3) 20px);">
                                         <div class="font-bold text-[9px] text-gray-400 uppercase tracking-widest mb-0.5 bg-gray-800 px-1 rounded">🚫 Unavailable</div>
                                         <div class="text-[8px] text-gray-500 truncate w-full bg-gray-800 px-1 rounded">${ev.event_type === 'dropoff' ? 'Dropoff: ' : ''}${ev.event_type === 'pickup' ? 'Pickup: ' : ''}${ev.title}</div>
@@ -1511,8 +1552,8 @@
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr} title="${ev.title}"
-                                     class="absolute right-1 rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass} ${opacityClass} border ${borderClass}"
-                                     style="top: ${startY}px; height: ${height}px; left: ${leftOffset}px; border-left-color: ${evColor}; min-height: 24px;">
+                                     class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex z-10 ${cursorClass} ${opacityClass} border ${borderClass}"
+                                     style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; border-left-color: ${evColor}; min-height: 24px;">
                                     ${badgeHtml}
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
