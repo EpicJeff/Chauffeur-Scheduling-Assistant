@@ -1416,6 +1416,10 @@
                     }
 
                     const colEvents = (colsObj[c_id] || []).sort((a, b) => new Date(a.start) - new Date(b.start));
+                    const uniqueColEventsMap = {};
+                    colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
+                    const uniqueColEvents = Object.values(uniqueColEventsMap);
+                    
                     const evColData = {};
                     const cols = [];
                     uniqueColEvents.forEach(ev => {
