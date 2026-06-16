@@ -106,7 +106,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "description": description,
                         "calendar_ids": [],
                         "source_event_ids": [],
-                        "recurring_event_id": e.get('recurringEventId')
+                        "recurring_event_id": e.get('recurringEventId') or (e['id'].split('_')[0] if '_' in e.get('id', '') else None)
                     }
                 
                 grouped_events[group_key]["calendar_ids"].append(cal_id)
