@@ -676,6 +676,50 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if is_passenger:
             events.append(e)
 
+    # Unroll events for passenger-specific times
+    unrolled_events = []
+    from collections import defaultdict
+    for e in events:
+        if not e.location or not e.location.strip():
+            unrolled_events.append(e)
+            continue
+            
+        config = e.app_config or {}
+        pax_times = config.get('passenger_times', {})
+        
+        if pax_times:
+            groups = defaultdict(list)
+            for p_id in e.calendar_ids:
+                times = pax_times.get(str(p_id))
+                if times and (times.get('start') or times.get('end')):
+                    groups[(times.get('start'), times.get('end'))].append(str(p_id))
+                else:
+                    groups[(None, None)].append(str(p_id))
+            
+            if len(groups) == 1 and (None, None) in groups:
+                unrolled_events.append(e)
+            else:
+                idx = 0
+                for time_tuple, p_ids in groups.items():
+                    e_unrolled = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                    e_unrolled.id = f"{e.id}_unrolled_{idx}"
+                    e_unrolled.calendar_ids = p_ids
+                    
+                    start_str, end_str = time_tuple
+                    if start_str:
+                        h, m = map(int, start_str.split(':'))
+                        e_unrolled.start = e.start.replace(hour=h, minute=m, second=0, microsecond=0)
+                    if end_str:
+                        h, m = map(int, end_str.split(':'))
+                        e_unrolled.end = e.end.replace(hour=h, minute=m, second=0, microsecond=0)
+                    
+                    unrolled_events.append(e_unrolled)
+                    idx += 1
+        else:
+            unrolled_events.append(e)
+            
+    events = unrolled_events
+
     # Separate events with no location
     no_location_events = []
     events_to_solve = []

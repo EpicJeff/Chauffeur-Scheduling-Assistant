@@ -858,6 +858,68 @@
             document.getElementById('event-modal').classList.remove('hidden');
         }
 
+        function markPaxTimeEdited(selectElem) {
+            selectElem.closest('.pax-times-container').dataset.edited = 'true';
+        }
+
+        function togglePaxTimes(checkbox, paxId) {
+            const container = document.getElementById('pax-times-' + paxId);
+            if (!container) return;
+            if (checkbox.checked || checkbox.disabled) {
+                container.classList.remove('opacity-40', 'pointer-events-none');
+                container.classList.add('opacity-100');
+            } else {
+                container.classList.add('opacity-40', 'pointer-events-none');
+                container.classList.remove('opacity-100');
+            }
+        }
+
+        function generateTimePickerHTML(pId, type, defaultTime24) {
+            let h = '';
+            let m = '';
+            let ampm = 'AM';
+
+            if (defaultTime24) {
+                const parts = defaultTime24.split(':');
+                if (parts.length >= 2) {
+                    let hour24 = parseInt(parts[0], 10);
+                    m = parts[1];
+                    ampm = hour24 >= 12 ? 'PM' : 'AM';
+                    let hour12 = hour24 % 12;
+                    if (hour12 === 0) hour12 = 12;
+                    h = hour12.toString().padStart(2, '0');
+                }
+            }
+
+            const hourOptions = Array.from({length: 12}, (_, i) => {
+                const val = (i + 1).toString().padStart(2, '0');
+                return `<option value="${val}" ${val === h ? 'selected' : ''}>${val}</option>`;
+            }).join('');
+
+            const minuteOptions = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map(val => {
+                return `<option value="${val}" ${val === m ? 'selected' : ''}>${val}</option>`;
+            }).join('');
+
+            return `
+                <div class="flex items-center space-x-1 pax-times-container" data-pax-time="${type}" data-pax-id="${pId}" data-edited="${defaultTime24 ? 'true' : 'false'}">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase w-10">${type}:</span>
+                    <select class="pax-time-h bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
+                        <option value="">--</option>
+                        ${hourOptions}
+                    </select>
+                    <span class="text-gray-400 font-bold">:</span>
+                    <select class="pax-time-m bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
+                        <option value="">--</option>
+                        ${minuteOptions}
+                    </select>
+                    <select class="pax-time-ampm bg-gray-900 border border-gray-600 rounded text-xs text-white p-0.5 focus:border-blue-500" onchange="markPaxTimeEdited(this)">
+                        <option value="AM" ${ampm === 'AM' ? 'selected' : ''}>AM</option>
+                        <option value="PM" ${ampm === 'PM' ? 'selected' : ''}>PM</option>
+                    </select>
+                </div>
+            `;
+        }
+
         function switchToViewMode() {
             document.getElementById('modal-edit-mode').classList.add('hidden');
             document.getElementById('modal-view-mode').classList.remove('hidden');
@@ -898,11 +960,22 @@
                     });
                 }
 
+                const paxTimes = appConfig.passenger_times || {};
+                const myTimes = paxTimes[p.id] || {};
+                const startPickerHTML = generateTimePickerHTML(p.id, 'start', myTimes.start);
+                const endPickerHTML = generateTimePickerHTML(p.id, 'end', myTimes.end);
+
                 return `
-                    <label class="flex items-center space-x-2 text-sm ${isDisabled ? 'text-blue-300 opacity-80' : 'text-gray-300'}">
-                        <input type="checkbox" value="${p.id}" class="pax-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
-                        <span class="truncate ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" title="${p.name}">${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}</span>
-                    </label>
+                    <div class="flex flex-col space-y-1 mb-2 bg-gray-800/40 p-2 rounded border border-gray-700/50">
+                        <label class="flex items-center space-x-2 text-sm ${isDisabled ? 'text-blue-300 opacity-80' : 'text-gray-300'}">
+                            <input type="checkbox" value="${p.id}" class="pax-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="togglePaxTimes(this, '${p.id}')">
+                            <span class="truncate ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" title="${p.name}">${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}</span>
+                        </label>
+                        <div id="pax-times-${p.id}" class="flex flex-col space-y-1 ml-6 transition-opacity duration-200 ${isChecked || isDisabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}">
+                            ${startPickerHTML}
+                            ${endPickerHTML}
+                        </div>
+                    </div>
                 `;
             }).join('');
 
@@ -927,7 +1000,6 @@
                     </label>
                 `;
             }).join('');
-
             document.getElementById('autocomplete-dropdown').classList.add('hidden');
             document.getElementById('modal-view-mode').classList.add('hidden');
             document.getElementById('modal-edit-mode').classList.remove('hidden');
@@ -938,11 +1010,42 @@
             if (!ev) return;
 
             // Parse Config
-            const paxCheckboxes = document.querySelectorAll('.pax-checkbox:checked');
+            const paxCheckboxes = document.querySelectorAll('.pax-checkbox:checked, .pax-checkbox:disabled');
             const drvCheckboxes = document.querySelectorAll('.drv-checkbox:checked');
             
+            const passengerTimes = {};
+            paxCheckboxes.forEach(cb => {
+                const pId = cb.value;
+                const timesContainer = document.getElementById('pax-times-' + pId);
+                if (!timesContainer) return;
+                
+                const timeRows = timesContainer.querySelectorAll('.pax-times-container[data-edited="true"]');
+                if (timeRows.length > 0) {
+                    passengerTimes[pId] = {};
+                    timeRows.forEach(row => {
+                        const type = row.dataset.paxTime;
+                        const h = row.querySelector('.pax-time-h').value;
+                        const m = row.querySelector('.pax-time-m').value;
+                        const ampm = row.querySelector('.pax-time-ampm').value;
+                        
+                        if (h && m) {
+                            let hour24 = parseInt(h, 10);
+                            if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
+                            if (ampm === 'AM' && hour24 === 12) hour24 = 0;
+                            passengerTimes[pId][type] = hour24.toString().padStart(2, '0') + ':' + m;
+                        }
+                    });
+                    
+                    // Cleanup if empty
+                    if (Object.keys(passengerTimes[pId]).length === 0) {
+                        delete passengerTimes[pId];
+                    }
+                }
+            });
+
             const configData = {
                 passenger_ids: Array.from(paxCheckboxes).map(cb => cb.value),
+                passenger_times: passengerTimes,
                 driver_ids: Array.from(drvCheckboxes).map(cb => cb.value),
                 driver_attendance_mode: document.getElementById('edit-attendance-mode').value,
                 is_trip: document.getElementById('edit-is-trip').checked,
