@@ -757,13 +757,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         locs_to_cache = set()
         if home_location: locs_to_cache.add(home_location)
         for d in drivers:
-            if d.home_location: locs_to_cache.add(d.home_location)
+            if getattr(d, 'home_location', None): locs_to_cache.add(d.home_location)
             for ev in driver_events_map.get(d.id, []):
-                if ev.location: locs_to_cache.add(ev.location)
-        for p in passengers:
-            if p.home_location: locs_to_cache.add(p.home_location)
+                if getattr(ev, 'location', None): locs_to_cache.add(ev.location)
         for ev in daily_events_to_solve:
-            if ev.location: locs_to_cache.add(ev.location)
+            if getattr(ev, 'location', None): locs_to_cache.add(ev.location)
             
         if locs_to_cache:
             maps.prime_matrix_cache(list(locs_to_cache))
