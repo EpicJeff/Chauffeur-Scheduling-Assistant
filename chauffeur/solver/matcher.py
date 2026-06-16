@@ -126,6 +126,23 @@ def solve_schedule(
     if passengers is None:
         passengers = []
         
+    # Resolve effective overrides (instance overrides take precedence over series overrides)
+    effective_overrides_list = []
+    # Sort descending by created_at to ensure newer overrides take precedence if duplicate
+    sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', 0) or 0, reverse=True)
+    
+    for e in events:
+        instance_o = next((o for o in sorted_overrides if o.event_id == e.id), None)
+        series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and o.event_id == e.recurring_event_id), None)
+        
+        effective_o = instance_o or series_o
+        if effective_o:
+            effective_copy = type(effective_o)(**effective_o.model_dump()) if hasattr(effective_o, 'model_dump') else type(effective_o)(**effective_o.dict()) if hasattr(effective_o, 'dict') else type(effective_o)(**effective_o)
+            effective_copy.event_id = e.id
+            effective_overrides_list.append(effective_copy)
+            
+    overrides = effective_overrides_list
+        
     # Default missing event locations to home_location to prevent 0-minute teleportation
     for e in events:
         if not getattr(e, 'location', None) or str(e.location).strip() == "":

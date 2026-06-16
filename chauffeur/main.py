@@ -588,6 +588,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     for e in all_fetched_events:
         original_calendar_ids = list(e.calendar_ids)
+        e.original_calendar_ids = original_calendar_ids
         
         # 1. Fetch Event Config
         config = None
@@ -598,6 +599,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if config:
                 e.app_config = config
                 break
+                
+        # Fallback to recurring series config
+        if not config and getattr(e, 'recurring_event_id', None):
+            config = storage.get_event_config(e.recurring_event_id)
+            if config:
+                e.app_config = config
 
         if config and config.get('is_ignored'):
             continue

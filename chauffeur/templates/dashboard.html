@@ -945,7 +945,7 @@
                 let isChecked = false;
                 let isDisabled = false;
 
-                const isOnCalendar = ev.calendar_ids && p.calendar_ids && ev.calendar_ids.some(cid => p.calendar_ids.includes(cid));
+                const isOnCalendar = ev.original_calendar_ids && p.calendar_ids && ev.original_calendar_ids.some(cid => p.calendar_ids.includes(cid));
 
                 if (isOnCalendar) {
                     isChecked = true;
@@ -1053,7 +1053,7 @@
             };
 
             const googleIdParts = ev.source_event_ids[0].split('::');
-            const googleId = googleIdParts[googleIdParts.length - 1];
+            const googleId = ev.recurring_event_id ? ev.recurring_event_id : googleIdParts[googleIdParts.length - 1];
 
             try {
                 // Save config
@@ -1186,12 +1186,21 @@
 
         async function forceSwap(ghostEventId, driverId) {
             closeEventModal();
+            let targetEventId = ghostEventId;
+            const ev = currentEventsMap[ghostEventId];
+            if (ev && ev.recurring_event_id) {
+                const applyToSeries = confirm("This is a recurring event. Do you want to apply this override to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                if (applyToSeries) {
+                    targetEventId = ev.recurring_event_id;
+                }
+            }
+            
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
                 await fetch('api/overrides', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_id: ghostEventId, driver_id: driverId })
+                    body: JSON.stringify({ event_id: targetEventId, driver_id: driverId })
                 });
 
                 // Optimistic UI update
@@ -1219,9 +1228,17 @@
 
         async function removeOverride(eventId) {
             closeEventModal();
+            let targetEventId = eventId;
+            const ev = currentEventsMap[eventId];
+            if (ev && ev.recurring_event_id) {
+                const applyToSeries = confirm("This is a recurring event. Do you want to remove the override for ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                if (applyToSeries) {
+                    targetEventId = ev.recurring_event_id;
+                }
+            }
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
-                await fetch(`api/overrides/event/${encodeURIComponent(eventId)}`, {
+                await fetch(`api/overrides/event/${encodeURIComponent(targetEventId)}`, {
                     method: 'DELETE'
                 });
                 

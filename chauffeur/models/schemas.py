@@ -12,6 +12,8 @@ class Event(BaseModel):
     location: Optional[str] = None
     description: Optional[str] = None
     calendar_ids: List[str]
+    recurring_event_id: Optional[str] = None
+    original_calendar_ids: List[str] = Field(default_factory=list)
     source_event_ids: List[str]
     all_day: bool = False
     event_type: str = "standard"
