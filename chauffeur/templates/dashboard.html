@@ -1193,7 +1193,23 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ event_id: ghostEventId, driver_id: driverId })
                 });
-                await fetchSchedule(!!currentStartDate);
+
+                // Optimistic UI update
+                if (currentData) {
+                    if (driverId === 'unassigned') {
+                        delete currentData.assignments[ghostEventId];
+                        if (currentData.ghost_assignments) delete currentData.ghost_assignments[ghostEventId];
+                        if (!currentData.unassigned.includes(ghostEventId)) currentData.unassigned.push(ghostEventId);
+                    } else {
+                        currentData.assignments[ghostEventId] = driverId;
+                        currentData.unassigned = currentData.unassigned.filter(id => id !== ghostEventId);
+                    }
+                    if (!currentData.overridden_events) currentData.overridden_events = [];
+                    if (!currentData.overridden_events.includes(ghostEventId)) currentData.overridden_events.push(ghostEventId);
+                    renderSchedule(currentData);
+                }
+
+                forceSync().catch(console.error);
             } catch (e) {
                 alert("Failed to force swap");
             } finally {
@@ -1208,7 +1224,14 @@
                 await fetch(`api/overrides/event/${encodeURIComponent(eventId)}`, {
                     method: 'DELETE'
                 });
-                await fetchSchedule(!!currentStartDate);
+                
+                // Optimistic UI update
+                if (currentData && currentData.overridden_events) {
+                    currentData.overridden_events = currentData.overridden_events.filter(id => id !== eventId);
+                    renderSchedule(currentData);
+                }
+                
+                forceSync().catch(console.error);
             } catch (e) {
                 alert("Failed to remove override");
             } finally {

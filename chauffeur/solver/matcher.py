@@ -514,6 +514,7 @@ def solve_schedule(
     
     # 5. Solve
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 5.0
     status = solver.Solve(model)
     
     assignments = {}
@@ -698,6 +699,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
     model.Minimize(sum(objective_terms))
     
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 2.0
     status = solver.Solve(model)
     
     assignments = {}
