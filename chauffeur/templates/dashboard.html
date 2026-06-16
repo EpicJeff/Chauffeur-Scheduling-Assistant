@@ -1084,7 +1084,11 @@
                 
                 closeEventModal();
                 if (currentData && currentData.events) {
-                    currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                    if (ev.recurring_event_id) {
+                        currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
+                    } else {
+                        currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                    }
                     renderSchedule(currentData);
                 }
                 forceSync().catch(console.error);
@@ -1108,7 +1112,11 @@
                 });
                 closeEventModal();
                 if (currentData && currentData.events) {
-                    currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                    if (ev.recurring_event_id) {
+                        currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
+                    } else {
+                        currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                    }
                     renderSchedule(currentData);
                 }
                 forceSync().catch(console.error);
@@ -1293,7 +1301,30 @@
             const { events, assignments, ghost_assignments, unassigned, no_location, calendar_metadata, overridden_events, lateness_warnings } = data;
 
             // --- Inbox Logic ---
-            const triageEvents = events.filter(e => e.needs_triage);
+            let triageEvents = events.filter(e => e.needs_triage);
+            
+            // Group recurring events
+            const seriesGrouped = {};
+            const deduplicatedTriageEvents = [];
+            for (const ev of triageEvents) {
+                if (ev.recurring_event_id) {
+                    if (!seriesGrouped[ev.recurring_event_id]) {
+                        seriesGrouped[ev.recurring_event_id] = {
+                            ...ev,
+                            is_series_grouped: true,
+                            series_count: 1
+                        };
+                        deduplicatedTriageEvents.push(seriesGrouped[ev.recurring_event_id]);
+                    } else {
+                        seriesGrouped[ev.recurring_event_id].series_count++;
+                    }
+                } else {
+                    deduplicatedTriageEvents.push(ev);
+                }
+            }
+            
+            triageEvents = deduplicatedTriageEvents;
+            
             const inboxContainer = document.getElementById('inbox-container');
             const inboxList = document.getElementById('inbox-list');
             const inboxCount = document.getElementById('inbox-count');
@@ -1305,11 +1336,16 @@
                     const calMetas = (ev.calendar_ids || []).map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
                     const evColor = calMetas.length > 0 ? calMetas[0].backgroundColor : '#3B82F6';
                     
+                    const seriesBadge = ev.is_series_grouped && ev.series_count > 1 ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded ml-2 border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
+
                     return `
                         <div onclick="openEventModal('${ev.id}')" class="bg-gray-800 border border-red-500/50 rounded-xl p-4 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group">
                             <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color: ${evColor}"></div>
                             <div class="pl-2">
-                                <h3 class="font-bold text-white text-lg truncate group-hover:text-blue-300 transition">${ev.title || '(No Title)'}</h3>
+                                <h3 class="font-bold text-white text-lg truncate group-hover:text-blue-300 transition flex items-center">
+                                    <span>${ev.title || '(No Title)'}</span>
+                                    ${seriesBadge}
+                                </h3>
                                 <p class="text-sm text-gray-400 mt-1">${formatDateStr(ev.start)} • ${formatTime(ev.start)}</p>
                                 <div class="mt-3 flex items-center justify-between">
                                     <span class="text-xs font-bold uppercase tracking-wider text-red-400 bg-red-900/30 px-2 py-1 rounded-md">Needs Setup</span>

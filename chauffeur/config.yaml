@@ -1,6 +1,7 @@
 name: "Chauffeur"
 description: "A smart Graph-based Calendar Assistant for mapping overlapping family driving routes."
-version: "1.8.65"
+image: ghcr.io/epicjeff/chauffeur-scheduling-assistant:main
+version: "1.8.66"
 slug: "chauffeur"
 init: false
 arch:
