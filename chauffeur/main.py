@@ -444,7 +444,10 @@ def hash_events(events_list):
 
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False):
     try:
-        return _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh)
+        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh)
+        global LAST_UPDATE_TIME
+        LAST_UPDATE_TIME = time.time()
+        return res
     except Exception as e:
         logger.error("Fatal error during schedule generation", exc_info=True)
         import traceback
@@ -1413,8 +1416,9 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-def force_refresh_schedule(start_date: str = None, end_date: str = None):
-    return refresh_schedule_logic(start_date, end_date, force_refresh=True)
+def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None):
+    background_tasks.add_task(refresh_schedule_logic, start_date, end_date, force_refresh=True)
+    return {"status": "sync_started"}
 
 
 

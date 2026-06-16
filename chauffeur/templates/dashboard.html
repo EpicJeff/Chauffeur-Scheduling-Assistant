@@ -526,7 +526,7 @@
                     url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
                 }
                 await fetch(url, { method: 'POST' });
-                await fetchSchedule();
+                // Do not fetchSchedule here; SSE will trigger an update when background sync completes
             } catch (e) {
                 showError("Manual sync failed.");
             } finally {
