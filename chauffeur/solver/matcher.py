@@ -288,17 +288,18 @@ def solve_schedule(
                         tol_e1 = e_tolerances.get(e1.id, 0) * 60
                         tol_e2 = e_tolerances.get(e2.id, 0) * 60
                         
-                        if e2.end <= e1.end:
-                            # Profile B: e2 is fully enveloped by e1. Drop e1 -> Drop e2 -> Pick e2 -> Pick e1
-                            late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.end).total_seconds())
-                            if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1:
-                                gap_seconds = float('inf')
-                        else:
-                            # Profile A: e1 and e2 overlap. Drop e1 -> Drop e2 -> Pick e1 -> Pick e2
-                            late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.start).total_seconds())
-                            late_pick_e2 = max(0, req_e1_e2 - (e2.end - e1.end).total_seconds())
-                            if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1 and late_pick_e2 <= tol_e2:
-                                gap_seconds = float('inf')
+                        if gap_seconds < 0:
+                            if e2.end <= e1.end:
+                                # Profile B: e2 is fully enveloped by e1. Drop e1 -> Drop e2 -> Pick e2 -> Pick e1
+                                late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.end).total_seconds())
+                                if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1:
+                                    gap_seconds = float('inf')
+                            else:
+                                # Profile A: e1 and e2 overlap. Drop e1 -> Drop e2 -> Pick e1 -> Pick e2
+                                late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.start).total_seconds())
+                                late_pick_e2 = max(0, req_e1_e2 - (e2.end - e1.end).total_seconds())
+                                if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1 and late_pick_e2 <= tol_e2:
+                                    gap_seconds = float('inf')
 
                 if (e1.id, e2.id) in grouped_event_pairs:
                     gap_seconds = float('inf')

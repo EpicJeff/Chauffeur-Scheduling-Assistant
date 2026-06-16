@@ -97,6 +97,7 @@ class Settings(BaseModel):
     home_location: Optional[str] = None
     trip_hashtags: List[str] = Field(default_factory=list)
     route_cache_duration_mins: int = 10
+    time_format_24h: bool = False
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
