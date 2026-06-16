@@ -446,7 +446,7 @@ def solve_schedule(
                         if shares_calendar:
                             objective_terms.append(both_assigned * 50)
                             
-                        if (same_loc or travel_mins <= 5) and shares_calendar:
+                        if same_loc or ((travel_mins <= 5) and shares_calendar):
                             # Higher bonus for doing things at the exact same location (reduces travel)
                             objective_terms.append(both_assigned * 5000)
                             
@@ -766,7 +766,11 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
         t1 = get_travel_time_minutes(e1.location, pickup.location)
         t2 = get_travel_time_minutes(pickup.location, e2.location)
         return t1 + t2
-    # Default 30 min buffer
+    
+    # Default 30 min buffer ONLY if locations are different
+    same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
+    if same_loc:
+        return 0
     return get_travel_time_minutes(e1.location, e2.location) + 30
 
 def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_metadata: List[dict] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
