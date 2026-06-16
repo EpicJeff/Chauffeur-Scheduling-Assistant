@@ -51,6 +51,7 @@ with db_lock:
     push_subscriptions_table = db.table('push_subscriptions')
     drive_status_table = db.table('drive_status')
     pending_notifications_table = db.table('pending_notifications')
+    event_configs_table = db.table('event_configs')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -495,7 +496,26 @@ def get_pending_notifications() -> List[dict]:
 def mark_notification_fired(notif_id: str):
     with db_lock:
         q = Query()
-        pending_notifications_table.update({'fired': True}, q.notif_id == notif_id)
+        pending_notifications_table.update({'fired': True}, q.id == notif_id)
+
+def get_event_config(google_id: str) -> Optional[dict]:
+    with db_lock:
+        q = Query()
+        res = event_configs_table.search(q.google_id == google_id)
+        if res:
+            return res[0]
+        return None
+
+def set_event_config(google_id: str, config_data: dict):
+    with db_lock:
+        q = Query()
+        config_data['google_id'] = google_id
+        event_configs_table.upsert(config_data, q.google_id == google_id)
+
+def delete_event_config(google_id: str):
+    with db_lock:
+        q = Query()
+        event_configs_table.remove(q.google_id == google_id)
 
 def get_completed_drives():
     with db_lock:

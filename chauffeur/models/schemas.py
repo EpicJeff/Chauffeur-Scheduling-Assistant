@@ -18,6 +18,8 @@ class Event(BaseModel):
     original_start: Optional[datetime] = None
     original_end: Optional[datetime] = None
     original_event_id: Optional[str] = None
+    needs_triage: bool = False
+    app_config: Optional[dict] = None
 
 class Driver(BaseModel):
     id: str

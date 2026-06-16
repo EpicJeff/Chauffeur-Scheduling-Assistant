@@ -325,6 +325,21 @@ def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
+# --- Event Configs API ---
+@app.post("/api/events/config/{google_id}")
+def update_event_config(google_id: str, config_data: dict, background_tasks: BackgroundTasks):
+    storage.set_event_config(google_id, config_data)
+    storage.clear_custom_schedules()
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "updated"}
+
+@app.delete("/api/events/config/{google_id}")
+def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
+    storage.delete_event_config(google_id)
+    storage.clear_custom_schedules()
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "deleted"}
+
 # --- Settings API ---
 @app.get("/api/settings")
 def get_settings():
@@ -557,66 +572,114 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     driver_events_map = {d.id: [] for d in drivers}
     driver_events_ids = {d.id: [] for d in drivers}
-    
-    for e in all_fetched_events:
-        all_events_for_ui[e.id] = e
-        
-        original_calendar_ids = list(e.calendar_ids)
-        is_passenger = any(c in calendar_ids for c in e.calendar_ids)
-        
-        # Also check passenger tags and passenger calendar IDs
-        matched_passengers = []
-        for p in passengers:
-            # Match by passenger's calendar ID
-            if any(c in p.calendar_ids for c in original_calendar_ids):
-                is_passenger = True
-                if p not in matched_passengers:
-                    matched_passengers.append(p)
-            # Match by hashtags
-            elif p.hashtags:
-                for tag in p.hashtags:
-                    title_match = fuzzy_has_hashtag(e.title, tag)
-                    desc_match = fuzzy_has_hashtag(e.description, tag)
-                    if title_match or desc_match:
-                        is_passenger = True
-                        if p not in matched_passengers:
-                            matched_passengers.append(p)
-                        break
-                        
-        if matched_passengers:
-            # Replace the generic calendar IDs with the actual passenger IDs.
-            # This ensures that "Data Calendars" don't falsely trigger overlap conflicts
-            # for different passengers.
-            e.calendar_ids = [str(p.id) for p in matched_passengers]
-                    
-        if is_passenger:
-            events.append(e)
 
-        if not getattr(e, 'location', '') or not str(e.location).strip():
-            continue
-            
-        for d in drivers:
-            # Check calendar_ids
-            if any(c in d.calendar_ids for c in original_calendar_ids):
-                driver_events_map[d.id].append(e)
-                driver_events_ids[d.id].append(e.id)
-                continue
-            
-            # Check driver hashtags
-            for tag in d.hashtags:
-                if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
-                    driver_events_map[d.id].append(e)
-                    driver_events_ids[d.id].append(e.id)
-                    break
-                
     rules_data = storage.get_all_rules()
     priority_rules_data = storage.get_all_priority_rules()
     overrides_data = storage.get_all_overrides()
-    
+
     rules = [Rule(**r) for r in rules_data]
     priority_rules = [PriorityRule(**pr) for pr in priority_rules_data]
     overrides = [ManualOverride(**o) for o in overrides_data]
-    
+
+    for e in all_fetched_events:
+        original_calendar_ids = list(e.calendar_ids)
+        
+        # 1. Fetch Event Config
+        config = None
+        for src_id in getattr(e, 'source_event_ids', [e.id]):
+            parts = src_id.split('::')
+            google_id = parts[-1] if len(parts) > 1 else src_id
+            config = storage.get_event_config(google_id)
+            if config:
+                e.app_config = config
+                break
+
+        if config and config.get('is_ignored'):
+            continue
+            
+        if config and config.get('location_override'):
+            e.location = config.get('location_override')
+            
+        if config and config.get('is_trip'):
+            e.event_type = 'background_trip'
+            
+        all_events_for_ui[e.id] = e
+
+        # 2. Check Passengers (Config -> Rules -> Calendar/Hashtags)
+        matched_passengers = []
+        is_passenger = False
+
+        if config and config.get('passenger_ids') is not None:
+            is_passenger = True
+            matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
+        else:
+            is_passenger = any(c in calendar_ids for c in e.calendar_ids)
+            
+            # Check Rules FIRST
+            rule_matched = False
+            for rule in rules:
+                if matcher.does_event_match_rule(e, rule, passengers):
+                    matched_pax = [p for p in passengers if str(p.id) in rule.passenger_ids]
+                    for p in matched_pax:
+                        if p not in matched_passengers:
+                            matched_passengers.append(p)
+                    is_passenger = True
+                    rule_matched = True
+            
+            # If no rule matched, fallback to hashtags and calendar_ids
+            if not rule_matched:
+                for p in passengers:
+                    if any(c in p.calendar_ids for c in original_calendar_ids):
+                        is_passenger = True
+                        if p not in matched_passengers:
+                            matched_passengers.append(p)
+                    elif p.hashtags:
+                        for tag in p.hashtags:
+                            if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
+                                is_passenger = True
+                                if p not in matched_passengers:
+                                    matched_passengers.append(p)
+                                break
+
+        if matched_passengers:
+            e.calendar_ids = [str(p.id) for p in matched_passengers]
+
+        # 3. Check Drivers
+        driver_matched = False
+        if config and config.get('driver_ids') is not None:
+            driver_matched = True
+            for d in drivers:
+                if str(d.id) in config.get('driver_ids', []):
+                    driver_events_map[d.id].append(e)
+                    driver_events_ids[d.id].append(e.id)
+        else:
+            for d in drivers:
+                if any(c in d.calendar_ids for c in original_calendar_ids):
+                    driver_matched = True
+                    driver_events_map[d.id].append(e)
+                    driver_events_ids[d.id].append(e.id)
+                    continue
+                for tag in d.hashtags:
+                    if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
+                        driver_matched = True
+                        driver_events_map[d.id].append(e)
+                        driver_events_ids[d.id].append(e.id)
+                        break
+
+        # 4. Triage Logic
+        # It needs triage if NO config exists AND (no location OR no attendees)
+        # Note: If a rule matched and assigned a passenger, it HAS an attendee.
+        if not config:
+            has_location = bool(getattr(e, 'location', '') and str(e.location).strip())
+            has_attendees = bool(matched_passengers) or driver_matched
+            if not has_location or not has_attendees:
+                e.needs_triage = True
+                
+        # 5. Append to events list if it's a passenger event AND has a location
+        # (needs_triage events still go to the dashboard but are stripped out of solver below)
+        if is_passenger:
+            events.append(e)
+
     # Separate events with no location
     no_location_events = []
     events_to_solve = []
