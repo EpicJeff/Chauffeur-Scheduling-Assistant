@@ -38,131 +38,129 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     if cached is not None:
         return (cached, 0) if return_traffic else cached
         
-    # 2. Call get_route_info to guarantee identical times for the scheduler and the map displays
-    info = get_route_info(origin, destination, ignore_age=not return_traffic)
-    if info and "duration" in info:
-        import re
-        dur_str = info["duration"]
-        sec = int(re.sub(r'\D', '', dur_str)) if dur_str else (MOCK_TIME * 60)
-        minutes = int(round(sec / 60.0))
+    # 2. If not in cache, fallback to priming the cache for just this pair
+    prime_matrix_cache([origin, destination])
+    
+    # 3. Check cache again
+    cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
+    if cached is not None:
+        return (cached, 0) if return_traffic else cached
         
-        delay_mins = 0
-        if info.get("staticDuration"):
-            static_sec = int(re.sub(r'\D', '', info["staticDuration"]))
-            static_mins = int(round(static_sec / 60.0))
-            delay_mins = max(0, minutes - static_mins)
-            
-        storage.set_cached_travel_time(origin.lower(), destination.lower(), minutes)
-        return (minutes, delay_mins) if return_traffic else minutes
-        
-    return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
-            
-    # 3. Cache and return fallback if API fails
+    # 4. Cache and return fallback if API fails
     storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
-def get_route_info(origin: str, destination: str, ignore_age: bool = False) -> Optional[dict]:
-    """
-    Returns a dictionary with the encoded polyline string, distance, and duration for the route.
-    """
-    if not origin or not destination:
-        return None
-    if origin.lower() == destination.lower():
-        return None
+def prime_matrix_cache(locations: list[str]):
+    from services import storage
+    if not locations:
+        return
         
-    cache_duration = get_cache_duration()
-    
-    # 1. Check cache
-    cached = storage.get_cached_route_info(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=ignore_age)
-    if cached is not None:
-        return cached
+    unique_locs = list(set([loc for loc in locations if loc and loc.strip()]))
+    if len(unique_locs) < 2:
+        return
         
-    # 2. Geocode origin and destination
-    orig_coords = geocode_address(origin)
-    dest_coords = geocode_address(destination)
-    
-    if not orig_coords or not dest_coords:
-        print(f"Could not geocode {origin} or {destination}")
-        return None
+    # Geocode all locations
+    coords = []
+    loc_names = []
+    for loc in unique_locs:
+        c = geocode_address(loc)
+        if c:
+            coords.append(c)
+            loc_names.append(loc)
+            
+    if len(coords) < 2:
+        return
         
-    orig_lat, orig_lon = orig_coords
-    dest_lat, dest_lon = dest_coords
-    
-    # 3. Try Mapbox Directions API first
     import datetime
+    import time
     mapbox_key = get_mapbox_api_key()
     current_month = datetime.datetime.now().strftime("%Y-%m")
-    mapbox_directions_usage = storage.get_mapbox_usage(current_month, 'directions')
     
-    if mapbox_key and mapbox_directions_usage < 90000:
-        url = f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
+    def fetch_matrix_chunk(src_indices, dest_indices, all_coords, all_locs):
+        chunk_indices = list(set(src_indices + dest_indices))
+        if len(chunk_indices) < 2:
+            return
+            
+        coord_strings = []
+        for idx in chunk_indices:
+            lat, lon = all_coords[idx]
+            coord_strings.append(f"{lon},{lat}")
+            
+        coord_str = ";".join(coord_strings)
+        
+        local_src = [chunk_indices.index(i) for i in src_indices]
+        local_dest = [chunk_indices.index(i) for i in dest_indices]
+        
+        src_str = ";".join(map(str, local_src))
+        dest_str = ";".join(map(str, local_dest))
+        
+        mapbox_directions_usage = storage.get_mapbox_usage(current_month, 'directions')
+        
+        if mapbox_key and mapbox_directions_usage < 90000:
+            url = f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving/{coord_str}"
+            params = {
+                "access_token": mapbox_key,
+                "sources": src_str,
+                "destinations": dest_str,
+                "annotations": "duration,distance"
+            }
+            try:
+                resp = requests.get(url, params=params, timeout=10)
+                if resp.status_code == 200:
+                    storage.increment_mapbox_usage(current_month, 'directions')
+                    data = resp.json()
+                    durations = data.get("durations", [])
+                    
+                    for s_i, src_idx in enumerate(src_indices):
+                        for d_i, dest_idx in enumerate(dest_indices):
+                            if src_idx == dest_idx:
+                                continue
+                            if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
+                                dur_sec = durations[s_i][d_i]
+                                mins = int(round(dur_sec / 60.0))
+                                storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                    return True
+                else:
+                    print(f"Mapbox Matrix API failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"Mapbox Matrix error: {e}")
+                
+        # Fallback to OSRM
+        url = f"http://router.project-osrm.org/table/v1/driving/{coord_str}"
         params = {
-            "access_token": mapbox_key,
-            "geometries": "polyline",
-            "overview": "full",
-            "steps": "false",
+            "sources": src_str,
+            "destinations": dest_str,
             "annotations": "duration,distance"
         }
         try:
-            resp = requests.get(url, params=params, timeout=5)
+            time.sleep(1.1)
+            resp = requests.get(url, params=params, timeout=10)
             if resp.status_code == 200:
-                storage.increment_mapbox_usage(current_month, 'directions')
                 data = resp.json()
-                routes = data.get("routes", [])
-                if routes:
-                    route = routes[0]
-                    polyline = route.get("geometry")
-                    duration_sec = route.get("duration", 0)
-                    distance_m = route.get("distance", 0)
-                    
-                    if polyline:
-                        info = {
-                            "polyline": polyline,
-                            "distanceMeters": distance_m,
-                            "duration": f"{int(duration_sec)}s",
-                            "staticDuration": f"{int(duration_sec)}s"
-                        }
-                        storage.set_cached_route_info(origin.lower(), destination.lower(), info)
-                        return info
-            else:
-                print(f"Mapbox API failed: status={resp.status_code}, body={resp.text}")
-        except Exception as ex:
-            print(f"Mapbox API exception: {ex}")
-            
-    # 4. Fallback to OSRM API
-    url = f"http://router.project-osrm.org/route/v1/driving/{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
-    params = {
-        "overview": "full",
-        "steps": "false",
-        "annotations": "false"
-    }
-    
-    try:
-        resp = requests.get(url, params=params, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            routes = data.get("routes", [])
-            if routes:
-                route = routes[0]
-                polyline = route.get("geometry")
-                duration_sec = route.get("duration", 0)
-                distance_m = route.get("distance", 0)
-                
-                if polyline:
-                    info = {
-                        "polyline": polyline,
-                        "distanceMeters": distance_m,
-                        "duration": f"{int(duration_sec)}s",
-                        "staticDuration": f"{int(duration_sec)}s"
-                    }
-                    storage.set_cached_route_info(origin.lower(), destination.lower(), info)
-                    return info
-        else:
-            print(f"OSRM API failed: status={resp.status_code}, body={resp.text}")
-    except Exception as ex:
-        print(f"OSRM API exception for route info: {ex}")
-            
-    return None
+                durations = data.get("durations", [])
+                for s_i, src_idx in enumerate(src_indices):
+                    for d_i, dest_idx in enumerate(dest_indices):
+                        if src_idx == dest_idx:
+                            continue
+                        if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
+                            dur_sec = durations[s_i][d_i]
+                            mins = int(round(dur_sec / 60.0))
+                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                return True
+        except Exception as e:
+            print(f"OSRM Matrix error: {e}")
+        return False
+        
+    N = len(coords)
+    if N <= 25:
+        fetch_matrix_chunk(list(range(N)), list(range(N)), coords, loc_names)
+    else:
+        chunk_size = 12
+        for i in range(0, N, chunk_size):
+            src_chunk = list(range(i, min(i+chunk_size, N)))
+            for j in range(0, N, chunk_size):
+                dest_chunk = list(range(j, min(j+chunk_size, N)))
+                fetch_matrix_chunk(src_chunk, dest_chunk, coords, loc_names)
 
 def get_mapbox_api_key() -> Optional[str]:
     import os

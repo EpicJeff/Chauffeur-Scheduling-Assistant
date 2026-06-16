@@ -340,9 +340,8 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
 
 @app.delete("/api/cache")
 def clear_caches():
-    from services.storage import distance_cache_table, polyline_cache_table, cache_table
+    from services.storage import distance_cache_table, cache_table
     distance_cache_table.truncate()
-    polyline_cache_table.truncate()
     cache_table.truncate()
     return {"status": "cleared"}
 
@@ -754,6 +753,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             combined_conflicts.extend(sched.get('conflicts', []))
             continue
             
+        # Pre-fetch Matrix API cache for all unique locations this day
+        locs_to_cache = set()
+        if home_location: locs_to_cache.add(home_location)
+        for d in drivers:
+            if d.home_location: locs_to_cache.add(d.home_location)
+            for ev in driver_events_map.get(d.id, []):
+                if ev.location: locs_to_cache.add(ev.location)
+        for p in passengers:
+            if p.home_location: locs_to_cache.add(p.home_location)
+        for ev in daily_events_to_solve:
+            if ev.location: locs_to_cache.add(ev.location)
+            
+        if locs_to_cache:
+            maps.prime_matrix_cache(list(locs_to_cache))
+
         # Else, solve for this day!
         assignments, unassigned, lateness_warnings = matcher.solve_schedule(
             daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata
@@ -1287,19 +1301,7 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
 def force_refresh_schedule(start_date: str = None, end_date: str = None):
     return refresh_schedule_logic(start_date, end_date, force_refresh=True)
 
-@app.get("/api/maps/test_polyline")
-def test_polyline(origin: str, destination: str):
-    info = maps.get_route_info(origin, destination)
-    if info and "polyline" in info:
-        return {"routes": [{"polyline": {"encodedPolyline": info["polyline"]}}]}
-    return {"error": "Failed to compute route"}
 
-@app.get("/api/maps/route_info")
-def get_route_info(origin: str, destination: str):
-    info = maps.get_route_info(origin, destination)
-    if not info:
-        return {"error": "No route found"}
-    return info
 
 @app.get("/api/admin/clear_cache")
 def clear_geocache():

@@ -43,7 +43,7 @@ with db_lock:
     daily_schedules_table = db.table('daily_schedules')
     settings_table = db.table('settings')
     distance_cache_table = db.table('distance_cache')
-    polyline_cache_table = db.table('polyline_cache')
+
     geocode_cache_table = db.table('geocode_cache')
     api_usage_table = db.table('api_usage')
     passengers_table = db.table('passengers')
@@ -120,25 +120,7 @@ def migrate_duplicate_rules():
                 rules_table.update(r, doc_ids=[r.doc_id])
 
 migrate_duplicate_rules()
-def get_cached_route_info(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False):
-    import time
-    with db_lock:
-        res = polyline_cache_table.search((Query().origin == origin) & (Query().destination == destination))
-        if res:
-            doc = res[0]
-            if ignore_age or (time.time() - doc.get('timestamp', 0)) < (max_age_mins * 60):
-                return doc.get('info')
-        return None
 
-def set_cached_route_info(origin: str, destination: str, info: dict):
-    import time
-    with db_lock:
-        polyline_cache_table.upsert({
-            'origin': origin,
-            'destination': destination,
-            'info': info,
-            'timestamp': time.time()
-        }, (Query().origin == origin) & (Query().destination == destination))
 
 # Geocode Cache
 def get_cached_geocode(address: str):
