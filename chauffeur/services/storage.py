@@ -496,7 +496,7 @@ def get_pending_notifications() -> List[dict]:
 def mark_notification_fired(notif_id: str):
     with db_lock:
         q = Query()
-        pending_notifications_table.update({'fired': True}, q.id == notif_id)
+        pending_notifications_table.update({'fired': True}, q.notif_id == notif_id)
 
 def get_event_config(google_id: str) -> Optional[dict]:
     with db_lock:
