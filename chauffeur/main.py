@@ -667,13 +667,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         break
 
         # 4. Triage Logic
-        # It needs triage if NO config exists AND (no location OR no attendees)
-        # Note: If a rule matched and assigned a passenger, it HAS an attendee.
+        # Every event we haven't seen before (no config) goes to the inbox.
         if not config:
-            has_location = bool(getattr(e, 'location', '') and str(e.location).strip())
-            has_attendees = bool(matched_passengers) or driver_matched
-            if not has_location or not has_attendees:
-                e.needs_triage = True
+            e.needs_triage = True
                 
         # 5. Append to events list if it's a passenger event AND has a location
         # (needs_triage events still go to the dashboard but are stripped out of solver below)

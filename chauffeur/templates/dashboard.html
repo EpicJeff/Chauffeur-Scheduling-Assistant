@@ -879,27 +879,27 @@
             // Passengers
             const paxContainer = document.getElementById('edit-passengers-container');
             const passengers = currentData.passengers || [];
-            
-            paxContainer.innerHTML = passengers.map(p => {
+                        paxContainer.innerHTML = passengers.map(p => {
                 let isChecked = false;
-                if (appConfig.passenger_ids) {
+                let isDisabled = false;
+
+                if (ev.calendar_ids && ev.calendar_ids.includes(String(p.id))) {
+                    isChecked = true;
+                    isDisabled = true;
+                } else if (appConfig.passenger_ids) {
                     isChecked = appConfig.passenger_ids.includes(String(p.id));
-                } else {
-                    if (ev.calendar_ids && ev.calendar_ids.includes(String(p.id))) {
-                        isChecked = true;
-                    } else if (p.hashtags && p.hashtags.length > 0) {
-                        // Detect hashtags for legacy events
-                        isChecked = p.hashtags.some(tag => {
-                            const t = tag.toLowerCase();
-                            return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
-                        });
-                    }
+                } else if (p.hashtags && p.hashtags.length > 0) {
+                    // Detect hashtags for legacy events
+                    isChecked = p.hashtags.some(tag => {
+                        const t = tag.toLowerCase();
+                        return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
+                    });
                 }
-                
+
                 return `
-                    <label class="flex items-center space-x-2 text-sm text-gray-300">
-                        <input type="checkbox" value="${p.id}" class="pax-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer" ${isChecked ? 'checked' : ''}>
-                        <span class="truncate cursor-pointer" title="${p.name}">${p.name}</span>
+                    <label class="flex items-center space-x-2 text-sm ${isDisabled ? 'text-blue-300 opacity-80' : 'text-gray-300'}">
+                        <input type="checkbox" value="${p.id}" class="pax-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
+                        <span class="truncate ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" title="${p.name}">${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}</span>
                     </label>
                 `;
             }).join('');
