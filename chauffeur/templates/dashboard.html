@@ -1070,21 +1070,21 @@
                 const newEnd = toIsoString(endInput);
                 
                 if (newStart !== ev.start || newEnd !== ev.end) {
-                    await fetch('api/overrides', {
-                        method: 'POST',
+                    await fetch('api/events', {
+                        method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            event_id: ev.id,
-                            start_time: newStart,
-                            end_time: newEnd,
+                            source_event_ids: ev.source_event_ids,
+                            start: newStart,
+                            end: newEnd,
                             location: configData.location_override || ev.location
                         })
                     });
                 }
                 
                 closeEventModal();
-                if (currentData && currentData.triage_events) {
-                    currentData.triage_events = currentData.triage_events.filter(e => e.id !== ev.id);
+                if (currentData && currentData.events) {
+                    currentData.events = currentData.events.filter(e => e.id !== ev.id);
                     renderSchedule(currentData);
                 }
                 forceSync().catch(console.error);
@@ -1107,8 +1107,8 @@
                     body: JSON.stringify({ is_ignored: true })
                 });
                 closeEventModal();
-                if (currentData && currentData.triage_events) {
-                    currentData.triage_events = currentData.triage_events.filter(e => e.id !== ev.id);
+                if (currentData && currentData.events) {
+                    currentData.events = currentData.events.filter(e => e.id !== ev.id);
                     renderSchedule(currentData);
                 }
                 forceSync().catch(console.error);

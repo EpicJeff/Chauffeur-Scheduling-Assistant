@@ -422,6 +422,11 @@ def update_event_details(payload: EventDetailsUpdate, background_tasks: Backgrou
         return {"error": str(e)}
 
 # --- Maps API ---
+@app.get("/api/maps/route_info")
+def get_route_info(origin: str, destination: str):
+    mins = maps.get_travel_time_minutes(origin, destination)
+    return {"duration": f"{mins * 60}s", "distanceMeters": mins * 1000}  # Mock distance
+
 @app.get("/api/places/autocomplete")
 def get_places_autocomplete(input: str):
     suggestions = maps.autocomplete_location(input)
