@@ -1083,7 +1083,11 @@
                 }
                 
                 closeEventModal();
-                await forceSync();
+                if (currentData && currentData.triage_events) {
+                    currentData.triage_events = currentData.triage_events.filter(e => e.id !== ev.id);
+                    renderSchedule(currentData);
+                }
+                forceSync().catch(console.error);
             } catch (e) {
                 showError("Failed to save configuration.");
             }
@@ -1103,7 +1107,11 @@
                     body: JSON.stringify({ is_ignored: true })
                 });
                 closeEventModal();
-                await forceSync();
+                if (currentData && currentData.triage_events) {
+                    currentData.triage_events = currentData.triage_events.filter(e => e.id !== ev.id);
+                    renderSchedule(currentData);
+                }
+                forceSync().catch(console.error);
             } catch (e) {
                 showError("Failed to ignore event.");
             }
