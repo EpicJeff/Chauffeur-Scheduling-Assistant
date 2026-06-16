@@ -884,9 +884,16 @@
                 let isChecked = false;
                 if (appConfig.passenger_ids) {
                     isChecked = appConfig.passenger_ids.includes(String(p.id));
-                } else if (ev.calendar_ids) {
-                    // Fallback to original logic if no config
-                    isChecked = ev.calendar_ids.includes(String(p.id));
+                } else {
+                    if (ev.calendar_ids && ev.calendar_ids.includes(String(p.id))) {
+                        isChecked = true;
+                    } else if (p.hashtags && p.hashtags.length > 0) {
+                        // Detect hashtags for legacy events
+                        isChecked = p.hashtags.some(tag => {
+                            const t = tag.toLowerCase();
+                            return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
+                        });
+                    }
                 }
                 
                 return `
