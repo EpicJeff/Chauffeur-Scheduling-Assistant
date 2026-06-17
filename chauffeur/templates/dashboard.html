@@ -1956,7 +1956,7 @@ const scheduleByDate = {};
                                 const distance = nextStartY - endY;
                                 const trafficWarn = edge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${edge.delay_mins}min traffic delay">⚠</span>` : '';
 
-                                if (distance > 0) {
+                                if (distance > 0 && !(edge.travel_mins === 0 && distance < 20)) {
                                     let pills = [];
 
                                     const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
