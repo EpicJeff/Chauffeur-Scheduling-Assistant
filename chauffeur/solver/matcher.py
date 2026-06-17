@@ -315,56 +315,55 @@ def solve_schedule(
             if (e1.location and e2.location and (e1.location.strip().lower() == e2.location.strip().lower() or get_travel_time_minutes(e1.location, e2.location) <= 5)):
                 if travel_time_mins <= 5: # Only bypass if there's no long pickup involved
                     gap_seconds = float('inf')
-            else:
-                attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
-                if not attendance_conflict and e1.location and e2.location:
-                    req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
-                        late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
-                        
-                        # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
-                        t1 = get_travel_time_minutes(e1.location, e2.location)
-                        req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 2 else 0)
-                        t2 = get_travel_time_minutes(e2.location, e1.location)
-                        req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 2 else 0)
-                        
-                        tol_e1 = e_tolerances.get(e1.id, 0) * 60
-                        tol_e2 = e_tolerances.get(e2.id, 0) * 60
-                        
-                        if gap_seconds < 0:
-                            if e2.end <= e1.end:
-                                # Profile B: e2 is fully enveloped by e1. Drop e1 -> Drop e2 -> Pick e2 -> Pick e1
-                                late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.end).total_seconds())
-                                if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1:
-                                    gap_seconds = float('inf')
-                            else:
-                                # Profile A: e1 and e2 overlap. Drop e1 -> Drop e2 -> Pick e1 -> Pick e2
-                                late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.start).total_seconds())
-                                late_pick_e2 = max(0, req_e1_e2 - (e2.end - e1.end).total_seconds())
-                                if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1 and late_pick_e2 <= tol_e2:
-                                    gap_seconds = float('inf')
+            attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
+            if not attendance_conflict and e1.location and e2.location:
+                req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
+                late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
+                
+                # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
+                t1 = get_travel_time_minutes(e1.location, e2.location)
+                req_e1_e2 = t1 * 60 + (5 * 60 if t1 > 2 else 0)
+                t2 = get_travel_time_minutes(e2.location, e1.location)
+                req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 2 else 0)
+                
+                tol_e1 = e_tolerances.get(e1.id, 0) * 60
+                tol_e2 = e_tolerances.get(e2.id, 0) * 60
+                
+                if gap_seconds < 0:
+                    if e2.end <= e1.end:
+                        # Profile B: e2 is fully enveloped by e1. Drop e1 -> Drop e2 -> Pick e2 -> Pick e1
+                        late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.end).total_seconds())
+                        if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1:
+                            gap_seconds = float('inf')
+                    else:
+                        # Profile A: e1 and e2 overlap. Drop e1 -> Drop e2 -> Pick e1 -> Pick e2
+                        late_pick_e1 = max(0, req_e2_e1 - (e1.end - e2.start).total_seconds())
+                        late_pick_e2 = max(0, req_e1_e2 - (e2.end - e1.end).total_seconds())
+                        if late_drop_e2 <= tol_e2 and late_pick_e1 <= tol_e1 and late_pick_e2 <= tol_e2:
+                            gap_seconds = float('inf')
 
-                if (e1.id, e2.id) in grouped_event_pairs:
-                    gap_seconds = float('inf')
+            if (e1.id, e2.id) in grouped_event_pairs:
+                gap_seconds = float('inf')
 
-                gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
-                if gap_seconds_with_tolerance < min_needed_seconds:
-                    # Driver conflict hard penalty (impossible)
-                    for d in drivers:
-                        if d.id == 'unassigned_ghost': continue
-                        both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
-                        model.AddImplication(both, assign_vars[(e1.id, d.id)])
-                        model.AddImplication(both, assign_vars[(e2.id, d.id)])
-                        model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
-                        objective_terms.append(both * -1000000)
-                elif gap_seconds < desired_needed_seconds:
-                    # Driver conflict soft penalty (buffer eaten into)
-                    for d in drivers:
-                        if d.id == 'unassigned_ghost': continue
-                        both = model.NewBoolVar(f'drv_buffer_conf_{e1.id}_{e2.id}_{d.id}')
-                        model.AddImplication(both, assign_vars[(e1.id, d.id)])
-                        model.AddImplication(both, assign_vars[(e2.id, d.id)])
-                        model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
-                        objective_terms.append(both * -50)
+            gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+            if gap_seconds_with_tolerance < min_needed_seconds:
+                # Driver conflict hard penalty (impossible)
+                for d in drivers:
+                    if d.id == 'unassigned_ghost': continue
+                    both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
+                    model.AddImplication(both, assign_vars[(e1.id, d.id)])
+                    model.AddImplication(both, assign_vars[(e2.id, d.id)])
+                    model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                    objective_terms.append(both * -1000000)
+            elif gap_seconds < desired_needed_seconds:
+                # Driver conflict soft penalty (buffer eaten into)
+                for d in drivers:
+                    if d.id == 'unassigned_ghost': continue
+                    both = model.NewBoolVar(f'drv_buffer_conf_{e1.id}_{e2.id}_{d.id}')
+                    model.AddImplication(both, assign_vars[(e1.id, d.id)])
+                    model.AddImplication(both, assign_vars[(e2.id, d.id)])
+                    model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                    objective_terms.append(both * -50)
 
     # 3b. Overridden pairs
     overridden_pairs = set((o.event_id, o.driver_id) for o in overrides)
