@@ -122,6 +122,16 @@ def migrate_duplicate_rules():
 
 migrate_duplicate_rules()
 
+def cleanup_corrupted_travel_times():
+    with db_lock:
+        QueryObj = Query()
+        # Remove any cached travel time >= 120 minutes (like the corrupted 999 values)
+        distance_cache_table.remove(QueryObj.minutes >= 120)
+        # Also clean up custom schedules and daily schedules cache to force a re-render
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+
+cleanup_corrupted_travel_times()
 
 # Geocode Cache
 def get_cached_geocode(address: str):
@@ -156,8 +166,10 @@ def set_cached_travel_time(origin: str, destination: str, minutes: int):
     import time
     with db_lock:
         QueryObj = Query()
-        distance_cache_table.remove((QueryObj.origin == origin) & (QueryObj.destination == destination))
-        distance_cache_table.insert({'origin': origin, 'destination': destination, 'minutes': minutes, 'timestamp': time.time()})
+        distance_cache_table.upsert(
+            {'origin': origin, 'destination': destination, 'minutes': minutes, 'timestamp': time.time()},
+            (QueryObj.origin == origin) & (QueryObj.destination == destination)
+        )
 
 # Driver CRUD
 def get_all_drivers() -> List[dict]:

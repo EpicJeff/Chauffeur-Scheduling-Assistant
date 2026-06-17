@@ -62,7 +62,7 @@ def run_test():
     # Priority Rule: 'CRITICAL' gives +500 weight
     pr1 = PriorityRule(match_type="keyword", match_value="CRITICAL", weight_modifier=500)
     
-    assignments, unassigned = solve_schedule(
+    assignments, unassigned, _ = solve_schedule(
         events=[e1, e2, e3, e4, e5, e6, e7],
         drivers=[d1, d2],
         rules=[r1, r2],

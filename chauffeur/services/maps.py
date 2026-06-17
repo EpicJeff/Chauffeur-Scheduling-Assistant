@@ -142,7 +142,7 @@ def prime_matrix_cache(locations: list[str]):
                             if src_idx == dest_idx:
                                 continue
                             
-                            mins = 999 # Default to 999 for unroutable paths
+                            mins = 15 # Default to 15 for unroutable paths
                             if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
                                 dur_sec = durations[s_i][d_i]
                                 mins = int(round(dur_sec / 60.0))
@@ -178,7 +178,7 @@ def prime_matrix_cache(locations: list[str]):
                         if src_idx == dest_idx:
                             continue
                         
-                        mins = 999
+                        mins = 15
                         if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
                             dur_sec = durations[s_i][d_i]
                             mins = int(round(dur_sec / 60.0))
@@ -189,13 +189,13 @@ def prime_matrix_cache(locations: list[str]):
                 for s_i, src_idx in enumerate(src_indices):
                     for d_i, dest_idx in enumerate(dest_indices):
                         if src_idx != dest_idx:
-                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 999)
+                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 15)
         except Exception as e:
             print(f"OSRM Matrix error: {e}")
             for s_i, src_idx in enumerate(src_indices):
                 for d_i, dest_idx in enumerate(dest_indices):
                     if src_idx != dest_idx:
-                        storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 999)
+                        storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 15)
         return False
         
     N = len(coords)

@@ -12,7 +12,8 @@ e1 = Event(
     location="123 Origin St",
     start=datetime.now(),
     end=datetime.now() + timedelta(hours=1),
-    calendar_ids=["cal1"]
+    calendar_ids=["cal1"],
+    source_event_ids=[]
 )
 e2 = Event(
     id="e2",
@@ -20,7 +21,8 @@ e2 = Event(
     location="456 Dest St",
     start=datetime.now() + timedelta(hours=3),
     end=datetime.now() + timedelta(hours=4),
-    calendar_ids=["cal2"]
+    calendar_ids=["cal2"],
+    source_event_ids=[]
 )
 e_pickup = Event(
     id="e_pickup",
@@ -28,7 +30,8 @@ e_pickup = Event(
     location="789 Pickup St",
     start=datetime.now() - timedelta(hours=1),
     end=datetime.now() + timedelta(hours=1, minutes=30),
-    calendar_ids=["cal2"]
+    calendar_ids=["cal2"],
+    source_event_ids=[]
 )
 
 assignments = {"e1": "d1", "e2": "d1"}
