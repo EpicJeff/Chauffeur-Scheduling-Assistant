@@ -559,7 +559,8 @@ def solve_schedule(
         if any(e.id == o.event_id for e in assignable_events):
             if o.driver_id == 'unassigned':
                 for d in drivers:
-                    model.Add(assign_vars[(o.event_id, d.id)] == 0)
+                    if d.id != 'unassigned_ghost':
+                        model.Add(assign_vars[(o.event_id, d.id)] == 0)
             elif any(d.id == o.driver_id for d in drivers):
                 # Calculate weight: Base 1,000,000 + seconds since override was created
                 # This ensures newer overrides always win over older ones if they conflict
