@@ -262,21 +262,18 @@ def get_rules():
     return storage.get_all_rules()
 
 @app.post("/api/rules")
-def create_rule(rule: Rule, background_tasks: BackgroundTasks):
+def create_rule(rule: Rule):
     doc_id = storage.add_rule(rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
-    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.put("/api/rules/{doc_id}")
-def update_rule(doc_id: int, rule: Rule, background_tasks: BackgroundTasks):
+def update_rule(doc_id: int, rule: Rule):
     storage.update_rule(doc_id, rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/rules/{doc_id}")
-def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
+def delete_rule(doc_id: int):
     storage.delete_rule(doc_id)
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Priority Rules API ---
@@ -285,21 +282,18 @@ def get_priority_rules():
     return storage.get_all_priority_rules()
 
 @app.post("/api/priority_rules")
-def create_priority_rule(rule: PriorityRule, background_tasks: BackgroundTasks):
+def create_priority_rule(rule: PriorityRule):
     doc_id = storage.add_priority_rule(rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
-    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.put("/api/priority_rules/{doc_id}")
-def update_priority_rule(doc_id: int, rule: PriorityRule, background_tasks: BackgroundTasks):
+def update_priority_rule(doc_id: int, rule: PriorityRule):
     storage.update_priority_rule(doc_id, rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/priority_rules/{doc_id}")
-def delete_priority_rule(doc_id: int, background_tasks: BackgroundTasks):
+def delete_priority_rule(doc_id: int):
     storage.delete_priority_rule(doc_id)
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Overrides API ---
@@ -308,36 +302,31 @@ def get_overrides():
     return storage.get_all_overrides()
 
 @app.post("/api/overrides")
-def create_override(override: ManualOverride, background_tasks: BackgroundTasks):
+def create_override(override: ManualOverride):
     doc_id = storage.add_override(override.model_dump() if hasattr(override, 'model_dump') else override.dict())
-    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.delete("/api/overrides/{doc_id}")
-def delete_override(doc_id: int, background_tasks: BackgroundTasks):
+def delete_override(doc_id: int):
     storage.delete_override(doc_id)
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 @app.delete("/api/overrides/event/{event_id}")
-def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks):
+def delete_override_by_event(event_id: str):
     storage.delete_override_by_event(event_id)
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Event Configs API ---
 @app.post("/api/events/config/{google_id}")
-def update_event_config(google_id: str, config_data: dict, background_tasks: BackgroundTasks):
+def update_event_config(google_id: str, config_data: dict):
     storage.set_event_config(google_id, config_data)
     storage.clear_custom_schedules()
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/events/config/{google_id}")
-def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
+def delete_event_config(google_id: str):
     storage.delete_event_config(google_id)
     storage.clear_custom_schedules()
-    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Settings API ---
@@ -410,13 +399,12 @@ class EventDetailsUpdate(BaseModel):
     source_event_ids: list[str]
 
 @app.patch("/api/events")
-def update_event_details(payload: EventDetailsUpdate, background_tasks: BackgroundTasks):
+def update_event_details(payload: EventDetailsUpdate):
     try:
         details = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else payload.dict(exclude_unset=True)
         # remove source_event_ids from details
         details.pop('source_event_ids', None)
         calendar.update_event_details(payload.source_event_ids, details)
-        background_tasks.add_task(refresh_schedule_logic)
         return {"status": "updated"}
     except Exception as e:
         return {"error": str(e)}
@@ -1441,8 +1429,8 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None):
-    background_tasks.add_task(refresh_schedule_logic, start_date, end_date, force_refresh=True)
+async def force_refresh_schedule(start_date: str = None, end_date: str = None):
+    await refresh_schedule_logic(start_date, end_date, force_refresh=True)
     return {"status": "sync_started"}
 
 
