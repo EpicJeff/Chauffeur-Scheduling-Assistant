@@ -631,6 +631,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             # Check Rules FIRST
             rule_matched = False
             for rule in rules:
+                # Driver rules (e.g. unavailable, priority) should NOT convert an event into a passenger route!
+                if getattr(rule, 'driver_id', None) is not None:
+                    continue
+                    
                 if matcher.does_event_match_rule(e, rule, passengers):
                     matched_pax = [p for p in passengers if str(p.id) in rule.passenger_ids]
                     for p in matched_pax:
