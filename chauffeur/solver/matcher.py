@@ -420,10 +420,19 @@ def solve_schedule(
             
             # Huge bonus if driver is an attendee of the event
             e_orig_bonus = getattr(e, 'original_event_id', None) or e.id
-            if any(de.id == e.id or de.id == e_orig_bonus or getattr(de, 'original_event_id', None) == e_orig_bonus for de in driver_events.get(d.id, [])):
+            is_attendee = False
+            for de in driver_events.get(d.id, []):
+                de_orig = getattr(de, 'original_event_id', None) or de.id
+                if de.id == e.id or de.id == e_orig_bonus or de_orig == e_orig_bonus or de_orig == e.id:
+                    is_attendee = True
+                    break
+                if de.start == e.start and de.end == e.end and de.title.strip().lower() == e.title.strip().lower():
+                    is_attendee = True
+                    break
+                    
+            if is_attendee:
                 weight += 2000
 
-            
             # Group weight
             if d.group == 'primary':
                 weight += 500
