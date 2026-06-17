@@ -1450,36 +1450,9 @@ const scheduleByDate = {};
             sortedDates.forEach(date => {
                 const colsObj = scheduleByDate[date];
 
-                // Step 1: Compute min/max passenger event times for filtering driver-only events
-                let minPassengerTime = Infinity;
-                let maxPassengerTime = -Infinity;
+                // Step 1: Removed min/max passenger time filtering so all driver events are shown as busy blocks
 
-                Object.values(colsObj).forEach(list => {
-                    list.forEach(ev => {
-                        const isAssignedPassenger = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
-                        if (isAssignedPassenger) {
-                            const st = new Date(ev.start).getTime();
-                            const et = new Date(ev.end).getTime();
-                            if (st < minPassengerTime) minPassengerTime = st;
-                            if (et > maxPassengerTime) maxPassengerTime = et;
-                        }
-                    });
-                });
-
-                // Step 2: Filter out driver-only events that do not overlap with passenger events
-                Object.keys(colsObj).forEach(c_id => {
-                    colsObj[c_id] = colsObj[c_id].filter(ev => {
-                        const isDriverOnly = !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]) && !(unassigned && unassigned.includes(ev.id)) && !(no_location && no_location.includes(ev.id));
-                        if (isDriverOnly) {
-                            const st = new Date(ev.start).getTime();
-                            const et = new Date(ev.end).getTime();
-                            if (et <= minPassengerTime || st >= maxPassengerTime) {
-                                return false; // completely outside
-                            }
-                        }
-                        return true;
-                    });
-                });
+                // Step 2: Removed filtering of driver-only events
 
                 // Get all columns that should be rendered in the timeline
                 let colIds = Object.keys(driversMap).sort((a, b) => {
