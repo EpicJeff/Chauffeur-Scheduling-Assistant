@@ -185,7 +185,8 @@ def solve_schedule(
     for e in events:
         is_req = bool(set(e.calendar_ids).intersection(req_att_cals))
         
-        has_stay_hashtag = '#stay' in (e.title or '').lower() or '#stay' in getattr(e, 'description', '').lower() or '#wait' in (e.title or '').lower() or '#wait' in getattr(e, 'description', '').lower()
+        desc = getattr(e, 'description', '') or ''
+        has_stay_hashtag = '#stay' in (e.title or '').lower() or '#stay' in desc.lower() or '#wait' in (e.title or '').lower() or '#wait' in desc.lower()
         has_stay_rule = False
         if rules:
             has_stay_rule = any(((r.constraint_type == 'attendance' and (r.attendance_action == 'stay' or r.attendance_action is None)) or r.constraint_type == 'no_split') and does_event_match_rule(e, r, passengers) for r in rules)
