@@ -673,7 +673,7 @@
             const timeLabel = colorTheme === 'blue' ? 'Leave at' : 'Arrive by';
 
             return `
-                <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openActionSheet(${actionArgs})">
+                <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isPast ? 'opacity-40' : ''}" onclick="openActionSheet(${actionArgs})">
                     <div class="w-10 h-10 rounded-full ${colorClassBg} border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md ${colorClassText}">
                         ${iconSvg}
                     </div>
@@ -841,8 +841,9 @@
                     };
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
+                    const isEventPast = new Date(ev.end) < new Date();
                     html += `
-                        <div class="flex items-start mb-6 relative z-10 group cursor-pointer" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
+                        <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
                             <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
                                 ${formatTime(ev.start).split(':')[0]}
                             </div>
