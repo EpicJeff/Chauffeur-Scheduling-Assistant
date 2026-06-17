@@ -239,6 +239,14 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         
     import datetime
     import urllib.parse
+    # Check cache outside lock so fast path is truly fast
+    cached = storage.get_cached_geocode(address)
+    if cached:
+        lat, lon = cached.get('lat'), cached.get('lon')
+        if lat == 0.0 and lon == 0.0:
+            return None
+        return lat, lon
+
     mapbox_key = get_mapbox_api_key()
     current_month = datetime.datetime.now().strftime("%Y-%m")
     mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
@@ -260,6 +268,10 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
                     display_name = features[0].get("place_name", "")
                     storage.set_cached_geocode(address, lat, lon, display_name)
                     return lat, lon
+                else:
+                    # Mapbox successfully searched but found nothing. Cache as failure.
+                    storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
+                    return None
             else:
                 print(f"Mapbox Geocoding API failed: {resp.status_code}")
         except Exception as ex:
@@ -270,7 +282,10 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         # Check cache again inside the lock in case another thread just fetched it
         cached = storage.get_cached_geocode(address)
         if cached:
-            return cached.get('lat'), cached.get('lon')
+            lat, lon = cached.get('lat'), cached.get('lon')
+            if lat == 0.0 and lon == 0.0:
+                return None
+            return lat, lon
             
         # Rate limit: Nominatim requires max 1 request per second
         import time
@@ -302,6 +317,9 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
                     display_name = data[0].get("display_name", "")
                     storage.set_cached_geocode(address, lat, lon, display_name)
                     return lat, lon
+                else:
+                    storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
+                    return None
             print(f"Nominatim Geocoding failed for {address}: {resp.status_code} {resp.text}")
         except Exception as ex:
             print(f"Nominatim Geocoding error for {address}: {ex}")
