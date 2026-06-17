@@ -1450,6 +1450,13 @@ const scheduleByDate = {};
             sortedDates.forEach(date => {
                 const colsObj = scheduleByDate[date];
 
+                function isPassengerTask(ev) {
+                    return (data.assignments && data.assignments[ev.id]) || 
+                           (data.ghost_assignments && data.ghost_assignments[ev.id]) || 
+                           (data.unassigned && data.unassigned.includes(ev.id)) || 
+                           (data.no_location && data.no_location.includes(ev.id));
+                }
+
                 // Step 1: Removed min/max passenger time filtering so all driver events are shown as busy blocks
 
                 // Step 2: Removed filtering of driver-only events
@@ -1523,7 +1530,7 @@ const scheduleByDate = {};
                 colIds.forEach(c_id => {
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(e => {
-                            if (e.event_type !== 'background_trip' && !e.all_day) {
+                            if (e.event_type !== 'background_trip' && isPassengerTask(e)) {
                                 allEventsForDate.push(e);
                             }
                         });
@@ -1733,7 +1740,7 @@ const scheduleByDate = {};
                     const evColData = {};
                     const cols = [];
                     uniqueColEvents.forEach(ev => {
-                        if (ev.event_type === 'background_trip' || ev.all_day) {
+                        if (ev.event_type === 'background_trip' || !isPassengerTask(ev)) {
                             evColData[ev.id] = { colIndex: 0, totalCols: 1 };
                             return;
                         }
@@ -1754,7 +1761,7 @@ const scheduleByDate = {};
                     });
                     
                     uniqueColEvents.forEach(ev => {
-                        if (ev.event_type === 'background_trip' || ev.all_day) return;
+                        if (ev.event_type === 'background_trip' || !isPassengerTask(ev)) return;
                         
                         const visited = new Set();
                         const queue = [ev];
@@ -1765,7 +1772,7 @@ const scheduleByDate = {};
                         while(queue.length > 0) {
                             const current = queue.shift();
                             uniqueColEvents.forEach(otherEv => {
-                                if (otherEv.event_type !== 'background_trip' && !otherEv.all_day && !visited.has(otherEv.id)) {
+                                if (otherEv.event_type !== 'background_trip' && isPassengerTask(otherEv) && !visited.has(otherEv.id)) {
                                     if (new Date(current.start) < new Date(otherEv.end) && new Date(current.end) > new Date(otherEv.start)) {
                                         visited.add(otherEv.id);
                                         queue.push(otherEv);
@@ -1796,7 +1803,7 @@ const scheduleByDate = {};
                         let leftStyle = '28px';
                         let widthStyle = 'calc(100% - 32px)';
                         
-                        if (ev.event_type !== 'background_trip' && !ev.all_day && evColData[ev.id] && evColData[ev.id].totalCols > 1) {
+                        if (ev.event_type !== 'background_trip' && isPassengerTask(ev) && evColData[ev.id] && evColData[ev.id].totalCols > 1) {
                             const cIndex = evColData[ev.id].colIndex;
                             const tCols = evColData[ev.id].totalCols;
                             const colWidth = `((100% - 32px) / ${tCols})`;
@@ -1850,7 +1857,7 @@ const scheduleByDate = {};
                                 </div>
                             `;
                         } else if (isDriverOnly) {
-                            const zIndex = ev.all_day ? 'z-0 pointer-events-none' : 'z-10';
+                            const zIndex = 'z-0 pointer-events-none';
                             const opacity = ev.all_day ? 'opacity-30' : 'opacity-70';
                             colEventsHtml += `
                                 <div class="absolute rounded-md overflow-hidden shadow-sm border-l-4 border-gray-600 border-dashed bg-gray-700 transition-colors flex flex-col ${zIndex} ${opacity}"
@@ -1866,7 +1873,7 @@ const scheduleByDate = {};
                             const isCompleted = new Date(ev.end).getTime() < nowTime;
                             const opacityClass = isCompleted ? 'opacity-40 grayscale' : 'opacity-100';
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
-                            const zIndex = ev.all_day ? 'z-0 opacity-50' : 'z-10';
+                            const zIndex = 'z-10';
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr} title="${ev.title}"
                                      class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex ${zIndex} ${cursorClass} ${opacityClass} border ${borderClass}"
