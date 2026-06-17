@@ -35,9 +35,22 @@ def get_calendar_service():
     creds, _ = google.auth.default(scopes=SCOPES)
     return build('calendar', 'v3', credentials=creds)
 
-def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, end_date_str=None) -> list[Event]:
+def _fetch_single_calendar(cal_id, time_min, time_max):
     service = get_calendar_service()
-    
+    try:
+        events_result = service.events().list(
+            calendarId=cal_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        return cal_id, events_result.get('items', [])
+    except Exception as ex:
+        print(f"Error fetching from calendar {cal_id}: {ex}")
+        return cal_id, []
+
+def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, end_date_str=None) -> list[Event]:
     if start_date_str and end_date_str:
         if 'T' in start_date_str:
             time_min = start_date_str
@@ -56,20 +69,15 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
         target_date = now_local + datetime.timedelta(days=days-1)
         end_of_target_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
         time_max = end_of_target_day.isoformat()
+        
     # Group events by (title, start, end, location)
     grouped_events = {}
     
-    for cal_id in calendar_ids:
-        try:
-            events_result = service.events().list(
-                calendarId=cal_id,
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            events = events_result.get('items', [])
-            
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(calendar_ids) or 1)) as executor:
+        futures = [executor.submit(_fetch_single_calendar, cal_id, time_min, time_max) for cal_id in calendar_ids]
+        for future in concurrent.futures.as_completed(futures):
+            cal_id, events = future.result()
             for e in events:
                 # Handle all-day events vs timed events
                 start_str = e['start'].get('dateTime', e['start'].get('date'))
@@ -111,9 +119,6 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                 
                 grouped_events[group_key]["calendar_ids"].append(cal_id)
                 grouped_events[group_key]["source_event_ids"].append(internal_id)
-                
-        except Exception as ex:
-            print(f"Error fetching from calendar {cal_id}: {ex}")
             
     # Convert grouped dictionary into Event objects
     all_events = []

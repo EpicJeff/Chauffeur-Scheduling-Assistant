@@ -73,15 +73,22 @@ def prime_matrix_cache(locations: list[str]):
     if len(unique_locs) < 2:
         return
 
-        
-    # Geocode all locations
+    import concurrent.futures
+    # Geocode all locations in parallel
     coords = []
     loc_names = []
-    for loc in unique_locs:
-        c = geocode_address(loc)
-        if c:
-            coords.append(c)
-            loc_names.append(loc)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_loc = {executor.submit(geocode_address, loc): loc for loc in unique_locs}
+        for future in concurrent.futures.as_completed(future_to_loc):
+            loc = future_to_loc[future]
+            try:
+                c = future.result()
+                if c:
+                    coords.append(c)
+                    loc_names.append(loc)
+            except Exception as e:
+                print(f"Error parallel geocoding {loc}: {e}")
             
     if len(coords) < 2:
         return
@@ -167,15 +174,23 @@ def prime_matrix_cache(locations: list[str]):
         return False
         
     N = len(coords)
-    if N <= 25:
+    if N <= 12:
         fetch_matrix_chunk(list(range(N)), list(range(N)), coords, loc_names)
     else:
         chunk_size = 12
-        for i in range(0, N, chunk_size):
-            src_chunk = list(range(i, min(i+chunk_size, N)))
-            for j in range(0, N, chunk_size):
-                dest_chunk = list(range(j, min(j+chunk_size, N)))
-                fetch_matrix_chunk(src_chunk, dest_chunk, coords, loc_names)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for i in range(0, N, chunk_size):
+                src_chunk = list(range(i, min(i+chunk_size, N)))
+                for j in range(0, N, chunk_size):
+                    dest_chunk = list(range(j, min(j+chunk_size, N)))
+                    futures.append(executor.submit(fetch_matrix_chunk, src_chunk, dest_chunk, coords, loc_names))
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in parallel matrix fetch: {e}")
 
 def get_mapbox_api_key() -> Optional[str]:
     import os
