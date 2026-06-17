@@ -96,6 +96,22 @@ def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: 
                     for j in range(i + 1, len(group_events)):
                         grouped_event_pairs.add((group_events[i].id, group_events[j].id))
                         grouped_event_pairs.add((group_events[j].id, group_events[i].id))
+                        
+    # Implicitly group events that are physically the same event
+    # (Same title, start time, and location)
+    implicit_groups = defaultdict(list)
+    for e in events:
+        if e.title and e.location:
+            key = (e.title.strip().lower(), e.start, e.location.strip().lower())
+            implicit_groups[key].append(e)
+            
+    for group_events in implicit_groups.values():
+        if len(group_events) > 1:
+            for i in range(len(group_events)):
+                for j in range(i + 1, len(group_events)):
+                    grouped_event_pairs.add((group_events[i].id, group_events[j].id))
+                    grouped_event_pairs.add((group_events[j].id, group_events[i].id))
+                    
     return grouped_event_pairs
 
 def solve_schedule(
@@ -955,15 +971,24 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     
                     if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
                         drive_from_pickup, delay_from = 0, 0
+                        if e1.start == e2.start:
+                            pickup_waypoint = None
+                        else:
+                            pickup_waypoint = {
+                                "to_pickup_mins": 0,
+                                "from_pickup_mins": drive_from_pickup,
+                                "pickup_location": e1.location,
+                                "pickup_event_title": e1.title
+                            }
                     else:
                         drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
+                        pickup_waypoint = {
+                            "to_pickup_mins": 0,
+                            "from_pickup_mins": drive_from_pickup,
+                            "pickup_location": e1.location,
+                            "pickup_event_title": e1.title
+                        }
                     
-                    pickup_waypoint = {
-                        "to_pickup_mins": 0,
-                        "from_pickup_mins": drive_from_pickup,
-                        "pickup_location": e1.location,
-                        "pickup_event_title": e1.title
-                    }
                     travel = drive_from_pickup
                     delay = delay_from
                 else:
