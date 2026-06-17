@@ -628,8 +628,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             is_passenger = True
             matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
         else:
-            is_passenger = any(c in calendar_ids for c in e.calendar_ids)
-            
             # Check Rules FIRST
             rule_matched = False
             for rule in rules:
@@ -643,8 +641,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
             # If no rule matched, fallback to hashtags and calendar_ids
             if not rule_matched:
+                # If an event is on a driver's calendar, we assume it's just blocking their schedule.
+                # We do NOT automatically treat it as a driving route unless it is ALSO on a dedicated non-driver calendar.
+                valid_passenger_cals = [c for c in original_calendar_ids if c not in driver_calendar_ids]
+                
+                is_passenger = any(c in calendar_ids for c in valid_passenger_cals)
+                
                 for p in passengers:
-                    if any(c in p.calendar_ids for c in original_calendar_ids):
+                    if any(c in p.calendar_ids for c in valid_passenger_cals):
                         is_passenger = True
                         if p not in matched_passengers:
                             matched_passengers.append(p)
