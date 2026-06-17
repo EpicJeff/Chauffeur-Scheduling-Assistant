@@ -886,18 +886,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             combined_conflicts.extend(sched.get('conflicts', []))
             continue
             
-        # Pre-fetch Matrix API cache for all unique locations this day
-        locs_to_cache = set()
-        if home_location: locs_to_cache.add(home_location)
-        for d in drivers:
-            if getattr(d, 'home_location', None): locs_to_cache.add(d.home_location)
-            for ev in driver_events_map.get(d.id, []):
-                if getattr(ev, 'location', None): locs_to_cache.add(ev.location)
-        for ev in daily_events_to_solve:
-            if getattr(ev, 'location', None): locs_to_cache.add(ev.location)
-            
-        if locs_to_cache:
-            maps.prime_matrix_cache(list(locs_to_cache))
+        # Pre-fetch was moved outside the loop for ALL locations to prevent redundant API calls
 
         # Else, solve for this day!
         assignments, unassigned, lateness_warnings = matcher.solve_schedule(

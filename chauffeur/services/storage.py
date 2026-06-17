@@ -456,14 +456,14 @@ def get_mapbox_usage(month: str, endpoint: str) -> int:
             return res[0].get('count', 0)
         return 0
 
-def increment_mapbox_usage(month: str, endpoint: str):
+def increment_mapbox_usage(month: str, endpoint: str, amount: int = 1):
     with db_lock:
         res = api_usage_table.search((Query().month == month) & (Query().endpoint == endpoint))
         if res:
-            new_count = res[0].get('count', 0) + 1
+            new_count = res[0].get('count', 0) + amount
             api_usage_table.update({'count': new_count}, (Query().month == month) & (Query().endpoint == endpoint))
         else:
-            api_usage_table.insert({'month': month, 'endpoint': endpoint, 'count': 1})
+            api_usage_table.insert({'month': month, 'endpoint': endpoint, 'count': amount})
 
 # Push Subscriptions
 def save_push_subscription(driver_id: str, subscription_info: dict):

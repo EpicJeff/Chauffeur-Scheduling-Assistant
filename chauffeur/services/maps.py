@@ -15,13 +15,13 @@ def get_cache_duration() -> int:
             with open(options_file, 'r') as f:
                 options = json.load(f)
             if 'route_cache_duration_mins' in options:
-                return int(options.get('route_cache_duration_mins', 10))
+                return int(options.get('route_cache_duration_mins', 1440))
         except Exception:
             pass
             
     # Fallback to local settings
     settings = storage.get_settings()
-    return int(settings.get('route_cache_duration_mins', 10))
+    return int(settings.get('route_cache_duration_mins', 1440))
 
 
 def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
@@ -129,7 +129,8 @@ def prime_matrix_cache(locations: list[str]):
             try:
                 resp = requests.get(url, params=params, timeout=10)
                 if resp.status_code == 200:
-                    storage.increment_mapbox_usage(current_month, 'directions')
+                    elements = len(src_indices) * len(dest_indices)
+                    storage.increment_mapbox_usage(current_month, 'directions', elements)
                     data = resp.json()
                     durations = data.get("durations", [])
                     
@@ -137,10 +138,12 @@ def prime_matrix_cache(locations: list[str]):
                         for d_i, dest_idx in enumerate(dest_indices):
                             if src_idx == dest_idx:
                                 continue
+                            
+                            mins = 999 # Default to 999 for unroutable paths
                             if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
                                 dur_sec = durations[s_i][d_i]
                                 mins = int(round(dur_sec / 60.0))
-                                storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                     return True
                 else:
                     print(f"Mapbox Matrix API failed: {resp.status_code} {resp.text}")
@@ -164,10 +167,12 @@ def prime_matrix_cache(locations: list[str]):
                     for d_i, dest_idx in enumerate(dest_indices):
                         if src_idx == dest_idx:
                             continue
+                        
+                        mins = 999
                         if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
                             dur_sec = durations[s_i][d_i]
                             mins = int(round(dur_sec / 60.0))
-                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                        storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                 return True
         except Exception as e:
             print(f"OSRM Matrix error: {e}")
