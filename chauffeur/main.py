@@ -502,20 +502,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     import difflib
     
     import re
+    text_hashtag_cache = {}
     def fuzzy_has_hashtag(text, target_tag):
         if not target_tag or not text: return False
         
-        # Strip HTML tags that Google Calendar often inserts in descriptions
-        clean_text = re.sub(r'<[^>]+>', ' ', text)
-        
-        words = [w.lower().strip('.,;?!()[]{}""\'\'') for w in clean_text.split()]
+        if text not in text_hashtag_cache:
+            clean_text = re.sub(r'<[^>]+>', ' ', text)
+            words = [w.lower().strip('.,;?!()[]{}""\'\'') for w in clean_text.split()]
+            text_hashtag_cache[text] = {w for w in words if w.startswith('#')}
+            
         target = target_tag.lower().strip('.,;?!()[]{}""\'\'')
-        for w in words:
-            if w.startswith('#'):
-                ratio = difflib.SequenceMatcher(None, w, target).ratio()
-                if ratio >= 0.8:
-                    return True
-        return False
+        return target in text_hashtag_cache[text]
 
     try:
         raw_events = calendar.fetch_upcoming_events(all_cals_to_fetch, days=days_to_fetch, start_date_str=start_date_str, end_date_str=end_date_str)
@@ -624,10 +621,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         matched_passengers = []
         is_passenger = False
 
+        valid_passenger_cals = [c for c in original_calendar_ids if c not in driver_calendar_ids]
+        is_driver_only = (len(valid_passenger_cals) == 0 and len(original_calendar_ids) > 0 and not any(c in calendar_ids for c in original_calendar_ids))
+
         if config and config.get('passenger_ids') is not None:
             is_passenger = True
             matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
-        else:
+        elif not is_driver_only:
             # Check Rules FIRST
             rule_matched = False
             for rule in rules:
@@ -645,10 +645,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
             # If no rule matched, fallback to hashtags and calendar_ids
             if not rule_matched:
-                # If an event is on a driver's calendar, we assume it's just blocking their schedule.
-                # We do NOT automatically treat it as a driving route unless it is ALSO on a dedicated non-driver calendar.
-                valid_passenger_cals = [c for c in original_calendar_ids if c not in driver_calendar_ids]
-                
                 is_passenger = any(c in calendar_ids for c in valid_passenger_cals)
                 
                 for p in passengers:
@@ -790,7 +786,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 e_pick.original_start = e.start
                 e_pick.original_end = e.end
                 e_pick.original_event_id = e.id
-                e_pick.start = e.end
+                e_pick.end = e.end
                 e_pick.needs_triage = False
                 events_to_solve.append(e_pick)
                 all_events_for_ui[e_pick.id] = e_pick

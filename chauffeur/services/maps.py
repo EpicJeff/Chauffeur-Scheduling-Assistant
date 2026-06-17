@@ -259,7 +259,13 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
             
         # Rate limit: Nominatim requires max 1 request per second
         import time
-        time.sleep(1.1)
+        if not hasattr(geocode_address, "last_nominatim_time"):
+            geocode_address.last_nominatim_time = 0
+        now = time.time()
+        elapsed = now - geocode_address.last_nominatim_time
+        if elapsed < 1.1:
+            time.sleep(1.1 - elapsed)
+        geocode_address.last_nominatim_time = time.time()
         
         url = "https://nominatim.openstreetmap.org/search"
         params = {

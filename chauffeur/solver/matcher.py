@@ -289,22 +289,13 @@ def solve_schedule(
                     gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
                     if gap_seconds_with_tolerance < min_needed_seconds:
                         # Passenger conflict hard penalty (impossible)
-                        for d1 in drivers:
-                            for d2 in drivers:
-                                both = model.NewBoolVar(f'pass_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
-                                model.AddImplication(both, assign_vars[(e1.id, d1.id)])
-                                model.AddImplication(both, assign_vars[(e2.id, d2.id)])
-                                model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
-                                objective_terms.append(both * -2000000)
+                        model.Add(sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1)
                     elif gap_seconds < desired_needed_seconds:
                         # Passenger conflict soft penalty (buffer eaten into)
-                        for d1 in drivers:
-                            for d2 in drivers:
-                                both = model.NewBoolVar(f'pass_buffer_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
-                                model.AddImplication(both, assign_vars[(e1.id, d1.id)])
-                                model.AddImplication(both, assign_vars[(e2.id, d2.id)])
-                                model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
-                                objective_terms.append(both * -50)
+                        both = model.NewBoolVar(f'pass_buffer_conf_{e1.id}_{e2.id}')
+                        sum_assigned = sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers)
+                        model.Add(sum_assigned <= 1 + both)
+                        objective_terms.append(both * -50)
                                 
             # Driver Conflict Logic
             travel_time_mins = get_switch_travel_time(e1, e2, events)
@@ -350,11 +341,7 @@ def solve_schedule(
                 # Driver conflict hard penalty (impossible)
                 for d in drivers:
                     if d.id == 'unassigned_ghost': continue
-                    both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
-                    model.AddImplication(both, assign_vars[(e1.id, d.id)])
-                    model.AddImplication(both, assign_vars[(e2.id, d.id)])
-                    model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
-                    objective_terms.append(both * -1000000)
+                    model.AddImplication(assign_vars[(e1.id, d.id)], assign_vars[(e2.id, d.id)].Not())
             elif gap_seconds < desired_needed_seconds:
                 # Driver conflict soft penalty (buffer eaten into)
                 for d in drivers:
@@ -765,6 +752,10 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
         used_vars[g_id] = model.NewBoolVar(f'used_{g_id}')
         for e in events:
             model.AddImplication(assign_vars[(e.id, g_id)], used_vars[g_id])
+            
+    # Symmetry breaking: force lower-indexed ghost drivers to be used before higher-indexed ones
+    for i in range(len(ghost_ids) - 1):
+        model.AddImplication(used_vars[ghost_ids[i+1]], used_vars[ghost_ids[i]])
             
     objective_terms = []
     for i, g_id in enumerate(ghost_ids):
