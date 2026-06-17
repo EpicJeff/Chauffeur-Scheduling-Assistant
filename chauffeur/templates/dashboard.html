@@ -771,7 +771,7 @@
                         if (type === 'conflict' || type === 'personal_conflict') {
                             actionHtml = `
                                 <div class="mt-3 flex space-x-2">
-                                    <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15}, this)" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
+                                    <button onclick="createRule('any', '${evTitle}', 'tolerance', ${reasonObj.lateness_mins || 15}, '${reasonObj.suggested_tolerance_type || 'both'}', this)" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded flex items-center shadow-sm transition-colors">
                                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                         Allow ${reasonObj.lateness_mins || 15}m Late
                                     </button>
@@ -1683,8 +1683,8 @@ const scheduleByDate = {};
                                         </div>
                                     </div>
                                     <div class="flex-shrink-0 flex items-center h-full gap-2">
-                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, this, 'schedule_all')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
-                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, this, 'schedule_one')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_all')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_one')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
                                     </div>
                                 </div>
                             `;
@@ -2169,7 +2169,7 @@ const scheduleByDate = {};
             }
         };
 
-        async function createRule(driverId, keyword, constraintType, toleranceMins, btnElement = null, duplicateAction = null) {
+        async function createRule(driverId, keyword, constraintType, toleranceMins, toleranceType = 'both', btnElement = null, duplicateAction = null) {
             if (btnElement) {
                 btnElement.disabled = true;
                 const originalText = btnElement.innerHTML;
@@ -2193,6 +2193,7 @@ const scheduleByDate = {};
                 driver_id: driverId,
                 constraint_type: constraintType,
                 tolerance_mins: toleranceMins,
+                tolerance_type: toleranceType,
                 keywords: keywordsToUse,
                 passenger_ids: [],
                 days_of_week: [],

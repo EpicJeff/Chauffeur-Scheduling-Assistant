@@ -443,7 +443,7 @@
                             </div>
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
                                 <template x-if="rule.constraint_type === 'tolerance'">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance: ' + rule.tolerance_mins + 'm'"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === \'arrival\' ? \'Arrival\' : (rule.tolerance_type === \'departure\' ? \'Departure\' : \'Both\')) + '): ' + rule.tolerance_mins + 'm'"></span>
                                 </template>
                                 <template x-if="rule.constraint_type === 'buffer'">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-blue-300 italic" x-text="'Buffer: ' + (rule.buffer_before_mins || 0) + 'm before, ' + (rule.buffer_after_mins || 0) + 'm after'"></span>
@@ -501,7 +501,7 @@
                             <option value="preferred">Preferred</option>
                             <option value="unavailable">Unavailable</option>
                             <option value="duplicate">Duplicate Event Handling</option>
-                            <option value="tolerance">Late Arrival (Tolerance)</option>
+                            <option value="tolerance">Tolerance (Late Arrival / Early Departure)</option>
                             <option value="group">Group Events</option>
                             <option value="buffer">Buffer Time</option>
                             <option value="attendance">Event Attendance</option>
@@ -510,6 +510,14 @@
                     <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'tolerance'">
                         <label class="block text-gray-400 mb-1 text-sm">Tolerance (mins)</label>
                         <input type="number" x-model.number="newRule.tolerance_mins" min="0" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                    </div>
+                    <div class="w-full lg:w-48" x-show="newRule.constraint_type === 'tolerance'">
+                        <label class="block text-gray-400 mb-1 text-sm">Applies To</label>
+                        <select x-model="newRule.tolerance_type" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            <option value="both">Both</option>
+                            <option value="arrival">Late Arrival</option>
+                            <option value="departure">Early Departure</option>
+                        </select>
                     </div>
                     <div class="w-full lg:w-32" x-show="newRule.constraint_type === 'buffer'">
                         <label class="block text-gray-400 mb-1 text-sm">Buffer Before (m)</label>
@@ -1250,6 +1258,7 @@
                         duplicate_action: rule.duplicate_action || 'schedule_one',
                         attendance_action: rule.attendance_action || 'stay',
                         tolerance_mins: rule.tolerance_mins || 0,
+                        tolerance_type: rule.tolerance_type || 'both',
                         buffer_before_mins: rule.buffer_before_mins || 0,
                         buffer_after_mins: rule.buffer_after_mins || 0,
                         grouping_period: rule.grouping_period || 'daily',
@@ -1271,7 +1280,7 @@
                 resetRuleForm() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
                 },
                 cancelEditRule() {
                     this.resetRuleForm();

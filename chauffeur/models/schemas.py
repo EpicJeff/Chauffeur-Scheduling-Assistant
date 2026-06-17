@@ -61,6 +61,7 @@ class Rule(BaseModel):
     constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'duplicate', 'group', 'buffer'
     duplicate_action: Optional[str] = None
     tolerance_mins: int = 0
+    tolerance_type: str = 'both'  # 'arrival', 'departure', 'both'
     grouping_period: str = 'daily'
     buffer_before_mins: int = 0
     buffer_after_mins: int = 0

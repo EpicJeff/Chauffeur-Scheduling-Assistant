@@ -247,17 +247,23 @@ def solve_schedule(
     e_buffer_before = {}
     e_buffer_after = {}
     for e in assignable_events:
-        tol = 0
+        tol_arr = 0
+        tol_dep = 0
         bb = 0
         ba = 0
         for r in rules:
             if does_event_match_rule(e, r, passengers):
                 if r.constraint_type == 'tolerance':
-                    tol = max(tol, getattr(r, 'tolerance_mins', 0))
+                    t_mins = getattr(r, 'tolerance_mins', 0)
+                    t_type = getattr(r, 'tolerance_type', 'both')
+                    if t_type in ['arrival', 'both']:
+                        tol_arr = max(tol_arr, t_mins)
+                    if t_type in ['departure', 'both']:
+                        tol_dep = max(tol_dep, t_mins)
                 elif r.constraint_type == 'buffer':
                     bb = max(bb, getattr(r, 'buffer_before_mins', 0))
                     ba = max(ba, getattr(r, 'buffer_after_mins', 0))
-        e_tolerances[e.id] = tol
+        e_tolerances[e.id] = {'arrival': tol_arr, 'departure': tol_dep}
         e_buffer_before[e.id] = bb
         e_buffer_after[e.id] = ba
         
@@ -286,7 +292,7 @@ def solve_schedule(
                     # Check attendance constraints
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                     
-                    gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60) + (e_tolerances.get(e1.id, 0) * 60)
+                    gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
                     if gap_seconds_with_tolerance < min_needed_seconds:
                         # Passenger conflict hard penalty (impossible)
                         model.Add(sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1)
@@ -317,8 +323,8 @@ def solve_schedule(
                 t2 = get_travel_time_minutes(e2.location, e1.location)
                 req_e2_e1 = t2 * 60 + (5 * 60 if t2 > 2 else 0)
                 
-                tol_e1 = e_tolerances.get(e1.id, 0) * 60
-                tol_e2 = e_tolerances.get(e2.id, 0) * 60
+                tol_e1 = max(e_tolerances.get(e1.id, {}).values()) * 60 if e1.id in e_tolerances else 0
+                tol_e2 = max(e_tolerances.get(e2.id, {}).values()) * 60 if e2.id in e_tolerances else 0
                 
                 if gap_seconds < 0:
                     if e2.end <= e1.end:
@@ -336,7 +342,7 @@ def solve_schedule(
             if (e1.id, e2.id) in grouped_event_pairs:
                 gap_seconds = float('inf')
 
-            gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60) + (e_tolerances.get(e1.id, 0) * 60)
+            gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
             if gap_seconds_with_tolerance < min_needed_seconds:
                 # Driver conflict hard penalty (impossible)
                 for d in drivers:
@@ -375,8 +381,8 @@ def solve_schedule(
                 needed_secs_de_to_e = (travel) * 60 + e_buffer_before.get(e.id, 0) * 60
                 
                 # Check for overlap, allowing for tolerance
-                e_before_de = (de.start - e.end).total_seconds() + (e_tolerances.get(e.id, 0) * 60) >= needed_secs_e_to_de
-                de_before_e = (e.start - de.end).total_seconds() + (e_tolerances.get(e.id, 0) * 60) >= needed_secs_de_to_e
+                e_before_de = (de.start - e.end).total_seconds() + (e_tolerances.get(e.id, {}).get('departure', 0) * 60) >= needed_secs_e_to_de
+                de_before_e = (e.start - de.end).total_seconds() + (e_tolerances.get(e.id, {}).get('arrival', 0) * 60) >= needed_secs_de_to_e
                 
                 # True physical overlap in time
                 if e.start < de.end and e.end > de.start:
@@ -1245,7 +1251,8 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                 "text": f"Passenger cannot travel from/to '{ae.title}' in time.",
                                 "type": "conflict",
                                 "conflict_event_title": ae.title,
-                                "lateness_mins": lateness_mins if lateness_mins > 0 else None
+                                "lateness_mins": lateness_mins if lateness_mins > 0 else None,
+                                "suggested_tolerance_type": "departure" if e.start <= ae.start else "arrival"
                             }
                             break
                             
@@ -1273,7 +1280,8 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                                 "text": f"Driver cannot travel from/to scheduled event '{ae.title}' in time.",
                                 "type": "conflict",
                                 "conflict_event_title": ae.title,
-                                "lateness_mins": lateness_mins if lateness_mins > 0 else None
+                                "lateness_mins": lateness_mins if lateness_mins > 0 else None,
+                                "suggested_tolerance_type": "departure" if e.start <= ae.start else "arrival"
                             }
                             break
                         
