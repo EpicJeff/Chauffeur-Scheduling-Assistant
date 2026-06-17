@@ -96,6 +96,8 @@ def prime_matrix_cache(locations: list[str]):
     import datetime
     import time
     mapbox_key = get_mapbox_api_key()
+    settings = storage.get_settings()
+    disable_mapbox = settings.get('disable_mapbox', False)
     current_month = datetime.datetime.now().strftime("%Y-%m")
     
     def fetch_matrix_chunk(src_indices, dest_indices, all_coords, all_locs):
@@ -118,7 +120,7 @@ def prime_matrix_cache(locations: list[str]):
         
         mapbox_directions_usage = storage.get_mapbox_usage(current_month, 'directions')
         
-        if mapbox_key and mapbox_directions_usage < 90000:
+        if mapbox_key and not disable_mapbox and mapbox_directions_usage < 90000:
             url = f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving/{coord_str}"
             params = {
                 "access_token": mapbox_key,
@@ -268,10 +270,12 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         return lat, lon
 
     mapbox_key = get_mapbox_api_key()
+    settings = storage.get_settings()
+    disable_mapbox = settings.get('disable_mapbox', False)
     current_month = datetime.datetime.now().strftime("%Y-%m")
     mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
     
-    if mapbox_key and mapbox_geocode_usage < 90000:
+    if mapbox_key and not disable_mapbox and mapbox_geocode_usage < 90000:
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(address)}.json"
         params = {
             "access_token": mapbox_key,
@@ -358,10 +362,12 @@ def autocomplete_location(input_text: str) -> list[dict]:
     import datetime
     import urllib.parse
     mapbox_key = get_mapbox_api_key()
+    settings = storage.get_settings()
+    disable_mapbox = settings.get('disable_mapbox', False)
     current_month = datetime.datetime.now().strftime("%Y-%m")
     mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
     
-    if mapbox_key and mapbox_geocode_usage < 90000:
+    if mapbox_key and not disable_mapbox and mapbox_geocode_usage < 90000:
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(input_text)}.json"
         params = {
             "access_token": mapbox_key,
