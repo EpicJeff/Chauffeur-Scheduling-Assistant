@@ -375,7 +375,9 @@ def solve_schedule(
             for de in d_events:
                 if getattr(de, 'event_type', '') == 'background_trip':
                     continue
-                if e.id == de.id:
+                e_orig = getattr(e, 'original_event_id', None) or e.id
+                de_orig = getattr(de, 'original_event_id', None) or de.id
+                if e.id == de.id or e_orig == de_orig or e.id == de_orig or e_orig == de.id:
                     continue # Driver is an attendee of this event, do not block
                 
                 if e.location and de.location:

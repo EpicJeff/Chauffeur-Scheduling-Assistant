@@ -718,6 +718,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 for time_tuple, p_ids in groups.items():
                     e_unrolled = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
                     e_unrolled.id = f"{e.id}_unrolled_{idx}"
+                    e_unrolled.original_event_id = getattr(e, 'original_event_id', None) or e.id
                     e_unrolled.calendar_ids = p_ids
                     
                     start_str, end_str = time_tuple
