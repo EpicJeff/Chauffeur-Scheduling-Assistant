@@ -273,51 +273,52 @@ def solve_schedule(
             
             if shares_calendar:
                 if getattr(e1, 'original_event_id', None) and getattr(e1, 'original_event_id', None) == getattr(e2, 'original_event_id', None):
-                    continue
-                
-                e1_end_time = getattr(e1, 'original_end', None) or e1.end
-                e2_start_time = getattr(e2, 'original_start', None) or e2.start
-
-                travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
-                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
-                desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
-                gap_seconds = (e2_start_time - e1_end_time).total_seconds()
-                
-                # Check attendance constraints
-                attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
-                
-                gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
-                if gap_seconds_with_tolerance < min_needed_seconds:
-                    # Passenger conflict hard penalty (impossible)
-                    for d1 in drivers:
-                        for d2 in drivers:
-                            both = model.NewBoolVar(f'pass_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
-                            model.AddImplication(both, assign_vars[(e1.id, d1.id)])
-                            model.AddImplication(both, assign_vars[(e2.id, d2.id)])
-                            model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
-                            objective_terms.append(both * -2000000)
-                elif gap_seconds < desired_needed_seconds:
-                    # Passenger conflict soft penalty (buffer eaten into)
-                    for d1 in drivers:
-                        for d2 in drivers:
-                            both = model.NewBoolVar(f'pass_buffer_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
-                            model.AddImplication(both, assign_vars[(e1.id, d1.id)])
-                            model.AddImplication(both, assign_vars[(e2.id, d2.id)])
-                            model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
-                            objective_terms.append(both * -50)
-            else:
-                travel_time_mins = get_switch_travel_time(e1, e2, events)
-                min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
-                desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
-                gap_seconds = (e2.start - e1.end).total_seconds()
-                
-                if (e1.location and e2.location and (e1.location.strip().lower() == e2.location.strip().lower() or get_travel_time_minutes(e1.location, e2.location) <= 5)):
-                    if travel_time_mins <= 5: # Only bypass if there's no long pickup involved
-                        gap_seconds = float('inf')
+                    pass
                 else:
+                    e1_end_time = getattr(e1, 'original_end', None) or e1.end
+                    e2_start_time = getattr(e2, 'original_start', None) or e2.start
+
+                    travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
+                    min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
+                    desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+                    gap_seconds = (e2_start_time - e1_end_time).total_seconds()
+                    
+                    # Check attendance constraints
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
-                    if not attendance_conflict and e1.location and e2.location:
-                        req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
+                    
+                    gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+                    if gap_seconds_with_tolerance < min_needed_seconds:
+                        # Passenger conflict hard penalty (impossible)
+                        for d1 in drivers:
+                            for d2 in drivers:
+                                both = model.NewBoolVar(f'pass_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
+                                model.AddImplication(both, assign_vars[(e1.id, d1.id)])
+                                model.AddImplication(both, assign_vars[(e2.id, d2.id)])
+                                model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
+                                objective_terms.append(both * -2000000)
+                    elif gap_seconds < desired_needed_seconds:
+                        # Passenger conflict soft penalty (buffer eaten into)
+                        for d1 in drivers:
+                            for d2 in drivers:
+                                both = model.NewBoolVar(f'pass_buffer_conf_{e1.id}_{d1.id}_{e2.id}_{d2.id}')
+                                model.AddImplication(both, assign_vars[(e1.id, d1.id)])
+                                model.AddImplication(both, assign_vars[(e2.id, d2.id)])
+                                model.AddBoolOr([both, assign_vars[(e1.id, d1.id)].Not(), assign_vars[(e2.id, d2.id)].Not()])
+                                objective_terms.append(both * -50)
+                                
+            # Driver Conflict Logic
+            travel_time_mins = get_switch_travel_time(e1, e2, events)
+            min_needed_seconds = (travel_time_mins + (5 if travel_time_mins > 2 else 0)) * 60
+            desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
+            gap_seconds = (e2.start - e1.end).total_seconds()
+            
+            if (e1.location and e2.location and (e1.location.strip().lower() == e2.location.strip().lower() or get_travel_time_minutes(e1.location, e2.location) <= 5)):
+                if travel_time_mins <= 5: # Only bypass if there's no long pickup involved
+                    gap_seconds = float('inf')
+            else:
+                attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
+                if not attendance_conflict and e1.location and e2.location:
+                    req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
                         late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
                         
                         # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
