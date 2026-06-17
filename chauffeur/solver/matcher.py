@@ -181,10 +181,19 @@ def solve_schedule(
 
     # Pre-calculate requires_attendance per event
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
-    event_requires_attendance = {
-        e.id: bool(set(e.calendar_ids).intersection(req_att_cals))
-        for e in events
-    }
+    event_requires_attendance = {}
+    for e in events:
+        is_req = bool(set(e.calendar_ids).intersection(req_att_cals))
+        
+        has_stay_hashtag = '#stay' in (e.title or '').lower() or '#stay' in getattr(e, 'description', '').lower() or '#wait' in (e.title or '').lower() or '#wait' in getattr(e, 'description', '').lower()
+        has_stay_rule = False
+        if rules:
+            has_stay_rule = any(((r.constraint_type == 'attendance' and (r.attendance_action == 'stay' or r.attendance_action is None)) or r.constraint_type == 'no_split') and does_event_match_rule(e, r, passengers) for r in rules)
+            
+        if has_stay_hashtag or has_stay_rule:
+            is_req = True
+            
+        event_requires_attendance[e.id] = is_req
         
     model = cp_model.CpModel()
     
@@ -339,6 +348,7 @@ def solve_schedule(
                 if gap_seconds_with_tolerance < min_needed_seconds:
                     # Driver conflict hard penalty (impossible)
                     for d in drivers:
+                        if d.id == 'unassigned_ghost': continue
                         both = model.NewBoolVar(f'drv_conf_{e1.id}_{e2.id}_{d.id}')
                         model.AddImplication(both, assign_vars[(e1.id, d.id)])
                         model.AddImplication(both, assign_vars[(e2.id, d.id)])
@@ -347,6 +357,7 @@ def solve_schedule(
                 elif gap_seconds < desired_needed_seconds:
                     # Driver conflict soft penalty (buffer eaten into)
                     for d in drivers:
+                        if d.id == 'unassigned_ghost': continue
                         both = model.NewBoolVar(f'drv_buffer_conf_{e1.id}_{e2.id}_{d.id}')
                         model.AddImplication(both, assign_vars[(e1.id, d.id)])
                         model.AddImplication(both, assign_vars[(e2.id, d.id)])
