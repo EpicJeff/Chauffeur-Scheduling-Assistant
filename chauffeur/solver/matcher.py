@@ -428,7 +428,7 @@ def solve_schedule(
                 weight += 100
                 
             # Priority within group (lower index = higher priority)
-            weight += max(0, (10 - d.priority_index) * 10)
+            weight += max(0, (10 - d.priority_index) * 150)
             
             # Preferred hours penalty
             if d.preferred_start and d.preferred_end:
