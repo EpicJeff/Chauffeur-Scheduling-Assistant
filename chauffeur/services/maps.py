@@ -6,6 +6,7 @@ import threading
 from services import storage
 
 geocode_lock = threading.Lock()
+api_rate_lock = threading.Lock()
 
 def get_cache_duration() -> int:
     import json
@@ -160,8 +161,15 @@ def prime_matrix_cache(locations: list[str]):
             "annotations": "duration,distance"
         }
         try:
-            time.sleep(1.1)
-            resp = requests.get(url, params=params, timeout=10)
+            with api_rate_lock:
+                if not hasattr(fetch_matrix_chunk, "last_osrm_time"):
+                    fetch_matrix_chunk.last_osrm_time = 0
+                elapsed = time.time() - fetch_matrix_chunk.last_osrm_time
+                if elapsed < 1.1:
+                    time.sleep(1.1 - elapsed)
+                resp = requests.get(url, params=params, timeout=10)
+                fetch_matrix_chunk.last_osrm_time = time.time()
+                
             if resp.status_code == 200:
                 data = resp.json()
                 durations = data.get("durations", [])
@@ -176,15 +184,25 @@ def prime_matrix_cache(locations: list[str]):
                             mins = int(round(dur_sec / 60.0))
                         storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                 return True
+            else:
+                print(f"OSRM Matrix API failed: {resp.status_code} {resp.text}")
+                for s_i, src_idx in enumerate(src_indices):
+                    for d_i, dest_idx in enumerate(dest_indices):
+                        if src_idx != dest_idx:
+                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 999)
         except Exception as e:
             print(f"OSRM Matrix error: {e}")
+            for s_i, src_idx in enumerate(src_indices):
+                for d_i, dest_idx in enumerate(dest_indices):
+                    if src_idx != dest_idx:
+                        storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 999)
         return False
         
     N = len(coords)
-    if N <= 12:
+    chunk_size = 50 if disable_mapbox else 12
+    if N <= chunk_size:
         fetch_matrix_chunk(list(range(N)), list(range(N)), coords, loc_names)
     else:
-        chunk_size = 12
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for i in range(0, N, chunk_size):
@@ -313,42 +331,39 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
             
         # Rate limit: Nominatim requires max 1 request per second
         import time
-        if not hasattr(geocode_address, "last_nominatim_time"):
-            geocode_address.last_nominatim_time = 0
-        now = time.time()
-        elapsed = now - geocode_address.last_nominatim_time
-        if elapsed < 1.1:
-            time.sleep(1.1 - elapsed)
-        geocode_address.last_nominatim_time = time.time()
-        
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": address,
-            "format": "json",
-            "limit": 1
-        }
-        headers = {
-            "User-Agent": "ChauffeurScheduleAssistant/1.0"
-        }
-        
-        try:
-            resp = requests.get(url, params=params, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data:
-                    lat = float(data[0]["lat"])
-                    lon = float(data[0]["lon"])
-                    display_name = data[0].get("display_name", "")
-                    storage.set_cached_geocode(address, lat, lon, display_name)
-                    return lat, lon
-                else:
-                    storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
-                    return None
-            print(f"Nominatim Geocoding failed for {address}: {resp.status_code} {resp.text}")
-        except Exception as ex:
-            print(f"Nominatim Geocoding error for {address}: {ex}")
+        with api_rate_lock:
+            if not hasattr(geocode_address, "last_nominatim_time"):
+                geocode_address.last_nominatim_time = 0
+            now = time.time()
+            elapsed = now - geocode_address.last_nominatim_time
+            if elapsed < 1.1:
+                time.sleep(1.1 - elapsed)
             
-    return None
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": address,
+                "format": "json",
+                "limit": 1
+            }
+            headers = {
+                "User-Agent": "ChauffeurScheduleAssistant/1.0"
+            }
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                geocode_address.last_nominatim_time = time.time()
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data and len(data) > 0:
+                        lat = float(data[0]["lat"])
+                        lon = float(data[0]["lon"])
+                        display_name = data[0].get("display_name", "")
+                        storage.set_cached_geocode(address, lat, lon, display_name)
+                        return lat, lon
+                storage.set_cached_geocode(address, 0.0, 0.0, "")
+            except Exception as e:
+                print(f"Nominatim error: {e}")
+                storage.set_cached_geocode(address, 0.0, 0.0, "")
+        return None
 
 def autocomplete_location(input_text: str) -> list[dict]:
     """
