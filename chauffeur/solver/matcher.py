@@ -419,7 +419,8 @@ def solve_schedule(
             weight = base_event_weight
             
             # Huge bonus if driver is an attendee of the event
-            if any(de.id == e.id for de in driver_events.get(d.id, [])):
+            e_orig_bonus = getattr(e, 'original_event_id', None) or e.id
+            if any(de.id == e.id or de.id == e_orig_bonus or getattr(de, 'original_event_id', None) == e_orig_bonus for de in driver_events.get(d.id, [])):
                 weight += 2000
 
             
@@ -818,7 +819,7 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int
     same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
     if same_loc:
         return 0
-    return get_travel_time_minutes(e1.location, e2.location) + 30
+    return get_travel_time_minutes(e1.location, e2.location)
 
 def compute_route_edges(assignments: Dict[str, str], events: List[Event], drivers: List[Driver], home_location: Optional[str] = None, trip_metadata: List[dict] = None, driver_attendances: Dict[str, List[str]] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, dict], Dict[str, dict], Dict[str, dict]]:
     from collections import defaultdict
