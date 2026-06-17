@@ -431,15 +431,15 @@ def solve_schedule(
             weight += max(0, (10 - d.priority_index) * 150)
             
             # Preferred hours penalty
-            if d.preferred_start and d.preferred_end:
+            if d.preferred_start or d.preferred_end:
                 try:
-                    p_start = datetime.strptime(d.preferred_start, '%H:%M').time()
-                    p_end = datetime.strptime(d.preferred_end, '%H:%M').time()
-                    
                     e_start_time = e.start.time()
                     e_end_time = e.end.time()
                     
-                    if e_start_time < p_start or e_end_time > p_end:
+                    p_start = datetime.strptime(d.preferred_start, '%H:%M').time() if d.preferred_start else None
+                    p_end = datetime.strptime(d.preferred_end, '%H:%M').time() if d.preferred_end else None
+                    
+                    if (p_start and e_start_time < p_start) or (p_end and e_end_time > p_end):
                         weight -= 300
                 except ValueError:
                     pass
