@@ -849,6 +849,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     home_location = maps.get_home_location()
 
+    all_locations = set()
+    if home_location:
+        all_locations.add(home_location)
+    for p in passengers:
+        if getattr(p, 'home_location', None):
+            all_locations.add(p.home_location)
+    for d in drivers:
+        if getattr(d, 'home_location', None):
+            all_locations.add(d.home_location)
+    for e in all_fetched_events:
+        if getattr(e, 'location', None):
+            all_locations.add(e.location)
+            
+    maps.prime_matrix_cache(list(all_locations))
+
     def merge_edges(target, source):
         if not source: return
         for d_id, edges in source.items():

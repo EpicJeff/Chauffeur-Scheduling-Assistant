@@ -449,7 +449,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
+                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 } else if (!isPagination) {
                     currentStartDate = new Date();
                     currentStartDate.setHours(0, 0, 0, 0);
@@ -460,8 +460,11 @@
 
                     const s = toLocalIsoString(currentStartDate);
                     const e = toLocalIsoString(currentEndDate);
-                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
+                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 }
+                
+                url += (url.includes('?') ? '&' : '?') + '_cb=' + new Date().getTime();
+                
                 const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' } });
                 const data = await res.json();
 

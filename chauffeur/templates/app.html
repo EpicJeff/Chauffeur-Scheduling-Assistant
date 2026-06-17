@@ -447,13 +447,13 @@
             showDriverSelection();
         }
 
-        async function fetchSchedule(refresh = false) {
+        async function fetchSchedule(refresh = false, skipLocal = false) {
             const container = document.getElementById('days-container');
             const btnSync = document.getElementById('btn-sync');
 
             const cached = localStorage.getItem('chauffeur_schedule');
             let hasCachedData = false;
-            if (cached && !refresh) {
+            if (cached && !refresh && !skipLocal) {
                 try {
                     scheduleData = JSON.parse(cached);
                     buildTimeline();
@@ -472,8 +472,8 @@
             }
 
             try {
-                let url = 'api/schedule';
-                if (refresh) url += '?force_refresh=true';
+                let url = 'api/schedule?_cb=' + new Date().getTime();
+                if (refresh) url += '&force_refresh=true';
 
                 const res = await fetch(url);
                 scheduleData = await res.json();
@@ -1148,7 +1148,7 @@
         evtSource.onmessage = function(event) {
             if (event.data === "update") {
                 if (selectedDriverId) {
-                    fetchSchedule(false);
+                    fetchSchedule(false, true);
                 }
             }
         };
