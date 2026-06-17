@@ -624,9 +624,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         valid_passenger_cals = [c for c in original_calendar_ids if c not in driver_calendar_ids]
         is_driver_only = (len(valid_passenger_cals) == 0 and len(original_calendar_ids) > 0 and not any(c in calendar_ids for c in original_calendar_ids))
 
-        if config and config.get('passenger_ids') is not None:
-            is_passenger = True
-            matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
+        if config and 'passenger_ids' in config:
+            if config.get('passenger_ids'):
+                is_passenger = True
+                matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
+            else:
+                is_passenger = False
         elif not is_driver_only:
             # Check Rules FIRST
             rule_matched = False
@@ -687,7 +690,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         # 4. Triage Logic
         # Every event we haven't seen before (no config) goes to the inbox.
-        if not config:
+        # Driver-only events bypass the inbox to avoid clutter.
+        if not config and not is_driver_only:
             e.needs_triage = True
                 
         # 5. Append to events list if it's a passenger event AND has a location
