@@ -98,11 +98,26 @@ def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: 
                         grouped_event_pairs.add((group_events[j].id, group_events[i].id))
                         
     # Implicitly group events that are physically the same event
-    # (Same title, start time, and location)
+    # (Same base ID, or Same title + start time + location)
     implicit_groups = defaultdict(list)
     for e in events:
-        if e.title and e.location:
-            key = (e.title.strip().lower(), e.start, e.location.strip().lower())
+        # Group by base ID
+        base_id = getattr(e, 'original_event_id', None)
+        if not base_id:
+            base_id = e.id
+        if '_unrolled_' in base_id:
+            base_id = base_id.split('_unrolled_')[0]
+        if base_id.endswith('_dropoff'):
+            base_id = base_id[:-8]
+        if base_id.endswith('_pickup'):
+            base_id = base_id[:-7]
+        implicit_groups[base_id].append(e)
+        
+        # Group by title, start, and location fallback
+        if e.title:
+            loc = e.location.strip().lower() if e.location else ""
+            normalized_title = e.title.replace('Dropoff: ', '').replace('Pickup: ', '').strip().lower()
+            key = (normalized_title, e.start, loc)
             implicit_groups[key].append(e)
             
     for group_events in implicit_groups.values():
