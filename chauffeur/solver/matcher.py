@@ -286,7 +286,7 @@ def solve_schedule(
                     # Check attendance constraints
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                     
-                    gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+                    gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60) + (e_tolerances.get(e1.id, 0) * 60)
                     if gap_seconds_with_tolerance < min_needed_seconds:
                         # Passenger conflict hard penalty (impossible)
                         model.Add(sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1)
@@ -336,7 +336,7 @@ def solve_schedule(
             if (e1.id, e2.id) in grouped_event_pairs:
                 gap_seconds = float('inf')
 
-            gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60)
+            gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, 0) * 60) + (e_tolerances.get(e1.id, 0) * 60)
             if gap_seconds_with_tolerance < min_needed_seconds:
                 # Driver conflict hard penalty (impossible)
                 for d in drivers:
