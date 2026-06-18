@@ -145,13 +145,17 @@ def prime_api_usage_seeding():
         has_seeded = settings.get('has_seeded_truth_2026_06', False)
         
         for endpoint, seed_val in seeds.items():
+            log_records = api_requests_log_table.search(Query().endpoint == endpoint)
+            log_sum = sum(r.get('count', 0) for r in log_records)
+            expected_min = seed_val + log_sum
+            
             res = api_usage_table.search((Query().month == current_month) & (Query().endpoint == endpoint))
             if res:
                 current_val = res[0].get('count', 0)
-                if current_val < seed_val:
-                    api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
+                if current_val < expected_min:
+                    api_usage_table.update({'count': expected_min}, (Query().month == current_month) & (Query().endpoint == endpoint))
             else:
-                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
+                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': expected_min})
                     
         if not has_seeded and settings_docs:
             settings['has_seeded_truth_2026_06'] = True
