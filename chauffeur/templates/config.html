@@ -488,7 +488,7 @@
                             </div>
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
                                 <template x-if="rule.constraint_type === 'tolerance'">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === \'arrival\' ? \'Arrival\' : (rule.tolerance_type === \'departure\' ? \'Departure\' : \'Both\')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
                                 </template>
                                 <template x-if="rule.constraint_type === 'buffer'">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-blue-300 italic" x-text="'Buffer: ' + (rule.buffer_before_mins || 0) + 'm before, ' + (rule.buffer_after_mins || 0) + 'm after'"></span>
