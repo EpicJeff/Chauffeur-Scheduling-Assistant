@@ -221,6 +221,7 @@
         <div x-show="activeTab === 'drivers'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                <div class="col-span-full bg-blue-900/30 border border-blue-500/50 p-4 rounded-xl text-blue-200" x-text="'Active Tab: ' + activeTab + ' | Loaded Drivers Count: ' + drivers.length"></div>
                 <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="'border-color: ' + driver.color_code">
                         <div class="w-full">
