@@ -125,6 +125,11 @@ CRITICAL INSTRUCTIONS:
 1. Every rule in the "rules" array MUST use the key "constraint_type" to specify the type (do NOT use "type" or "rule_type").
 2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location). Do NOT generate rules with empty filters (which would match all events globally) unless the philosophy explicitly requests a global default.
 3. The "passenger_ids" inside rules MUST match the Passenger IDs provided in the context above (not names or emails).
+4. CONFLICT AVOIDANCE & LOGICAL CONSISTENCY:
+   - Avoid generating redundant or conflicting rules. If driver A is "required" for certain events, do NOT generate "preferred" rules for driver B or C for the exact same events (as "required" overrides all other assignments).
+   - If multiple drivers are "preferred" for the same event category, either split them logically (e.g. by day of week or passenger) if the text implies it, or generate only a single preferred rule for the primary driver mentioned.
+   - Do not generate "preferred" and "unavailable" rules for the same driver that overlap in their filters.
+   - Do not merge completely unrelated keywords (e.g. "sports", "practice", "game") into a single rule if they trigger different driver requirements. Keep keywords specific and clean.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
