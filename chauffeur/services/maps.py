@@ -266,8 +266,8 @@ def prime_matrix_cache(locations: list[str]):
                     if c is None:
                         pairs_to_query.append((s_idx, d_idx))
             if pairs_to_query:
-                max_pairs = get_map_option('mapbox_directions_max_pairs', 500)
-                disable_osrm = get_map_option('disable_osrm', True)
+                max_pairs = get_map_option('mapbox_directions_max_pairs', 50)
+                disable_osrm = get_map_option('disable_osrm', False)
                 if len(pairs_to_query) > max_pairs and not disable_osrm:
                     print(f"Too many pairs to query via Directions API ({len(pairs_to_query)} > {max_pairs}). Cascading to OSRM to protect limits and avoid long runtimes.")
                 else:
