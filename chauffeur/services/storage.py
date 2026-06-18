@@ -168,6 +168,12 @@ def prime_api_usage_seeding():
 prime_api_usage_seeding()
 
 # Geocode Cache
+def mark_all_daily_schedules_dirty():
+    with db_lock:
+        for entry in daily_schedules_table.all():
+            entry['events_hash'] = 'DIRTY'
+            daily_schedules_table.update(entry, doc_ids=[entry.doc_id])
+
 def clear_schedule_caches():
     with db_lock:
         custom_schedules_table.truncate()
@@ -250,14 +256,14 @@ def get_all_drivers() -> List[dict]:
 def add_driver(driver_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         return drivers_table.insert(driver_data)
 
 def delete_driver(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         drivers_table.remove(doc_ids=[doc_id])
 
@@ -297,21 +303,21 @@ def get_passengers() -> List[dict]:
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         return passengers_table.insert(passenger_data)
 
 def update_passenger(doc_id: int, passenger_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         passengers_table.update(passenger_data, doc_ids=[doc_id])
 
 def delete_passenger(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         passengers_table.remove(doc_ids=[doc_id])
 
@@ -375,21 +381,21 @@ def get_all_rules() -> List[dict]:
 def add_rule(rule_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         return rules_table.insert(rule_data)
 
 def update_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_rule(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         rules_table.remove(doc_ids=[doc_id])
 
@@ -439,21 +445,21 @@ def get_all_priority_rules() -> List[dict]:
 def add_priority_rule(rule_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         return priority_rules_table.insert(rule_data)
 
 def update_priority_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         priority_rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_priority_rule(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         cache_table.truncate()
         priority_rules_table.remove(doc_ids=[doc_id])
 
@@ -461,7 +467,7 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
     with db_lock:
         cache_docs = cache_table.all()
         if not cache_docs:
-            daily_schedules_table.truncate()
+            mark_all_daily_schedules_dirty()
             custom_schedules_table.truncate()
             return
             
@@ -479,7 +485,7 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
                 target_events.append(e)
                 
         if not target_events:
-            daily_schedules_table.truncate()
+            mark_all_daily_schedules_dirty()
             custom_schedules_table.truncate()
             return
             
@@ -505,7 +511,10 @@ def invalidate_daily_schedule_cache_for_event(event_id: str):
                 dates_to_invalidate.add(start_str[:10])
                 
         for date_str in dates_to_invalidate:
-            daily_schedules_table.remove(Query().date_str == date_str)
+            entry = daily_schedules_table.get(Query().date_str == date_str)
+            if entry:
+                entry['events_hash'] = 'DIRTY'
+                daily_schedules_table.update(entry, doc_ids=[entry.doc_id])
             
         custom_schedules_table.truncate()
 
@@ -607,7 +616,7 @@ def get_settings() -> dict:
 def update_settings(settings_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
         settings_table.truncate()
         settings_table.insert(settings_data)
 
