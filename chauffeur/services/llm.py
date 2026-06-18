@@ -227,6 +227,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
         except Exception as e:
             raise RuntimeError(f"Gemini API request failed: {str(e)}")
     else:
@@ -358,6 +361,9 @@ def refine_scheduling_text(
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
         except Exception as e:
             raise RuntimeError(f"Gemini API request failed: {str(e)}")
     else:
