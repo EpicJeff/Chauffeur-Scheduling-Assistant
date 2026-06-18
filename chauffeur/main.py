@@ -607,8 +607,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     if not all_cals_to_fetch:
         return {"error": "No calendar IDs configured in settings, drivers, or passengers."}
     
-    # Fetch 30 days of data by default so the app has a full schedule. The dashboard will filter this down to days_to_show.
-    days_to_fetch = 30
+    # Fetch events dynamically based on the days_to_show settings
+    days_to_fetch = int(settings.get('days_to_show', 7))
+
     
     import difflib
     
