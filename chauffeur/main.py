@@ -349,6 +349,34 @@ def clear_caches():
     cache_table.truncate()
     return {"status": "cleared"}
 
+@app.get("/api/maps/stats")
+def get_maps_stats():
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    return {
+        "matrix": {
+            "monthly": storage.get_mapbox_usage(current_month, 'matrix'),
+            "rolling_24h": storage.get_rolling_usage('matrix', 86400),
+            "rpm": storage.get_rolling_usage('matrix', 60),
+            "limit": maps.get_map_option('mapbox_matrix_limit', 90000),
+            "disabled": maps.get_map_option('disable_mapbox_matrix', False)
+        },
+        "directions": {
+            "monthly": storage.get_mapbox_usage(current_month, 'directions'),
+            "rolling_24h": storage.get_rolling_usage('directions', 86400),
+            "rpm": storage.get_rolling_usage('directions', 60),
+            "limit": maps.get_map_option('mapbox_directions_limit', 90000),
+            "disabled": maps.get_map_option('disable_mapbox_directions', False)
+        },
+        "geocode": {
+            "monthly": storage.get_mapbox_usage(current_month, 'geocode'),
+            "rolling_24h": storage.get_rolling_usage('geocode', 86400),
+            "rpm": storage.get_rolling_usage('geocode', 60),
+            "limit": maps.get_map_option('mapbox_geocode_limit', 90000),
+            "disabled": maps.get_map_option('disable_mapbox', False)
+        }
+    }
+
 # --- Telemetry API ---
 @app.post("/api/telemetry")
 def submit_telemetry(event: TelemetryEvent):

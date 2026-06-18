@@ -100,6 +100,11 @@ class Settings(BaseModel):
     route_cache_duration_mins: int = 10
     time_format_24h: bool = False
     disable_mapbox: bool = False
+    disable_mapbox_matrix: bool = False
+    disable_mapbox_directions: bool = False
+    mapbox_matrix_limit: int = 90000
+    mapbox_directions_limit: int = 90000
+    mapbox_geocode_limit: int = 90000
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

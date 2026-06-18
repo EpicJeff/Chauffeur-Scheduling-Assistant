@@ -8,6 +8,79 @@ from services import storage
 geocode_lock = threading.Lock()
 api_rate_lock = threading.Lock()
 
+def get_map_option(key: str, default: any) -> any:
+    import json
+    options_file = '/data/options.json'
+    if os.path.exists(options_file):
+        try:
+            with open(options_file, 'r') as f:
+                options = json.load(f)
+            if key in options:
+                val = options[key]
+                if val is not None:
+                    return val
+        except Exception:
+            pass
+    settings = storage.get_settings()
+    return settings.get(key, default)
+
+def fire_home_assistant_alert(endpoint: str, reason: str, current_usage: int):
+    import os
+    import requests
+    supervisor_token = os.environ.get('SUPERVISOR_TOKEN')
+    if not supervisor_token:
+        print(f"HA API Alert would fire: {reason} for Mapbox {endpoint} (usage={current_usage})")
+        return
+        
+    url = "http://supervisor/core/api/events/chauffeur_api_alert"
+    headers = {
+        "Authorization": f"Bearer {supervisor_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "endpoint": endpoint,
+        "reason": reason,
+        "current_usage": current_usage,
+        "message": f"CRITICAL: Chauffeur detected a rapid increase in Mapbox {endpoint} usage: {reason}. Current usage is {current_usage}."
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=5)
+        if resp.status_code not in (200, 201):
+            print(f"Failed to fire HA event: {resp.status_code} {resp.text}")
+        else:
+            print(f"Successfully fired HA event chauffeur_api_alert: {reason}")
+    except Exception as e:
+        print(f"Exception firing HA event: {e}")
+
+def check_usage_limits_and_spikes(endpoint: str, increment: int = 1) -> bool:
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    
+    # 1. Fetch current monthly usage count
+    monthly_usage = storage.get_mapbox_usage(current_month, endpoint)
+    
+    # 2. Get limit setting
+    limit = get_map_option(f'mapbox_{endpoint}_limit', 90000)
+    
+    # Check if monthly limit is already reached
+    if monthly_usage >= limit:
+        return False
+        
+    # Check if a spike has occurred (rapid increase in the last 1 hour)
+    # Spike thresholds: 5000 elements for matrix, 500 requests for directions/geocode
+    spike_threshold = 5000 if endpoint == 'matrix' else 500
+    hourly_usage = storage.get_rolling_usage(endpoint, 3600)
+    
+    # If adding this would trigger a spike alert
+    if hourly_usage + increment >= spike_threshold and hourly_usage < spike_threshold:
+        reason = f"Usage in the last hour exceeded {spike_threshold} units (current rolling hourly usage is {hourly_usage + increment})"
+        fire_home_assistant_alert(endpoint, reason, monthly_usage + increment)
+        
+    # Also log request and increment usage
+    storage.increment_mapbox_usage(current_month, endpoint, increment)
+    storage.log_api_request(endpoint, increment)
+    return True
+
 def get_cache_duration() -> int:
     import json
     options_file = '/data/options.json'
@@ -119,9 +192,12 @@ def prime_matrix_cache(locations: list[str]):
         src_str = ";".join(map(str, local_src))
         dest_str = ";".join(map(str, local_dest))
         
-        mapbox_directions_usage = storage.get_mapbox_usage(current_month, 'directions')
+        disable_matrix = get_map_option('disable_mapbox_matrix', False)
+        disable_directions = get_map_option('disable_mapbox_directions', False)
+        elements = len(src_indices) * len(dest_indices)
         
-        if mapbox_key and not disable_mapbox and mapbox_directions_usage < 90000:
+        # --- TIER 1: Mapbox Matrix API ---
+        if mapbox_key and not disable_mapbox and not disable_matrix and check_usage_limits_and_spikes('matrix', elements):
             url = f"https://api.mapbox.com/directions-matrix/v1/mapbox/driving/{coord_str}"
             params = {
                 "access_token": mapbox_key,
@@ -132,8 +208,6 @@ def prime_matrix_cache(locations: list[str]):
             try:
                 resp = requests.get(url, params=params, timeout=10)
                 if resp.status_code == 200:
-                    elements = len(src_indices) * len(dest_indices)
-                    storage.increment_mapbox_usage(current_month, 'directions', elements)
                     data = resp.json()
                     durations = data.get("durations", [])
                     
@@ -153,7 +227,55 @@ def prime_matrix_cache(locations: list[str]):
             except Exception as e:
                 print(f"Mapbox Matrix error: {e}")
                 
-        # Fallback to OSRM
+        # --- TIER 2: Mapbox Directions API (Individual pairwise requests) ---
+        if mapbox_key and not disable_mapbox and not disable_directions:
+            pairs_to_query = []
+            for s_idx in src_indices:
+                for d_idx in dest_indices:
+                    if s_idx == d_idx:
+                        continue
+                    # Check if already cached
+                    c = storage.get_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), max_age_mins=cache_duration)
+                    if c is None:
+                        pairs_to_query.append((s_idx, d_idx))
+                        
+            if pairs_to_query:
+                print(f"Mapbox Matrix unavailable/over limit. Querying Directions API for {len(pairs_to_query)} pairs.")
+                success_count = 0
+                for s_idx, d_idx in pairs_to_query:
+                    if not check_usage_limits_and_spikes('directions', 1):
+                        print("Mapbox Directions API limit reached. Cascading to OSRM.")
+                        break
+                        
+                    lat_s, lon_s = all_coords[s_idx]
+                    lat_d, lon_d = all_coords[d_idx]
+                    url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{lon_s},{lat_s};{lon_d},{lat_d}"
+                    params = {
+                        "access_token": mapbox_key,
+                        "overview": "false"
+                    }
+                    try:
+                        time.sleep(0.15) # Rate limit delay
+                        resp = requests.get(url, params=params, timeout=5)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            routes = data.get("routes", [])
+                            if routes:
+                                dur_sec = routes[0].get("duration", 900)
+                                mins = int(round(dur_sec / 60.0))
+                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
+                                success_count += 1
+                        else:
+                            print(f"Mapbox Directions API failed: {resp.status_code}")
+                            storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
+                    except Exception as ex:
+                        print(f"Mapbox Directions API error: {ex}")
+                        storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
+                        
+                if success_count == len(pairs_to_query):
+                    return True
+                    
+        # --- TIER 3: OSRM ---
         url = f"http://router.project-osrm.org/table/v1/driving/{coord_str}"
         params = {
             "sources": src_str,
@@ -288,12 +410,9 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         return lat, lon
 
     mapbox_key = get_mapbox_api_key()
-    settings = storage.get_settings()
-    disable_mapbox = settings.get('disable_mapbox', False)
-    current_month = datetime.datetime.now().strftime("%Y-%m")
-    mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
+    disable_mapbox = get_map_option('disable_mapbox', False)
     
-    if mapbox_key and not disable_mapbox and mapbox_geocode_usage < 90000:
+    if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(address)}.json"
         params = {
             "access_token": mapbox_key,
@@ -302,7 +421,6 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         try:
             resp = requests.get(url, params=params, timeout=5)
             if resp.status_code == 200:
-                storage.increment_mapbox_usage(current_month, 'geocode')
                 data = resp.json()
                 features = data.get("features", [])
                 if features:
@@ -377,12 +495,9 @@ def autocomplete_location(input_text: str) -> list[dict]:
     import datetime
     import urllib.parse
     mapbox_key = get_mapbox_api_key()
-    settings = storage.get_settings()
-    disable_mapbox = settings.get('disable_mapbox', False)
-    current_month = datetime.datetime.now().strftime("%Y-%m")
-    mapbox_geocode_usage = storage.get_mapbox_usage(current_month, 'geocode')
+    disable_mapbox = get_map_option('disable_mapbox', False)
     
-    if mapbox_key and not disable_mapbox and mapbox_geocode_usage < 90000:
+    if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(input_text)}.json"
         params = {
             "access_token": mapbox_key,
@@ -393,7 +508,6 @@ def autocomplete_location(input_text: str) -> list[dict]:
         try:
             resp = requests.get(url, params=params, timeout=5)
             if resp.status_code == 200:
-                storage.increment_mapbox_usage(current_month, 'geocode')
                 data = resp.json()
                 features = data.get("features", [])
                 return [{"description": f.get("place_name")} for f in features if f.get("place_name")]

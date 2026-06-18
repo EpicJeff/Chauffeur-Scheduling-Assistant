@@ -52,6 +52,7 @@ with db_lock:
     drive_status_table = db.table('drive_status')
     pending_notifications_table = db.table('pending_notifications')
     event_configs_table = db.table('event_configs')
+    api_requests_log_table = db.table('api_requests_log')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -132,6 +133,26 @@ def cleanup_corrupted_travel_times():
         daily_schedules_table.truncate()
 
 cleanup_corrupted_travel_times()
+
+def prime_api_usage_seeding():
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    seeds = {
+        'matrix': 117902,
+        'directions': 2499,
+        'geocode': 927
+    }
+    with db_lock:
+        for endpoint, seed_val in seeds.items():
+            res = api_usage_table.search((Query().month == current_month) & (Query().endpoint == endpoint))
+            if res:
+                current_val = res[0].get('count', 0)
+                if current_val < seed_val:
+                    api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
+            else:
+                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
+
+prime_api_usage_seeding()
 
 # Geocode Cache
 def get_cached_geocode(address: str):
@@ -476,6 +497,26 @@ def increment_mapbox_usage(month: str, endpoint: str, amount: int = 1):
             api_usage_table.update({'count': new_count}, (Query().month == month) & (Query().endpoint == endpoint))
         else:
             api_usage_table.insert({'month': month, 'endpoint': endpoint, 'count': amount})
+
+def log_api_request(endpoint: str, count: int = 1):
+    import time
+    with db_lock:
+        api_requests_log_table.insert({
+            'timestamp': time.time(),
+            'endpoint': endpoint,
+            'count': count
+        })
+        three_days_ago = time.time() - (3 * 24 * 3600)
+        api_requests_log_table.remove(Query().timestamp < three_days_ago)
+
+def get_rolling_usage(endpoint: str, seconds: int) -> int:
+    import time
+    with db_lock:
+        now = time.time()
+        start_time = now - seconds
+        q = Query()
+        records = api_requests_log_table.search((q.endpoint == endpoint) & (q.timestamp >= start_time))
+        return sum(r.get('count', 0) for r in records)
 
 # Push Subscriptions
 def save_push_subscription(driver_id: str, subscription_info: dict):
