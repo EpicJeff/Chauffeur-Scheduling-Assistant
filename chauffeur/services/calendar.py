@@ -197,14 +197,15 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
 
     if missing_cals:
         def _fetch_meta(cal_id):
+            local_service = get_calendar_service()
             color_index = sum(ord(c) for c in cal_id) % len(PALETTE)
             cal_color = PALETTE[color_index]
             try:
-                cal = service.calendars().get(calendarId=cal_id).execute()
+                cal = local_service.calendars().get(calendarId=cal_id).execute()
                 summary = cal.get("summary")
             except Exception as ex:
                 try:
-                    cal = service.calendarList().get(calendarId=cal_id).execute()
+                    cal = local_service.calendarList().get(calendarId=cal_id).execute()
                     summary = cal.get("summary")
                 except Exception as ex2:
                     summary = None
