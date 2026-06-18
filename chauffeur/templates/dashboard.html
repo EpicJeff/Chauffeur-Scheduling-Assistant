@@ -1497,7 +1497,14 @@
                 inboxContainer.classList.add('hidden');
             }
             // --- End Inbox Logic ---
-const scheduleByDate = {};
+            const scheduleByDate = {};
+            if (data.solving_dates) {
+                data.solving_dates.forEach(d_str => {
+                    if (!scheduleByDate[d_str]) {
+                        scheduleByDate[d_str] = {};
+                    }
+                });
+            }
 
 
             const overriddenEventsList = overridden_events || [];
@@ -1602,7 +1609,8 @@ const scheduleByDate = {};
                     return true;
                 });
 
-                if (colIds.length === 0) {
+                const isSolving = data.solving_dates && data.solving_dates.includes(date);
+                if (colIds.length === 0 && !isSolving) {
                     return; // Skip rendering this entire date block if there are no columns
                 }
 
