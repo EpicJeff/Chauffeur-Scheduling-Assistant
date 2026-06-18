@@ -146,20 +146,12 @@ def prime_api_usage_seeding():
         
         for endpoint, seed_val in seeds.items():
             res = api_usage_table.search((Query().month == current_month) & (Query().endpoint == endpoint))
-            if not has_seeded:
-                # Force alignment with the exact Mapbox console numbers on first load
-                if res:
+            if res:
+                current_val = res[0].get('count', 0)
+                if current_val < seed_val:
                     api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
-                else:
-                    api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
             else:
-                # Standard logic for regular restarts to prevent undercounting
-                if res:
-                    current_val = res[0].get('count', 0)
-                    if current_val < seed_val:
-                        api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
-                else:
-                    api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
+                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
                     
         if not has_seeded and settings_docs:
             settings['has_seeded_truth_2026_06'] = True
