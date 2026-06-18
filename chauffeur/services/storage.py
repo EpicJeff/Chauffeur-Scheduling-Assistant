@@ -128,9 +128,6 @@ def cleanup_corrupted_travel_times():
         QueryObj = Query()
         # Remove any cached travel time >= 120 minutes (like the corrupted 999 values)
         distance_cache_table.remove(QueryObj.minutes >= 120)
-        # Also clean up custom schedules and daily schedules cache to force a re-render
-        custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
 
 cleanup_corrupted_travel_times()
 
@@ -320,7 +317,14 @@ def delete_passenger(doc_id: int):
 
 def add_telemetry_event(event_data: dict) -> int:
     with db_lock:
-        return telemetry_table.insert(event_data)
+        doc_id = telemetry_table.insert(event_data)
+        all_events = telemetry_table.all()
+        if len(all_events) > 200:
+            all_events.sort(key=lambda x: x.get('timestamp', 0))
+            excess = len(all_events) - 200
+            doc_ids_to_remove = [e.doc_id for e in all_events[:excess]]
+            telemetry_table.remove(doc_ids=doc_ids_to_remove)
+        return doc_id
 
 def get_telemetry_events(limit: int = 50) -> List[dict]:
     with db_lock:

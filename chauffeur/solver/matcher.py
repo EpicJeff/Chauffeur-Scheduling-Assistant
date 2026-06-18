@@ -276,8 +276,8 @@ def solve_schedule(
             e1 = sorted_events[i]
             e2 = sorted_events[j]
             
-            # Skip conflict checks for events starting more than 60 minutes apart
-            if (e2.start - e1.end).total_seconds() > 3600:
+            # Skip conflict checks for events starting more than 3 hours apart
+            if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
@@ -613,8 +613,8 @@ def solve_schedule(
                 e1 = sorted_events[i]
                 e2 = sorted_events[j]
                 
-                # Skip lateness checks for events starting more than 60 minutes apart
-                if (e2.start - e1.end).total_seconds() > 3600:
+                # Skip lateness checks for events starting more than 3 hours apart
+                if (e2.start - e1.end).total_seconds() > 10800:
                     break
                     
                 d1_id = assignments.get(e1.id)
@@ -748,8 +748,8 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             e1 = sorted_events[i]
             e2 = sorted_events[j]
             
-            # Skip conflict checks for events starting more than 60 minutes apart
-            if (e2.start - e1.end).total_seconds() > 3600:
+            # Skip conflict checks for events starting more than 3 hours apart
+            if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))

@@ -57,14 +57,22 @@ def get_calendar_service():
 def _fetch_single_calendar(cal_id, time_min, time_max):
     service = get_calendar_service()
     try:
-        events_result = service.events().list(
-            calendarId=cal_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-        return cal_id, events_result.get('items', [])
+        events = []
+        page_token = None
+        while True:
+            events_result = service.events().list(
+                calendarId=cal_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy='startTime',
+                pageToken=page_token
+            ).execute()
+            events.extend(events_result.get('items', []))
+            page_token = events_result.get('nextPageToken')
+            if not page_token:
+                break
+        return cal_id, events
     except Exception as ex:
         print(f"Error fetching from calendar {cal_id}: {ex}")
         return cal_id, []

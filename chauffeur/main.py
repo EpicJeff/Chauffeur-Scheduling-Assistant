@@ -147,7 +147,6 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    storage.custom_schedules_table.truncate()
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
     yield
@@ -223,12 +222,19 @@ def delete_driver(doc_id: int, background_tasks: BackgroundTasks):
 async def stream_events():
     async def event_generator():
         last_seen = LAST_UPDATE_TIME
+        last_ping = time.time()
         try:
             while True:
                 await asyncio.sleep(1)
+                now = time.time()
                 if LAST_UPDATE_TIME > last_seen:
                     last_seen = LAST_UPDATE_TIME
                     yield "data: update\n\n"
+                    last_ping = now
+                elif now - last_ping > 15:
+                    # SSE keep-alive comment
+                    yield ": ping\n\n"
+                    last_ping = now
         except asyncio.CancelledError:
             pass
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -262,18 +268,21 @@ def get_rules():
     return storage.get_all_rules()
 
 @app.post("/api/rules")
-def create_rule(rule: Rule):
+def create_rule(rule: Rule, background_tasks: BackgroundTasks):
     doc_id = storage.add_rule(rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.put("/api/rules/{doc_id}")
-def update_rule(doc_id: int, rule: Rule):
+def update_rule(doc_id: int, rule: Rule, background_tasks: BackgroundTasks):
     storage.update_rule(doc_id, rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/rules/{doc_id}")
-def delete_rule(doc_id: int):
+def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_rule(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Priority Rules API ---
@@ -282,18 +291,21 @@ def get_priority_rules():
     return storage.get_all_priority_rules()
 
 @app.post("/api/priority_rules")
-def create_priority_rule(rule: PriorityRule):
+def create_priority_rule(rule: PriorityRule, background_tasks: BackgroundTasks):
     doc_id = storage.add_priority_rule(rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.put("/api/priority_rules/{doc_id}")
-def update_priority_rule(doc_id: int, rule: PriorityRule):
+def update_priority_rule(doc_id: int, rule: PriorityRule, background_tasks: BackgroundTasks):
     storage.update_priority_rule(doc_id, rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/priority_rules/{doc_id}")
-def delete_priority_rule(doc_id: int):
+def delete_priority_rule(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_priority_rule(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Overrides API ---
@@ -302,31 +314,36 @@ def get_overrides():
     return storage.get_all_overrides()
 
 @app.post("/api/overrides")
-def create_override(override: ManualOverride):
+def create_override(override: ManualOverride, background_tasks: BackgroundTasks):
     doc_id = storage.add_override(override.model_dump() if hasattr(override, 'model_dump') else override.dict())
+    background_tasks.add_task(refresh_schedule_logic)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.delete("/api/overrides/{doc_id}")
-def delete_override(doc_id: int):
+def delete_override(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_override(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 @app.delete("/api/overrides/event/{event_id}")
-def delete_override_by_event(event_id: str):
+def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks):
     storage.delete_override_by_event(event_id)
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Event Configs API ---
 @app.post("/api/events/config/{google_id}")
-def update_event_config(google_id: str, config_data: dict):
+def update_event_config(google_id: str, config_data: dict, background_tasks: BackgroundTasks):
     storage.set_event_config(google_id, config_data)
     storage.clear_custom_schedules()
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "updated"}
 
 @app.delete("/api/events/config/{google_id}")
-def delete_event_config(google_id: str):
+def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
     storage.delete_event_config(google_id)
     storage.clear_custom_schedules()
+    background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
 # --- Settings API ---
