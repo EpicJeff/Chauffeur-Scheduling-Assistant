@@ -384,15 +384,15 @@
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="flex items-center mb-4 md:mb-0">
                             <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white" :style="`background-color: ${getPassengerColor(passenger)}`">
-                                <span x-text="passenger.name.charAt(0)"></span>
+                                <span x-text="(passenger.name || '').charAt(0)"></span>
                             </div>
                             <div>
                                 <h3 class="text-xl font-bold text-white" x-text="passenger.name"></h3>
                                 <div class="text-gray-400 text-sm flex gap-2 items-center mt-1">
-                                    <template x-for="tag in passenger.hashtags" :key="tag">
+                                    <template x-for="tag in (passenger.hashtags || [])" :key="tag">
                                         <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-mono text-xs" x-text="tag"></span>
                                     </template>
-                                    <span x-text="passenger.calendar_ids.length + ' calendars'"></span>
+                                    <span x-text="(passenger.calendar_ids ? passenger.calendar_ids.length : 0) + ' calendars'"></span>
                                     <template x-if="passenger.requires_attendance">
                                         <span class="px-2 py-0.5 bg-red-900/50 text-red-300 rounded font-bold text-xs uppercase tracking-wide border border-red-800">Requires Attendance</span>
                                     </template>
@@ -501,13 +501,13 @@
                                 </template>
                                 <span class="font-bold">IF</span>
                                 <template x-if="rule.keywords && rule.keywords.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + rule.keywords.join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + rule.passenger_ids.map(p => getPassengerName(p)).join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.time_start || rule.time_end">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -751,13 +751,13 @@
                             <div class="text-gray-400 flex flex-wrap gap-2 items-center">
                                 <span class="font-bold">IF</span>
                                 <template x-if="rule.keywords && rule.keywords.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + rule.keywords.join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + rule.passenger_ids.map(p => getPassengerName(p)).join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
-                                    <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ')"></span>
+                                    <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
                                 </template>
                                 <template x-if="rule.time_start || rule.time_end">
                                     <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -1255,8 +1255,14 @@
                     return PALETTE[sum % PALETTE.length];
                 },
                 async loadPassengers() {
-                    const res = await fetch(`${this.apiBase}api/passengers`);
-                    this.passengers = await res.json();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/passengers`);
+                        const data = await res.json();
+                        this.passengers = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load passengers", e);
+                        this.passengers = [];
+                    }
                 },
 
                 addPassengerCalendarId() {
@@ -1325,8 +1331,14 @@
 
                 // --- Rules ---
                 async loadRules() {
-                    const res = await fetch(`${this.apiBase}api/rules`);
-                    this.rules = await res.json();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rules`);
+                        const data = await res.json();
+                        this.rules = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load rules", e);
+                        this.rules = [];
+                    }
                 },
                 editRule(rule) {
                     this.editRuleId = rule.doc_id;
@@ -1403,8 +1415,14 @@
                 },
 
                 async loadPriorityRules() {
-                    const res = await fetch(`${this.apiBase}api/priority_rules`);
-                    this.priorityRules = await res.json();
+                    try {
+                        const res = await fetch(`${this.apiBase}api/priority_rules`);
+                        const data = await res.json();
+                        this.priorityRules = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load priority rules", e);
+                        this.priorityRules = [];
+                    }
                 },
                 editPriorityRule(rule) {
                     this.editPriorityRuleId = rule.doc_id;
