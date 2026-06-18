@@ -126,8 +126,7 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     if cached is not None:
         return (cached, 0) if return_traffic else cached
         
-    # 4. Cache and return fallback if API fails
-    storage.set_cached_travel_time(origin.lower(), destination.lower(), MOCK_TIME)
+    # 4. Return fallback if API fails (do not cache so it retries later)
     return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
 
 def prime_matrix_cache(locations: list[str]):
@@ -308,10 +307,8 @@ def prime_matrix_cache(locations: list[str]):
                                     success_count += 1
                             else:
                                 print(f"Mapbox Directions API failed: {resp.status_code}")
-                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
                         except Exception as ex:
                             print(f"Mapbox Directions API error: {ex}")
-                            storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
                             
                     if success_count == len(pairs_to_query):
                         return True
@@ -349,16 +346,8 @@ def prime_matrix_cache(locations: list[str]):
                 return True
             else:
                 print(f"OSRM Matrix API failed: {resp.status_code} {resp.text}")
-                for s_i, src_idx in enumerate(src_indices):
-                    for d_i, dest_idx in enumerate(dest_indices):
-                        if src_idx != dest_idx:
-                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 15)
         except Exception as e:
             print(f"OSRM Matrix error: {e}")
-            for s_i, src_idx in enumerate(src_indices):
-                for d_i, dest_idx in enumerate(dest_indices):
-                    if src_idx != dest_idx:
-                        storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 15)
         return False
         
     matrix_usage = storage.get_mapbox_usage(current_month, 'matrix')

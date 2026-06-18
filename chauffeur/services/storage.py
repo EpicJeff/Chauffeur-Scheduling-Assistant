@@ -175,6 +175,8 @@ def clear_schedule_caches():
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
         cache_table.truncate()
+        distance_cache_table.truncate()
+        geocode_cache_table.truncate()
 
 def get_cached_geocode(address: str):
     with db_lock:
