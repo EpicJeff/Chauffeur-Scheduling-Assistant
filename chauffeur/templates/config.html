@@ -157,114 +157,6 @@
                     </div>
                 </div>
 
-                <!-- Real-time Stats Dashboard -->
-                <div x-show="mapsStats" class="mt-6 border-t border-gray-850 pt-6">
-                    <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center justify-between">
-                        <span>Live API Usage Dashboard</span>
-                        <span class="flex items-center text-xs font-semibold text-green-400 lowercase font-mono">
-                            <span class="relative flex h-2 w-2 mr-2">
-                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                            </span>
-                            Live Updating (5s)
-                        </span>
-                    </h4>
-
-                    <!-- Active Fallback Warnings -->
-                    <div class="space-y-2 mb-4">
-                        <!-- Matrix Fallback Check -->
-                        <div x-show="disableMapboxMatrix || (mapsStats && mapsStats.matrix.monthly >= mapsStats.matrix.limit)" class="p-3 bg-amber-950/40 border border-amber-900/60 text-amber-300 rounded-lg text-xs flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                <span>
-                                    <strong class="font-bold">Matrix API Offline:</strong> 
-                                    <span x-text="disableMapboxMatrix ? 'Disabled by user option.' : 'Monthly limit reached (' + mapsStats.matrix.monthly + ' / ' + mapsStats.matrix.limit + ').'"></span>
-                                </span>
-                            </div>
-                            <span class="px-2 py-0.5 bg-amber-900/60 text-amber-200 rounded font-bold uppercase tracking-wider text-[10px] border border-amber-800">Falling back to Directions</span>
-                        </div>
-
-                        <!-- Directions Fallback Check -->
-                        <div x-show="(disableMapboxMatrix || (mapsStats && mapsStats.matrix.monthly >= mapsStats.matrix.limit)) && (disableMapboxDirections || (mapsStats && mapsStats.directions.monthly >= mapsStats.directions.limit))" class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                <span>
-                                    <strong class="font-bold">Directions API Offline:</strong>
-                                    <span x-text="disableMapboxDirections ? 'Disabled by user option.' : 'Monthly limit reached (' + mapsStats.directions.monthly + ' / ' + mapsStats.directions.limit + ').'"></span>
-                                </span>
-                            </div>
-                            <span class="px-2 py-0.5 bg-red-900/60 text-red-200 rounded font-bold uppercase tracking-wider text-[10px] border border-red-800">Falling back to free OSRM</span>
-                        </div>
-                    </div>
-
-                    <!-- Usage Meters -->
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6" x-if="mapsStats">
-                        <!-- Matrix Meter -->
-                        <div class="bg-gray-800/60 p-4 rounded-xl border border-gray-700/80">
-                            <div class="flex items-center justify-between text-xs mb-2">
-                                <span class="font-bold text-gray-400 uppercase">Matrix Elements</span>
-                                <span class="text-blue-400 font-mono font-bold" x-text="mapsStats.matrix.monthly + ' / ' + mapsStats.matrix.limit"></span>
-                            </div>
-                            <div class="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden mb-3">
-                                <div class="h-2.5 rounded-full transition-all duration-500" 
-                                     :class="mapsStats.matrix.monthly >= mapsStats.matrix.limit ? 'bg-red-500' : (mapsStats.matrix.monthly >= mapsStats.matrix.limit * 0.8 ? 'bg-amber-500' : 'bg-blue-500')"
-                                     :style="`width: ${Math.min(100, (mapsStats.matrix.monthly / mapsStats.matrix.limit) * 100)}%`"></div>
-                            </div>
-                            <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono">
-                                <span>Rolling 24h: <strong class="text-gray-300" x-text="mapsStats.matrix.rolling_24h"></strong></span>
-                                <span class="flex items-center gap-1">
-                                    RPM: 
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-blue-400 rounded font-bold border border-blue-900/30 animate-pulse" x-show="mapsStats.matrix.rpm > 0" x-text="mapsStats.matrix.rpm"></span>
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800" x-show="mapsStats.matrix.rpm === 0">0</span>
-                                </span>
-                            </div>
-                        </div>
-
-                        <!-- Directions Meter -->
-                        <div class="bg-gray-800/60 p-4 rounded-xl border border-gray-700/80">
-                            <div class="flex items-center justify-between text-xs mb-2">
-                                <span class="font-bold text-gray-400 uppercase">Directions Requests</span>
-                                <span class="text-purple-400 font-mono font-bold" x-text="mapsStats.directions.monthly + ' / ' + mapsStats.directions.limit"></span>
-                            </div>
-                            <div class="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden mb-3">
-                                <div class="h-2.5 rounded-full transition-all duration-500" 
-                                     :class="mapsStats.directions.monthly >= mapsStats.directions.limit ? 'bg-red-500' : (mapsStats.directions.monthly >= mapsStats.directions.limit * 0.8 ? 'bg-amber-500' : 'bg-purple-500')"
-                                     :style="`width: ${Math.min(100, (mapsStats.directions.monthly / mapsStats.directions.limit) * 100)}%`"></div>
-                            </div>
-                            <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono">
-                                <span>Rolling 24h: <strong class="text-gray-300" x-text="mapsStats.directions.rolling_24h"></strong></span>
-                                <span class="flex items-center gap-1">
-                                    RPM: 
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-purple-400 rounded font-bold border border-purple-900/30 animate-pulse" x-show="mapsStats.directions.rpm > 0" x-text="mapsStats.directions.rpm"></span>
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800" x-show="mapsStats.directions.rpm === 0">0</span>
-                                </span>
-                            </div>
-                        </div>
-
-                        <!-- Geocode Meter -->
-                        <div class="bg-gray-800/60 p-4 rounded-xl border border-gray-700/80">
-                            <div class="flex items-center justify-between text-xs mb-2">
-                                <span class="font-bold text-gray-400 uppercase">Geocode Requests</span>
-                                <span class="text-green-400 font-mono font-bold" x-text="mapsStats.geocode.monthly + ' / ' + mapsStats.geocode.limit"></span>
-                            </div>
-                            <div class="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden mb-3">
-                                <div class="h-2.5 rounded-full transition-all duration-500" 
-                                     :class="mapsStats.geocode.monthly >= mapsStats.geocode.limit ? 'bg-red-500' : (mapsStats.geocode.monthly >= mapsStats.geocode.limit * 0.8 ? 'bg-amber-500' : 'bg-green-500')"
-                                     :style="`width: ${Math.min(100, (mapsStats.geocode.monthly / mapsStats.geocode.limit) * 100)}%`"></div>
-                            </div>
-                            <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono">
-                                <span>Rolling 24h: <strong class="text-gray-300" x-text="mapsStats.geocode.rolling_24h"></strong></span>
-                                <span class="flex items-center gap-1">
-                                    RPM: 
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-green-400 rounded font-bold border border-green-900/30 animate-pulse" x-show="mapsStats.geocode.rpm > 0" x-text="mapsStats.geocode.rpm"></span>
-                                    <span class="px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800" x-show="mapsStats.geocode.rpm === 0">0</span>
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Time Format -->
             <div class="mb-6">
                 <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Time Format</label>
@@ -1023,8 +915,6 @@
                     await this.loadPassengers();
                     await this.loadRules();
                     await this.loadPriorityRules();
-                    await this.fetchMapsStats();
-                    this.statsInterval = setInterval(() => this.fetchMapsStats(), 5000);
                 },
 
                 async handleLocationInput() {
@@ -1233,16 +1123,7 @@
                             });
                     }
                 },
-                async fetchMapsStats() {
-                    try {
-                        const res = await fetch('api/maps/stats');
-                        if (res.ok) {
-                            this.mapsStats = await res.json();
-                        }
-                    } catch (e) {
-                        console.error("Failed to fetch maps stats", e);
-                    }
-                },
+
 
                 async loadDrivers() {
                     const res = await fetch('api/drivers');

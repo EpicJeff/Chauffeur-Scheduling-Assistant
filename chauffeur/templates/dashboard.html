@@ -118,6 +118,16 @@
                 <span id="notif-badge"
                     class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
+            <button onclick="toggleMapsStats()" id="maps-stats-btn"
+                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center relative">
+                <svg class="w-5 h-5 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                    </path>
+                </svg>
+                API Stats
+                <span id="maps-stats-warning-dot" class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 h-2.5 w-2.5 rounded-full hidden animate-ping"></span>
+            </button>
             <a href="config"
                 class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -162,6 +172,108 @@
             <div id="notif-list" class="flex-1 overflow-y-auto space-y-3">
                 <p class="text-gray-500 text-center py-4 italic">No recent notifications</p>
             </div>
+        </div>
+    </div>
+
+    <!-- Mapbox API Stats Rollout Panel (Slide-out Drawer, Non-Modal) -->
+    <div id="maps-stats-panel" 
+         class="fixed top-0 right-0 h-full w-96 bg-gray-800 border-l border-gray-700 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
+        
+        <!-- Header -->
+        <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-900/40 shrink-0">
+            <h3 class="text-xl font-bold text-blue-300 flex items-center gap-2">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                Mapbox API Usage
+            </h3>
+            <button onclick="toggleMapsStats()" class="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded-lg transition-colors focus:outline-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Scrollable content -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            
+            <div id="stats-loader" class="text-center text-gray-500 py-10 animate-pulse">
+                Loading statistics...
+            </div>
+
+            <div id="stats-content" class="hidden space-y-6">
+                <!-- Warnings section -->
+                <div id="stats-warnings" class="space-y-2"></div>
+
+                <!-- Meters list -->
+                <div class="space-y-5">
+                    <!-- Matrix Card -->
+                    <div class="bg-gray-900/60 p-4 rounded-xl border border-gray-700/80">
+                        <div class="flex items-center justify-between text-xs mb-2">
+                            <span class="font-bold text-gray-400 uppercase">Matrix (Tier 1)</span>
+                            <span id="matrix-monthly-text" class="text-blue-400 font-mono font-bold"></span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden mb-3">
+                            <div id="matrix-progress" class="h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono font-bold">
+                            <span>Rolling 24h: <strong id="matrix-24h-text" class="text-gray-300"></strong></span>
+                            <span class="flex items-center gap-1 font-bold">
+                                RPM: 
+                                <span id="matrix-rpm-text" class="px-1.5 py-0.5 bg-gray-900 text-blue-400 rounded font-bold border border-blue-900/30"></span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Directions Card -->
+                    <div class="bg-gray-900/60 p-4 rounded-xl border border-gray-700/80">
+                        <div class="flex items-center justify-between text-xs mb-2">
+                            <span class="font-bold text-gray-400 uppercase">Directions (Tier 2)</span>
+                            <span id="directions-monthly-text" class="text-purple-400 font-mono font-bold"></span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden mb-3">
+                            <div id="directions-progress" class="h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono font-bold">
+                            <span>Rolling 24h: <strong id="directions-24h-text" class="text-gray-300"></strong></span>
+                            <span class="flex items-center gap-1 font-bold">
+                                RPM: 
+                                <span id="directions-rpm-text" class="px-1.5 py-0.5 bg-gray-900 text-purple-400 rounded font-bold border border-purple-900/30"></span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Geocode Card -->
+                    <div class="bg-gray-900/60 p-4 rounded-xl border border-gray-700/80">
+                        <div class="flex items-center justify-between text-xs mb-2">
+                            <span class="font-bold text-gray-400 uppercase">Geocoding API</span>
+                            <span id="geocode-monthly-text" class="text-green-400 font-mono font-bold"></span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden mb-3">
+                            <div id="geocode-progress" class="h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono font-bold">
+                            <span>Rolling 24h: <strong id="geocode-24h-text" class="text-gray-300"></strong></span>
+                            <span class="flex items-center gap-1 font-bold">
+                                RPM: 
+                                <span id="geocode-rpm-text" class="px-1.5 py-0.5 bg-gray-900 text-green-400 rounded font-bold border border-green-900/30"></span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-gray-750 bg-gray-900/40 text-center shrink-0">
+            <span class="inline-flex items-center text-xs font-semibold text-green-400 lowercase font-mono">
+                <span class="relative flex h-2 w-2 mr-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                Real-Time updating (5s)
+            </span>
         </div>
     </div>
 
@@ -2156,6 +2268,7 @@ const scheduleByDate = {};
 
         // Fetch immediately (which will hit the cache instantly)
         fetchSchedule();
+        fetchMapsStatsDashboard();
 
         // Listen for real-time updates from the backend
         const evtSource = new EventSource("api/stream");
@@ -2247,6 +2360,139 @@ const scheduleByDate = {};
                 }
             } catch (err) {
                 console.error(err);
+            }
+        }
+
+        let isMapsStatsOpen = false;
+        let mapsStatsInterval = null;
+
+        function toggleMapsStats() {
+            const panel = document.getElementById('maps-stats-panel');
+            isMapsStatsOpen = !isMapsStatsOpen;
+            if (isMapsStatsOpen) {
+                panel.classList.remove('translate-x-full');
+                panel.classList.add('translate-x-0');
+                fetchMapsStatsDashboard();
+                mapsStatsInterval = setInterval(fetchMapsStatsDashboard, 5000);
+            } else {
+                panel.classList.remove('translate-x-0');
+                panel.classList.add('translate-x-full');
+                if (mapsStatsInterval) {
+                    clearInterval(mapsStatsInterval);
+                    mapsStatsInterval = null;
+                }
+            }
+        }
+
+        async function fetchMapsStatsDashboard() {
+            try {
+                const res = await fetch('api/maps/stats');
+                if (!res.ok) return;
+                const stats = await res.json();
+                
+                document.getElementById('stats-loader').classList.add('hidden');
+                document.getElementById('stats-content').classList.remove('hidden');
+
+                // Update warnings
+                const warningsEl = document.getElementById('stats-warnings');
+                let warningsHtml = '';
+                
+                const matrixOffline = stats.matrix.disabled || (stats.matrix.monthly >= stats.matrix.limit);
+                const directionsOffline = stats.directions.disabled || (stats.directions.monthly >= stats.directions.limit);
+                
+                if (matrixOffline) {
+                    const reason = stats.matrix.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.matrix.monthly} / ${stats.matrix.limit}).`;
+                    warningsHtml += `
+                        <div class="p-3 bg-amber-950/40 border border-amber-900/60 text-amber-300 rounded-lg text-xs flex flex-col gap-1">
+                            <div class="flex items-center gap-2 font-bold">
+                                <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                <span>Matrix API Offline</span>
+                            </div>
+                            <span class="text-gray-400">${reason}</span>
+                            <span class="px-2 py-0.5 bg-amber-900/60 text-amber-200 rounded font-bold uppercase tracking-wider text-[10px] border border-amber-800 w-max mt-1">Fallback: Using Directions</span>
+                        </div>
+                    `;
+                }
+
+                if (matrixOffline && directionsOffline) {
+                    const reason = stats.directions.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.directions.monthly} / ${stats.directions.limit}).`;
+                    warningsHtml += `
+                        <div class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex flex-col gap-1">
+                            <div class="flex items-center gap-2 font-bold">
+                                <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                <span>Directions API Offline</span>
+                            </div>
+                            <span class="text-gray-400">${reason}</span>
+                            <span class="px-2 py-0.5 bg-red-900/60 text-red-200 rounded font-bold uppercase tracking-wider text-[10px] border border-red-800 w-max mt-1">Fallback: Using free OSRM</span>
+                        </div>
+                    `;
+                }
+
+                warningsEl.innerHTML = warningsHtml;
+
+                // Matrix updates
+                const matPct = Math.min(100, (stats.matrix.monthly / stats.matrix.limit) * 100);
+                document.getElementById('matrix-monthly-text').textContent = `${stats.matrix.monthly} / ${stats.matrix.limit}`;
+                const matProgress = document.getElementById('matrix-progress');
+                matProgress.style.width = `${matPct}%`;
+                matProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.matrix.monthly >= stats.matrix.limit ? 'bg-red-500' : (stats.matrix.monthly >= stats.matrix.limit * 0.8 ? 'bg-amber-500' : 'bg-blue-500')}`;
+                document.getElementById('matrix-24h-text').textContent = stats.matrix.rolling_24h;
+                
+                const matRpm = document.getElementById('matrix-rpm-text');
+                if (stats.matrix.rpm > 0) {
+                    matRpm.textContent = stats.matrix.rpm;
+                    matRpm.className = "px-1.5 py-0.5 bg-gray-900 text-blue-400 rounded font-bold border border-blue-900/30 animate-pulse";
+                } else {
+                    matRpm.textContent = "0";
+                    matRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
+                }
+
+                // Directions updates
+                const dirPct = Math.min(100, (stats.directions.monthly / stats.directions.limit) * 100);
+                document.getElementById('directions-monthly-text').textContent = `${stats.directions.monthly} / ${stats.directions.limit}`;
+                const dirProgress = document.getElementById('directions-progress');
+                dirProgress.style.width = `${dirPct}%`;
+                dirProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.directions.monthly >= stats.directions.limit ? 'bg-red-500' : (stats.directions.monthly >= stats.directions.limit * 0.8 ? 'bg-amber-500' : 'bg-purple-500')}`;
+                document.getElementById('directions-24h-text').textContent = stats.directions.rolling_24h;
+                
+                const dirRpm = document.getElementById('directions-rpm-text');
+                if (stats.directions.rpm > 0) {
+                    dirRpm.textContent = stats.directions.rpm;
+                    dirRpm.className = "px-1.5 py-0.5 bg-gray-900 text-purple-400 rounded font-bold border border-purple-900/30 animate-pulse";
+                } else {
+                    dirRpm.textContent = "0";
+                    dirRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
+                }
+
+                // Geocode updates
+                const geoPct = Math.min(100, (stats.geocode.monthly / stats.geocode.limit) * 100);
+                document.getElementById('geocode-monthly-text').textContent = `${stats.geocode.monthly} / ${stats.geocode.limit}`;
+                const geoProgress = document.getElementById('geocode-progress');
+                geoProgress.style.width = `${geoPct}%`;
+                geoProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.geocode.monthly >= stats.geocode.limit ? 'bg-red-500' : (stats.geocode.monthly >= stats.geocode.limit * 0.8 ? 'bg-amber-500' : 'bg-green-500')}`;
+                document.getElementById('geocode-24h-text').textContent = stats.geocode.rolling_24h;
+                
+                const geoRpm = document.getElementById('geocode-rpm-text');
+                if (stats.geocode.rpm > 0) {
+                    geoRpm.textContent = stats.geocode.rpm;
+                    geoRpm.className = "px-1.5 py-0.5 bg-gray-900 text-green-400 rounded font-bold border border-green-900/30 animate-pulse";
+                } else {
+                    geoRpm.textContent = "0";
+                    geoRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
+                }
+
+                // Update warning dot on API Stats button in header
+                const hasWarning = matrixOffline || directionsOffline;
+                const dot = document.getElementById('maps-stats-warning-dot');
+                if (dot) {
+                    if (hasWarning) {
+                        dot.classList.remove('hidden');
+                    } else {
+                        dot.classList.add('hidden');
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to fetch map stats dashboard", e);
             }
         }
     </script>
