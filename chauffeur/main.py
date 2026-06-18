@@ -6,7 +6,7 @@ from fastapi import FastAPI, BackgroundTasks, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 import asyncio
