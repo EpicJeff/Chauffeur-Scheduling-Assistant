@@ -1531,11 +1531,10 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-async def force_refresh_schedule(start_date: str = None, end_date: str = None, force: bool = True):
-    await asyncio.to_thread(trigger_background_refresh, start_date, end_date, force)
-    while schedule_coordinator.is_running:
-        await asyncio.sleep(0.1)
+async def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True):
+    background_tasks.add_task(trigger_background_refresh, start_date, end_date, force)
     return {"status": "sync_started"}
+
 
 
 

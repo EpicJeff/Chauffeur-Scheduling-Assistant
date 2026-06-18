@@ -480,7 +480,9 @@
             if (pageHeader) pageHeader.classList.add('hidden');
         }
 
+        const localSolvingDates = new Set();
         let routeEdges = {};
+
         let initialEdges = {};
         let finalEdges = {};
         let conflictsMap = {};
@@ -624,11 +626,20 @@
                 const syncIcon = document.getElementById('sync-icon');
                 const syncText = document.getElementById('sync-text');
                 if (syncBtn) {
-                    syncBtn.disabled = false;
-                    syncBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                    if (syncIcon) syncIcon.classList.remove('animate-spin');
-                    if (syncText) syncText.textContent = 'Sync Now';
+                    const isStillSolving = (currentData && currentData.solving_dates && currentData.solving_dates.length > 0) || (typeof localSolvingDates !== 'undefined' && localSolvingDates.size > 0);
+                    if (isStillSolving) {
+                        syncBtn.disabled = true;
+                        syncBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                        if (syncIcon) syncIcon.classList.add('animate-spin');
+                        if (syncText) syncText.textContent = 'Syncing...';
+                    } else {
+                        syncBtn.disabled = false;
+                        syncBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        if (syncIcon) syncIcon.classList.remove('animate-spin');
+                        if (syncText) syncText.textContent = 'Sync Now';
+                    }
                 }
+
             }
         }
 
@@ -1194,6 +1205,10 @@
             const googleId = ev.recurring_event_id ? ev.recurring_event_id : googleIdParts[googleIdParts.length - 1];
 
             try {
+                if (ev.start) {
+                    localSolvingDates.add(ev.start.split('T')[0]);
+                    renderSchedule(currentData);
+                }
                 // Save config
                 await fetch(`api/events/config/${googleId}`, {
                     method: 'POST',
@@ -1243,6 +1258,10 @@
             const googleId = googleIdParts[googleIdParts.length - 1];
             
             try {
+                if (ev.start) {
+                    localSolvingDates.add(ev.start.split('T')[0]);
+                    renderSchedule(currentData);
+                }
                 await fetch(`api/events/config/${googleId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1334,6 +1353,10 @@
             closeEventModal();
             let targetEventId = ghostEventId;
             const ev = currentEventsMap[ghostEventId];
+            if (ev) {
+                const dateStr = ev.start.split('T')[0];
+                localSolvingDates.add(dateStr);
+            }
             if (ev && ev.recurring_event_id) {
                 const applyToSeries = confirm("This is a recurring event. Do you want to apply this override to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
                 if (applyToSeries) {
@@ -1376,6 +1399,10 @@
             closeEventModal();
             let targetEventId = eventId;
             const ev = currentEventsMap[eventId];
+            if (ev) {
+                const dateStr = ev.start.split('T')[0];
+                localSolvingDates.add(dateStr);
+            }
             if (ev && ev.recurring_event_id) {
                 const applyToSeries = confirm("This is a recurring event. Do you want to remove the override for ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
                 if (applyToSeries) {
@@ -1401,6 +1428,7 @@
                 document.getElementById('schedule-container').classList.remove('opacity-50', 'pointer-events-none');
             }
         }
+
 
         // Global escape key listener for modal
         document.addEventListener('keydown', function (e) {
@@ -1497,6 +1525,17 @@
                 inboxContainer.classList.add('hidden');
             }
             // --- End Inbox Logic ---
+            // Clear local solving dates if they are no longer in data.solving_dates
+            if (data.solving_dates) {
+                for (const date of localSolvingDates) {
+                    if (!data.solving_dates.includes(date)) {
+                        localSolvingDates.delete(date);
+                    }
+                }
+            } else {
+                localSolvingDates.clear();
+            }
+
             const scheduleByDate = {};
             if (data.solving_dates) {
                 data.solving_dates.forEach(d_str => {
@@ -1505,6 +1544,12 @@
                     }
                 });
             }
+            localSolvingDates.forEach(d_str => {
+                if (!scheduleByDate[d_str]) {
+                    scheduleByDate[d_str] = {};
+                }
+            });
+
 
 
             const overriddenEventsList = overridden_events || [];
@@ -1609,10 +1654,11 @@
                     return true;
                 });
 
-                const isSolving = data.solving_dates && data.solving_dates.includes(date);
+                const isSolving = (data.solving_dates && data.solving_dates.includes(date)) || (typeof localSolvingDates !== 'undefined' && localSolvingDates.has(date));
                 if (colIds.length === 0 && !isSolving) {
                     return; // Skip rendering this entire date block if there are no columns
                 }
+
 
                 const dayContainer = document.createElement('div');
                 dayContainer.className = "relative border border-gray-700/30 rounded-xl p-4 mb-6 bg-gray-800/10 overflow-hidden flex flex-col";
@@ -2284,8 +2330,9 @@
 
                 dayContainer.appendChild(mainWrapper);
 
-                if (data.solving_dates && data.solving_dates.includes(date)) {
+                if ((data.solving_dates && data.solving_dates.includes(date)) || (typeof localSolvingDates !== 'undefined' && localSolvingDates.has(date))) {
                     const overlay = document.createElement('div');
+
                     overlay.className = "absolute inset-0 bg-gray-950/60 backdrop-blur-[1px] z-40 flex items-center justify-center pointer-events-auto transition-opacity duration-300";
                     overlay.innerHTML = `
                         <div class="flex items-center gap-3 bg-gray-800 border border-blue-500/30 px-5 py-3 rounded-xl shadow-2xl">
