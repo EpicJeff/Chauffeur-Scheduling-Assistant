@@ -175,9 +175,16 @@ def clear_schedule_caches():
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
         cache_table.truncate()
-        # Only remove poisoned entries to avoid wiping thousands of legitimate caches
+        distance_cache_table.truncate()
+        geocode_cache_table.truncate()
+
+def purge_poisoned_caches():
+    # Remove only poisoned entries to avoid wiping thousands of legitimate caches on startup
+    with db_lock:
         distance_cache_table.remove(Query().minutes == 15)
         geocode_cache_table.remove(Query().lat == 0.0)
+
+purge_poisoned_caches()
 
 def get_cached_geocode(address: str):
     with db_lock:
