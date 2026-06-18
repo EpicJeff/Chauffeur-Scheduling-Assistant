@@ -221,7 +221,7 @@
         <div x-show="activeTab === 'drivers'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                <template x-for="driver in drivers" :key="driver.doc_id">
+                <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="`border-color: ${driver.color_code}`">
                         <div class="w-full">
                             <div class="flex justify-between items-center mb-2">
@@ -380,7 +380,7 @@
         <div x-show="activeTab === 'passengers'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Passengers</h2>
             <div class="space-y-4 mb-8">
-                <template x-for="passenger in passengers" :key="passenger.doc_id">
+                <template x-for="passenger in passengers" :key="passenger.doc_id || passenger.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="flex items-center mb-4 md:mb-0">
                             <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white" :style="`background-color: ${getPassengerColor(passenger)}`">
@@ -477,7 +477,7 @@
         <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Routing Rules</h2>
             <div class="space-y-4 mb-8">
-                <template x-for="rule in rules" :key="rule.doc_id">
+                <template x-for="rule in rules" :key="rule.doc_id || rule.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="text-sm space-y-2">
                             <div class="flex flex-wrap items-center gap-2">
@@ -741,7 +741,7 @@
             <p class="text-gray-400 mb-6">Define priority rules to help the solver resolve conflicts. When events overlap, the event with the highest total priority is favored.</p>
             
             <div class="space-y-4 mb-8">
-                <template x-for="rule in priorityRules" :key="rule.doc_id">
+                <template x-for="rule in priorityRules" :key="rule.doc_id || rule.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="text-sm space-y-2">
                             <div class="flex flex-wrap items-center gap-2">
@@ -1134,13 +1134,20 @@
 
 
                 async loadDrivers() {
-                    const res = await fetch(`${this.apiBase}api/drivers`);
-                    this.drivers = await res.json();
-                    let allDriverCals = [];
-                    this.drivers.forEach(d => {
-                        if (d.calendar_ids) allDriverCals.push(...d.calendar_ids);
-                    });
-                    await this.fetchCalendarMetadata(allDriverCals);
+                    try {
+                        const res = await fetch(`${this.apiBase}api/drivers`);
+                        const data = await res.json();
+                        this.drivers = Array.isArray(data) ? data : [];
+                        let allDriverCals = [];
+                        this.drivers.forEach(d => {
+                            if (d && Array.isArray(d.calendar_ids)) {
+                                allDriverCals.push(...d.calendar_ids);
+                            }
+                        });
+                        await this.fetchCalendarMetadata(allDriverCals);
+                    } catch (e) {
+                        console.error("Failed to load drivers", e);
+                    }
                 },
                 async submitDriver() {
                     this.saving = true;
@@ -1211,8 +1218,8 @@
                         preferred_end: d.preferred_end || '',
                         home_location: d.home_location || '',
                         is_disabled: d.is_disabled || false,
-                        calendarIds: d.calendar_ids || [],
-                        hashtags: d.hashtags || [],
+                        calendarIds: Array.isArray(d.calendar_ids) ? d.calendar_ids : (d.calendar_ids ? [d.calendar_ids] : []),
+                        hashtags: Array.isArray(d.hashtags) ? d.hashtags : (d.hashtags ? [d.hashtags] : []),
                         preferred_maps_provider: d.preferred_maps_provider || 'google',
                         phone_number: d.phone_number || '',
                         cell_carrier: d.cell_carrier || ''
