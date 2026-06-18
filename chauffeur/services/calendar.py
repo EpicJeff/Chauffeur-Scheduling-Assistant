@@ -200,21 +200,35 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
             color_index = sum(ord(c) for c in cal_id) % len(PALETTE)
             cal_color = PALETTE[color_index]
             try:
-                # Use calendars().get() instead of calendarList().get() because service accounts
-                # don't automatically have shared calendars in their personal calendarList.
                 cal = service.calendars().get(calendarId=cal_id).execute()
-                return cal_id, {
-                    "summary": cal.get("summary", "Unknown Calendar"),
-                    "backgroundColor": cal_color,
-                    "foregroundColor": "#FFFFFF"
-                }
+                summary = cal.get("summary")
             except Exception as ex:
-                print(f"Error fetching metadata for calendar {cal_id}: {ex}")
-                return cal_id, {
-                    "summary": "Unknown Calendar",
-                    "backgroundColor": cal_color,
-                    "foregroundColor": "#FFFFFF"
-                }
+                try:
+                    cal = service.calendarList().get(calendarId=cal_id).execute()
+                    summary = cal.get("summary")
+                except Exception as ex2:
+                    summary = None
+                    
+            if not summary or summary == "Unknown Calendar":
+                from services import storage
+                for p in storage.get_passengers():
+                    if cal_id in p.calendar_ids:
+                        summary = f"{p.name}'s Calendar"
+                        break
+                if not summary:
+                    for d in storage.get_drivers():
+                        if cal_id in d.calendar_ids:
+                            summary = f"{d.name}'s Calendar"
+                            break
+                            
+            if not summary:
+                summary = "Unknown Calendar"
+                
+            return cal_id, {
+                "summary": summary,
+                "backgroundColor": cal_color,
+                "foregroundColor": "#FFFFFF"
+            }
 
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(missing_cals) or 1)) as executor:
