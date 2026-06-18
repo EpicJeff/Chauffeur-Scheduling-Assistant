@@ -442,22 +442,7 @@ def get_home_location() -> Optional[str]:
         
     return home_loc if home_loc and str(home_loc).strip() != "" else None
 
-def geocode_address(address: str) -> Optional[tuple[float, float]]:
-    if not address or not address.strip():
-        return None
-        
-    cached = storage.get_cached_geocode(address)
-    if cached:
-        try:
-            lat = float(cached.get('lat'))
-            lon = float(cached.get('lon'))
-            if lat == 0.0 and lon == 0.0:
-                return None
-            return lat, lon
-        except (ValueError, TypeError):
-            pass
-        
-    import datetime
+def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, str]]:
     import urllib.parse
     mapbox_key = get_mapbox_api_key()
     disable_mapbox = get_map_option('disable_mapbox', False)
@@ -476,41 +461,14 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
                 if features:
                     lon, lat = features[0]["center"]
                     display_name = features[0].get("place_name", "")
-                    storage.set_cached_geocode(address, lat, lon, display_name)
-                    return lat, lon
-                else:
-                    storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
-                    return None
+                    return float(lat), float(lon), display_name
             else:
                 print(f"Mapbox Geocoding API failed: {resp.status_code}")
         except Exception as ex:
             print(f"Mapbox Geocoding API exception: {ex}")
             
-    # Fallback to Nominatim (using lock-free check followed by rate lock)
-    cached = storage.get_cached_geocode(address)
-    if cached:
-        try:
-            lat = float(cached.get('lat'))
-            lon = float(cached.get('lon'))
-            if lat == 0.0 and lon == 0.0:
-                return None
-            return lat, lon
-        except (ValueError, TypeError):
-            pass
-            
+    # Fallback to Nominatim
     with api_rate_lock:
-        # Double check inside the rate lock
-        cached = storage.get_cached_geocode(address)
-        if cached:
-            try:
-                lat = float(cached.get('lat'))
-                lon = float(cached.get('lon'))
-                if lat == 0.0 and lon == 0.0:
-                    return None
-                return lat, lon
-            except (ValueError, TypeError):
-                pass
-            
         import time
         if not hasattr(geocode_address, "last_nominatim_time"):
             geocode_address.last_nominatim_time = 0
@@ -537,13 +495,69 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
                     lat = float(data[0]["lat"])
                     lon = float(data[0]["lon"])
                     display_name = data[0].get("display_name", "")
-                    storage.set_cached_geocode(address, lat, lon, display_name)
-                    return lat, lon
-            storage.set_cached_geocode(address, 0.0, 0.0, "")
+                    return float(lat), float(lon), display_name
         except Exception as e:
             print(f"Nominatim error: {e}")
-            storage.set_cached_geocode(address, 0.0, 0.0, "")
+            
+    return None
+
+def geocode_address(address: str) -> Optional[tuple[float, float]]:
+    if not address or not address.strip():
         return None
+        
+    # Check cache first
+    cached = storage.get_cached_geocode(address)
+    if cached:
+        try:
+            lat = float(cached.get('lat'))
+            lon = float(cached.get('lon'))
+            if lat == 0.0 and lon == 0.0:
+                return None
+            return lat, lon
+        except (ValueError, TypeError):
+            pass
+
+    # Call API lookup for original address
+    res = _geocode_address_api_lookup(address)
+    if res:
+        lat, lon, display_name = res
+        storage.set_cached_geocode(address, lat, lon, display_name)
+        return lat, lon
+
+    # Try fallback by repeatedly stripping the first comma-separated part
+    parts = [p.strip() for p in address.split(',')]
+    while len(parts) > 1:
+        fallback_address = ", ".join(parts[1:])
+        print(f"Geocoding failed for '{address}'. Trying simplified fallback: '{fallback_address}'")
+        
+        # Check cache for fallback
+        cached_fb = storage.get_cached_geocode(fallback_address)
+        if cached_fb:
+            try:
+                lat = float(cached_fb.get('lat'))
+                lon = float(cached_fb.get('lon'))
+                if lat != 0.0 or lon != 0.0:
+                    # Cache under original address too
+                    storage.set_cached_geocode(address, lat, lon, cached_fb.get('display_name', ''))
+                    return lat, lon
+            except (ValueError, TypeError):
+                pass
+        else:
+            # Call API lookup for fallback
+            res_fb = _geocode_address_api_lookup(fallback_address)
+            if res_fb:
+                lat, lon, display_name = res_fb
+                # Save under both fallback AND original address
+                storage.set_cached_geocode(fallback_address, lat, lon, display_name)
+                storage.set_cached_geocode(address, lat, lon, display_name)
+                return lat, lon
+        
+        parts = parts[1:]
+
+    # Write failed status to cache for original address
+    storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
+    return None
+
 
 def autocomplete_location(input_text: str) -> list[dict]:
     """
