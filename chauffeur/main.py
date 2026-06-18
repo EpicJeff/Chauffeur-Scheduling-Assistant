@@ -804,9 +804,26 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     priority_rules_data = storage.get_all_priority_rules()
     overrides_data = storage.get_all_overrides()
 
-    rules = [Rule(**r) for r in rules_data]
-    priority_rules = [PriorityRule(**pr) for pr in priority_rules_data]
-    overrides = [ManualOverride(**o) for o in overrides_data]
+    rules = []
+    for r in rules_data:
+        try:
+            rules.append(Rule(**r))
+        except Exception as err:
+            logger.warning(f"Skipping invalid rule from database: {err}. Rule data: {r}")
+
+    priority_rules = []
+    for pr in priority_rules_data:
+        try:
+            priority_rules.append(PriorityRule(**pr))
+        except Exception as err:
+            logger.warning(f"Skipping invalid priority rule from database: {err}. Rule data: {pr}")
+
+    overrides = []
+    for o in overrides_data:
+        try:
+            overrides.append(ManualOverride(**o))
+        except Exception as err:
+            logger.warning(f"Skipping invalid override from database: {err}. Override data: {o}")
 
     for e in all_fetched_events:
         original_calendar_ids = list(e.calendar_ids)
