@@ -911,11 +911,13 @@
                 autocompleteTimeout: null,
 
                 async init() {
+                    console.log("configApp init started");
                     await this.loadSettings();
                     await this.loadDrivers();
                     await this.loadPassengers();
                     await this.loadRules();
                     await this.loadPriorityRules();
+                    console.log("configApp init complete");
                 },
 
                 async handleLocationInput() {
@@ -1135,9 +1137,12 @@
 
                 async loadDrivers() {
                     try {
+                        console.log("Fetching drivers from:", `${this.apiBase}api/drivers`);
                         const res = await fetch(`${this.apiBase}api/drivers`);
                         const data = await res.json();
+                        console.log("Drivers response data:", data);
                         this.drivers = Array.isArray(data) ? data : [];
+                        console.log("this.drivers array is now:", this.drivers);
                         let allDriverCals = [];
                         this.drivers.forEach(d => {
                             if (d && Array.isArray(d.calendar_ids)) {
