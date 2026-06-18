@@ -429,13 +429,13 @@ def solve_schedule(
                     break
                     
             if is_attendee:
-                weight += 2000
+                weight += 5000
 
             # Group weight
             if d.group == 'primary':
-                weight += 500
+                weight += 2000
             elif d.group == 'secondary':
-                weight += 100
+                weight += 0
                 
             # Priority within group (lower index = higher priority)
             weight += max(0, (10 - d.priority_index) * 150)
@@ -470,7 +470,7 @@ def solve_schedule(
                                     model.Add(assign_vars[(e.id, other_d.id)] == 0)
                         weight += 500
                     elif r.constraint_type == 'preferred':
-                        weight += 200
+                        weight += 10000
                     elif r.constraint_type == 'unavailable':
                         model.Add(assign_vars[(e.id, d.id)] == 0)
                         
