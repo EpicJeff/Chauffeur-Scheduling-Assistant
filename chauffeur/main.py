@@ -484,7 +484,7 @@ class AbortRefreshException(Exception):
 
 class ScheduleCoordinator:
     def __init__(self):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.is_running = False
         self.pending_refresh = False
         self.pending_args = None
