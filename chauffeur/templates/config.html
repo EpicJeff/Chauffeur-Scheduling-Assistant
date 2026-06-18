@@ -865,6 +865,7 @@
         function configApp() {
             return {
                 activeTab: 'general',
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 saving: false,
                 daysToShow: 7,
                 routeCacheDurationMins: 1440,
@@ -925,7 +926,7 @@
                     clearTimeout(this.autocompleteTimeout);
                     this.autocompleteTimeout = setTimeout(async () => {
                         try {
-                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.homeLocation)}`);
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.homeLocation)}`);
                             const data = await res.json();
                             if (data.suggestions) {
                                 this.locationSuggestions = data.suggestions;
@@ -952,7 +953,7 @@
                     clearTimeout(this.autocompleteTimeout);
                     this.autocompleteTimeout = setTimeout(async () => {
                         try {
-                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newDriver.home_location)}`);
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.newDriver.home_location)}`);
                             const data = await res.json();
                             if (data.suggestions) {
                                 this.driverLocationSuggestions = data.suggestions;
@@ -977,7 +978,7 @@
                     clearTimeout(this.autocompleteTimeout);
                     this.autocompleteTimeout = setTimeout(async () => {
                         try {
-                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newRule.location)}`);
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.newRule.location)}`);
                             const data = await res.json();
                             if (data.suggestions) {
                                 this.ruleLocationSuggestions = data.suggestions;
@@ -1003,7 +1004,7 @@
                     clearTimeout(this.autocompleteTimeout);
                     this.autocompleteTimeout = setTimeout(async () => {
                         try {
-                            const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(this.newPriorityRule.location)}`);
+                            const res = await fetch(`${this.apiBase}api/places/autocomplete?input=${encodeURIComponent(this.newPriorityRule.location)}`);
                             const data = await res.json();
                             if (data.suggestions) {
                                 this.priorityRuleLocationSuggestions = data.suggestions;
@@ -1024,7 +1025,7 @@
                 async fetchCalendarMetadata(ids) {
                     if (!ids || ids.length === 0) return;
                     try {
-                        const res = await fetch('api/calendars/metadata', {
+                        const res = await fetch(`${this.apiBase}api/calendars/metadata`, {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify(ids)
@@ -1039,7 +1040,7 @@
                 },
 
                 async loadSettings() {
-                    const res = await fetch('api/settings');
+                    const res = await fetch(`${this.apiBase}api/settings`);
                     const data = await res.json();
                     this.daysToShow = data.days_to_show || 7;
                     this.routeCacheDurationMins = data.route_cache_duration_mins || 1440;
@@ -1102,13 +1103,13 @@
                             trip_hashtags: this.tripHashtags || []
                         };
                         
-                        await fetch('api/settings', {
+                        await fetch(`${this.apiBase}api/settings`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
                         if (this.isHomeAssistant) {
-                            await fetch('api/settings/ha_sync', { method: 'POST' });
+                            await fetch(`${this.apiBase}api/settings/ha_sync`, { method: 'POST' });
                         }
                     } finally {
                         this.saving = false;
@@ -1116,17 +1117,24 @@
                 },
                 async clearCaches() {
                     if(confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google/Mapbox.")) {
-                        fetch('api/admin/clear_cache')
-                            .then(r => r.json())
-                            .then(() => {
-                                alert("Caches cleared successfully.");
+                        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                        fetch(`${apiBase}api/cache`, { method: 'DELETE' })
+                            .then(r => {
+                                if (r.ok) {
+                                    alert("Caches cleared successfully.");
+                                } else {
+                                    alert("Failed to clear caches: HTTP status " + r.status);
+                                }
+                            })
+                            .catch(err => {
+                                alert("Failed to clear caches: " + err);
                             });
                     }
                 },
 
 
                 async loadDrivers() {
-                    const res = await fetch('api/drivers');
+                    const res = await fetch(`${this.apiBase}api/drivers`);
                     this.drivers = await res.json();
                     let allDriverCals = [];
                     this.drivers.forEach(d => {
@@ -1156,10 +1164,10 @@
                         cell_carrier: this.newDriver.cell_carrier || null
                     };
                     if (this.editDriverId) {
-                        await fetch(`api/drivers/${this.editDriverId}`, { method: 'DELETE' });
+                        await fetch(`${this.apiBase}api/drivers/${this.editDriverId}`, { method: 'DELETE' });
                     }
                     
-                    await fetch('api/drivers', {
+                    await fetch(`${this.apiBase}api/drivers`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -1220,7 +1228,7 @@
                 },
                 async deleteDriver(docId) {
                     if(!confirm('Are you sure you want to delete this driver?')) return;
-                    await fetch(`api/drivers/${docId}`, { method: 'DELETE' });
+                    await fetch(`${this.apiBase}api/drivers/${docId}`, { method: 'DELETE' });
                     await this.loadDrivers();
                 },
 
@@ -1240,7 +1248,7 @@
                     return PALETTE[sum % PALETTE.length];
                 },
                 async loadPassengers() {
-                    const res = await fetch('api/passengers');
+                    const res = await fetch(`${this.apiBase}api/passengers`);
                     this.passengers = await res.json();
                 },
 
@@ -1272,14 +1280,14 @@
                     const payload = { ...this.newPassenger };
                     
                     if (this.editPassengerId) {
-                        await fetch(`api/passengers/${this.editPassengerId}`, {
+                        await fetch(`${this.apiBase}api/passengers/${this.editPassengerId}`, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
                         this.editPassengerId = null;
                     } else {
-                        await fetch('api/passengers', {
+                        await fetch(`${this.apiBase}api/passengers`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
@@ -1304,13 +1312,13 @@
 
                 async deletePassenger(docId) {
                     if(!confirm('Are you sure you want to delete this passenger?')) return;
-                    await fetch(`api/passengers/${docId}`, { method: 'DELETE' });
+                    await fetch(`${this.apiBase}api/passengers/${docId}`, { method: 'DELETE' });
                     await this.loadPassengers();
                 },
 
                 // --- Rules ---
                 async loadRules() {
-                    const res = await fetch('api/rules');
+                    const res = await fetch(`${this.apiBase}api/rules`);
                     this.rules = await res.json();
                 },
                 editRule(rule) {
@@ -1374,21 +1382,21 @@
                         
                         const payload = JSON.parse(JSON.stringify(this.newRule));
                         if(this.editRuleId) {
-                            await fetch(`api/rules/${this.editRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                            await fetch(`${this.apiBase}api/rules/${this.editRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                         } else {
-                            await fetch('api/rules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                            await fetch(`${this.apiBase}api/rules`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                         }
                         this.cancelEditRule();
                         await this.loadRules();
                     } finally { this.saving = false; }
                 },
                 async deleteRule(doc_id) {
-                    await fetch(`api/rules/${doc_id}`, { method: 'DELETE' });
+                    await fetch(`${this.apiBase}api/rules/${doc_id}`, { method: 'DELETE' });
                     await this.loadRules();
                 },
 
                 async loadPriorityRules() {
-                    const res = await fetch('api/priority_rules');
+                    const res = await fetch(`${this.apiBase}api/priority_rules`);
                     this.priorityRules = await res.json();
                 },
                 editPriorityRule(rule) {
@@ -1428,16 +1436,16 @@
                         
                         const payload = JSON.parse(JSON.stringify(this.newPriorityRule));
                         if (this.editPriorityRuleId) {
-                            await fetch(`api/priority_rules/${this.editPriorityRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                            await fetch(`${this.apiBase}api/priority_rules/${this.editPriorityRuleId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                         } else {
-                            await fetch('api/priority_rules', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                            await fetch(`${this.apiBase}api/priority_rules`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                         }
                         this.cancelEditPriorityRule();
                         await this.loadPriorityRules();
                     } finally { this.saving = false; }
                 },
                 async deletePriorityRule(doc_id) {
-                    await fetch(`api/priority_rules/${doc_id}`, { method: 'DELETE' });
+                    await fetch(`${this.apiBase}api/priority_rules/${doc_id}`, { method: 'DELETE' });
                     await this.loadPriorityRules();
                 },
 

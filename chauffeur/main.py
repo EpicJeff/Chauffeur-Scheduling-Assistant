@@ -344,16 +344,20 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
 
 @app.delete("/api/cache")
 def clear_caches():
-    from services.storage import distance_cache_table, cache_table
+    from services.storage import distance_cache_table, cache_table, daily_schedules_table, custom_schedules_table
     distance_cache_table.truncate()
     cache_table.truncate()
+    daily_schedules_table.truncate()
+    custom_schedules_table.truncate()
     return {"status": "cleared"}
 
 @app.get("/api/maps/stats")
 def get_maps_stats():
     import datetime
     current_month = datetime.datetime.now().strftime("%Y-%m")
+    has_key = bool(maps.get_mapbox_api_key())
     return {
+        "has_key": has_key,
         "matrix": {
             "monthly": storage.get_mapbox_usage(current_month, 'matrix'),
             "rolling_24h": storage.get_rolling_usage('matrix', 86400),
@@ -1447,7 +1451,7 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
 
 @app.post("/api/schedule/refresh")
 async def force_refresh_schedule(start_date: str = None, end_date: str = None):
-    await refresh_schedule_logic(start_date, end_date, force_refresh=True)
+    await asyncio.to_thread(refresh_schedule_logic, start_date, end_date, True)
     return {"status": "sync_started"}
 
 

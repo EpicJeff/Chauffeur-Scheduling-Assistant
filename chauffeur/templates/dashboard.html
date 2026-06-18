@@ -548,12 +548,14 @@
             }
 
             try {
-                const driversRes = await fetch('api/drivers');
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const driversRes = await fetch(`${apiBase}api/drivers`);
+                if (!driversRes.ok) throw new Error(`Failed to load drivers: ${driversRes.status}`);
                 const driversList = await driversRes.json();
                 driversMap = {};
                 driversList.filter(d => !d.is_disabled).forEach(d => { driversMap[d.id] = d; });
 
-                let url = 'api/schedule';
+                let url = `${apiBase}api/schedule`;
                 if (currentStartDate && currentEndDate && isPagination) {
                     const s = toLocalIsoString(currentStartDate);
 
@@ -561,7 +563,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
+                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 } else if (!isPagination) {
                     currentStartDate = new Date();
                     currentStartDate.setHours(0, 0, 0, 0);
@@ -572,12 +574,13 @@
 
                     const s = toLocalIsoString(currentStartDate);
                     const e = toLocalIsoString(currentEndDate);
-                    url = `api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
+                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`;
                 }
                 
                 url += (url.includes('?') ? '&' : '?') + '_cb=' + new Date().getTime();
                 
                 const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' } });
+                if (!res.ok) throw new Error(`Failed to load schedule: ${res.status}`);
                 const data = await res.json();
 
                 if (data.error) {
@@ -642,7 +645,8 @@
             if (text) text.textContent = 'Syncing...';
 
             try {
-                let url = 'api/schedule/refresh';
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                let url = `${apiBase}api/schedule/refresh`;
                 if (currentStartDate && currentEndDate) {
                     const s = toLocalIsoString(currentStartDate);
 
@@ -650,13 +654,17 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
+                    url = `${apiBase}api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
                 }
-                await fetch(url, { method: 'POST' });
+                const res = await fetch(url, { method: 'POST' });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`Sync request failed with status ${res.status}: ${errText}`);
+                }
                 // Now that refresh is synchronous, fetch the new schedule!
                 await fetchSchedule();
             } catch (e) {
-                showError("Manual sync failed.");
+                showError("Manual sync failed: " + e.message);
                 if (btn) {
                     btn.disabled = false;
                     btn.classList.remove('opacity-50', 'cursor-not-allowed');
@@ -2386,7 +2394,8 @@ const scheduleByDate = {};
 
         async function fetchMapsStatsDashboard() {
             try {
-                const res = await fetch('api/maps/stats');
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/maps/stats`);
                 if (!res.ok) return;
                 const stats = await res.json();
                 
@@ -2397,10 +2406,23 @@ const scheduleByDate = {};
                 const warningsEl = document.getElementById('stats-warnings');
                 let warningsHtml = '';
                 
-                const matrixOffline = stats.matrix.disabled || (stats.matrix.monthly >= stats.matrix.limit);
-                const directionsOffline = stats.directions.disabled || (stats.directions.monthly >= stats.directions.limit);
+                if (stats.has_key === false) {
+                    warningsHtml += `
+                        <div class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex flex-col gap-1">
+                            <div class="flex items-center gap-2 font-bold">
+                                <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                <span>Mapbox API Key Missing</span>
+                            </div>
+                            <span class="text-gray-400">No Mapbox API Key is set in your addon configuration. Mapbox routing is bypassed.</span>
+                            <span class="px-2 py-0.5 bg-red-900/60 text-red-200 rounded font-bold uppercase tracking-wider text-[10px] border border-red-800 w-max mt-1">Fallback: Using free OSRM</span>
+                        </div>
+                    `;
+                }
                 
-                if (matrixOffline) {
+                const matrixOffline = stats.matrix.disabled || (stats.matrix.monthly >= stats.matrix.limit) || (stats.has_key === false);
+                const directionsOffline = stats.directions.disabled || (stats.directions.monthly >= stats.directions.limit) || (stats.has_key === false);
+                
+                if (matrixOffline && stats.has_key !== false) {
                     const reason = stats.matrix.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.matrix.monthly} / ${stats.matrix.limit}).`;
                     warningsHtml += `
                         <div class="p-3 bg-amber-950/40 border border-amber-900/60 text-amber-300 rounded-lg text-xs flex flex-col gap-1">
@@ -2414,7 +2436,7 @@ const scheduleByDate = {};
                     `;
                 }
 
-                if (matrixOffline && directionsOffline) {
+                if (matrixOffline && directionsOffline && stats.has_key !== false) {
                     const reason = stats.directions.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.directions.monthly} / ${stats.directions.limit}).`;
                     warningsHtml += `
                         <div class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex flex-col gap-1">
