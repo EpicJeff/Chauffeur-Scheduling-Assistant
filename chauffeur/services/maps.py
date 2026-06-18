@@ -265,13 +265,16 @@ def prime_matrix_cache(locations: list[str]):
                     c = storage.get_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), max_age_mins=cache_duration, ignore_age=True)
                     if c is None:
                         pairs_to_query.append((s_idx, d_idx))
-                        
             if pairs_to_query:
-                max_pairs = get_map_option('mapbox_directions_max_pairs', 50)
-                if len(pairs_to_query) > max_pairs:
+                max_pairs = get_map_option('mapbox_directions_max_pairs', 500)
+                disable_osrm = get_map_option('disable_osrm', True)
+                if len(pairs_to_query) > max_pairs and not disable_osrm:
                     print(f"Too many pairs to query via Directions API ({len(pairs_to_query)} > {max_pairs}). Cascading to OSRM to protect limits and avoid long runtimes.")
                 else:
-                    print(f"Mapbox Matrix unavailable/over limit. Querying Directions API for {len(pairs_to_query)} pairs.")
+                    if len(pairs_to_query) > max_pairs:
+                        print(f"Querying {len(pairs_to_query)} pairs via Directions API (OSRM fallback disabled).")
+                    else:
+                        print(f"Mapbox Matrix unavailable/over limit. Querying Directions API for {len(pairs_to_query)} pairs.")
                     success_count = 0
                     for s_idx, d_idx in pairs_to_query:
                         if not check_usage_limits_and_spikes('directions', 1):
@@ -314,6 +317,11 @@ def prime_matrix_cache(locations: list[str]):
                         return True
                     
         # --- TIER 3: OSRM ---
+        disable_osrm = get_map_option('disable_osrm', False)
+        if disable_osrm:
+            print("OSRM fallback is disabled. Matrix chunk calculation failed.")
+            return False
+            
         url = f"http://router.project-osrm.org/table/v1/driving/{coord_str}"
         params = {
             "sources": src_str,
