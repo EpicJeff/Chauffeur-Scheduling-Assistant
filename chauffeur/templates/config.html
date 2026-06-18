@@ -70,8 +70,8 @@
                 <div class="flex flex-wrap gap-2">
                     <template x-for="(calId, index) in calendarIds" :key="index">
                         <div class="flex items-center text-blue-200 px-3 py-1.5 rounded-full text-sm font-bold shadow-sm border border-gray-600"
-                             :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
-                            <div class="w-3 h-3 rounded-full mr-2 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                             :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
+                            <div class="w-3 h-3 rounded-full mr-2 shadow-sm" :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')"></div>
                             <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-2"></span>
                             <button @click="removeCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -222,7 +222,7 @@
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                 <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
-                    <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="`border-color: ${driver.color_code}`">
+                    <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="'border-color: ' + driver.color_code">
                         <div class="w-full">
                             <div class="flex justify-between items-center mb-2">
                                 <div class="font-bold text-xl text-white flex items-center gap-2">
@@ -349,8 +349,8 @@
                         <div class="flex flex-wrap gap-2">
                             <template x-for="(calId, index) in newDriver.calendarIds" :key="index">
                                 <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
-                                     :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
-                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                                     :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
+                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')"></div>
                                     <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-1"></span>
                                     <button @click="removeDriverCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -383,7 +383,7 @@
                 <template x-for="passenger in passengers" :key="passenger.doc_id || passenger.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="flex items-center mb-4 md:mb-0">
-                            <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white" :style="`background-color: ${getPassengerColor(passenger)}`">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white" :style="'background-color: ' + getPassengerColor(passenger)">
                                 <span x-text="(passenger.name || '').charAt(0)"></span>
                             </div>
                             <div>
@@ -444,8 +444,8 @@
                         <div class="flex flex-wrap gap-2">
                             <template x-for="(calId, index) in newPassenger.calendar_ids" :key="index">
                                 <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
-                                     :style="calendarMetadata[calId] ? `background-color: ${calendarMetadata[calId].backgroundColor}40; border-color: ${calendarMetadata[calId].backgroundColor}` : 'background-color: #374151'">
-                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="`background-color: ${calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF'}`"></div>
+                                     :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
+                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm" :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')"></div>
                                     <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId" class="mr-1"></span>
                                     <button @click="removePassengerCalendarId(index)" class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
