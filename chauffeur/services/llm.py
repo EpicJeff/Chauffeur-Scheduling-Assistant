@@ -214,7 +214,6 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                     }
                 ],
                 "generationConfig": {
-                    "responseMimeType": "application/json",
                     "temperature": 0.1
                 }
             }
