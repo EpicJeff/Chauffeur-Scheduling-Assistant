@@ -265,6 +265,11 @@ def prime_matrix_cache(locations: list[str]):
                     c = storage.get_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), max_age_mins=cache_duration, ignore_age=True)
                     if c is None:
                         pairs_to_query.append((s_idx, d_idx))
+                        
+            if not pairs_to_query:
+                # Everything is already cached! No need to do anything.
+                return True
+                
             if pairs_to_query:
                 max_pairs = get_map_option('mapbox_directions_max_pairs', 50)
                 disable_osrm = get_map_option('disable_osrm', False)
