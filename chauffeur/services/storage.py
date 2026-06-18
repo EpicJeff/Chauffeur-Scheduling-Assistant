@@ -143,14 +143,30 @@ def prime_api_usage_seeding():
         'geocode': 927
     }
     with db_lock:
+        settings_docs = settings_table.all()
+        settings = dict(settings_docs[0]) if settings_docs else {}
+        has_seeded = settings.get('has_seeded_truth_2026_06', False)
+        
         for endpoint, seed_val in seeds.items():
             res = api_usage_table.search((Query().month == current_month) & (Query().endpoint == endpoint))
-            if res:
-                current_val = res[0].get('count', 0)
-                if current_val < seed_val:
+            if not has_seeded:
+                # Force alignment with the exact Mapbox console numbers on first load
+                if res:
                     api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
+                else:
+                    api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
             else:
-                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
+                # Standard logic for regular restarts to prevent undercounting
+                if res:
+                    current_val = res[0].get('count', 0)
+                    if current_val < seed_val:
+                        api_usage_table.update({'count': seed_val}, (Query().month == current_month) & (Query().endpoint == endpoint))
+                else:
+                    api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': seed_val})
+                    
+        if not has_seeded and settings_docs:
+            settings['has_seeded_truth_2026_06'] = True
+            settings_table.update(settings, doc_ids=[settings_docs[0].doc_id])
 
 prime_api_usage_seeding()
 
