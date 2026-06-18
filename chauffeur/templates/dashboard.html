@@ -1464,7 +1464,17 @@
         }
 
         function renderSchedule(data) {
-            const { events, assignments, ghost_assignments, unassigned, no_location, calendar_metadata, overridden_events, lateness_warnings } = data;
+            if (!data) data = {};
+            const { 
+                events = [], 
+                assignments = {}, 
+                ghost_assignments = {}, 
+                unassigned = [], 
+                no_location = [], 
+                calendar_metadata = {}, 
+                overridden_events = [], 
+                lateness_warnings = [] 
+            } = data;
 
             // --- Inbox Logic ---
             let triageEvents = events.filter(e => e.needs_triage);
