@@ -38,6 +38,7 @@ class Driver(BaseModel):
     preferred_maps_provider: str = 'google'
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
+    bio: Optional[str] = ""
 
 class Passenger(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -45,6 +46,7 @@ class Passenger(BaseModel):
     calendar_ids: List[str] = Field(default_factory=list)
     hashtags: List[str] = Field(default_factory=list)
     requires_attendance: bool = False
+    bio: Optional[str] = ""
 
 class EventFilter(BaseModel):
     keywords: List[str] = Field(default_factory=list)
@@ -73,6 +75,7 @@ class Rule(BaseModel):
     time_end: Optional[str] = None
     location: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
+    is_ai_generated: bool = False
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -85,6 +88,7 @@ class PriorityRule(BaseModel):
     time_start: Optional[str] = None
     time_end: Optional[str] = None
     location: Optional[str] = None
+    is_ai_generated: bool = False
 
 class ManualOverride(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -105,6 +109,11 @@ class Settings(BaseModel):
     mapbox_matrix_limit: int = 90000
     mapbox_directions_limit: int = 90000
     mapbox_geocode_limit: int = 90000
+    llm_provider: str = ""
+    llm_gemini_api_key: Optional[str] = None
+    llm_ollama_url: str = "http://localhost:11434"
+    llm_ollama_model: str = "qwen2.5:7b"
+    family_philosophy: str = ""
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

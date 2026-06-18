@@ -357,6 +357,116 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
+class LLMTestPayload(BaseModel):
+    provider: str
+    url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+@app.post("/api/settings/test_llm")
+def test_llm(payload: LLMTestPayload):
+    from services.llm import test_llm_connection
+    success, message = test_llm_connection(
+        provider=payload.provider,
+        url=payload.url,
+        api_key=payload.api_key,
+        model=payload.model
+    )
+    return {"success": success, "message": message}
+
+@app.post("/api/settings/generate_ai_rules")
+def generate_ai_rules(background_tasks: BackgroundTasks):
+    from services.llm import generate_rules_from_philosophy
+    
+    settings = storage.get_settings()
+    provider = settings.get('llm_provider', '')
+    if not provider:
+        return {"success": False, "message": "AI Assistant is not configured. Please select a provider first."}
+        
+    url = settings.get('llm_ollama_url', 'http://localhost:11434')
+    api_key = settings.get('llm_gemini_api_key', '')
+    model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+    philosophy = settings.get('family_philosophy', '')
+    
+    if not philosophy.strip():
+        return {"success": False, "message": "Family Philosophy is empty. Please enter your scheduling philosophy first."}
+        
+    drivers = storage.get_all_drivers()
+    passengers = storage.get_all_passengers()
+    
+    try:
+        rules, priority_rules, raw_log = generate_rules_from_philosophy(
+            provider=provider,
+            url=url,
+            api_key=api_key,
+            model=model,
+            philosophy=philosophy,
+            drivers=drivers,
+            passengers=passengers
+        )
+        
+        # Save to database
+        with storage.db_lock:
+            # 1. Remove all old AI generated rules
+            from tinydb import Query
+            storage.rules_table.remove(Query().is_ai_generated == True)
+            storage.priority_rules_table.remove(Query().is_ai_generated == True)
+            
+            # 2. Insert new ones
+            for r in rules:
+                storage.rules_table.insert(r)
+            for pr in priority_rules:
+                storage.priority_rules_table.insert(pr)
+                
+            # 3. Clear schedule caches so solver reruns on next fetch
+            storage.custom_schedules_table.truncate()
+            storage.mark_all_daily_schedules_dirty()
+            storage.cache_table.truncate()
+            
+        # Trigger background schedule solve
+        background_tasks.add_task(trigger_background_refresh)
+        
+        return {
+            "success": True, 
+            "message": f"Successfully generated and applied {len(rules)} routing rules and {len(priority_rules)} priority rules!",
+            "rules_count": len(rules),
+            "priority_rules_count": len(priority_rules)
+        }
+    except Exception as e:
+        logger.error(f"AI Rule generation failed: {e}", exc_info=True)
+        return {"success": False, "message": str(e)}
+
+class LLMRefinePayload(BaseModel):
+    text: str
+    context_type: str
+
+@app.post("/api/settings/refine_text")
+def refine_text(payload: LLMRefinePayload):
+    from services.llm import refine_scheduling_text
+    
+    settings = storage.get_settings()
+    provider = settings.get('llm_provider', '')
+    if not provider:
+        return {"success": False, "message": "AI Assistant is not configured. Please select a provider in settings first."}
+        
+    url = settings.get('llm_ollama_url', 'http://localhost:11434')
+    api_key = settings.get('llm_gemini_api_key', '')
+    model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+    
+    try:
+        refined = refine_scheduling_text(
+            provider=provider,
+            url=url,
+            api_key=api_key,
+            model=model,
+            text=payload.text,
+            context_type=payload.context_type
+        )
+        return {"success": True, "refined_text": refined}
+    except Exception as e:
+        logger.error(f"AI Text refinement failed: {e}", exc_info=True)
+        return {"success": False, "message": str(e)}
+
 @app.delete("/api/cache")
 def clear_caches():
     with storage.db_lock:

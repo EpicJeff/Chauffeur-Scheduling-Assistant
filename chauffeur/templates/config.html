@@ -208,6 +208,85 @@
                 <p class="text-gray-500 text-sm mt-1">If an all-day event contains any of these hashtags, its location will be used as a temporary Home Location for the event's duration.</p>
             </div>
 
+            <!-- AI assistant section -->
+            <div class="mt-8 pt-8 border-t border-gray-700">
+                <h3 class="text-2xl font-bold mb-4 text-blue-300 flex items-center gap-2">
+                    <svg class="w-7 h-7 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 113.536 0V21h2v-4"></path>
+                    </svg>
+                    AI Scheduling Assistant
+                </h3>
+                <p class="text-gray-400 text-sm mb-6">
+                    Translate your natural language family driving rules and philosophy, along with individual driver and passenger biographies, into structured constraints automatically.
+                </p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div>
+                        <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">LLM Provider</label>
+                        <select x-model="llmProvider" @change="saveSettings()" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white appearance-none">
+                            <option value="">Disabled / None</option>
+                            <option value="ollama">Ollama (Local)</option>
+                            <option value="gemini">Gemini API (Cloud)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Gemini settings -->
+                    <div x-show="llmProvider === 'gemini'" x-transition>
+                        <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
+                        <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()" placeholder="Enter Gemini API Key" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                    </div>
+                    
+                    <!-- Ollama settings -->
+                    <div x-show="llmProvider === 'ollama'" class="grid grid-cols-1 sm:grid-cols-2 gap-4 col-span-1 md:col-span-2" x-transition>
+                        <div>
+                            <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama URL</label>
+                            <input type="text" x-model="llmOllamaUrl" @change="saveSettings()" placeholder="http://localhost:11434" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama Model</label>
+                            <input type="text" x-model="llmOllamaModel" @change="saveSettings()" placeholder="qwen2.5:7b" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-gray-400 font-semibold text-sm uppercase tracking-wider">Family Philosophy & Rules</label>
+                        <button @click.prevent="refineText('philosophy')" :disabled="!llmProvider || refiningPhilosophy" class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningPhilosophy"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4" x-show="refiningPhilosophy" class="animate-spin"></path>
+                            </svg>
+                            <span x-text="refiningPhilosophy ? 'Improving...' : 'Improve with AI'"></span>
+                        </button>
+                    </div>
+                    <textarea x-model="familyPhilosophy" @change="saveSettings()" rows="4" placeholder="Describe your scheduling priorities in plain English (e.g. 'Lorena always drives Nate to his soccer practices on Mondays. Lorena needs 10 minutes buffer before and after events. Jeff is preferred for swim events. Ignore all events with the keyword private.')" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white text-sm"></textarea>
+                    <p class="text-gray-500 text-xs mt-1">Include general guidelines, driver preferences, and routine patterns.</p>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div class="flex flex-wrap gap-4 items-center mb-6">
+                    <button @click="testLLMConnection()" :disabled="!llmProvider" class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center shadow-md">
+                        Test Connection
+                    </button>
+                    <button @click="generateAIRules()" :disabled="!llmProvider || !familyPhilosophy.trim() || aiRulesGenerating" class="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center shadow-md">
+                        <span x-text="aiRulesGenerating ? 'Synthesizing...' : 'Synthesize AI Rules'"></span>
+                    </button>
+                </div>
+                
+                <!-- Connection Result Message -->
+                <div x-show="llmTestResult" x-cloak class="p-4 rounded-lg mb-4 text-sm font-medium border"
+                     :class="llmTestSuccess ? 'bg-green-900/30 border-green-500/50 text-green-300' : 'bg-red-900/30 border-red-500/50 text-red-300'">
+                     <span x-text="llmTestResult"></span>
+                </div>
+                
+                <!-- AI Synthesis Result Message -->
+                <div x-show="aiRulesResult" x-cloak class="p-4 rounded-lg text-sm font-medium border"
+                     :class="aiRulesSuccess ? 'bg-green-900/30 border-green-500/50 text-green-300' : 'bg-red-900/30 border-red-500/50 text-red-300'">
+                     <span x-text="aiRulesResult"></span>
+                </div>
+            </div>
+
             <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
                 <div>
                     <h4 class="font-bold text-white">System Cache</h4>
@@ -359,6 +438,19 @@
                             </template>
                         </div>
                     </div>
+                    <div class="w-full mt-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="block text-gray-400 font-semibold text-sm">Bio / Context (e.g. "Jeff does not drive after 8 PM")</label>
+                            <button @click.prevent="refineText('driver_bio')" :disabled="!llmProvider || refiningDriverBio" class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningDriverBio"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4" x-show="refiningDriverBio" class="animate-spin"></path>
+                                </svg>
+                                <span x-text="refiningDriverBio ? 'Improving...' : 'Improve with AI'"></span>
+                            </button>
+                        </div>
+                        <textarea x-model="newDriver.bio" rows="2" placeholder="Enter custom driver notes, philosophy, or specific details for AI scheduling..." class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm focus:outline-none focus:border-blue-500"></textarea>
+                    </div>
                     <div class="w-full mt-2 flex items-center space-x-3">
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" x-model="newDriver.is_disabled" class="sr-only peer">
@@ -453,6 +545,19 @@
                         </div>
                     </div>
                 </div>
+                <div class="w-full mt-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="block text-gray-400 font-semibold text-sm">Bio / Context (e.g. "Ben gets anxious after soccer and prefers riding with Mom")</label>
+                        <button @click.prevent="refineText('passenger_bio')" :disabled="!llmProvider || refiningPassengerBio" class="text-xs px-2.5 py-1 bg-purple-900/40 hover:bg-purple-800/60 disabled:opacity-50 text-purple-300 border border-purple-800/60 rounded-lg font-bold flex items-center gap-1 transition-all shadow-sm">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" x-show="!refiningPassengerBio"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4" x-show="refiningPassengerBio" class="animate-spin"></path>
+                            </svg>
+                            <span x-text="refiningPassengerBio ? 'Improving...' : 'Improve with AI'"></span>
+                        </button>
+                    </div>
+                    <textarea x-model="newPassenger.bio" rows="2" placeholder="Enter custom passenger notes, preferences, or specific routines for AI scheduling..." class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm focus:outline-none focus:border-blue-500"></textarea>
+                </div>
                 <div class="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-600 flex items-center justify-between">
                     <div>
                         <h4 class="font-bold text-white mb-1">Requires Attendance</h4>
@@ -475,7 +580,8 @@
         <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Routing Rules</h2>
             <div class="space-y-4 mb-8">
-                <template x-for="rule in rules" :key="rule.doc_id || rule.id">
+                <h3 class="text-lg font-bold text-gray-300 mb-2 uppercase tracking-wide">Manual Routing Rules</h3>
+                <template x-for="rule in rules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="text-sm space-y-2">
                             <div class="flex flex-wrap items-center gap-2">
@@ -522,6 +628,64 @@
                         </div>
                     </div>
                 </template>
+                <template x-if="rules.filter(r => !r.is_ai_generated).length === 0">
+                    <p class="text-sm text-gray-500 italic">No manual routing rules configured.</p>
+                </template>
+            </div>
+
+            <!-- AI Generated Rules Section -->
+            <div class="border-t border-gray-700/60 pt-6 mt-8 mb-8">
+                <h3 class="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                    <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    AI-Generated Routing Rules (Read-Only)
+                </h3>
+                <div class="space-y-4">
+                    <template x-for="rule in rules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
+                        <div class="bg-gray-900/60 p-5 rounded-xl flex justify-between items-center border-l-4 border-purple-500 shadow-sm">
+                            <div class="text-sm space-y-2">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-lg">Driver</span> 
+                                    <span class="font-extrabold text-blue-400 px-2 py-1 bg-blue-900/30 rounded text-lg" x-text="getDriverName(rule.driver_id)"></span> 
+                                    <span class="text-lg">is</span> 
+                                    <span class="font-extrabold text-purple-400 uppercase px-2 py-1 bg-purple-900/30 rounded text-lg" x-text="rule.constraint_type === 'duplicate' ? 'DUPLICATE (' + (rule.duplicate_action === 'schedule_all' ? 'SCHEDULE ALL' : 'SCHEDULE ONE') + ')' : (rule.constraint_type === 'attendance' ? 'ATTENDANCE (' + (rule.attendance_action === 'dropoff_pickup' ? 'SPLIT' : 'STAY') + ')' : (rule.constraint_type === 'no_split' ? 'ATTENDANCE (STAY)' : rule.constraint_type))"></span> 
+                                </div>
+                                <div class="text-gray-400 flex flex-wrap gap-2 items-center">
+                                    <template x-if="rule.constraint_type === 'tolerance'">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic" x-text="'Tolerance (' + (rule.tolerance_type === 'arrival' ? 'Arrival' : (rule.tolerance_type === 'departure' ? 'Departure' : 'Both')) + '): ' + rule.tolerance_mins + 'm'"></span>
+                                    </template>
+                                    <template x-if="rule.constraint_type === 'buffer'">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-blue-300 italic" x-text="'Buffer: ' + (rule.buffer_before_mins || 0) + 'm before, ' + (rule.buffer_after_mins || 0) + 'm after'"></span>
+                                    </template>
+                                    <template x-if="rule.constraint_type === 'duplicate'">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-teal-300 italic" x-text="'Period: ' + (rule.grouping_period || 'daily')"></span>
+                                    </template>
+                                    <template x-if="rule.constraint_type === 'group'">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-purple-300 italic" x-text="(rule.filter_sets ? rule.filter_sets.length : 0) + ' events grouped'"></span>
+                                    </template>
+                                    <span class="font-bold">IF</span>
+                                    <template x-if="rule.keywords && rule.keywords.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.time_start || rule.time_end">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                                    </template>
+                                </div>
+                            </div>
+                            <span class="px-2.5 py-1 bg-purple-900/40 text-purple-300 border border-purple-800/60 rounded-full text-xs font-bold uppercase tracking-wider shrink-0">AI Generated</span>
+                        </div>
+                    </template>
+                    <template x-if="rules.filter(r => r.is_ai_generated).length === 0">
+                        <p class="text-sm text-gray-500 italic">No AI-generated routing rules synthesized yet. Go to General tab to configure.</p>
+                    </template>
+                </div>
             </div>
             
             <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4">
@@ -739,7 +903,8 @@
             <p class="text-gray-400 mb-6">Define priority rules to help the solver resolve conflicts. When events overlap, the event with the highest total priority is favored.</p>
             
             <div class="space-y-4 mb-8">
-                <template x-for="rule in priorityRules" :key="rule.doc_id || rule.id">
+                <h3 class="text-lg font-bold text-gray-300 mb-2 uppercase tracking-wide">Manual Event Priorities</h3>
+                <template x-for="rule in priorityRules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
                         <div class="text-sm space-y-2">
                             <div class="flex flex-wrap items-center gap-2">
@@ -775,6 +940,53 @@
                         </div>
                     </div>
                 </template>
+                <template x-if="priorityRules.filter(r => !r.is_ai_generated).length === 0">
+                    <p class="text-sm text-gray-500 italic">No manual priority rules configured.</p>
+                </template>
+            </div>
+
+            <!-- AI Generated Priority Rules Section -->
+            <div class="border-t border-gray-700/60 pt-6 mt-8 mb-8">
+                <h3 class="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                    <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    AI-Generated Event Priorities (Read-Only)
+                </h3>
+                <div class="space-y-4">
+                    <template x-for="rule in priorityRules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
+                        <div class="bg-gray-900/60 p-5 rounded-xl flex justify-between items-center border-l-4 border-purple-500 shadow-sm">
+                            <div class="text-sm space-y-2">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-lg font-bold">Priority Modifier:</span> 
+                                    <span class="font-extrabold text-green-400 px-2 py-1 bg-green-900/30 rounded text-lg" x-text="rule.weight_modifier > 0 ? '+' + rule.weight_modifier : rule.weight_modifier"></span> 
+                                </div>
+                                <div class="text-gray-400 flex flex-wrap gap-2 items-center">
+                                    <span class="font-bold">IF</span>
+                                    <template x-if="rule.keywords && rule.keywords.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                                    </template>
+                                    <template x-if="rule.time_start || rule.time_end">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
+                                    </template>
+                                    <template x-if="rule.location">
+                                        <span class="bg-gray-800 px-2 py-1 rounded text-indigo-300" x-text="'Loc: ' + rule.location"></span>
+                                    </template>
+                                </div>
+                            </div>
+                            <span class="px-2.5 py-1 bg-purple-900/40 text-purple-300 border border-purple-800/60 rounded-full text-xs font-bold uppercase tracking-wider shrink-0">AI Generated</span>
+                        </div>
+                    </template>
+                    <template x-if="priorityRules.filter(r => r.is_ai_generated).length === 0">
+                        <p class="text-sm text-gray-500 italic">No AI-generated priority rules synthesized yet. Go to General tab to configure.</p>
+                    </template>
+                </div>
             </div>
             
             <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4">
@@ -885,7 +1097,6 @@
                 driverLocationSuggestions: [],
                 ruleLocationSuggestions: [],
                 priorityRuleLocationSuggestions: [],
-                autocompleteTimeout: null,
                 newCalendarIdInput: '',
                 newTripHashtagInput: '',
                 tripHashtags: [],
@@ -895,10 +1106,26 @@
                 passengers: [],
                 rules: [],
                 priorityRules: [],
-                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' },
+                
+                // AI assistant LLM settings
+                llmProvider: '',
+                llmGeminiApiKey: '',
+                llmOllamaUrl: 'http://localhost:11434',
+                llmOllamaModel: 'qwen2.5:7b',
+                familyPhilosophy: '',
+                llmTestResult: null,
+                llmTestSuccess: null,
+                aiRulesGenerating: false,
+                aiRulesResult: null,
+                aiRulesSuccess: null,
+                refiningPhilosophy: false,
+                refiningDriverBio: false,
+                refiningPassengerBio: false,
+
+                newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' },
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
-                newPassenger: { name: '', hashtags: [], calendar_ids: [] },
+                newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
                 newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
@@ -1058,6 +1285,14 @@
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
+                    
+                    // LLM Settings
+                    this.llmProvider = data.llm_provider || '';
+                    this.llmGeminiApiKey = data.llm_gemini_api_key || '';
+                    this.llmOllamaUrl = data.llm_ollama_url || 'http://localhost:11434';
+                    this.llmOllamaModel = data.llm_ollama_model || 'qwen2.5:7b';
+                    this.familyPhilosophy = data.family_philosophy || '';
+
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
                 async addCalendarId() {
@@ -1103,7 +1338,12 @@
                             mapbox_directions_limit: parseInt(this.mapboxDirectionsLimit) || 90000,
                             mapbox_geocode_limit: parseInt(this.mapboxGeocodeLimit) || 90000,
                             home_location: this.homeLocation || '',
-                            trip_hashtags: this.tripHashtags || []
+                            trip_hashtags: this.tripHashtags || [],
+                            llm_provider: this.llmProvider,
+                            llm_gemini_api_key: this.llmGeminiApiKey,
+                            llm_ollama_url: this.llmOllamaUrl,
+                            llm_ollama_model: this.llmOllamaModel,
+                            family_philosophy: this.familyPhilosophy
                         };
                         
                         await fetch(`${this.apiBase}api/settings`, {
@@ -1174,7 +1414,8 @@
                         hashtags: this.newDriver.hashtags,
                         preferred_maps_provider: this.newDriver.preferred_maps_provider || 'google',
                         phone_number: this.newDriver.phone_number || null,
-                        cell_carrier: this.newDriver.cell_carrier || null
+                        cell_carrier: this.newDriver.cell_carrier || null,
+                        bio: this.newDriver.bio || ''
                     };
                     if (this.editDriverId) {
                         await fetch(`${this.apiBase}api/drivers/${this.editDriverId}`, { method: 'DELETE' });
@@ -1228,14 +1469,15 @@
                         hashtags: Array.isArray(d.hashtags) ? d.hashtags : (d.hashtags ? [d.hashtags] : []),
                         preferred_maps_provider: d.preferred_maps_provider || 'google',
                         phone_number: d.phone_number || '',
-                        cell_carrier: d.cell_carrier || ''
+                        cell_carrier: d.cell_carrier || '',
+                        bio: d.bio || ''
                     };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
-                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '' };
+                    this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
@@ -1312,7 +1554,7 @@
                             body: JSON.stringify(payload)
                         });
                     }
-                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false };
+                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
                     await this.loadPassengers();
                     } finally {
                         this.saving = false;
@@ -1320,12 +1562,12 @@
                 },
 
                 editPassenger(passenger) {
-                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [], requires_attendance: passenger.requires_attendance || false };
+                    this.newPassenger = { name: passenger.name, hashtags: passenger.hashtags || [], calendar_ids: passenger.calendar_ids || [], requires_attendance: passenger.requires_attendance || false, bio: passenger.bio || '' };
                     this.editPassengerId = passenger.doc_id;
                 },
 
                 cancelEditPassenger() {
-                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [] };
+                    this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
                     this.editPassengerId = null;
                 },
 
@@ -1524,6 +1766,108 @@
                     const idx = this.newPriorityRule.passenger_ids.indexOf(pid);
                     if(idx === -1) this.newPriorityRule.passenger_ids.push(pid);
                     else this.newPriorityRule.passenger_ids.splice(idx, 1);
+                },
+                async testLLMConnection() {
+                    this.llmTestResult = 'Testing connection...';
+                    this.llmTestSuccess = null;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings/test_llm`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                provider: this.llmProvider,
+                                url: this.llmOllamaUrl,
+                                api_key: this.llmGeminiApiKey,
+                                model: this.llmOllamaModel
+                            })
+                        });
+                        const data = await res.json();
+                        this.llmTestSuccess = data.success;
+                        this.llmTestResult = data.message;
+                    } catch (e) {
+                        this.llmTestSuccess = false;
+                        this.llmTestResult = `Error: ${e.message}`;
+                    }
+                },
+                async generateAIRules() {
+                    if (!confirm('Synthesizing rules will replace all existing AI-generated rules. Standard manually-created rules are preserved. Continue?')) {
+                        return;
+                    }
+                    this.aiRulesGenerating = true;
+                    this.aiRulesResult = 'Generating rules...';
+                    this.aiRulesSuccess = null;
+                    try {
+                        // First save settings to ensure LLM config and philosophy are up-to-date
+                        await this.saveSettings();
+                        
+                        const res = await fetch(`${this.apiBase}api/settings/generate_ai_rules`, {
+                            method: 'POST'
+                        });
+                        const data = await res.json();
+                        this.aiRulesSuccess = data.success;
+                        this.aiRulesResult = data.message;
+                        
+                        if (data.success) {
+                            await this.loadRules();
+                            await this.loadPriorityRules();
+                        }
+                    } catch (e) {
+                        this.aiRulesSuccess = false;
+                        this.aiRulesResult = `Error: ${e.message}`;
+                    } finally {
+                        this.aiRulesGenerating = false;
+                    }
+                },
+                async refineText(contextType) {
+                    let targetText = '';
+                    if (contextType === 'philosophy') {
+                        targetText = this.familyPhilosophy;
+                        this.refiningPhilosophy = true;
+                    } else if (contextType === 'driver_bio') {
+                        targetText = this.newDriver.bio;
+                        this.refiningDriverBio = true;
+                    } else if (contextType === 'passenger_bio') {
+                        targetText = this.newPassenger.bio;
+                        this.refiningPassengerBio = true;
+                    }
+
+                    if (!targetText || !targetText.trim()) {
+                        alert('Please enter some text first before attempting to refine it.');
+                        this.refiningPhilosophy = false;
+                        this.refiningDriverBio = false;
+                        this.refiningPassengerBio = false;
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch(`${this.apiBase}api/settings/refine_text`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                text: targetText,
+                                context_type: contextType
+                            })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            if (contextType === 'philosophy') {
+                                this.familyPhilosophy = data.refined_text;
+                                await this.saveSettings();
+                            } else if (contextType === 'driver_bio') {
+                                this.newDriver.bio = data.refined_text;
+                            } else if (contextType === 'passenger_bio') {
+                                this.newPassenger.bio = data.refined_text;
+                            }
+                        } else {
+                            alert(`Failed to refine text: ${data.message}`);
+                        }
+                    } catch (e) {
+                        alert(`Error refining text: ${e.message}`);
+                    } finally {
+                        this.refiningPhilosophy = false;
+                        this.refiningDriverBio = false;
+                        this.refiningPassengerBio = false;
+                    }
                 }
             }
         }
