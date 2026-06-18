@@ -69,7 +69,7 @@ from datetime import datetime, timedelta
 async def poll_schedule():
     while True:
         try:
-            await asyncio.to_thread(refresh_schedule_logic)
+            await asyncio.to_thread(trigger_background_refresh)
         except Exception as e:
             print(f"Polling error: {e}")
         await asyncio.sleep(300)
@@ -316,34 +316,32 @@ def get_overrides():
 @app.post("/api/overrides")
 def create_override(override: ManualOverride, background_tasks: BackgroundTasks):
     doc_id = storage.add_override(override.model_dump() if hasattr(override, 'model_dump') else override.dict())
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.delete("/api/overrides/{doc_id}")
 def delete_override(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_override(doc_id)
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
 
 @app.delete("/api/overrides/event/{event_id}")
 def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks):
     storage.delete_override_by_event(event_id)
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
 
 # --- Event Configs API ---
 @app.post("/api/events/config/{google_id}")
 def update_event_config(google_id: str, config_data: dict, background_tasks: BackgroundTasks):
     storage.set_event_config(google_id, config_data)
-    storage.clear_custom_schedules()
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
 @app.delete("/api/events/config/{google_id}")
 def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
     storage.delete_event_config(google_id)
-    storage.clear_custom_schedules()
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
 
 # --- Settings API ---
@@ -356,7 +354,7 @@ def get_settings():
 @app.post("/api/settings")
 def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     storage.update_settings(settings.model_dump() if hasattr(settings, 'model_dump') else settings.dict())
-    background_tasks.add_task(refresh_schedule_logic)
+    background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
 @app.delete("/api/cache")
@@ -479,12 +477,88 @@ def hash_events(events_list):
         parts.append(f"{getattr(e, 'id', '')}|{getattr(e, 'start', '')}|{getattr(e, 'end', '')}|{getattr(e, 'location', '')}|{getattr(e, 'title', '')}")
     return hashlib.sha256("||".join(parts).encode('utf-8')).hexdigest()
 
+import threading
+
+class AbortRefreshException(Exception):
+    pass
+
+class ScheduleCoordinator:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.is_running = False
+        self.pending_refresh = False
+        self.pending_args = None
+        self.solving_dates = set()
+
+    def start_solving(self, dates):
+        with self.lock:
+            self.solving_dates.update(dates)
+
+    def finish_solving(self, date_str):
+        with self.lock:
+            self.solving_dates.discard(date_str)
+
+    def get_solving_dates(self):
+        with self.lock:
+            return list(self.solving_dates)
+
+    def clear_solving_dates(self):
+        with self.lock:
+            self.solving_dates.clear()
+
+schedule_coordinator = ScheduleCoordinator()
+
+def check_abort_refresh():
+    if schedule_coordinator.pending_refresh:
+        raise AbortRefreshException()
+
+def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False):
+    with schedule_coordinator.lock:
+        if schedule_coordinator.is_running:
+            schedule_coordinator.pending_refresh = True
+            schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh)
+            logger.info("ScheduleCoordinator: Active run detected. Enqueued pending refresh.")
+            return
+        else:
+            schedule_coordinator.is_running = True
+            schedule_coordinator.pending_refresh = False
+            schedule_coordinator.pending_args = None
+            
+    try:
+        while True:
+            try:
+                refresh_schedule_logic(start_date_str, end_date_str, force_refresh)
+            except AbortRefreshException:
+                logger.info("ScheduleCoordinator: Active run aborted by new pending request.")
+            except Exception as e:
+                logger.error(f"ScheduleCoordinator: Error during run: {e}", exc_info=True)
+                
+            with schedule_coordinator.lock:
+                if schedule_coordinator.pending_refresh:
+                    start_date_str, end_date_str, force_refresh = schedule_coordinator.pending_args
+                    schedule_coordinator.pending_refresh = False
+                    schedule_coordinator.pending_args = None
+                    schedule_coordinator.clear_solving_dates()
+                    logger.info("ScheduleCoordinator: Starting next queued/coalesced run.")
+                else:
+                    schedule_coordinator.is_running = False
+                    schedule_coordinator.clear_solving_dates()
+                    logger.info("ScheduleCoordinator: All queued runs complete.")
+                    break
+    except Exception as e:
+        logger.error(f"ScheduleCoordinator: Fatal loop error: {e}", exc_info=True)
+        with schedule_coordinator.lock:
+            schedule_coordinator.is_running = False
+            schedule_coordinator.clear_solving_dates()
+
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False):
     try:
         res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh)
         global LAST_UPDATE_TIME
         LAST_UPDATE_TIME = time.time()
         return res
+    except AbortRefreshException as e:
+        raise e
     except Exception as e:
         logger.error("Fatal error during schedule generation", exc_info=True)
         import traceback
@@ -871,58 +945,295 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
-    
-    combined_assignments = {}
-    combined_unassigned = []
-    combined_lateness_warnings = []
-    combined_ghost_assignments = {}
-    combined_ghost_drivers = []
-    combined_events_to_solve = []
-    combined_route_edges = {}
-    combined_initial_edges = {}
-    combined_final_edges = {}
-    combined_true_unassigned = []
-    combined_conflicts = []
-    
     home_location = maps.get_home_location()
+    calendar_metadata = None
 
-    # Weekly pre-fetch is removed in favor of day-by-day priming inside the daily loop.
+    def compile_and_save_combined():
+        nonlocal calendar_metadata
+        combined_assignments = {}
+        combined_unassigned = []
+        combined_lateness_warnings = []
+        combined_ghost_assignments = {}
+        combined_ghost_drivers = []
+        combined_events_to_solve = []
+        combined_route_edges = {}
+        combined_initial_edges = {}
+        combined_final_edges = {}
+        combined_true_unassigned = []
+        combined_conflicts = []
+        
+        def merge_edges(target, source):
+            if not source: return
+            for d_id, edges in source.items():
+                if d_id not in target:
+                    target[d_id] = {}
+                target[d_id].update(edges)
 
-    def merge_edges(target, source):
-        if not source: return
-        for d_id, edges in source.items():
-            if d_id not in target:
-                target[d_id] = {}
-            target[d_id].update(edges)
+        for d_str in fetched_by_date.keys():
+            daily_cache = storage.get_cached_daily_schedule(d_str)
+            if daily_cache and 'schedule' in daily_cache:
+                sched = daily_cache['schedule']
+                combined_assignments.update(sched.get('assignments', {}))
+                combined_unassigned.extend(sched.get('unassigned', []))
+                combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
+                combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
+                
+                existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
+                for g in sched.get('ghost_drivers', []):
+                    if g['id'] not in existing_ghost_ids:
+                        combined_ghost_drivers.append(g)
+                        existing_ghost_ids.add(g['id'])
+                        
+                combined_events_to_solve.extend(sched.get('events', []))
+                merge_edges(combined_route_edges, sched.get('route_edges', {}))
+                merge_edges(combined_initial_edges, sched.get('initial_edges', {}))
+                merge_edges(combined_final_edges, sched.get('final_edges', {}))
+                combined_true_unassigned.extend(sched.get('true_unassigned', []))
+                combined_conflicts.extend(sched.get('conflicts', []))
 
+        if not calendar_metadata:
+            calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
+            # Inject passenger metadata
+            PALETTE = ["#3B82F6", "#10B981", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#06B6D4", "#84CC16"]
+            for p in passengers:
+                color_index = sum(ord(c) for c in str(p.id)) % len(PALETTE)
+                bg_color = PALETTE[color_index]
+                fg_color = "#ffffff"
+                if p.calendar_ids:
+                    primary_cal = p.calendar_ids[0]
+                    if primary_cal in calendar_metadata:
+                        bg_color = calendar_metadata[primary_cal].get("backgroundColor", bg_color)
+                        fg_color = calendar_metadata[primary_cal].get("foregroundColor", fg_color)
+                calendar_metadata[str(p.id)] = {
+                    "summary": p.name,
+                    "backgroundColor": bg_color,
+                    "foregroundColor": fg_color
+                }
+
+        diagnostics = matcher.compute_diagnostics(
+            combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
+        )
+
+        duplicate_groups = []
+        schedule_one_keywords = []
+        schedule_all_keywords = []
+        for r in rules:
+            if r.constraint_type == 'duplicate':
+                action = getattr(r, 'duplicate_action', 'schedule_one')
+                if getattr(r, 'event_keyword', None):
+                    if action == 'schedule_all':
+                        schedule_all_keywords.append(r.event_keyword.lower())
+                    else:
+                        schedule_one_keywords.append(r.event_keyword.lower())
+                if hasattr(r, 'keywords') and r.keywords:
+                    if action == 'schedule_all':
+                        schedule_all_keywords.extend([kw.lower() for kw in r.keywords])
+                    else:
+                        schedule_one_keywords.extend([kw.lower() for kw in r.keywords])
+
+        from collections import defaultdict
+        dup_groups = defaultdict(list)
+        for e in combined_events_to_solve:
+            if isinstance(e, dict):
+                date_str = e['start'][:10] if 'start' in e and isinstance(e['start'], str) else e['start'].strftime('%Y-%m-%d')
+                core_title = e.get('title', '').split(' - ')[0].split(':')[0].strip()
+                cal_ids = tuple(sorted(e.get('calendar_ids', [])))
+                e_id = e.get('id')
+                e_title = e.get('title')
+            else:
+                date_str = e.start.strftime('%Y-%m-%d')
+                core_title = e.title.split(' - ')[0].split(':')[0].strip()
+                cal_ids = tuple(sorted(e.calendar_ids))
+                e_id = e.id
+                e_title = e.title
+
+            e_title_lower = e_title.lower()
+            if any(kw in e_title_lower for kw in schedule_one_keywords):
+                continue
+            if any(kw in e_title_lower for kw in schedule_all_keywords):
+                continue
+            if len(core_title) > 3:
+                key = (date_str, core_title, cal_ids)
+                dup_groups[key].append((e_title, e_id))
+
+        for key, evs in dup_groups.items():
+            if len(evs) > 1:
+                duplicate_groups.append({
+                    "date": key[0],
+                    "keyword": key[1],
+                    "original_titles": [e[0] for e in evs],
+                    "event_ids": [e[1] for e in evs]
+                })
+
+        data_payload = jsonable_encoder({
+            "duplicate_groups": duplicate_groups,
+            "events": list(all_events_for_ui.values()),
+            "assignments": combined_assignments,
+            "ghost_assignments": combined_ghost_assignments,
+            "ghost_drivers": combined_ghost_drivers,
+            "route_edges": combined_route_edges,
+            "initial_edges": combined_initial_edges,
+            "final_edges": combined_final_edges,
+            "conflicts": combined_conflicts,
+            "unassigned": combined_true_unassigned,
+            "no_location": no_location_events,
+            "overridden_events": [o.event_id for o in overrides],
+            "calendar_metadata": calendar_metadata,
+            "lateness_warnings": combined_lateness_warnings,
+            "passenger_calendar_ids": calendar_ids,
+            "driver_events": driver_events_ids,
+            "home_location": home_location or "",
+            "diagnostics": diagnostics,
+            "passengers": passengers,
+            "drivers": drivers,
+            "solving_dates": schedule_coordinator.get_solving_dates()
+        })
+
+        if not start_date_str and not end_date_str:
+            storage.set_cached_schedule(data_payload)
+        else:
+            storage.save_custom_schedule(start_date_str, end_date_str, data_payload, "")
+
+        global LAST_UPDATE_TIME
+        LAST_UPDATE_TIME = time.time()
+        
+        # --- Generate Pending Notifications ---
+        if start_date_str is None and end_date_str is None:
+            pending_notifications = []
+            events_by_id = {e.id: e for e in all_events_for_ui.values()}
+            import datetime
+            now_ts = datetime.datetime.now().timestamp()
+            
+            existing_notifs = storage.get_pending_notifications()
+            fired_notif_ids = {n["notif_id"] for n in existing_notifs if n.get("fired")}
+            
+            all_driver_ids = set()
+            all_driver_ids.update(data_payload.get("initial_edges", {}).keys())
+            all_driver_ids.update(data_payload.get("route_edges", {}).keys())
+            all_driver_ids.update(data_payload.get("final_edges", {}).keys())
+            
+            for d_id in all_driver_ids:
+                if d_id.startswith('ghost_'): continue
+                
+                for ev_id, edge in data_payload.get("initial_edges", {}).get(d_id, {}).items():
+                    ev = events_by_id.get(ev_id)
+                    if not ev: continue
+                    pickup_wp = edge.get("pickup_waypoint")
+                    buffer_before = edge.get("buffer_before_mins", 0)
+                    ev_start_ts = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp()
+                    
+                    def add_init_notif(nid, ts, body, loc):
+                        if now_ts <= ts + 600:
+                            pending_notifications.append({
+                                "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
+                                "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids
+                            })
+
+                    if pickup_wp:
+                        pax_pickup_loc = pickup_wp.get("pickup_location", "")
+                        driver_home_loc = edge.get("driver_home_location", "")
+                        if pax_pickup_loc == driver_home_loc:
+                            dep_time = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                            add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
+                        else:
+                            dep1 = ev_start_ts - (pickup_wp.get("from_driver_home_mins", 0) + pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                            add_init_notif(f"init_{ev_id}_1", dep1, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
+                            dep2 = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
+                            add_init_notif(f"init_{ev_id}_2", dep2, f"Drive to {ev.location.split(',')[0]}", ev.location)
+                    else:
+                        dep_time = ev_start_ts - (edge.get("travel_mins", 0) + 5 + buffer_before) * 60
+                        add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
+                        
+                for ev_id, edge in data_payload.get("route_edges", {}).get(d_id, {}).items():
+                    ev = events_by_id.get(ev_id)
+                    next_ev = events_by_id.get(edge.get("to_event", ""))
+                    if not ev or not next_ev: continue
+                    buffer_after = edge.get("buffer_after_mins", 0)
+                    buffer_before = edge.get("buffer_before_mins", 0)
+                    ev_end_ts = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp()
+                    next_ev_start_ts = datetime.datetime.fromisoformat(next_ev.start.isoformat()).timestamp()
+                    
+                    home_wp = edge.get("home_waypoint")
+                    pickup_wp = edge.get("pickup_waypoint")
+                    
+                    def add_notif(nid, ts, body, loc):
+                        if now_ts <= ts + 600:
+                            pending_notifications.append({
+                                "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
+                                "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids
+                            })
+
+                    if home_wp and pickup_wp:
+                        pax_pickup_loc = pickup_wp.get("pickup_location", "")
+                        driver_home_loc = home_wp.get("driver_home_location", "")
+                        dep1 = ev_end_ts + buffer_after * 60
+                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
+                        if pax_pickup_loc == driver_home_loc:
+                            dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                            add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                        else:
+                            dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                            add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
+                            dep3 = max(dep2, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                            add_notif(f"route_{ev_id}_{next_ev.id}_3", dep3, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                    elif home_wp:
+                        dep1 = ev_end_ts + buffer_after * 60
+                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
+                        dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                    elif pickup_wp:
+                        dep1 = ev_end_ts + buffer_after * 60
+                        add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, f"Pickup at {pickup_wp.get('pickup_location', 'Location').split(',')[0]}", pickup_wp.get("pickup_location", ""))
+                        dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                    else:
+                        dep_time = max(ev_end_ts + buffer_after * 60, next_ev_start_ts - (edge.get("travel_mins", 0) + buffer_before + 5) * 60)
+                        add_notif(f"route_{ev_id}_{next_ev.id}", dep_time, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
+                        
+                for ev_id, edge in data_payload.get("final_edges", {}).get(d_id, {}).items():
+                    ev = events_by_id.get(ev_id)
+                    if not ev: continue
+                    dep_time = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp() + edge.get("buffer_after_mins", 0) * 60
+                    if now_ts <= dep_time + 600:
+                        notif_id = f"final_{ev_id}"
+                        pending_notifications.append({
+                            "notif_id": notif_id,
+                            "driver_id": d_id,
+                            "trigger_timestamp": dep_time,
+                            "title": "Time to Leave!",
+                            "body": "Drive Home",
+                            "location": settings.get("home_location", ""),
+                            "fired": notif_id in fired_notif_ids
+                        })
+            storage.save_pending_notifications(pending_notifications)
+        return data_payload
+
+    # Identify which dates actually need solving
+    dates_needing_solve = []
     for date_str, daily_fetched in fetched_by_date.items():
         daily_hash = hash_events(daily_fetched)
+        daily_cache = storage.get_cached_daily_schedule(date_str)
+        if not (daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh):
+            dates_needing_solve.append(date_str)
+
+    schedule_coordinator.start_solving(dates_needing_solve)
+
+    # Save the initial combined cache immediately with the solving_dates list populated
+    compile_and_save_combined()
+
+    for date_str, daily_fetched in fetched_by_date.items():
+        # Check abort at the start of each daily iteration
+        check_abort_refresh()
+
+        daily_hash = hash_events(daily_fetched)
         daily_events_to_solve = events_to_solve_by_date[date_str]
-        
+
         # Check cache
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh:
-            sched = daily_cache['schedule']
-            combined_assignments.update(sched.get('assignments', {}))
-            combined_unassigned.extend(sched.get('unassigned', []))
-            combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
-            combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
-            
-            existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
-            for g in sched.get('ghost_drivers', []):
-                if g['id'] not in existing_ghost_ids:
-                    combined_ghost_drivers.append(g)
-                    existing_ghost_ids.add(g['id'])
-                    
-            combined_events_to_solve.extend(sched.get('events', []))
-            merge_edges(combined_route_edges, sched.get('route_edges', {}))
-            merge_edges(combined_initial_edges, sched.get('initial_edges', {}))
-            merge_edges(combined_final_edges, sched.get('final_edges', {}))
-            combined_true_unassigned.extend(sched.get('true_unassigned', []))
-            combined_conflicts.extend(sched.get('conflicts', []))
             continue
-            
-        # Collect and prime locations active on this specific day only to prevent combinatorial explosion.
+
+        # Else, solve for this day!
         daily_locations = set()
         if home_location:
             daily_locations.add(home_location)
@@ -935,29 +1246,27 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for e in daily_events_to_solve:
             if getattr(e, 'location', None):
                 daily_locations.add(e.location)
-                
+
         maps.prime_matrix_cache(list(daily_locations))
 
-        # Else, solve for this day!
+        # Check abort before running solver
+        check_abort_refresh()
+
         assignments, unassigned, lateness_warnings = matcher.solve_schedule(
             daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata
         )
-        
-        # Ghost Routes
+
         unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
         assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
         ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
-        
-        # Route Edges
+
         all_assignments = {**assignments, **ghost_assignments}
         route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
-        
-        # True Unassigned
+
         true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
-        
-        # Conflicts
+
         conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
-        
+
         daily_schedule = {
             "assignments": assignments,
             "unassigned": unassigned,
@@ -971,267 +1280,19 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
         }
-        
+
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash)
-        
-        combined_assignments.update(assignments)
-        combined_unassigned.extend(unassigned)
-        combined_lateness_warnings.extend(lateness_warnings)
-        combined_ghost_assignments.update(ghost_assignments)
-        
-        existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
-        for g in ghost_drivers:
-            if g['id'] not in existing_ghost_ids:
-                combined_ghost_drivers.append(g)
-                existing_ghost_ids.add(g['id'])
-                
-        combined_events_to_solve.extend(daily_schedule["events"])
-        merge_edges(combined_route_edges, daily_schedule["route_edges"])
-        merge_edges(combined_initial_edges, daily_schedule["initial_edges"])
-        merge_edges(combined_final_edges, daily_schedule["final_edges"])
-        combined_true_unassigned.extend(true_unassigned)
-        combined_conflicts.extend(conflicts)
-        
-    calendar_metadata = calendar.get_calendar_metadata(all_cals_to_fetch)
-    
-    PALETTE = [
-        "#3B82F6", "#10B981", "#8B5CF6", "#EC4899", 
-        "#14B8A6", "#F97316", "#06B6D4", "#84CC16"
-    ]
-    
-    # Inject passenger metadata so the UI renders their badges nicely
-    for p in passengers:
-        # Fallback to a deterministic color based on their passenger ID
-        color_index = sum(ord(c) for c in str(p.id)) % len(PALETTE)
-        bg_color = PALETTE[color_index]
-        fg_color = "#ffffff"
-        
-        if p.calendar_ids:
-            # Try to grab the color from the passenger's first associated calendar
-            primary_cal = p.calendar_ids[0]
-            if primary_cal in calendar_metadata:
-                bg_color = calendar_metadata[primary_cal].get("backgroundColor", bg_color)
-                fg_color = calendar_metadata[primary_cal].get("foregroundColor", fg_color)
-                
-        calendar_metadata[str(p.id)] = {
-            "summary": p.name,
-            "backgroundColor": bg_color,
-            "foregroundColor": fg_color
-        }
-    
-    overridden_event_ids = [o.event_id for o in overrides]
-    
-    diagnostics = matcher.compute_diagnostics(
-        combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
-    )
-    
-    duplicate_groups = []
-    schedule_one_keywords = []
-    schedule_all_keywords = []
-    for r in rules:
-        if r.constraint_type == 'duplicate':
-            action = getattr(r, 'duplicate_action', 'schedule_one')
-            
-            if getattr(r, 'event_keyword', None):
-                if action == 'schedule_all':
-                    schedule_all_keywords.append(r.event_keyword.lower())
-                else:
-                    schedule_one_keywords.append(r.event_keyword.lower())
-                    
-            if hasattr(r, 'keywords') and r.keywords:
-                if action == 'schedule_all':
-                    schedule_all_keywords.extend([kw.lower() for kw in r.keywords])
-                else:
-                    schedule_one_keywords.extend([kw.lower() for kw in r.keywords])
-    from collections import defaultdict
-    dup_groups = defaultdict(list)
-    for e in combined_events_to_solve:
-        # e might be a dict or an Event object depending on whether it came from cache
-        if isinstance(e, dict):
-            date_str = e['start'][:10] if 'start' in e and isinstance(e['start'], str) else e['start'].strftime('%Y-%m-%d')
-            core_title = e.get('title', '').split(' - ')[0].split(':')[0].strip()
-            cal_ids = tuple(sorted(e.get('calendar_ids', [])))
-            e_id = e.get('id')
-            e_title = e.get('title')
-        else:
-            date_str = e.start.strftime('%Y-%m-%d')
-            core_title = e.title.split(' - ')[0].split(':')[0].strip()
-            cal_ids = tuple(sorted(e.calendar_ids))
-            e_id = e.id
-            e_title = e.title
-            
-        e_title_lower = e_title.lower()
-        
-        if any(kw in e_title_lower for kw in schedule_one_keywords):
-            continue
-            
-        if any(kw in e_title_lower for kw in schedule_all_keywords):
-            continue
-            
-        if len(core_title) > 3:
-            # Group by date, core title, and calendars. Ignore duration.
-            # This catches duplicates for the same attendee, while keeping separate events for different attendees distinct.
-            key = (date_str, core_title, cal_ids)
-            dup_groups[key].append((e_title, e_id))
-            
-    for key, evs in dup_groups.items():
-        if len(evs) > 1:
-            duplicate_groups.append({
-                "date": key[0],
-                "keyword": key[1],
-                "original_titles": [e[0] for e in evs],
-                "event_ids": [e[1] for e in evs]
-            })
 
-    data = jsonable_encoder({
-        "duplicate_groups": duplicate_groups,
-        "events": list(all_events_for_ui.values()),
-        "assignments": combined_assignments,
-        "ghost_assignments": combined_ghost_assignments,
-        "ghost_drivers": combined_ghost_drivers,
-        "route_edges": combined_route_edges,
-        "initial_edges": combined_initial_edges,
-        "final_edges": combined_final_edges,
-        "conflicts": combined_conflicts,
-        "unassigned": combined_true_unassigned,
-        "no_location": no_location_events,
-        "overridden_events": overridden_event_ids,
-        "calendar_metadata": calendar_metadata,
-        "lateness_warnings": combined_lateness_warnings,
-        "passenger_calendar_ids": calendar_ids,
-        "driver_events": driver_events_ids,
-        "home_location": home_location or "",
-        "diagnostics": diagnostics,
-        "passengers": passengers,
-        "drivers": drivers
-    })
-    
-    if not start_date_str and not end_date_str:
-        storage.set_cached_schedule(data)
-    else:
-        storage.save_custom_schedule(start_date_str, end_date_str, data, "")
-        
-    global LAST_UPDATE_TIME
-    LAST_UPDATE_TIME = time.time()
+        # Day finished, remove it from solving list and save combined!
+        schedule_coordinator.finish_solving(date_str)
+        compile_and_save_combined()
 
-    if start_date_str is None and end_date_str is None:
-        # --- Generate Pending Notifications ---
-        pending_notifications = []
-        events_by_id = {e.id: e for e in all_events_for_ui.values()}
-        import datetime
-        now_ts = datetime.datetime.now().timestamp()
-        
-        # Preserve fired status
-        existing_notifs = storage.get_pending_notifications()
-        fired_notif_ids = {n["notif_id"] for n in existing_notifs if n.get("fired")}
-        
-        # Collect all drivers from edges
-        all_driver_ids = set()
-        all_driver_ids.update(data.get("initial_edges", {}).keys())
-        all_driver_ids.update(data.get("route_edges", {}).keys())
-        all_driver_ids.update(data.get("final_edges", {}).keys())
-        
-        for d_id in all_driver_ids:
-            if d_id.startswith('ghost_'): continue
-            
-            for ev_id, edge in data.get("initial_edges", {}).get(d_id, {}).items():
-                ev = events_by_id.get(ev_id)
-                if not ev: continue
-                pickup_wp = edge.get("pickup_waypoint")
-                buffer_before = edge.get("buffer_before_mins", 0)
-                ev_start_ts = datetime.datetime.fromisoformat(ev.start.isoformat()).timestamp()
-                
-                def add_init_notif(nid, ts, body, loc):
-                    if now_ts <= ts + 600:
-                        pending_notifications.append({
-                            "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
-                            "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids
-                        })
+    # Final compile just in case, ensuring solving_dates is completely cleared for this run
+    schedule_coordinator.clear_solving_dates()
+    final_data = compile_and_save_combined()
 
-                if pickup_wp:
-                    pax_pickup_loc = pickup_wp.get("pickup_location", "")
-                    driver_home_loc = edge.get("driver_home_location", "")
-                    if pax_pickup_loc == driver_home_loc:
-                        dep_time = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                        add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
-                    else:
-                        dep1 = ev_start_ts - (pickup_wp.get("from_driver_home_mins", 0) + pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                        add_init_notif(f"init_{ev_id}_1", dep1, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
-                        dep2 = ev_start_ts - (pickup_wp.get("from_global_home_mins", 0) + 5 + buffer_before) * 60
-                        add_init_notif(f"init_{ev_id}_2", dep2, f"Drive to {ev.location.split(',')[0]}", ev.location)
-                else:
-                    dep_time = ev_start_ts - (edge.get("travel_mins", 0) + 5 + buffer_before) * 60
-                    add_init_notif(f"init_{ev_id}", dep_time, f"Drive to {ev.location.split(',')[0]}", ev.location)
-                    
-            for ev_id, edge in data.get("route_edges", {}).get(d_id, {}).items():
-                ev = events_by_id.get(ev_id)
-                next_ev = events_by_id.get(edge.get("to_event", ""))
-                if not ev or not next_ev: continue
-                buffer_after = edge.get("buffer_after_mins", 0)
-                buffer_before = edge.get("buffer_before_mins", 0)
-                ev_end_ts = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp()
-                next_ev_start_ts = datetime.datetime.fromisoformat(next_ev.start.isoformat()).timestamp()
-                
-                home_wp = edge.get("home_waypoint")
-                pickup_wp = edge.get("pickup_waypoint")
-                
-                def add_notif(nid, ts, body, loc):
-                    if now_ts <= ts + 600:
-                        pending_notifications.append({
-                            "notif_id": nid, "driver_id": d_id, "trigger_timestamp": ts,
-                            "title": "Time to Leave!", "body": body, "location": loc, "fired": nid in fired_notif_ids
-                        })
-
-                if home_wp and pickup_wp:
-                    pax_pickup_loc = pickup_wp.get("pickup_location", "")
-                    driver_home_loc = home_wp.get("driver_home_location", "")
-                    
-                    dep1 = ev_end_ts + buffer_after * 60
-                    add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
-                    
-                    if pax_pickup_loc == driver_home_loc:
-                        dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
-                    else:
-                        dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Pickup at {pax_pickup_loc.split(',')[0]}", pax_pickup_loc)
-                        dep3 = max(dep2, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                        add_notif(f"route_{ev_id}_{next_ev.id}_3", dep3, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
-                elif home_wp:
-                    dep1 = ev_end_ts + buffer_after * 60
-                    add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, "Drive Home", settings.get("home_location", ""))
-                    dep2 = max(dep1, next_ev_start_ts - (home_wp.get("from_home_mins", 0) + buffer_before + 5) * 60)
-                    add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
-                elif pickup_wp:
-                    dep1 = ev_end_ts + buffer_after * 60
-                    add_notif(f"route_{ev_id}_{next_ev.id}_1", dep1, f"Pickup at {pickup_wp.get('pickup_location', 'Location').split(',')[0]}", pickup_wp.get("pickup_location", ""))
-                    dep2 = max(dep1, next_ev_start_ts - (pickup_wp.get("from_pickup_mins", 0) + buffer_before + 5) * 60)
-                    add_notif(f"route_{ev_id}_{next_ev.id}_2", dep2, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
-                else:
-                    dep_time = max(ev_end_ts + buffer_after * 60, next_ev_start_ts - (edge.get("travel_mins", 0) + buffer_before + 5) * 60)
-                    add_notif(f"route_{ev_id}_{next_ev.id}", dep_time, f"Drive to {next_ev.location.split(',')[0]}", next_ev.location)
-                    
-            for ev_id, edge in data.get("final_edges", {}).get(d_id, {}).items():
-                ev = events_by_id.get(ev_id)
-                if not ev: continue
-                dep_time = datetime.datetime.fromisoformat(ev.end.isoformat()).timestamp() + edge.get("buffer_after_mins", 0) * 60
-                if now_ts <= dep_time + 600:
-                    notif_id = f"final_{ev_id}"
-                    pending_notifications.append({
-                        "notif_id": notif_id,
-                        "driver_id": d_id,
-                        "trigger_timestamp": dep_time,
-                        "title": "Time to Leave!",
-                        "body": "Drive Home",
-                        "location": settings.get("home_location", ""),
-                        "fired": notif_id in fired_notif_ids
-                    })
-                    
-        storage.save_pending_notifications(pending_notifications)
-        # ----------------------------------------
-    
-    return data
+    return final_data
 
 
 from fastapi.responses import FileResponse
@@ -1275,6 +1336,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 
             if cached:
                 cached["completed_drives"] = completed
+                cached["solving_dates"] = schedule_coordinator.get_solving_dates()
                 # Rate limit background refreshes to every 5 minutes per date range
                 import time
                 global last_bg_refresh
@@ -1283,7 +1345,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 if now - last_bg_refresh.get(cache_key, 0) > 300:
                     last_bg_refresh[cache_key] = now
                     # Fire an async background refresh so Google Calendar latency (1-5s) doesn't block the UI
-                    background_tasks.add_task(refresh_schedule_logic, start_date, end_date, False)
+                    background_tasks.add_task(trigger_background_refresh, start_date, end_date, False)
                 return cached
 
         # Fetch fresh and block if no cache exists or forced
@@ -1291,6 +1353,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
             res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
             if "error" not in res:
                 res["completed_drives"] = completed
+                res["solving_dates"] = schedule_coordinator.get_solving_dates()
             return res
         except Exception as e:
             import traceback
@@ -1468,8 +1531,10 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-async def force_refresh_schedule(start_date: str = None, end_date: str = None):
-    await asyncio.to_thread(refresh_schedule_logic, start_date, end_date, True)
+async def force_refresh_schedule(start_date: str = None, end_date: str = None, force: bool = True):
+    await asyncio.to_thread(trigger_background_refresh, start_date, end_date, force)
+    while schedule_coordinator.is_running:
+        await asyncio.sleep(0.1)
     return {"status": "sync_started"}
 
 

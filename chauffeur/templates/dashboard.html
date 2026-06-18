@@ -632,7 +632,7 @@
             }
         }
 
-        async function forceSync() {
+        async function forceSync(force = true) {
             const btn = document.getElementById('sync-btn');
             const icon = document.getElementById('sync-icon');
             const text = document.getElementById('sync-text');
@@ -646,7 +646,7 @@
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                let url = `${apiBase}api/schedule/refresh`;
+                let url = `${apiBase}api/schedule/refresh?force=${force}`;
                 if (currentStartDate && currentEndDate) {
                     const s = toLocalIsoString(currentStartDate);
 
@@ -654,7 +654,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `${apiBase}api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_cb=${new Date().getTime()}`;
+                    url = `${apiBase}api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force=${force}&_cb=${new Date().getTime()}`;
                 }
                 const res = await fetch(url, { method: 'POST' });
                 if (!res.ok) {
@@ -1229,7 +1229,7 @@
                     }
                     renderSchedule(currentData);
                 }
-                forceSync().catch(console.error);
+                forceSync(false).catch(console.error);
             } catch (e) {
                 showError("Failed to save configuration.");
             }
@@ -1257,7 +1257,7 @@
                     }
                     renderSchedule(currentData);
                 }
-                forceSync().catch(console.error);
+                forceSync(false).catch(console.error);
             } catch (e) {
                 showError("Failed to ignore event.");
             }
@@ -1364,7 +1364,7 @@
                     renderSchedule(currentData);
                 }
 
-                forceSync().catch(console.error);
+                forceSync(false).catch(console.error);
             } catch (e) {
                 alert("Failed to force swap");
             } finally {
@@ -1394,7 +1394,7 @@
                     renderSchedule(currentData);
                 }
                 
-                forceSync().catch(console.error);
+                forceSync(false).catch(console.error);
             } catch (e) {
                 alert("Failed to remove override");
             } finally {
@@ -1606,9 +1606,14 @@ const scheduleByDate = {};
                     return; // Skip rendering this entire date block if there are no columns
                 }
 
+                const dayContainer = document.createElement('div');
+                dayContainer.className = "relative border border-gray-700/30 rounded-xl p-4 mb-6 bg-gray-800/10 overflow-hidden flex flex-col";
+                
                 const formattedDateTitle = formatDateStr(date);
-                const dateHtml = `<div class="bg-gray-800 border-t border-gray-700 py-1 px-3 mt-2 mb-0 shadow-sm rounded-t-lg"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest">${formattedDateTitle}</h2></div>`;
-                scheduleContainer.innerHTML += dateHtml;
+                const dateHeader = document.createElement('div');
+                dateHeader.className = "bg-gray-800 border-t border-gray-700 py-2.5 px-4 mb-4 shadow-md rounded-lg flex items-center justify-between";
+                dateHeader.innerHTML = `<h2 class="text-base font-bold text-blue-200 uppercase tracking-widest leading-none">${formattedDateTitle}</h2>`;
+                dayContainer.appendChild(dateHeader);
 
                 // --- Timeline Constants & Logic ---
                 const PIXELS_PER_MINUTE = 1.3;
@@ -2262,7 +2267,6 @@ const scheduleByDate = {};
                             </div>
                         `;
                     });
-
                     sidebar.innerHTML = sidebarHtml;
                     mainWrapper.appendChild(wrapper);
                     mainWrapper.appendChild(sidebar);
@@ -2270,7 +2274,24 @@ const scheduleByDate = {};
                     mainWrapper.appendChild(wrapper);
                 }
 
-                scheduleContainer.appendChild(mainWrapper);
+                dayContainer.appendChild(mainWrapper);
+
+                if (data.solving_dates && data.solving_dates.includes(date)) {
+                    const overlay = document.createElement('div');
+                    overlay.className = "absolute inset-0 bg-gray-950/60 backdrop-blur-[1px] z-40 flex items-center justify-center pointer-events-auto transition-opacity duration-300";
+                    overlay.innerHTML = `
+                        <div class="flex items-center gap-3 bg-gray-800 border border-blue-500/30 px-5 py-3 rounded-xl shadow-2xl">
+                            <svg class="animate-spin h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span class="text-xs font-bold text-blue-100 uppercase tracking-widest animate-pulse">Updating Schedule...</span>
+                        </div>
+                    `;
+                    dayContainer.appendChild(overlay);
+                }
+
+                scheduleContainer.appendChild(dayContainer);
             });
         }
 

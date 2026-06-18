@@ -4,7 +4,7 @@ import os
 import json
 import threading
 
-db_lock = threading.Lock()
+db_lock = threading.RLock()
 
 if os.path.exists('/data/options.json'):
     DB_PATH = '/data/chauffeur_db.json'
@@ -457,6 +457,58 @@ def delete_priority_rule(doc_id: int):
         cache_table.truncate()
         priority_rules_table.remove(doc_ids=[doc_id])
 
+def invalidate_daily_schedule_cache_for_event(event_id: str):
+    with db_lock:
+        cache_docs = cache_table.all()
+        if not cache_docs:
+            daily_schedules_table.truncate()
+            custom_schedules_table.truncate()
+            return
+            
+        cache = cache_docs[0]
+        events = cache.get("events", [])
+        
+        target_events = []
+        for e in events:
+            e_id = e.get("id")
+            orig_id = e.get("original_event_id")
+            recur_id = e.get("recurring_event_id")
+            if (e_id == event_id or 
+                (orig_id and orig_id == event_id) or 
+                (recur_id and recur_id == event_id)):
+                target_events.append(e)
+                
+        if not target_events:
+            daily_schedules_table.truncate()
+            custom_schedules_table.truncate()
+            return
+            
+        import datetime
+        dates_to_invalidate = set()
+        for e in target_events:
+            start_str = e.get("start")
+            end_str = e.get("end")
+            if not start_str:
+                continue
+            try:
+                if len(start_str) >= 10:
+                    start_dt = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                    end_dt = datetime.datetime.fromisoformat(end_str.replace('Z', '+00:00')) if end_str else start_dt
+                    
+                    curr = start_dt.date()
+                    end_date = end_dt.date()
+                    while curr <= end_date:
+                        dates_to_invalidate.add(curr.strftime("%Y-%m-%d"))
+                        curr += datetime.timedelta(days=1)
+            except Exception as ex:
+                print(f"Error parsing date strings {start_str} / {end_str}: {ex}")
+                dates_to_invalidate.add(start_str[:10])
+                
+        for date_str in dates_to_invalidate:
+            daily_schedules_table.remove(Query().date_str == date_str)
+            
+        custom_schedules_table.truncate()
+
 # Overrides CRUD
 def get_all_overrides() -> List[dict]:
     with db_lock:
@@ -468,28 +520,27 @@ def get_all_overrides() -> List[dict]:
         return overrides
 
 def add_override(override_data: dict) -> int:
+    invalidate_daily_schedule_cache_for_event(override_data['event_id'])
     with db_lock:
-        custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
-        cache_table.truncate()
         # Overrides are unique per event_id, so remove existing if present
         overrides_table.remove(Query().event_id == override_data['event_id'])
         return overrides_table.insert(override_data)
 
 def delete_override(doc_id: int):
     with db_lock:
-        custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
-        cache_table.truncate()
+        override = overrides_table.get(doc_id=doc_id)
+        event_id = override.get('event_id') if override else None
+    if event_id:
+        invalidate_daily_schedule_cache_for_event(event_id)
+    with db_lock:
         overrides_table.remove(doc_ids=[doc_id])
 
 def delete_override_by_event(event_id: str):
     from tinydb import Query
+    invalidate_daily_schedule_cache_for_event(event_id)
     with db_lock:
-        custom_schedules_table.truncate()
-        daily_schedules_table.truncate()
-        cache_table.truncate()
         overrides_table.remove(Query().event_id == event_id)
+
 
 # Schedule Cache
 def get_cached_schedule() -> dict:
@@ -640,12 +691,14 @@ def get_event_config(google_id: str) -> Optional[dict]:
         return None
 
 def set_event_config(google_id: str, config_data: dict):
+    invalidate_daily_schedule_cache_for_event(google_id)
     with db_lock:
         q = Query()
         config_data['google_id'] = google_id
         event_configs_table.upsert(config_data, q.google_id == google_id)
 
 def delete_event_config(google_id: str):
+    invalidate_daily_schedule_cache_for_event(google_id)
     with db_lock:
         q = Query()
         event_configs_table.remove(q.google_id == google_id)
