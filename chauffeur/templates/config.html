@@ -231,9 +231,15 @@
                     </div>
                     
                     <!-- Gemini settings -->
-                    <div x-show="llmProvider === 'gemini'" x-transition>
-                        <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
-                        <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()" placeholder="Enter Gemini API Key" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                    <div x-show="llmProvider === 'gemini'" class="grid grid-cols-1 sm:grid-cols-2 gap-4 col-span-1 md:col-span-2" x-transition>
+                        <div>
+                            <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
+                            <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()" placeholder="Enter Gemini API Key" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini Model</label>
+                            <input type="text" x-model="llmGeminiModel" @change="saveSettings()" placeholder="gemini-3.5-flash" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
+                        </div>
                     </div>
                     
                     <!-- Ollama settings -->
@@ -1110,6 +1116,7 @@
                 // AI assistant LLM settings
                 llmProvider: '',
                 llmGeminiApiKey: '',
+                llmGeminiModel: 'gemini-3.5-flash',
                 llmOllamaUrl: 'http://localhost:11434',
                 llmOllamaModel: 'qwen2.5:7b',
                 familyPhilosophy: '',
@@ -1289,6 +1296,7 @@
                     // LLM Settings
                     this.llmProvider = data.llm_provider || '';
                     this.llmGeminiApiKey = data.llm_gemini_api_key || '';
+                    this.llmGeminiModel = data.llm_gemini_model || 'gemini-3.5-flash';
                     this.llmOllamaUrl = data.llm_ollama_url || 'http://localhost:11434';
                     this.llmOllamaModel = data.llm_ollama_model || 'qwen2.5:7b';
                     this.familyPhilosophy = data.family_philosophy || '';
@@ -1341,6 +1349,7 @@
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
+                            llm_gemini_model: this.llmGeminiModel,
                             llm_ollama_url: this.llmOllamaUrl,
                             llm_ollama_model: this.llmOllamaModel,
                             family_philosophy: this.familyPhilosophy
@@ -1778,7 +1787,7 @@
                                 provider: this.llmProvider,
                                 url: this.llmOllamaUrl,
                                 api_key: this.llmGeminiApiKey,
-                                model: this.llmOllamaModel
+                                model: this.llmProvider === 'gemini' ? this.llmGeminiModel : this.llmOllamaModel
                             })
                         });
                         const data = await res.json();

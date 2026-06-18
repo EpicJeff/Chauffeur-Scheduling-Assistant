@@ -111,6 +111,7 @@ class Settings(BaseModel):
     mapbox_geocode_limit: int = 90000
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
+    llm_gemini_model: str = "gemini-3.5-flash"
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"
     family_philosophy: str = ""

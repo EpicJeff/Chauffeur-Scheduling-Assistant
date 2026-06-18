@@ -385,7 +385,10 @@ def generate_ai_rules(background_tasks: BackgroundTasks):
         
     url = settings.get('llm_ollama_url', 'http://localhost:11434')
     api_key = settings.get('llm_gemini_api_key', '')
-    model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+    if provider == 'gemini':
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+    else:
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
     philosophy = settings.get('family_philosophy', '')
     
     if not philosophy.strip():
@@ -451,7 +454,10 @@ def refine_text(payload: LLMRefinePayload):
         
     url = settings.get('llm_ollama_url', 'http://localhost:11434')
     api_key = settings.get('llm_gemini_api_key', '')
-    model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+    if provider == 'gemini':
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+    else:
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
     
     try:
         refined = refine_scheduling_text(

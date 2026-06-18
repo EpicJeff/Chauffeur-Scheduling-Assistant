@@ -33,7 +33,10 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             return False, "Gemini API Key is required."
         try:
             # Simple test call
-            req_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            gemini_model = model or 'gemini-3.5-flash'
+            if gemini_model.startswith('models/'):
+                gemini_model = gemini_model[7:]
+            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
             payload = {
                 "contents": [{"parts": [{"text": "Hello"}]}],
                 "generationConfig": {"maxOutputTokens": 5}
@@ -199,7 +202,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             
     elif provider == 'gemini':
         try:
-            req_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            gemini_model = model or 'gemini-3.5-flash'
+            if gemini_model.startswith('models/'):
+                gemini_model = gemini_model[7:]
+            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
             payload = {
                 "contents": [
                     {
@@ -328,7 +334,10 @@ def refine_scheduling_text(
 
     elif provider == 'gemini':
         try:
-            req_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            gemini_model = model or 'gemini-3.5-flash'
+            if gemini_model.startswith('models/'):
+                gemini_model = gemini_model[7:]
+            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
             payload = {
                 "contents": [
                     {
