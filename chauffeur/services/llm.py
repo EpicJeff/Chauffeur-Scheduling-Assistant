@@ -121,11 +121,45 @@ Constraints & rules details:
 - 'location' is a substring match for the event location field.
 - All rules must include 'is_ai_generated': true.
 
-Generate only valid, applicable rules derived directly from the bios and philosophy. Keep rules minimal and direct.
-You MUST respond with a single valid JSON object containing:
+CRITICAL INSTRUCTIONS:
+1. Every rule in the "rules" array MUST use the key "constraint_type" to specify the type (do NOT use "type" or "rule_type").
+2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location). Do NOT generate rules with empty filters (which would match all events globally) unless the philosophy explicitly requests a global default.
+3. The "passenger_ids" inside rules MUST match the Passenger IDs provided in the context above (not names or emails).
+
+You MUST respond with a single valid JSON object of the following exact structure:
 {{
-  "rules": [...],
-  "priority_rules": [...]
+  "rules": [
+    {{
+      "driver_id": "string (e.g. 'mom', 'dad')",
+      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'tolerance' | 'duplicate' | 'buffer' | 'attendance')",
+      "duplicate_action": "string or null ('schedule_one' | 'schedule_all')",
+      "tolerance_mins": 0,
+      "tolerance_type": "string ('arrival' | 'departure' | 'both')",
+      "grouping_period": "string ('daily' | 'weekly' | 'monthly' | 'all')",
+      "buffer_before_mins": 0,
+      "buffer_after_mins": 0,
+      "attendance_action": "string or null ('dropoff_pickup' | 'stay')",
+      "keywords": ["list of strings"],
+      "passenger_ids": ["list of Passenger IDs"],
+      "days_of_week": [0, 1],
+      "time_start": "string ('HH:MM' or null)",
+      "time_end": "string ('HH:MM' or null)",
+      "location": "string or null",
+      "is_ai_generated": true
+    }}
+  ],
+  "priority_rules": [
+    {{
+      "weight_modifier": 1000,
+      "keywords": ["list of strings"],
+      "passenger_ids": ["list of Passenger IDs"],
+      "days_of_week": [0, 1],
+      "time_start": "string ('HH:MM' or null)",
+      "time_end": "string ('HH:MM' or null)",
+      "location": "string or null",
+      "is_ai_generated": true
+    }}
+  ]
 }}
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON."""
 
