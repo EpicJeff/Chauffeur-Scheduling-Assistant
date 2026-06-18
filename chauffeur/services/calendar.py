@@ -11,29 +11,48 @@ import google.auth
 from google.oauth2.service_account import Credentials
 import json
 
-def get_calendar_service():
-    # 1. Try to load from Home Assistant Add-on options
-    options_file = '/data/options.json'
-    if os.path.exists(options_file):
-        try:
-            with open(options_file, 'r') as f:
-                options = json.load(f)
-            raw_sa_json = options.get('google_service_account_json')
-            if raw_sa_json:
-                sa_info = json.loads(raw_sa_json)
-                creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-                return build('calendar', 'v3', credentials=creds)
-        except Exception as e:
-            print(f"Failed to load credentials from HA options.json: {e}")
+import threading
+_local_storage = threading.local()
+_global_creds = None
+_creds_lock = threading.Lock()
 
-    # 2. Try to load from local credentials.json
-    if os.path.exists(CREDENTIALS_FILE):
-        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
-        return build('calendar', 'v3', credentials=creds)
+def get_calendar_service():
+    global _global_creds
+    # Each thread must have its own service client to prevent socket sharing and SSL errors
+    if hasattr(_local_storage, 'service'):
+        return _local_storage.service
         
-    # 3. Fall back to default application credentials
-    creds, _ = google.auth.default(scopes=SCOPES)
-    return build('calendar', 'v3', credentials=creds)
+    if _global_creds is None:
+        with _creds_lock:
+            if _global_creds is None:
+                creds = None
+                # 1. Try to load from Home Assistant Add-on options
+                options_file = '/data/options.json'
+                if os.path.exists(options_file):
+                    try:
+                        with open(options_file, 'r') as f:
+                            options = json.load(f)
+                        raw_sa_json = options.get('google_service_account_json')
+                        if raw_sa_json:
+                            sa_info = json.loads(raw_sa_json)
+                            creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+                    except Exception as e:
+                        print(f"Failed to load credentials from HA options.json: {e}")
+
+                if not creds:
+                    # 2. Try to load from local credentials.json
+                    if os.path.exists(CREDENTIALS_FILE):
+                        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+                        
+                if not creds:
+                    # 3. Fall back to default application credentials
+                    creds, _ = google.auth.default(scopes=SCOPES)
+                    
+                _global_creds = creds
+                
+    service = build('calendar', 'v3', credentials=_global_creds, static_discovery=True)
+    _local_storage.service = service
+    return service
 
 def _fetch_single_calendar(cal_id, time_min, time_max):
     service = get_calendar_service()
@@ -140,13 +159,16 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
         
     return all_events
 
+_metadata_cache = {}
+_metadata_cache_lock = threading.Lock()
+
 def get_calendar_metadata(calendar_ids: list[str]) -> dict:
     """
     Fetches the summary and assigns a deterministic background color for each calendar 
-    from the Google Calendar API.
+    from the Google Calendar API. Cached in memory and fetched in parallel to prevent bottlenecks.
     """
+    global _metadata_cache
     service = get_calendar_service()
-    metadata = {}
     
     PALETTE = [
         "#3B82F6", # Blue
@@ -158,30 +180,44 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
         "#06B6D4", # Cyan
         "#84CC16"  # Lime
     ]
-    
-    for cal_id in calendar_ids:
-        # Generate a deterministic color from the cal_id string
-        color_index = sum(ord(c) for c in cal_id) % len(PALETTE)
-        cal_color = PALETTE[color_index]
-        
-        try:
-            # Use calendars().get() instead of calendarList().get() because service accounts
-            # don't automatically have shared calendars in their personal calendarList.
-            cal = service.calendars().get(calendarId=cal_id).execute()
-            metadata[cal_id] = {
-                "summary": cal.get("summary", "Unknown Calendar"),
-                "backgroundColor": cal_color,
-                "foregroundColor": "#FFFFFF"
-            }
-        except Exception as ex:
-            print(f"Error fetching metadata for calendar {cal_id}: {ex}")
-            metadata[cal_id] = {
-                "summary": "Unknown Calendar",
-                "backgroundColor": cal_color,
-                "foregroundColor": "#FFFFFF"
-            }
-            
-    return metadata
+
+    missing_cals = []
+    with _metadata_cache_lock:
+        for cal_id in calendar_ids:
+            if cal_id not in _metadata_cache:
+                missing_cals.append(cal_id)
+
+    if missing_cals:
+        def _fetch_meta(cal_id):
+            color_index = sum(ord(c) for c in cal_id) % len(PALETTE)
+            cal_color = PALETTE[color_index]
+            try:
+                # Use calendars().get() instead of calendarList().get() because service accounts
+                # don't automatically have shared calendars in their personal calendarList.
+                cal = service.calendars().get(calendarId=cal_id).execute()
+                return cal_id, {
+                    "summary": cal.get("summary", "Unknown Calendar"),
+                    "backgroundColor": cal_color,
+                    "foregroundColor": "#FFFFFF"
+                }
+            except Exception as ex:
+                print(f"Error fetching metadata for calendar {cal_id}: {ex}")
+                return cal_id, {
+                    "summary": "Unknown Calendar",
+                    "backgroundColor": cal_color,
+                    "foregroundColor": "#FFFFFF"
+                }
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(missing_cals) or 1)) as executor:
+            futures = [executor.submit(_fetch_meta, cal_id) for cal_id in missing_cals]
+            for future in concurrent.futures.as_completed(futures):
+                cal_id, meta = future.result()
+                with _metadata_cache_lock:
+                    _metadata_cache[cal_id] = meta
+
+    with _metadata_cache_lock:
+        return {cal_id: _metadata_cache[cal_id] for cal_id in calendar_ids if cal_id in _metadata_cache}
 
 def update_event_details(source_event_ids: list[str], details: dict):
     """
