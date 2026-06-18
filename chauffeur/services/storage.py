@@ -171,14 +171,36 @@ def prime_api_usage_seeding():
 prime_api_usage_seeding()
 
 # Geocode Cache
+def clear_schedule_caches():
+    with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
+
 def get_cached_geocode(address: str):
     with db_lock:
         res = geocode_cache_table.search(Query().address == address.strip().lower())
         if res:
-            return res[0]
+            record = res[0]
+            lat = record.get('lat')
+            lon = record.get('lon')
+            try:
+                float(lat)
+                float(lon)
+                return record
+            except (ValueError, TypeError):
+                print(f"Deleting corrupt geocode cache entry for: {address} (lat={lat}, lon={lon})")
+                geocode_cache_table.remove(Query().address == address.strip().lower())
         return None
 
 def set_cached_geocode(address: str, lat: float, lon: float, display_name: str = ""):
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (ValueError, TypeError):
+        print(f"Error: Refusing to cache invalid coordinates for {address}: lat={lat}, lon={lon}")
+        return
+        
     with db_lock:
         geocode_cache_table.upsert({
             'address': address.strip().lower(),
@@ -188,10 +210,14 @@ def set_cached_geocode(address: str, lat: float, lon: float, display_name: str =
         }, Query().address == address.strip().lower())
 
 def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[int]:
+    if not origin or not destination:
+        return None
     import time
+    orig_clean = origin.strip().lower()
+    dest_clean = destination.strip().lower()
     with db_lock:
         QueryObj = Query()
-        result = distance_cache_table.search((QueryObj.origin == origin) & (QueryObj.destination == destination))
+        result = distance_cache_table.search((QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
         if result:
             cached_data = result[0]
             timestamp = cached_data.get('timestamp', 0)
@@ -200,12 +226,16 @@ def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10
         return None
 
 def set_cached_travel_time(origin: str, destination: str, minutes: int):
+    if not origin or not destination:
+        return
     import time
+    orig_clean = origin.strip().lower()
+    dest_clean = destination.strip().lower()
     with db_lock:
         QueryObj = Query()
         distance_cache_table.upsert(
-            {'origin': origin, 'destination': destination, 'minutes': minutes, 'timestamp': time.time()},
-            (QueryObj.origin == origin) & (QueryObj.destination == destination)
+            {'origin': orig_clean, 'destination': dest_clean, 'minutes': int(minutes), 'timestamp': time.time()},
+            (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean)
         )
 
 # Driver CRUD
@@ -222,10 +252,16 @@ def get_all_drivers() -> List[dict]:
 
 def add_driver(driver_data: dict) -> int:
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         return drivers_table.insert(driver_data)
 
 def delete_driver(doc_id: int):
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         drivers_table.remove(doc_ids=[doc_id])
 
 # Passenger CRUD
@@ -263,16 +299,23 @@ def get_passengers() -> List[dict]:
 
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         return passengers_table.insert(passenger_data)
 
 def update_passenger(doc_id: int, passenger_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         passengers_table.update(passenger_data, doc_ids=[doc_id])
 
 def delete_passenger(doc_id: int):
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         passengers_table.remove(doc_ids=[doc_id])
 
 def add_telemetry_event(event_data: dict) -> int:
@@ -327,16 +370,23 @@ def get_all_rules() -> List[dict]:
 
 def add_rule(rule_data: dict) -> int:
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         return rules_table.insert(rule_data)
 
 def update_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_rule(doc_id: int):
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         rules_table.remove(doc_ids=[doc_id])
 
 # Priority Rule CRUD
@@ -384,16 +434,23 @@ def get_all_priority_rules() -> List[dict]:
 
 def add_priority_rule(rule_data: dict) -> int:
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         return priority_rules_table.insert(rule_data)
 
 def update_priority_rule(doc_id: int, rule_data: dict):
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         priority_rules_table.update(rule_data, doc_ids=[doc_id])
 
 def delete_priority_rule(doc_id: int):
     with db_lock:
+        custom_schedules_table.truncate()
+        daily_schedules_table.truncate()
+        cache_table.truncate()
         priority_rules_table.remove(doc_ids=[doc_id])
 
 # Overrides CRUD
@@ -410,6 +467,7 @@ def add_override(override_data: dict) -> int:
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         # Overrides are unique per event_id, so remove existing if present
         overrides_table.remove(Query().event_id == override_data['event_id'])
         return overrides_table.insert(override_data)
@@ -418,6 +476,7 @@ def delete_override(doc_id: int):
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         overrides_table.remove(doc_ids=[doc_id])
 
 def delete_override_by_event(event_id: str):
@@ -425,6 +484,7 @@ def delete_override_by_event(event_id: str):
     with db_lock:
         custom_schedules_table.truncate()
         daily_schedules_table.truncate()
+        cache_table.truncate()
         overrides_table.remove(Query().event_id == event_id)
 
 # Schedule Cache

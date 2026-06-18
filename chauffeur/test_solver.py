@@ -32,9 +32,9 @@ def run_test():
     
     # Mock Rules
     # Dad is required for Soccer Practice
-    r1 = Rule(driver_id="d2", event_keyword="Soccer", constraint_type="required")
+    r1 = Rule(driver_id="d2", keywords=["Soccer"], constraint_type="required")
     # Mom is unavailable for Dentist
-    r2 = Rule(driver_id="d1", event_keyword="Dentist", constraint_type="unavailable")
+    r2 = Rule(driver_id="d1", keywords=["Dentist"], constraint_type="unavailable")
     
     # Let's add two fully conflicting events in the afternoon
     e4 = Event(
@@ -60,7 +60,7 @@ def run_test():
     )
     
     # Priority Rule: 'CRITICAL' gives +500 weight
-    pr1 = PriorityRule(match_type="keyword", match_value="CRITICAL", weight_modifier=500)
+    pr1 = PriorityRule(keywords=["CRITICAL"], weight_modifier=500)
     
     assignments, unassigned, _ = solve_schedule(
         events=[e1, e2, e3, e4, e5, e6, e7],

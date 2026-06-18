@@ -275,6 +275,11 @@ def solve_schedule(
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
             e2 = sorted_events[j]
+            
+            # Skip conflict checks for events starting more than 60 minutes apart
+            if (e2.start - e1.end).total_seconds() > 3600:
+                break
+                
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
             
             if shares_calendar:
@@ -489,6 +494,8 @@ def solve_schedule(
                         
                         if same_loc:
                             travel_mins = 0
+                        elif (e2.start - e1.end).total_seconds() > 3600:
+                            travel_mins = 99  # Skip Maps API query for events far apart
                         else:
                             travel_mins = get_travel_time_minutes(e1.location, e2.location) if shares_calendar else get_switch_travel_time(e1, e2, events)
                         
@@ -605,6 +612,11 @@ def solve_schedule(
             for j in range(i + 1, len(sorted_events)):
                 e1 = sorted_events[i]
                 e2 = sorted_events[j]
+                
+                # Skip lateness checks for events starting more than 60 minutes apart
+                if (e2.start - e1.end).total_seconds() > 3600:
+                    break
+                    
                 d1_id = assignments.get(e1.id)
                 d2_id = assignments.get(e2.id)
                 
@@ -735,6 +747,11 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
             e2 = sorted_events[j]
+            
+            # Skip conflict checks for events starting more than 60 minutes apart
+            if (e2.start - e1.end).total_seconds() > 3600:
+                break
+                
             shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
             
             if shares_calendar:

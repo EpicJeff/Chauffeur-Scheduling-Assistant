@@ -344,11 +344,11 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
 
 @app.delete("/api/cache")
 def clear_caches():
-    from services.storage import distance_cache_table, cache_table, daily_schedules_table, custom_schedules_table
-    distance_cache_table.truncate()
-    cache_table.truncate()
-    daily_schedules_table.truncate()
-    custom_schedules_table.truncate()
+    with storage.db_lock:
+        storage.distance_cache_table.truncate()
+        storage.cache_table.truncate()
+        storage.daily_schedules_table.truncate()
+        storage.custom_schedules_table.truncate()
     return {"status": "cleared"}
 
 @app.get("/api/maps/stats")
@@ -869,20 +869,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     home_location = maps.get_home_location()
 
-    all_locations = set()
-    if home_location:
-        all_locations.add(home_location)
-    for p in passengers:
-        if getattr(p, 'home_location', None):
-            all_locations.add(p.home_location)
-    for d in drivers:
-        if getattr(d, 'home_location', None):
-            all_locations.add(d.home_location)
-    for e in all_fetched_events:
-        if getattr(e, 'location', None):
-            all_locations.add(e.location)
-            
-    maps.prime_matrix_cache(list(all_locations))
+    # Weekly pre-fetch is removed in favor of day-by-day priming inside the daily loop.
 
     def merge_edges(target, source):
         if not source: return
@@ -918,7 +905,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             combined_conflicts.extend(sched.get('conflicts', []))
             continue
             
-        # Pre-fetch was moved outside the loop for ALL locations to prevent redundant API calls
+        # Collect and prime locations active on this specific day only to prevent combinatorial explosion.
+        daily_locations = set()
+        if home_location:
+            daily_locations.add(home_location)
+        for p in passengers:
+            if getattr(p, 'home_location', None):
+                daily_locations.add(p.home_location)
+        for d in drivers:
+            if getattr(d, 'home_location', None):
+                daily_locations.add(d.home_location)
+        for e in daily_events_to_solve:
+            if getattr(e, 'location', None):
+                daily_locations.add(e.location)
+                
+        maps.prime_matrix_cache(list(daily_locations))
 
         # Else, solve for this day!
         assignments, unassigned, lateness_warnings = matcher.solve_schedule(
@@ -1458,11 +1459,12 @@ async def force_refresh_schedule(start_date: str = None, end_date: str = None):
 
 @app.get("/api/admin/clear_cache")
 def clear_geocache():
-    storage.geocode_cache_table.truncate()
-    storage.route_cache_table.truncate()
-    storage.daily_schedules_table.truncate()
-    storage.custom_schedules_table.truncate()
-    return {"status": "ok", "message": "Geocode, routing, and schedule caches wiped successfully"}
+    with storage.db_lock:
+        storage.geocode_cache_table.truncate()
+        storage.distance_cache_table.truncate()
+        storage.daily_schedules_table.truncate()
+        storage.custom_schedules_table.truncate()
+    return {"status": "ok", "message": "Geocode, travel times, and schedule caches wiped successfully"}
 
 @app.post("/api/test/set_mapbox_usage")
 def test_set_mapbox_usage(endpoint: str, count: int):

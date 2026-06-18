@@ -181,13 +181,35 @@ def prime_matrix_cache(locations: list[str]):
             
         coord_strings = []
         for idx in chunk_indices:
-            lat, lon = all_coords[idx]
-            coord_strings.append(f"{lon},{lat}")
+            try:
+                lat, lon = all_coords[idx]
+                lat_f = float(lat)
+                lon_f = float(lon)
+                coord_strings.append(f"{lon_f},{lat_f}")
+            except (ValueError, TypeError, IndexError) as ex:
+                print(f"Warning: Skipping invalid coordinate at index {idx}: {all_coords[idx] if idx < len(all_coords) else 'out of bounds'}, error: {ex}")
+                continue
+            
+        if len(coord_strings) < 2:
+            return
             
         coord_str = ";".join(coord_strings)
         
-        local_src = [chunk_indices.index(i) for i in src_indices]
-        local_dest = [chunk_indices.index(i) for i in dest_indices]
+        local_src = []
+        local_dest = []
+        for i in src_indices:
+            try:
+                local_src.append(chunk_indices.index(i))
+            except ValueError:
+                pass
+        for i in dest_indices:
+            try:
+                local_dest.append(chunk_indices.index(i))
+            except ValueError:
+                pass
+                
+        if not local_src or not local_dest:
+            return
         
         src_str = ";".join(map(str, local_src))
         dest_str = ";".join(map(str, local_dest))
@@ -240,40 +262,53 @@ def prime_matrix_cache(locations: list[str]):
                         pairs_to_query.append((s_idx, d_idx))
                         
             if pairs_to_query:
-                print(f"Mapbox Matrix unavailable/over limit. Querying Directions API for {len(pairs_to_query)} pairs.")
-                success_count = 0
-                for s_idx, d_idx in pairs_to_query:
-                    if not check_usage_limits_and_spikes('directions', 1):
-                        print("Mapbox Directions API limit reached. Cascading to OSRM.")
-                        break
-                        
-                    lat_s, lon_s = all_coords[s_idx]
-                    lat_d, lon_d = all_coords[d_idx]
-                    url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{lon_s},{lat_s};{lon_d},{lat_d}"
-                    params = {
-                        "access_token": mapbox_key,
-                        "overview": "false"
-                    }
-                    try:
-                        time.sleep(0.15) # Rate limit delay
-                        resp = requests.get(url, params=params, timeout=5)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            routes = data.get("routes", [])
-                            if routes:
-                                dur_sec = routes[0].get("duration", 900)
-                                mins = int(round(dur_sec / 60.0))
-                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
-                                success_count += 1
-                        else:
-                            print(f"Mapbox Directions API failed: {resp.status_code}")
+                max_pairs = get_map_option('mapbox_directions_max_pairs', 50)
+                if len(pairs_to_query) > max_pairs:
+                    print(f"Too many pairs to query via Directions API ({len(pairs_to_query)} > {max_pairs}). Cascading to OSRM to protect limits and avoid long runtimes.")
+                else:
+                    print(f"Mapbox Matrix unavailable/over limit. Querying Directions API for {len(pairs_to_query)} pairs.")
+                    success_count = 0
+                    for s_idx, d_idx in pairs_to_query:
+                        if not check_usage_limits_and_spikes('directions', 1):
+                            print("Mapbox Directions API limit reached. Cascading to OSRM.")
+                            break
+                            
+                        try:
+                            lat_s, lon_s = all_coords[s_idx]
+                            lat_d, lon_d = all_coords[d_idx]
+                            lat_s_f = float(lat_s)
+                            lon_s_f = float(lon_s)
+                            lat_d_f = float(lat_d)
+                            lon_d_f = float(lon_d)
+                        except (ValueError, TypeError, IndexError) as ex:
+                            print(f"Warning: Skipping pairwise routing due to invalid coordinates: {ex}")
+                            continue
+                            
+                        url = f"https://api.mapbox.com/directions/v5/mapbox/driving/{lon_s_f},{lat_s_f};{lon_d_f},{lat_d_f}"
+                        params = {
+                            "access_token": mapbox_key,
+                            "overview": "false"
+                        }
+                        try:
+                            time.sleep(0.15) # Rate limit delay
+                            resp = requests.get(url, params=params, timeout=5)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                routes = data.get("routes", [])
+                                if routes:
+                                    dur_sec = routes[0].get("duration", 900)
+                                    mins = int(round(dur_sec / 60.0))
+                                    storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
+                                    success_count += 1
+                            else:
+                                print(f"Mapbox Directions API failed: {resp.status_code}")
+                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
+                        except Exception as ex:
+                            print(f"Mapbox Directions API error: {ex}")
                             storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
-                    except Exception as ex:
-                        print(f"Mapbox Directions API error: {ex}")
-                        storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), 15)
-                        
-                if success_count == len(pairs_to_query):
-                    return True
+                            
+                    if success_count == len(pairs_to_query):
+                        return True
                     
         # --- TIER 3: OSRM ---
         url = f"http://router.project-osrm.org/table/v1/driving/{coord_str}"
@@ -320,8 +355,18 @@ def prime_matrix_cache(locations: list[str]):
                         storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), 15)
         return False
         
+    matrix_usage = storage.get_mapbox_usage(current_month, 'matrix')
+    matrix_limit = get_map_option('mapbox_matrix_limit', 90000)
+    
+    use_mapbox_matrix = (
+        mapbox_key and 
+        not disable_mapbox and 
+        not get_map_option('disable_mapbox_matrix', False) and 
+        matrix_usage < matrix_limit
+    )
+    
     N = len(coords)
-    chunk_size = 50 if disable_mapbox else 12
+    chunk_size = 12 if use_mapbox_matrix else 50
     if N <= chunk_size:
         fetch_matrix_chunk(list(range(N)), list(range(N)), coords, loc_names)
     else:
@@ -397,18 +442,17 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         
     cached = storage.get_cached_geocode(address)
     if cached:
-        return cached.get('lat'), cached.get('lon')
+        try:
+            lat = float(cached.get('lat'))
+            lon = float(cached.get('lon'))
+            if lat == 0.0 and lon == 0.0:
+                return None
+            return lat, lon
+        except (ValueError, TypeError):
+            pass
         
     import datetime
     import urllib.parse
-    # Check cache outside lock so fast path is truly fast
-    cached = storage.get_cached_geocode(address)
-    if cached:
-        lat, lon = cached.get('lat'), cached.get('lon')
-        if lat == 0.0 and lon == 0.0:
-            return None
-        return lat, lon
-
     mapbox_key = get_mapbox_api_key()
     disable_mapbox = get_map_option('disable_mapbox', False)
     
@@ -442,10 +486,14 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         # Check cache again inside the lock in case another thread just fetched it
         cached = storage.get_cached_geocode(address)
         if cached:
-            lat, lon = cached.get('lat'), cached.get('lon')
-            if lat == 0.0 and lon == 0.0:
-                return None
-            return lat, lon
+            try:
+                lat = float(cached.get('lat'))
+                lon = float(cached.get('lon'))
+                if lat == 0.0 and lon == 0.0:
+                    return None
+                return lat, lon
+            except (ValueError, TypeError):
+                pass
             
         # Rate limit: Nominatim requires max 1 request per second
         import time
