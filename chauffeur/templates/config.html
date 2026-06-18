@@ -82,6 +82,7 @@
                         <div class="text-gray-500 italic text-sm">No calendars added yet.</div>
                     </template>
                 </div>
+            </div>
             <!-- Days to show -->
             <div class="mb-6">
                 <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Days to Display on Kiosk Dashboard</label>
@@ -156,6 +157,7 @@
                         <input type="number" x-model="mapboxGeocodeLimit" @change="saveSettings()" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
+            </div>
 
             <!-- Time Format -->
             <div class="mb-6">
@@ -215,13 +217,10 @@
             </div>
         </div>
 
-        </div>
-
         <!-- Drivers -->
         <div x-show="activeTab === 'drivers'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
             <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                <div class="col-span-full bg-blue-900/30 border border-blue-500/50 p-4 rounded-xl text-blue-200" x-text="'Active Tab: ' + activeTab + ' | Loaded Drivers Count: ' + drivers.length"></div>
                 <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
                     <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1" :class="{'opacity-50 grayscale': driver.is_disabled}" :style="'border-color: ' + driver.color_code">
                         <div class="w-full">
@@ -373,8 +372,6 @@
                     <button x-show="editDriverId" @click="cancelEditDriver()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
                 </div>
             </div>
-        </div>
-
         </div>
 
         <!-- Passengers -->
@@ -860,6 +857,9 @@
                 </div>
             </div>
         </div>
+    </div>
+    </div>
+</div>
 </div>
 
     <script>
