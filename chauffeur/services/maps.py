@@ -137,8 +137,8 @@ def prime_matrix_cache(locations: list[str]):
     from itertools import combinations
     missing_locs = set()
     for l1, l2 in combinations(unique_locs, 2):
-        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=False)
-        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=False)
+        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=True)
+        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=True)
         if c1 is None or c2 is None:
             missing_locs.add(l1)
             missing_locs.add(l2)
