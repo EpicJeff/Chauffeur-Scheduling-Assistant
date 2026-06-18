@@ -103,6 +103,12 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
         return (0, 0) if return_traffic else 0
     if origin.lower() == destination.lower():
         return (0, 0) if return_traffic else 0
+        
+    # Check if they geocode to the same coordinates (e.g. same building, different gym/room)
+    coords_origin = geocode_address(origin)
+    coords_dest = geocode_address(destination)
+    if coords_origin and coords_dest and coords_origin == coords_dest:
+        return (0, 0) if return_traffic else 0
     
     MOCK_TIME = 15
     cache_duration = get_cache_duration()
