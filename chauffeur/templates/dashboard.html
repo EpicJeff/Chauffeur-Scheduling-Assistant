@@ -2437,7 +2437,7 @@
 
                 dayContainer.appendChild(mainWrapper);
 
-                if ((data.solving_dates && data.solving_dates.includes(date)) || (typeof localSolvingDates !== 'undefined' && localSolvingDates.has(date))) {
+                if (!options.isModal && ((data.solving_dates && data.solving_dates.includes(date)) || (typeof localSolvingDates !== 'undefined' && localSolvingDates.has(date)))) {
                     const overlay = document.createElement('div');
 
                     overlay.className = "absolute inset-0 bg-gray-950/60 backdrop-blur-[1px] z-40 flex items-center justify-center pointer-events-auto transition-opacity duration-300";
@@ -2827,8 +2827,7 @@
                 no_location: sched ? sched.no_location || [] : [],
                 lateness_warnings: sched ? sched.lateness_warnings || [] : [],
                 driver_events: window.currentData ? window.currentData.driver_events : {},
-                calendar_metadata: window.currentData ? window.currentData.calendar_metadata : {},
-                solving_dates: [window.activeAITargetDate]
+                calendar_metadata: window.currentData ? window.currentData.calendar_metadata : {}
             };
             
             renderSchedule(modalData, { 
