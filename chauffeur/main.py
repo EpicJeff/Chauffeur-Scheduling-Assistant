@@ -752,11 +752,11 @@ def check_abort_refresh():
     if schedule_coordinator.pending_refresh:
         raise AbortRefreshException()
 
-def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False):
+def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     with schedule_coordinator.lock:
         if schedule_coordinator.is_running:
             schedule_coordinator.pending_refresh = True
-            schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh)
+            schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh, draft)
             logger.info("ScheduleCoordinator: Active run detected. Enqueued pending refresh.")
             return
         else:
@@ -765,9 +765,9 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
             schedule_coordinator.pending_args = None
             
     try:
-        while True:
             try:
-                refresh_schedule_logic(start_date_str, end_date_str, force_refresh)
+                args = schedule_coordinator.pending_args if schedule_coordinator.pending_refresh else (start_date_str, end_date_str, force_refresh, draft)
+                refresh_schedule_logic(*args)
             except AbortRefreshException:
                 logger.info("ScheduleCoordinator: Active run aborted by new pending request.")
             except Exception as e:
@@ -791,9 +791,9 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
             schedule_coordinator.is_running = False
             schedule_coordinator.clear_solving_dates()
 
-def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False):
+def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     try:
-        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh)
+        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
         global LAST_UPDATE_TIME
         LAST_UPDATE_TIME = time.time()
         return res
@@ -804,7 +804,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         import traceback
         return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
-def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False):
+def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
@@ -1511,7 +1511,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         # Check cache
         daily_cache = storage.get_cached_daily_schedule(date_str)
-        if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh:
+        if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh and not draft:
             continue
 
         # Else, solve for this day!
@@ -1545,9 +1545,26 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if not default_theme and themes:
             default_theme = themes[0]
 
-        assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-            daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
-        )
+        if draft:
+            assignments = {}
+            if daily_cache and 'schedule' in daily_cache and 'assignments' in daily_cache['schedule']:
+                assignments = dict(daily_cache['schedule']['assignments'])
+            elif previous_assignments:
+                assignments = dict(previous_assignments)
+            
+            for ov in overrides:
+                if ov.date_str == date_str:
+                    if ov.driver_id == 'unassigned':
+                        assignments.pop(ov.event_id, None)
+                    else:
+                        assignments[ov.event_id] = ov.driver_id
+                        
+            unassigned = [e.id for e in daily_events_to_solve if e.id not in assignments]
+            lateness_warnings = []
+        else:
+            assignments, unassigned, lateness_warnings = matcher.solve_schedule(
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
+            )
 
         unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
         assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
@@ -1898,9 +1915,13 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-async def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True):
-    background_tasks.add_task(trigger_background_refresh, start_date, end_date, force)
-    return {"status": "sync_started"}
+async def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True, draft: bool = False):
+    if draft:
+        refresh_schedule_logic(start_date, end_date, force_refresh=force, draft=True)
+        return {"status": "sync_started_and_finished_draft"}
+    else:
+        background_tasks.add_task(trigger_background_refresh, start_date, end_date, force, draft=False)
+        return {"status": "sync_started"}
 
 
 

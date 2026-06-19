@@ -693,7 +693,7 @@
             }
         }
 
-        async function forceSync(force = true) {
+        async function forceSync(force = true, draft = false) {
             const btn = document.getElementById('sync-btn');
             const icon = document.getElementById('sync-icon');
             const text = document.getElementById('sync-text');
@@ -707,7 +707,7 @@
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                let url = `${apiBase}api/schedule/refresh?force=${force}`;
+                let url = `${apiBase}api/schedule/refresh?force=${force}&draft=${draft}`;
                 if (currentStartDate && currentEndDate) {
                     const s = toLocalIsoString(currentStartDate);
 
@@ -715,7 +715,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `${apiBase}api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force=${force}&_cb=${new Date().getTime()}`;
+                    url = `${apiBase}api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force=${force}&draft=${draft}&_cb=${new Date().getTime()}`;
                 }
                 const res = await fetch(url, { method: 'POST' });
                 if (!res.ok) {
@@ -826,7 +826,7 @@
                 analyzeBtn.classList.add('hidden');
                 
                 // When turning off draft mode, sync with backend to let solver run
-                forceSync(false).catch(console.error);
+                forceSync(false, false).catch(console.error);
             }
         }
 
@@ -1494,9 +1494,7 @@
                     renderSchedule(currentData);
                 }
 
-                if (!isDraftMode) {
-                    forceSync(false).catch(console.error);
-                }
+                forceSync(false, isDraftMode).catch(console.error);
             } catch (e) {
                 alert("Failed to force swap");
             } finally {
@@ -1530,9 +1528,7 @@
                     renderSchedule(currentData);
                 }
                 
-                if (!isDraftMode) {
-                    forceSync(false).catch(console.error);
-                }
+                forceSync(false, isDraftMode).catch(console.error);
             } catch (e) {
                 alert("Failed to remove override");
             } finally {
