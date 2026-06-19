@@ -411,7 +411,7 @@ def solve_schedule(
     
     for e in assignable_events:
         # Calculate dynamic base weight for the event
-        base_event_weight = int(1000 * unassigned_penalty_mult)
+        base_event_weight = int(100 * unassigned_penalty_mult)
         for pr in priority_rules:
             mod = pr.weight_modifier
             if mod == 500 or mod == 200: mod = 10000
@@ -442,7 +442,7 @@ def solve_schedule(
 
             # Group weight
             if d.group == 'primary':
-                weight += int(300 * primary_driver_bonus_mult)
+                weight += int(2000 * primary_driver_bonus_mult)
             elif d.group == 'secondary':
                 weight += 0
                 
@@ -465,7 +465,7 @@ def solve_schedule(
             
             # Stickiness
             if previous_assignments.get(e.id) == d.id:
-                weight += int(200 * stickiness_bonus_mult)
+                weight += int(5 * stickiness_bonus_mult)
                 
             # Apply Driver Rules
             for r in rules:
@@ -513,12 +513,12 @@ def solve_schedule(
                             
                         if same_loc or ((travel_mins <= 5) and shares_calendar):
                             # Higher bonus for doing things at the exact same location (reduces travel)
-                            objective_terms.append(both_assigned * int(500 * same_loc_bonus_mult))
+                            objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
                             
                         # Penalize travel time for events assigned to the same driver
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < 10800: # 3 hours
-                            objective_terms.append(both_assigned * (-int(travel_mins * 10 * travel_time_penalty_mult)))
+                            objective_terms.append(both_assigned * (-int(travel_mins * travel_time_penalty_mult)))
                     
     # 4c. Mutually Exclusive Event Groups
 
