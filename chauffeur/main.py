@@ -1007,12 +1007,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         passenger_calendar_ids = [c for p in passengers for c in p.calendar_ids]
         is_driver_only = all(c in driver_calendar_ids and c not in passenger_calendar_ids for c in original_calendar_ids) and len(original_calendar_ids) > 0
         
-        if config and 'passenger_ids' in config:
-            if config.get('passenger_ids'):
-                is_passenger = True
-                matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
-            else:
-                is_passenger = False
+        if config and config.get('passenger_ids'):
+            is_passenger = True
+            matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
         else:
             # Check Rules FIRST
             rule_matched = False
