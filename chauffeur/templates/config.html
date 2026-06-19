@@ -589,16 +589,14 @@
 
         <!-- Rules -->
         <div x-show="activeTab === 'rules'" x-cloak x-transition.opacity class="space-y-10">
-        <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="text-3xl font-bold text-blue-300">Routing Rules</h2>
-<button @click="openRuleModal()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                    New Rule
-                </button>
-            </div>
-            <div x-show="activeTab === 'rules'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
-            <h2 class="text-3xl font-bold mb-6 text-indigo-300">Scheduling Rules & Priorities</h2>
+            <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold text-indigo-300">Scheduling Rules & Priorities</h2>
+                    <button @click="openRuleModal()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        New Rule
+                    </button>
+                </div>
 
             <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
                 <div class="flex items-center space-x-3 w-full sm:w-auto">
@@ -1150,6 +1148,7 @@
                     <button x-show="editPriorityRuleId" @click="cancelEditPriorityRule()" class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center">Cancel</button>
                 </div>
             </div>
+        </div>
         </div>
 
         <!-- Themes -->
