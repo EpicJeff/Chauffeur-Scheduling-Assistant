@@ -436,9 +436,12 @@ def generate_ai_rules(background_tasks: BackgroundTasks):
         # Trigger background schedule solve
         background_tasks.add_task(trigger_background_refresh)
         
+        msg = f"Successfully generated {len(rules)} rules, {len(priority_rules)} priority rules, and {len(themes)} themes!"
+        if len(themes) == 0:
+            msg = f"WARNING: Generated {len(rules)} rules, but the AI failed to generate any themes! The AI evaluation will not work without themes."
         return {
-            "success": True, 
-            "message": f"Successfully generated {len(rules)} rules, {len(priority_rules)} priority rules, and {len(themes)} themes!",
+            "success": True if len(themes) > 0 else False, 
+            "message": msg,
             "rules_count": len(rules),
             "priority_rules_count": len(priority_rules),
             "themes_count": len(themes)
@@ -1514,7 +1517,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             import threading
             threading.Thread(target=bg_eval, args=(date_str, daily_hash, encoded_schedule, default_theme, other_themes, daily_events_to_solve, drivers, rules, priority_rules, overrides, previous_assignments, driver_events_map, passengers, trip_metadata, home_location, driver_events_ids, provider, url, api_key, model, philosophy)).start()
         else:
-            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='approved_default')
+            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=None)
 
         # Day finished, remove it from solving list and save combined!
         schedule_coordinator.finish_solving(date_str)
@@ -1541,6 +1544,14 @@ def get_vapid_public_key():
 def push_subscribe(sub: PushSubscription):
     storage.save_push_subscription(sub.driver_id, sub.subscription)
     return {"status": "ok"}
+
+@app.get("/api/debug_db")
+def debug_db():
+    return {
+        "db_path": storage.DB_PATH,
+        "themes_count": len(storage.themes_table.all()),
+        "rules_count": len(storage.rules_table.all())
+    }
 
 @app.post("/api/drive_status")
 def update_drive_status(status: DriveStatus):
