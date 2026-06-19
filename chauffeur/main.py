@@ -437,8 +437,8 @@ def generate_ai_rules(background_tasks: BackgroundTasks):
         background_tasks.add_task(trigger_background_refresh)
         
         msg = f"Successfully generated {len(rules)} rules, {len(priority_rules)} priority rules, and {len(themes)} themes!"
-        if len(themes) == 0:
-            msg = f"WARNING: Generated {len(rules)} rules, but the AI failed to generate any themes! The AI evaluation will not work without themes."
+        if len(themes) < 2:
+            msg = f"WARNING: Generated {len(rules)} rules, but only {len(themes)} themes! The AI evaluation requires at least 2 themes to compare options."
         return {
             "success": True if len(themes) > 0 else False, 
             "message": msg,
@@ -1145,10 +1145,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 combined_true_unassigned.extend(sched.get('true_unassigned', []))
                 combined_conflicts.extend(sched.get('conflicts', []))
                 
-                ai_status = daily_cache.get('ai_status')
-                if ai_status:
+                if 'ai_status' in daily_cache:
                     combined_ai_metadata[d_str] = {
-                        'ai_status': ai_status,
+                        'ai_status': daily_cache.get('ai_status'),
                         'selected_index': daily_cache.get('selected_index'),
                         'llm_reasoning': daily_cache.get('llm_reasoning'),
                         'options': daily_cache.get('options', [])
