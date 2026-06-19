@@ -1333,7 +1333,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if any(kw in e_title_lower for kw in schedule_all_keywords):
                 continue
             if len(core_title) > 3:
-                key = (date_str, core_title, cal_ids)
+                key = (date_str, core_title)
                 dup_groups[key].append((e_title, e_id))
 
         for key, evs in dup_groups.items():

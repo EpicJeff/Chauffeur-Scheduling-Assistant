@@ -99,6 +99,18 @@
                 <button id="btn-next-week" onclick="fetchNextWeek()"
                     class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-3 md:px-4 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:flex-none">Next &rarr;</button>
             </div>
+            <div class="flex gap-2 w-full md:w-auto justify-center order-last md:order-none mt-2 md:mt-0">
+                <button id="btn-draft-mode" onclick="toggleDraftMode()"
+                    class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-2 px-3 md:px-4 rounded-lg shadow-md border border-gray-600 transition-colors text-sm md:text-base flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                    Draft Mode: OFF
+                </button>
+                <button id="btn-analyze-draft" onclick="analyzeDraft()"
+                    class="hidden bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-3 md:px-4 rounded-lg shadow-md transition-colors text-sm md:text-base flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    Analyze Draft
+                </button>
+            </div>
             <button onclick="forceSync()" id="sync-btn"
                 class="bg-blue-600 hover:bg-blue-500 px-4 md:px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center text-sm md:text-base">
                 <svg id="sync-icon" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -792,6 +804,63 @@
 
         let currentEventsMap = {};
         let activeEventId = null;
+        let isDraftMode = false;
+
+        function toggleDraftMode() {
+            isDraftMode = !isDraftMode;
+            const btn = document.getElementById('btn-draft-mode');
+            const analyzeBtn = document.getElementById('btn-analyze-draft');
+            if (isDraftMode) {
+                btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg> Draft Mode: ON`;
+                btn.classList.replace('bg-gray-700', 'bg-yellow-600');
+                btn.classList.replace('hover:bg-gray-600', 'hover:bg-yellow-500');
+                btn.classList.replace('text-gray-300', 'text-white');
+                btn.classList.replace('border-gray-600', 'border-yellow-500');
+                analyzeBtn.classList.remove('hidden');
+            } else {
+                btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg> Draft Mode: OFF`;
+                btn.classList.replace('bg-yellow-600', 'bg-gray-700');
+                btn.classList.replace('hover:bg-yellow-500', 'hover:bg-gray-600');
+                btn.classList.replace('text-white', 'text-gray-300');
+                btn.classList.replace('border-yellow-500', 'border-gray-600');
+                analyzeBtn.classList.add('hidden');
+                
+                // When turning off draft mode, sync with backend to let solver run
+                forceSync(false).catch(console.error);
+            }
+        }
+
+        async function analyzeDraft() {
+            const analyzeBtn = document.getElementById('btn-analyze-draft');
+            const originalHtml = analyzeBtn.innerHTML;
+            analyzeBtn.innerHTML = `<svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing...`;
+            analyzeBtn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/rules/analyze-overrides', { method: 'POST' });
+                if (!res.ok) throw new Error('Analysis failed');
+                const data = await res.json();
+                
+                let msg = "AI Analysis Complete!\n\n";
+                if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
+                    msg += "No new rules were generated (either no consistent patterns found or rules already exist).";
+                } else {
+                    msg += `Generated ${data.new_rules_count} new constraint rules and ${data.new_priority_rules_count} new priority rules!\n\n`;
+                    msg += "Turning off Draft Mode to let the solver apply your new AI rules...";
+                }
+                alert(msg);
+                
+                if (isDraftMode) {
+                    toggleDraftMode(); // This will auto-sync
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Failed to analyze draft.");
+            } finally {
+                analyzeBtn.innerHTML = originalHtml;
+                analyzeBtn.disabled = false;
+            }
+        }
 
         function toDateTimeLocal(isoStr) {
             if (!isoStr) return '';
@@ -1425,7 +1494,9 @@
                     renderSchedule(currentData);
                 }
 
-                forceSync(false).catch(console.error);
+                if (!isDraftMode) {
+                    forceSync(false).catch(console.error);
+                }
             } catch (e) {
                 alert("Failed to force swap");
             } finally {
@@ -1459,7 +1530,9 @@
                     renderSchedule(currentData);
                 }
                 
-                forceSync(false).catch(console.error);
+                if (!isDraftMode) {
+                    forceSync(false).catch(console.error);
+                }
             } catch (e) {
                 alert("Failed to remove override");
             } finally {
