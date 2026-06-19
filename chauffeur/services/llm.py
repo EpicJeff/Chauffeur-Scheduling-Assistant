@@ -137,7 +137,15 @@ CRITICAL INSTRUCTIONS:
 4. CONFLICT AVOIDANCE: Avoid generating redundant or conflicting rules.
 5. THEMES: You MUST generate 3-5 custom "Solver Themes" that represent different strategic ways to fulfill the family philosophy.
    - The first theme should ALWAYS be the "Standard" or "Balanced" default theme with 1.0 multipliers for everything.
-   - Additional themes should tweak the multipliers (e.g., 5.0 for a huge bonus/penalty, 0.2 for a reduction) to optimize for specific behaviors mentioned or implied in the philosophy/feedback (e.g., "Fewest Handoffs" by increasing stickiness, "Fastest Drives" by increasing travel time penalty).
+   - Additional themes should tweak the multipliers to optimize for specific behaviors. CRITICAL: You must use multipliers scaled high enough to actually bridge the gap between the underlying engine's base weights!
+     * The base weight for Primary Driver Bonus is 2000.
+     * The base weight for Same Location Bonus is 5000.
+     * The base weight for Unassigned Penalty is 100.
+     * The base weight for Travel Time Penalty is 1 (per minute, usually ~30 penalty max).
+     * The base weight for Stickiness Bonus is 5.
+     If you want a theme to prioritize "Fastest Drives" (Travel Time), your travel_time_penalty_multiplier must be massive (e.g. 50 to 100) to compete with the 2000 primary driver bonus.
+     If you want a theme to prioritize "Fewest Handoffs" (Stickiness), use a stickiness_bonus_multiplier of 200 to 500.
+     If you want to ensure no events are dropped, use an unassigned_penalty_multiplier of 20 to 50.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
