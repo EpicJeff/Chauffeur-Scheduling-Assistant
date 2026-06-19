@@ -489,6 +489,10 @@ def delete_theme(doc_id: int):
     with db_lock:
         themes_table.remove(doc_ids=[doc_id])
 
+def update_theme(doc_id: int, theme_data: dict):
+    with db_lock:
+        themes_table.update(theme_data, doc_ids=[doc_id])
+
 # AI Feedback
 def get_recent_ai_feedback(limit: int = 20) -> List[dict]:
     with db_lock:

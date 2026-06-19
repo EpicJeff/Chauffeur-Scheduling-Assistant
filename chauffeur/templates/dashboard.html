@@ -479,14 +479,21 @@
 
     <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-full max-w-5xl border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
-            <div class="flex justify-between items-start mb-6 shrink-0">
+            <div class="flex justify-between items-center mb-6 shrink-0 gap-4">
                 <h3 class="text-2xl md:text-3xl font-bold text-indigo-300 flex items-center">
                     <svg class="w-8 h-8 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                     Review AI Suggestions
                 </h3>
-                <button onclick="closeAIModal()" class="text-gray-400 hover:text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
+                <div class="flex items-center gap-4">
+                    <div id="ai-modal-nav" class="flex items-center gap-2 hidden">
+                        <button onclick="navigateAIOptions(-1)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">&larr; Prev Day</button>
+                        <span id="ai-modal-nav-text" class="text-gray-400 text-sm font-bold px-2"></span>
+                        <button onclick="navigateAIOptions(1)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">Next Day &rarr;</button>
+                    </div>
+                    <button onclick="closeAIModal()" class="text-gray-400 hover:text-white ml-2">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
             </div>
             <div class="flex-1 flex flex-col md:flex-row gap-6 min-h-0">
                 <div class="w-full md:w-1/3 bg-gray-900 border border-gray-700 rounded-xl overflow-y-auto flex flex-col p-4 space-y-4" id="ai-options-list">
@@ -1494,8 +1501,14 @@
             }
         }
 
-        function renderSchedule(data) {
+        function renderSchedule(data, options = {}) {
             if (!data) data = {};
+            const { 
+                targetContainerId = 'schedule-container',
+                isModal = false,
+                dateFilter = null 
+            } = options;
+
             const { 
                 events = [], 
                 assignments = {}, 
@@ -1507,8 +1520,9 @@
                 lateness_warnings = [] 
             } = data;
 
-            // --- Inbox Logic ---
-            let triageEvents = events.filter(e => e.needs_triage);
+            if (!isModal) {
+                // --- Inbox Logic ---
+                let triageEvents = events.filter(e => e.needs_triage);
             
             // Group recurring events
             const seriesGrouped = {};
@@ -1571,10 +1585,15 @@
             const aiBanner = document.getElementById('ai-suggestion-banner');
             let hasAiSuggestion = false;
             let firstSuggestionDate = null;
+            let allSuggestionDates = [];
             if (data.ai_metadata) {
-                for (const [dateStr, meta] of Object.entries(data.ai_metadata)) {
+                // Ensure dates are sorted chronologically
+                const sortedDates = Object.keys(data.ai_metadata).sort((a, b) => new Date(a) - new Date(b));
+                for (const dateStr of sortedDates) {
+                    const meta = data.ai_metadata[dateStr];
                     if (meta.ai_status === 'suggests_alternative' && meta.options && meta.options.length > 0) {
                         hasAiSuggestion = true;
+                        allSuggestionDates.push(dateStr);
                         if (!firstSuggestionDate) firstSuggestionDate = dateStr;
                     }
                 }
@@ -1583,9 +1602,11 @@
                 aiBanner.classList.remove('hidden');
                 window.currentAiMetadata = data.ai_metadata;
                 window.firstSuggestionDate = firstSuggestionDate;
+                window.allSuggestionDates = allSuggestionDates;
             } else {
                 aiBanner.classList.add('hidden');
                 window.currentAiMetadata = data.ai_metadata || null;
+                window.allSuggestionDates = [];
             }
 
             // Clear local solving dates if they are no longer in data.solving_dates
@@ -1598,6 +1619,7 @@
             } else {
                 localSolvingDates.clear();
             }
+            } // Close if (!isModal)
 
             const scheduleByDate = {};
             if (data.solving_dates) {
@@ -1675,7 +1697,7 @@
                 }
             });
 
-            const scheduleContainer = document.getElementById('schedule-container');
+            const scheduleContainer = document.getElementById(targetContainerId);
             scheduleContainer.innerHTML = '';
 
             if (Object.keys(scheduleByDate).length === 0) {
@@ -1684,7 +1706,14 @@
             }
 
             // Sort dates
-            const sortedDates = Object.keys(scheduleByDate).sort((a, b) => new Date(a) - new Date(b));
+            let sortedDates = Object.keys(scheduleByDate).sort((a, b) => new Date(a) - new Date(b));
+            if (dateFilter) {
+                sortedDates = sortedDates.filter(d => d === dateFilter);
+                if (sortedDates.length === 0) {
+                    scheduleContainer.innerHTML = `<p class="text-center text-gray-500 text-xl mt-20">No scheduled activities for ${dateFilter}.</p>`;
+                    return;
+                }
+            }
 
             sortedDates.forEach(date => {
                 const colsObj = scheduleByDate[date];
@@ -2686,8 +2715,34 @@
             window.activeAISelectedIndex = meta.selected_index;
             window.activeAIReasoning = meta.llm_reasoning;
             
+            updateAIModalNav();
             renderAIOptionsList();
             renderAIOptionDetails(meta.selected_index);
+        }
+
+        function updateAIModalNav() {
+            const navEl = document.getElementById('ai-modal-nav');
+            const navText = document.getElementById('ai-modal-nav-text');
+            
+            if (window.allSuggestionDates && window.allSuggestionDates.length > 1) {
+                navEl.classList.remove('hidden');
+                const idx = window.allSuggestionDates.indexOf(window.activeAITargetDate);
+                navText.textContent = `${idx + 1} of ${window.allSuggestionDates.length}`;
+            } else {
+                navEl.classList.add('hidden');
+            }
+        }
+
+        function navigateAIOptions(dir) {
+            if (!window.allSuggestionDates || window.allSuggestionDates.length === 0) return;
+            const idx = window.allSuggestionDates.indexOf(window.activeAITargetDate);
+            if (idx === -1) return;
+            
+            let newIdx = idx + dir;
+            if (newIdx < 0) newIdx = window.allSuggestionDates.length - 1;
+            if (newIdx >= window.allSuggestionDates.length) newIdx = 0;
+            
+            openAIOptionsModal(window.allSuggestionDates[newIdx]);
         }
 
         function closeAIModal() {
@@ -2753,27 +2808,31 @@
                 </div>
             `;
             
-            let assignmentsHTML = '';
-            const sched = opt.schedule;
-            if (sched && sched.assignments) {
-                assignmentsHTML = `<div class="space-y-2 mt-4"><h4 class="font-bold text-gray-300">Assignments</h4>`;
-                for (const [eventId, driverId] of Object.entries(sched.assignments)) {
-                    const eTitle = currentEventsMap[eventId] ? currentEventsMap[eventId].title : eventId;
-                    const dName = driversMap[driverId] ? driversMap[driverId].name : driverId;
-                    assignmentsHTML += `<div class="bg-gray-800 p-2 rounded flex justify-between text-sm"><span class="text-gray-300 truncate mr-2">${eTitle}</span><span class="text-blue-400 font-bold">${dName}</span></div>`;
-                }
-                assignmentsHTML += `</div>`;
-            }
-
             container.innerHTML = `
-                <h3 class="text-2xl font-bold text-white mb-2">${opt.theme_name}</h3>
-                ${reasoningHTML}
-                <div class="bg-gray-900 rounded-xl border border-gray-700 p-4 flex-1 overflow-y-auto">
-                    <p class="text-sm text-gray-400 italic mb-4">You are viewing the schedule assignments for this option.</p>
-                    ${assignmentsHTML}
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-2xl font-bold text-white">${opt.theme_name}</h3>
+                    <div class="text-gray-400 font-bold bg-gray-800 px-3 py-1 rounded-lg shadow-inner">${formatDateStr(window.activeAITargetDate)}</div>
                 </div>
+                ${reasoningHTML}
+                <div id="ai-modal-schedule-container" class="w-full flex-1 overflow-y-auto bg-gray-900 rounded-xl border border-gray-700 p-4"></div>
                 ${actionsHTML}
             `;
+            
+            const modalData = {
+                events: window.currentData ? window.currentData.events : [],
+                assignments: sched ? sched.assignments || {} : {},
+                ghost_assignments: sched ? sched.ghost_assignments || {} : {},
+                unassigned: sched ? sched.unassigned || [] : [],
+                no_location: sched ? sched.no_location || [] : [],
+                lateness_warnings: sched ? sched.lateness_warnings || [] : [],
+                driver_events: window.currentData ? window.currentData.driver_events : {}
+            };
+            
+            renderSchedule(modalData, { 
+                targetContainerId: 'ai-modal-schedule-container', 
+                isModal: true, 
+                dateFilter: window.activeAITargetDate 
+            });
         }
 
         async function submitAIFeedback(selectedIdx) {
@@ -2791,7 +2850,18 @@
                     body: JSON.stringify(payload)
                 });
                 
-                closeAIModal();
+                // Remove the resolved date from window.allSuggestionDates
+                if (window.allSuggestionDates) {
+                    window.allSuggestionDates = window.allSuggestionDates.filter(d => d !== window.activeAITargetDate);
+                }
+                
+                // If there are more dates to review, navigate to the next one
+                if (window.allSuggestionDates && window.allSuggestionDates.length > 0) {
+                    openAIOptionsModal(window.allSuggestionDates[0]);
+                } else {
+                    closeAIModal();
+                }
+                
                 // Optionally force sync to re-render the accepted schedule
                 forceSync(true);
             } catch (e) {

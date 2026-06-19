@@ -76,6 +76,7 @@ class Rule(BaseModel):
     location: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
     is_ai_generated: bool = False
+    is_enabled: bool = True
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -89,6 +90,7 @@ class PriorityRule(BaseModel):
     time_end: Optional[str] = None
     location: Optional[str] = None
     is_ai_generated: bool = False
+    is_enabled: bool = True
 
 class ManualOverride(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

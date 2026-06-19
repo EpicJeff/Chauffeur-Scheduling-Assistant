@@ -308,6 +308,29 @@ def delete_priority_rule(doc_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
+# --- Themes API ---
+@app.get("/api/themes")
+def get_themes():
+    return storage.get_all_themes()
+
+@app.post("/api/themes")
+def create_theme(theme_data: dict, background_tasks: BackgroundTasks):
+    doc_id = storage.add_theme(theme_data)
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"doc_id": doc_id, "status": "created"}
+
+@app.put("/api/themes/{doc_id}")
+def update_theme(doc_id: int, theme_data: dict, background_tasks: BackgroundTasks):
+    storage.update_theme(doc_id, theme_data)
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "updated"}
+
+@app.delete("/api/themes/{doc_id}")
+def delete_theme(doc_id: int, background_tasks: BackgroundTasks):
+    storage.delete_theme(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "deleted"}
+
 # --- Overrides API ---
 @app.get("/api/overrides")
 def get_overrides():
@@ -829,17 +852,28 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     priority_rules_data = storage.get_all_priority_rules()
     overrides_data = storage.get_all_overrides()
 
+    enable_standard_rules = settings.get("enable_standard_rules", True)
+    enable_ai_rules = settings.get("enable_ai_rules", True)
+
     rules = []
     for r in rules_data:
         try:
-            rules.append(Rule(**r))
+            rule_obj = Rule(**r)
+            if not rule_obj.is_enabled: continue
+            if rule_obj.is_ai_generated and not enable_ai_rules: continue
+            if not rule_obj.is_ai_generated and not enable_standard_rules: continue
+            rules.append(rule_obj)
         except Exception as err:
             logger.warning(f"Skipping invalid rule from database: {err}. Rule data: {r}")
 
     priority_rules = []
     for pr in priority_rules_data:
         try:
-            priority_rules.append(PriorityRule(**pr))
+            p_rule_obj = PriorityRule(**pr)
+            if not p_rule_obj.is_enabled: continue
+            if p_rule_obj.is_ai_generated and not enable_ai_rules: continue
+            if not p_rule_obj.is_ai_generated and not enable_standard_rules: continue
+            priority_rules.append(p_rule_obj)
         except Exception as err:
             logger.warning(f"Skipping invalid priority rule from database: {err}. Rule data: {pr}")
 
@@ -1415,8 +1449,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort before running solver
         check_abort_refresh()
 
-        themes = storage.get_all_themes()
-        default_theme = next((t for t in themes if "default" in t.get('name', '').lower() or "standard" in t.get('name', '').lower()), {})
+        enable_ai_themes = settings.get("enable_ai_themes", True)
+        all_themes = storage.get_all_themes()
+        themes = []
+        for t in all_themes:
+            if not t.get('is_enabled', True): continue
+            if t.get('is_ai_generated', False) and not enable_ai_themes: continue
+            themes.append(t)
+            
+        default_theme = next((t for t in themes if "default" in (t.get('name') or '').lower() or "standard" in (t.get('name') or '').lower()), {})
         if not default_theme and themes:
             default_theme = themes[0]
 
