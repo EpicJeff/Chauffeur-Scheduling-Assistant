@@ -37,6 +37,8 @@ with db_lock:
     drivers_table = db.table('drivers')
     rules_table = db.table('rules')
     priority_rules_table = db.table('priority_rules')
+    themes_table = db.table('themes')
+    ai_feedback_table = db.table('ai_feedback')
     overrides_table = db.table('overrides')
     cache_table = db.table('schedule_cache')
     custom_schedules_table = db.table('custom_schedules')
@@ -469,6 +471,36 @@ def delete_priority_rule(doc_id: int):
         cache_table.truncate()
         priority_rules_table.remove(doc_ids=[doc_id])
 
+# Themes CRUD
+def get_all_themes() -> List[dict]:
+    with db_lock:
+        themes = []
+        for t in themes_table.all():
+            doc = dict(t)
+            doc['doc_id'] = t.doc_id
+            themes.append(doc)
+        return themes
+
+def add_theme(theme_data: dict) -> int:
+    with db_lock:
+        return themes_table.insert(theme_data)
+
+def delete_theme(doc_id: int):
+    with db_lock:
+        themes_table.remove(doc_ids=[doc_id])
+
+# AI Feedback
+def get_recent_ai_feedback(limit: int = 20) -> List[dict]:
+    with db_lock:
+        feedback = ai_feedback_table.all()
+        feedback.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        return feedback[:limit]
+
+def add_ai_feedback(context: str):
+    import time
+    with db_lock:
+        ai_feedback_table.insert({'timestamp': time.time(), 'context': context})
+
 def invalidate_daily_schedule_cache_for_event(event_id: str):
     with db_lock:
         cache_docs = cache_table.all()
@@ -602,12 +634,27 @@ def get_cached_daily_schedule(date_str: str):
             return res[0]
         return None
 
-def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str):
+def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str, options: list = None, ai_status: str = 'evaluating', selected_index: int = 0, llm_reasoning: str = ""):
     with db_lock:
+        existing = daily_schedules_table.get(Query().date_str == date_str)
+        
+        # If we are only updating options/ai_status, keep existing options if not provided
+        if existing and existing.get('events_hash') == events_hash:
+            if options is None:
+                options = existing.get('options', [])
+            if not llm_reasoning and ai_status == 'evaluating':
+                ai_status = existing.get('ai_status', 'evaluating')
+                selected_index = existing.get('selected_index', 0)
+                llm_reasoning = existing.get('llm_reasoning', '')
+                
         daily_schedules_table.upsert({
             'date_str': date_str,
             'schedule': schedule_data,
-            'events_hash': events_hash
+            'events_hash': events_hash,
+            'options': options or [],
+            'ai_status': ai_status,
+            'selected_index': selected_index,
+            'llm_reasoning': llm_reasoning
         }, Query().date_str == date_str)
 
 

@@ -70,11 +70,12 @@ def generate_rules_from_philosophy(
     model: str,
     philosophy: str,
     drivers: List[dict],
-    passengers: List[dict]
-) -> Tuple[List[dict], List[dict], str]:
+    passengers: List[dict],
+    feedback: List[str] = None
+) -> Tuple[List[dict], List[dict], List[dict], str]:
     """
-    Calls Ollama or Gemini to synthesize rules from philosophy and bios.
-    Returns: (list_of_rule_dicts, list_of_priority_rule_dicts, raw_response_log_str)
+    Calls Ollama or Gemini to synthesize rules and solver themes from philosophy and bios.
+    Returns: (list_of_rules, list_of_priority_rules, list_of_themes, raw_response_log)
     """
     
     # Build context about drivers and passengers
@@ -93,14 +94,19 @@ def generate_rules_from_philosophy(
             f"- Passenger ID: '{p_id}' (matches calendar ID), Name: '{p['name']}', Hashtags: {p.get('hashtags', [])}, Bio/Context: \"{p.get('bio', '')}\""
         )
         
+    feedback_context = ""
+    if feedback:
+        feedback_context = "\nRecent user feedback to learn from:\n" + "\n".join([f"- {f}" for f in feedback]) + "\nAdjust your generated themes and rules to respect this past feedback."
+
     system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
-Your task is to translate a natural language 'Family Philosophy' and individual driver/passenger biographies into structured constraint rules and priority rules.
+Your task is to translate a natural language 'Family Philosophy' and individual driver/passenger biographies into structured constraint rules, priority rules, and solver themes.
 
 Available Drivers (use only these IDs for rules):
 {chr(10).join(driver_context)}
 
 Available Passengers (use only these passenger IDs for rules):
 {chr(10).join(passenger_context)}
+{feedback_context}
 
 Rule Types available:
 1. 'required': A driver MUST drive for events matching these filters.
@@ -126,19 +132,18 @@ Constraints & rules details:
 
 CRITICAL INSTRUCTIONS:
 1. Every rule in the "rules" array MUST use the key "constraint_type" to specify the type (do NOT use "type" or "rule_type").
-2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location). Do NOT generate rules with empty filters (which would match all events globally) unless the philosophy explicitly requests a global default.
+2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location). Do NOT generate rules with empty filters.
 3. The "passenger_ids" inside rules MUST match the Passenger IDs provided in the context above (not names or emails).
-4. CONFLICT AVOIDANCE & LOGICAL CONSISTENCY:
-   - Avoid generating redundant or conflicting rules. If driver A is "required" for certain events, do NOT generate "preferred" rules for driver B or C for the exact same events (as "required" overrides all other assignments).
-   - If multiple drivers are "preferred" for the same event category, either split them logically (e.g. by day of week or passenger) if the text implies it, or generate only a single preferred rule for the primary driver mentioned.
-   - Do not generate "preferred" and "unavailable" rules for the same driver that overlap in their filters.
-   - Do not merge completely unrelated keywords (e.g. "sports", "practice", "game") into a single rule if they trigger different driver requirements. Keep keywords specific and clean.
+4. CONFLICT AVOIDANCE: Avoid generating redundant or conflicting rules.
+5. THEMES: You MUST generate 3-5 custom "Solver Themes" that represent different strategic ways to fulfill the family philosophy.
+   - The first theme should ALWAYS be the "Standard" or "Balanced" default theme with 1.0 multipliers for everything.
+   - Additional themes should tweak the multipliers (e.g., 5.0 for a huge bonus/penalty, 0.2 for a reduction) to optimize for specific behaviors mentioned or implied in the philosophy/feedback (e.g., "Fewest Handoffs" by increasing stickiness, "Fastest Drives" by increasing travel time penalty).
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
   "rules": [
     {{
-      "driver_id": "string (e.g. 'mom', 'dad')",
+      "driver_id": "string (e.g. 'mom')",
       "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'tolerance' | 'duplicate' | 'buffer' | 'attendance')",
       "duplicate_action": "string or null ('schedule_one' | 'schedule_all')",
       "tolerance_mins": 0,
@@ -166,6 +171,17 @@ You MUST respond with a single valid JSON object of the following exact structur
       "time_end": "string ('HH:MM' or null)",
       "location": "string or null",
       "is_ai_generated": true
+    }}
+  ],
+  "themes": [
+    {{
+      "name": "string (e.g., 'Balanced Default')",
+      "description": "string",
+      "unassigned_penalty_multiplier": 1.0,
+      "stickiness_bonus_multiplier": 1.0,
+      "travel_time_penalty_multiplier": 1.0,
+      "primary_driver_bonus_multiplier": 1.0,
+      "same_location_bonus_multiplier": 1.0
     }}
   ]
 }}
@@ -249,14 +265,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         parsed = json.loads(cleaned_json_str)
         rules_out = parsed.get('rules', [])
         priority_rules_out = parsed.get('priority_rules', [])
+        themes_out = parsed.get('themes', [])
         
         # Ensure is_ai_generated flag is set to True
         for r in rules_out:
             r['is_ai_generated'] = True
         for pr in priority_rules_out:
             pr['is_ai_generated'] = True
+        for t in themes_out:
+            t['is_ai_generated'] = True
             
-        return rules_out, priority_rules_out, raw_response
+        return rules_out, priority_rules_out, themes_out, raw_response
     except json.JSONDecodeError as e:
         raise ValueError(f"LLM did not return valid JSON. Error: {str(e)}. Raw output was:\n{raw_response}")
 
@@ -379,3 +398,119 @@ def refine_scheduling_text(
         refined_str = "\n".join(lines).strip()
 
     return refined_str
+
+def evaluate_schedule_options(
+    provider: str,
+    url: str,
+    api_key: str,
+    model: str,
+    philosophy: str,
+    drivers: List[dict],
+    options: List[dict],
+    feedback: List[str] = None
+) -> Tuple[int, str]:
+    """
+    Evaluates generated schedule options and returns the selected index and reasoning.
+    options: List of dicts, each containing 'theme_name', 'assignments_summary', 'unassigned_summary'.
+    """
+    if not options:
+        return 0, "No options to evaluate."
+
+    driver_context = []
+    for d in drivers:
+        driver_context.append(f"- {d['name']} (ID: {d['id']}, Group: {d['group']}, Bio: {d.get('bio', '')})")
+
+    feedback_context = ""
+    if feedback:
+        feedback_context = "\nRecent user feedback to learn from:\n" + "\n".join([f"- {f}" for f in feedback]) + "\nAdjust your choice to respect this past feedback."
+
+    options_text = ""
+    for idx, opt in enumerate(options):
+        options_text += f"Option {idx}:\nTheme: {opt.get('theme_name', 'Unknown')}\n"
+        options_text += f"Assignments: {opt.get('assignments_summary', 'None')}\n"
+        options_text += f"Unassigned Events: {opt.get('unassigned_summary', 'None')}\n\n"
+
+    system_prompt = f"""You are an expert family scheduling assistant.
+Your task is to review multiple schedule options generated by a mathematical solver, and pick the ONE that best fits the family's philosophy and recent feedback.
+
+Family Philosophy:
+{philosophy}
+
+Drivers:
+{chr(10).join(driver_context)}
+{feedback_context}
+
+Available Options:
+{options_text}
+
+You MUST respond with a single valid JSON object of the following exact structure:
+{{
+  "selected_index": 0,
+  "reasoning": "A 1-3 sentence explanation of why this option is the best fit."
+}}
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON."""
+
+    prompt = "Evaluate the options and return the best one in JSON format."
+
+    raw_response = ""
+
+    if provider == 'ollama':
+        try:
+            req_url = f"{url.rstrip('/')}/api/chat"
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.1}
+            }
+            req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                raw_response = data.get('message', {}).get('content', '')
+        except Exception as e:
+            return 0, f"Ollama request failed: {str(e)}"
+
+    elif provider == 'gemini':
+        try:
+            gemini_model = model or 'gemini-3.5-flash'
+            if gemini_model.startswith('models/'):
+                gemini_model = gemini_model[7:]
+            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": f"{system_prompt}\n\nUser Request: {prompt}"}]
+                    }
+                ],
+                "generationConfig": {"temperature": 0.1}
+            }
+            req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+        except Exception as e:
+            return 0, f"Gemini request failed: {str(e)}"
+    else:
+        return 0, "Invalid LLM provider."
+
+    cleaned_json_str = raw_response.strip()
+    if cleaned_json_str.startswith("```"):
+        lines = cleaned_json_str.splitlines()
+        if lines[0].startswith("```"): lines = lines[1:]
+        if lines and lines[-1].startswith("```"): lines = lines[:-1]
+        cleaned_json_str = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(cleaned_json_str)
+        sel_idx = parsed.get('selected_index', 0)
+        reasoning = parsed.get('reasoning', "I chose this option based on the family philosophy.")
+        if not isinstance(sel_idx, int) or sel_idx < 0 or sel_idx >= len(options):
+            sel_idx = 0
+        return sel_idx, reasoning
+    except json.JSONDecodeError:
+        return 0, "Failed to parse LLM evaluation."

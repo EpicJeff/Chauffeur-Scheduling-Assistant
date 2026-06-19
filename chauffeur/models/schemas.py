@@ -123,3 +123,15 @@ class TelemetryEvent(BaseModel):
     action: str  # e.g., 'pickup', 'dropoff', 'arrived'
     timestamp: float = Field(default_factory=time.time)
     details: Optional[str] = None
+
+class Theme(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    description: str
+    unassigned_penalty_multiplier: float = 1.0
+    stickiness_bonus_multiplier: float = 1.0
+    travel_time_penalty_multiplier: float = 1.0
+    primary_driver_bonus_multiplier: float = 1.0
+    same_location_bonus_multiplier: float = 1.0
+    is_ai_generated: bool = False
+

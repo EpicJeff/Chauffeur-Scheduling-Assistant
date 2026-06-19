@@ -146,6 +146,16 @@
         class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center">
     </div>
 
+    <div id="ai-suggestion-banner" class="hidden bg-indigo-900 border border-indigo-500 text-indigo-200 p-4 rounded-xl shadow-lg mb-6 flex justify-between items-center cursor-pointer hover:bg-indigo-800 transition-colors" onclick="openAIOptionsModal()">
+        <div class="flex items-center">
+            <svg class="w-6 h-6 mr-3 text-indigo-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            <div>
+                <span class="font-bold block">AI suggested an alternative schedule.</span>
+                <span class="text-sm opacity-80" id="ai-suggestion-text">Click to review the reasoning and options.</span>
+            </div>
+        </div>
+        <button class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-colors text-white">Review Options</button>
+    </div>
 
     <div id="inbox-container" class="hidden mb-6">
         <h2 class="text-2xl font-bold text-yellow-500 mb-4 flex items-center">
@@ -467,6 +477,27 @@
         </div>
     </div>
 
+    <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-full max-w-5xl border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
+            <div class="flex justify-between items-start mb-6 shrink-0">
+                <h3 class="text-2xl md:text-3xl font-bold text-indigo-300 flex items-center">
+                    <svg class="w-8 h-8 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Review AI Suggestions
+                </h3>
+                <button onclick="closeAIModal()" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="flex-1 flex flex-col md:flex-row gap-6 min-h-0">
+                <div class="w-full md:w-1/3 bg-gray-900 border border-gray-700 rounded-xl overflow-y-auto flex flex-col p-4 space-y-4" id="ai-options-list">
+                    <!-- Populated dynamically -->
+                </div>
+                <div class="w-full md:w-2/3 flex flex-col overflow-y-auto pr-2" id="ai-option-details">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div id="schedule-container" class="space-y-12 pb-10">
         <p class="text-center text-gray-500 text-xl mt-20 animate-pulse">Loading schedule...</p>
@@ -1535,6 +1566,28 @@
                 inboxContainer.classList.add('hidden');
             }
             // --- End Inbox Logic ---
+            
+            // --- AI Suggestion Logic ---
+            const aiBanner = document.getElementById('ai-suggestion-banner');
+            let hasAiSuggestion = false;
+            let firstSuggestionDate = null;
+            if (data.ai_metadata) {
+                for (const [dateStr, meta] of Object.entries(data.ai_metadata)) {
+                    if (meta.ai_status === 'suggests_alternative' && meta.options && meta.options.length > 0) {
+                        hasAiSuggestion = true;
+                        if (!firstSuggestionDate) firstSuggestionDate = dateStr;
+                    }
+                }
+            }
+            if (hasAiSuggestion && !isReadOnly) {
+                aiBanner.classList.remove('hidden');
+                window.currentAiMetadata = data.ai_metadata;
+                window.firstSuggestionDate = firstSuggestionDate;
+            } else {
+                aiBanner.classList.add('hidden');
+                window.currentAiMetadata = data.ai_metadata || null;
+            }
+
             // Clear local solving dates if they are no longer in data.solving_dates
             if (data.solving_dates) {
                 for (const date of localSolvingDates) {
@@ -1676,7 +1729,20 @@
                 const formattedDateTitle = formatDateStr(date);
                 const dateHeader = document.createElement('div');
                 dateHeader.className = "bg-gray-800 border-t border-gray-700 py-2.5 px-4 mb-4 shadow-md rounded-lg flex items-center justify-between";
-                dateHeader.innerHTML = `<h2 class="text-base font-bold text-blue-200 uppercase tracking-widest leading-none">${formattedDateTitle}</h2>`;
+                
+                let aiBadgeHTML = '';
+                if (data.ai_metadata && data.ai_metadata[date] && !isReadOnly) {
+                    const meta = data.ai_metadata[date];
+                    if (meta.ai_status === 'evaluating') {
+                        aiBadgeHTML = `<span class="bg-gray-700 text-gray-300 text-[10px] font-bold px-2 py-0.5 rounded ml-3 flex items-center border border-gray-500"><svg class="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> AI Evaluating...</span>`;
+                    } else if (meta.ai_status === 'suggests_alternative') {
+                        aiBadgeHTML = `<button onclick="openAIOptionsModal('${date}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-2 py-0.5 rounded ml-3 flex items-center shadow-md transition-colors"><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> AI Suggestion</button>`;
+                    } else if (meta.ai_status === 'approved_default') {
+                        aiBadgeHTML = `<button onclick="openAIOptionsModal('${date}')" class="bg-green-700 hover:bg-green-600 text-green-100 text-[10px] font-bold px-2 py-0.5 rounded ml-3 flex items-center shadow-md transition-colors" title="AI reviewed this schedule"><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> AI Approved</button>`;
+                    }
+                }
+                
+                dateHeader.innerHTML = `<div class="flex items-center"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest leading-none">${formattedDateTitle}</h2>${aiBadgeHTML}</div>`;
                 dayContainer.appendChild(dateHeader);
 
                 // --- Timeline Constants & Logic ---
@@ -2601,6 +2667,133 @@
                 }
             } catch (e) {
                 console.error("Failed to fetch map stats dashboard", e);
+            }
+        }
+
+        function openAIOptionsModal(dateStr = null) {
+            const targetDate = dateStr || window.firstSuggestionDate;
+            if (!targetDate || !window.currentAiMetadata || !window.currentAiMetadata[targetDate]) return;
+            
+            const meta = window.currentAiMetadata[targetDate];
+            if (!meta.options || meta.options.length === 0) return;
+            
+            document.getElementById('ai-modal').classList.remove('hidden');
+            
+            window.activeAITargetDate = targetDate;
+            window.activeAIOptions = meta.options;
+            window.activeAISelectedIndex = meta.selected_index;
+            window.activeAIReasoning = meta.llm_reasoning;
+            
+            renderAIOptionsList();
+            renderAIOptionDetails(meta.selected_index);
+        }
+
+        function closeAIModal() {
+            document.getElementById('ai-modal').classList.add('hidden');
+        }
+
+        function renderAIOptionsList() {
+            const listEl = document.getElementById('ai-options-list');
+            listEl.innerHTML = '';
+            
+            window.activeAIOptions.forEach((opt, idx) => {
+                const isSelected = idx === window.activeAISelectedIndex;
+                const isBase = idx === 0;
+                
+                const badge = isSelected ? `<span class="bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded ml-2">AI Pick</span>` : '';
+                const baseBadge = isBase ? `<span class="bg-gray-700 text-gray-300 text-[10px] font-bold px-2 py-0.5 rounded ml-2">Base</span>` : '';
+                
+                const el = document.createElement('div');
+                el.className = `p-4 rounded-xl border cursor-pointer transition-colors ${idx === window.viewingAIOptionIdx ? 'bg-indigo-900/50 border-indigo-500' : 'bg-gray-800 border-gray-700 hover:bg-gray-700'}`;
+                el.onclick = () => renderAIOptionDetails(idx);
+                
+                el.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <h4 class="font-bold text-white text-lg flex items-center">${opt.theme_name} ${badge} ${baseBadge}</h4>
+                    </div>
+                    <div class="text-sm text-gray-400 mt-2 line-clamp-2">${opt.assignments_summary || 'No assignments'}</div>
+                `;
+                listEl.appendChild(el);
+            });
+        }
+
+        function renderAIOptionDetails(idx) {
+            window.viewingAIOptionIdx = idx;
+            renderAIOptionsList(); // Update selected state in sidebar
+            
+            const opt = window.activeAIOptions[idx];
+            const isAIPick = idx === window.activeAISelectedIndex;
+            const container = document.getElementById('ai-option-details');
+            
+            let reasoningHTML = '';
+            if (isAIPick && window.activeAIReasoning) {
+                reasoningHTML = `
+                    <div class="bg-indigo-900/30 border border-indigo-500/50 rounded-xl p-4 mb-6">
+                        <h4 class="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-2 flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            AI Reasoning
+                        </h4>
+                        <p class="text-indigo-100 text-sm leading-relaxed">${window.activeAIReasoning}</p>
+                    </div>
+                `;
+            }
+            
+            let actionsHTML = `
+                <div class="mt-6 flex flex-col gap-4">
+                    <h4 class="text-lg font-bold text-white">Provide Feedback</h4>
+                    <textarea id="ai-feedback-text" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500 min-h-[100px]" placeholder="Why did you choose or reject this option? This helps the AI learn your preferences..."></textarea>
+                    <div class="flex justify-end gap-3">
+                        <button onclick="submitAIFeedback(${idx})" class="bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-lg font-bold text-white shadow-md transition-colors flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            Accept & Save Feedback
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            let assignmentsHTML = '';
+            const sched = opt.schedule;
+            if (sched && sched.assignments) {
+                assignmentsHTML = `<div class="space-y-2 mt-4"><h4 class="font-bold text-gray-300">Assignments</h4>`;
+                for (const [eventId, driverId] of Object.entries(sched.assignments)) {
+                    const eTitle = currentEventsMap[eventId] ? currentEventsMap[eventId].title : eventId;
+                    const dName = driversMap[driverId] ? driversMap[driverId].name : driverId;
+                    assignmentsHTML += `<div class="bg-gray-800 p-2 rounded flex justify-between text-sm"><span class="text-gray-300 truncate mr-2">${eTitle}</span><span class="text-blue-400 font-bold">${dName}</span></div>`;
+                }
+                assignmentsHTML += `</div>`;
+            }
+
+            container.innerHTML = `
+                <h3 class="text-2xl font-bold text-white mb-2">${opt.theme_name}</h3>
+                ${reasoningHTML}
+                <div class="bg-gray-900 rounded-xl border border-gray-700 p-4 flex-1 overflow-y-auto">
+                    <p class="text-sm text-gray-400 italic mb-4">You are viewing the schedule assignments for this option.</p>
+                    ${assignmentsHTML}
+                </div>
+                ${actionsHTML}
+            `;
+        }
+
+        async function submitAIFeedback(selectedIdx) {
+            const feedbackText = document.getElementById('ai-feedback-text').value.trim();
+            const payload = {
+                date: window.activeAITargetDate,
+                selected_index: selectedIdx,
+                user_reasoning: feedbackText
+            };
+            
+            try {
+                await fetch('api/settings/ai_feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                closeAIModal();
+                // Optionally force sync to re-render the accepted schedule
+                forceSync(true);
+            } catch (e) {
+                alert("Failed to submit feedback.");
             }
         }
     </script>
