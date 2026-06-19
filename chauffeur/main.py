@@ -765,17 +765,17 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
             schedule_coordinator.pending_args = None
             
     try:
+        while True:
             try:
                 args = schedule_coordinator.pending_args if schedule_coordinator.pending_refresh else (start_date_str, end_date_str, force_refresh, draft)
                 refresh_schedule_logic(*args)
             except AbortRefreshException:
                 logger.info("ScheduleCoordinator: Active run aborted by new pending request.")
             except Exception as e:
-                logger.error(f"ScheduleCoordinator: Error during run: {e}", exc_info=True)
-                
+                logger.error(f"ScheduleCoordinator: Error in schedule run: {e}", exc_info=True)
+            
             with schedule_coordinator.lock:
                 if schedule_coordinator.pending_refresh:
-                    start_date_str, end_date_str, force_refresh = schedule_coordinator.pending_args
                     schedule_coordinator.pending_refresh = False
                     schedule_coordinator.pending_args = None
                     schedule_coordinator.clear_solving_dates()
@@ -1003,16 +1003,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         matched_passengers = []
         is_passenger = False
 
-        valid_passenger_cals = [c for c in original_calendar_ids if c not in driver_calendar_ids]
-        is_driver_only = (len(valid_passenger_cals) == 0 and len(original_calendar_ids) > 0 and not any(c in calendar_ids for c in original_calendar_ids))
-
+        driver_calendar_ids = [c for d in drivers for c in d.calendar_ids]
+        passenger_calendar_ids = [c for p in passengers for c in p.calendar_ids]
+        is_driver_only = all(c in driver_calendar_ids and c not in passenger_calendar_ids for c in original_calendar_ids) and len(original_calendar_ids) > 0
+        
         if config and 'passenger_ids' in config:
             if config.get('passenger_ids'):
                 is_passenger = True
                 matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
             else:
                 is_passenger = False
-        elif not is_driver_only:
+        else:
             # Check Rules FIRST
             rule_matched = False
             for rule in rules:
@@ -1312,6 +1313,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         schedule_one_keywords.extend([kw.lower() for kw in r.keywords])
 
         from collections import defaultdict
+        import datetime
         dup_groups = defaultdict(list)
         for e in combined_events_to_solve:
             if isinstance(e, dict):
@@ -1333,14 +1335,28 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if any(kw in e_title_lower for kw in schedule_all_keywords):
                 continue
             if len(core_title) > 3:
-                key = (date_str, core_title)
-                dup_groups[key].append((e_title, e_id))
+                key = (cal_ids, core_title)
+                dup_groups[key].append((e_title, e_id, date_str))
 
         for key, evs in dup_groups.items():
             if len(evs) > 1:
+                dates = sorted([datetime.datetime.strptime(e[2], '%Y-%m-%d').date() for e in evs])
+                min_date = dates[0]
+                max_date = dates[-1]
+                delta = (max_date - min_date).days
+                if delta == 0:
+                    time_period = "daily"
+                elif delta <= 7:
+                    time_period = "weekly"
+                elif delta <= 31:
+                    time_period = "monthly"
+                else:
+                    time_period = "entire_period"
+                    
                 duplicate_groups.append({
-                    "date": key[0],
+                    "date": min_date.strftime('%Y-%m-%d'),
                     "keyword": key[1],
+                    "time_period": time_period,
                     "original_titles": [e[0] for e in evs],
                     "event_ids": [e[1] for e in evs]
                 })
