@@ -1516,7 +1516,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             import threading
             threading.Thread(target=bg_eval, args=(date_str, daily_hash, encoded_schedule, default_theme, other_themes, daily_events_to_solve, drivers, rules, priority_rules, overrides, previous_assignments, driver_events_map, passengers, trip_metadata, home_location, driver_events_ids, provider, url, api_key, model, philosophy)).start()
         else:
-            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=None)
+            debug_str = f"DEBUG_IDLE: themes={len(themes)}, others={len(other_themes)}, prov='{provider}'"
+            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=debug_str)
 
         # Day finished, remove it from solving list and save combined!
         schedule_coordinator.finish_solving(date_str)
