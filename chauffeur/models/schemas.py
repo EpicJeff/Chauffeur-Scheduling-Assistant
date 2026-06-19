@@ -117,6 +117,11 @@ class Settings(BaseModel):
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"
     family_philosophy: str = ""
+    enable_standard_rules: bool = True
+    enable_ai_rules: bool = True
+    enable_standard_priority_rules: bool = True
+    enable_ai_priority_rules: bool = True
+    enable_ai_themes: bool = True
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

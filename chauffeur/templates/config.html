@@ -1805,7 +1805,7 @@
                     const endpoint = type === 'rule' ? 'rules' : 'priority_rules';
                     const newStatus = rule.is_enabled === false ? true : false;
                     const payload = { ...rule, is_enabled: newStatus };
-                    await fetch(`${this.apiBase}api/${endpoint}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                    await fetch(`${this.apiBase}api/${endpoint}/${rule.doc_id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                     if (type === 'rule') {
                         await this.loadRules();
                     } else {

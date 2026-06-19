@@ -2818,6 +2818,7 @@
                 ${actionsHTML}
             `;
             
+            const sched = opt.schedule;
             const modalData = {
                 events: window.currentData ? window.currentData.events : [],
                 assignments: sched ? sched.assignments || {} : {},
@@ -2833,6 +2834,7 @@
             renderSchedule(modalData, { 
                 targetContainerId: 'ai-modal-schedule-container', 
                 isModal: true, 
+                isReadOnly: true,
                 dateFilter: window.activeAITargetDate 
             });
         }
