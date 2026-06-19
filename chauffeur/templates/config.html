@@ -1166,7 +1166,7 @@
                 </div>
             </div>
             <div class="space-y-4">
-                <template x-for="(theme, idx) in themes" :key="theme.doc_id || idx">
+                <template x-for="theme in themes">
                     <div class="bg-gray-900 p-5 rounded-xl flex items-center justify-between border border-gray-700 transition-opacity" :class="theme.is_enabled === false || !enableAiThemes ? 'opacity-50 grayscale' : ''">
                         <div class="flex items-center gap-4">
                             <label class="relative inline-flex items-center cursor-pointer">
