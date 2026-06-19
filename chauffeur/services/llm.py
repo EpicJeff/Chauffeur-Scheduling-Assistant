@@ -521,3 +521,161 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return sel_idx, reasoning
     except json.JSONDecodeError:
         return 0, "Failed to parse LLM evaluation."
+
+
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1) -> dict:
+    import json
+    import urllib.request
+    
+    raw_response = ""
+    if provider == 'ollama':
+        try:
+            req_url = f"{url.rstrip('/')}/api/chat"
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": temperature}
+            }
+            req = urllib.request.Request(
+                req_url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                raw_response = data.get('message', {}).get('content', '')
+        except Exception as e:
+            raise RuntimeError(f"Ollama request failed: {str(e)}")
+            
+    elif provider == 'gemini':
+        try:
+            gemini_model = model or 'gemini-3.5-flash'
+            if gemini_model.startswith('models/'):
+                gemini_model = gemini_model[7:]
+            req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": f"{system_prompt}\n\nUser Request: {user_prompt}"}]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": temperature,
+                    "responseMimeType": "application/json"
+                }
+            }
+            req = urllib.request.Request(
+                req_url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                try:
+                    raw_response = data['candidates'][0]['content']['parts'][0]['text']
+                except (KeyError, IndexError):
+                    raise RuntimeError("Unexpected response format from Gemini API")
+        except Exception as e:
+            raise RuntimeError(f"Gemini request failed: {str(e)}")
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+        
+    try:
+        if raw_response.startswith('```json'):
+            raw_response = raw_response.split('```json')[1]
+            if raw_response.endswith('```'):
+                raw_response = raw_response[:-3]
+        return json.loads(raw_response.strip())
+    except json.JSONDecodeError as e:
+        import traceback
+        raise RuntimeError(f"Failed to parse LLM JSON: {str(e)}\nRaw: {raw_response}")
+
+def identify_override_patterns(provider: str, url: str, api_key: str, model: str, overrides: list) -> list:
+    system_prompt = """You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
+Your task is to review a list of manual drag-and-drop schedule overrides made by a user and group them into logical 'Pattern Clusters'.
+A Pattern Cluster is a recurring behavior. For example, if you see the user moved 'Lily Swim Practice' to driver 'mom' on 5 different dates, that is a cluster.
+
+You MUST respond with a single valid JSON object of the following structure:
+{
+  "clusters": [
+    {
+      "description": "Brief description of the pattern (e.g. 'Moved Lily Swim to Mom')",
+      "dates": ["2026-06-12", "2026-06-14", "2026-06-19"],
+      "original_driver_id": "dad",
+      "new_driver_id": "mom"
+    }
+  ]
+}
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
+"""
+    
+    overrides_text = "List of Overrides:\n"
+    for o in overrides:
+        overrides_text += f"Date: {o.get('date_str')}, Event ID: {o.get('event_id')}, Reassigned to Driver: {o.get('driver_id')}\n"
+        
+    res = _call_llm_json(provider, url, api_key, model, system_prompt, overrides_text)
+    return res.get('clusters', [])
+
+def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str, cluster: dict, daily_schedules_context: str, passengers: list) -> dict:
+    passenger_context = []
+    for p in passengers:
+        cal_ids = p.get('calendar_ids', [])
+        p_id = cal_ids[0] if cal_ids else p['id']
+        passenger_context.append(
+            f"- Passenger ID: '{p_id}' (matches calendar ID), Name: '{p['name']}', Hashtags: {p.get('hashtags', [])}"
+        )
+        
+    system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
+You identified a Pattern Cluster: {cluster.get('description')} where the user repeatedly reassigned an event to driver '{cluster.get('new_driver_id')}'.
+I will provide you with the full daily schedules for the dates this occurred.
+Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at the surrounding context (e.g., was that driver already at that location? were there other specific passengers involved?).
+
+Based on your deduction, you MUST generate structured JSON rules that codify this behavior.
+
+Available Passengers (use only these passenger IDs for rules):
+{chr(10).join(passenger_context)}
+
+Rule Types available:
+1. 'required': This specific driver MUST be assigned to drive for events matching these filters.
+2. 'preferred': This specific driver is preferred (has higher weight) for events matching these filters.
+3. 'unavailable': This specific driver cannot drive for events matching these filters.
+4. 'duplicate': Action for duplicate events for the same attendees ('schedule_one' or 'schedule_all') if they occur within the same grouping_period.
+
+Constraints & rules details:
+- 'days_of_week' is a list of integers: 0 for Monday, 1 for Tuesday, 2 for Wednesday, 3 for Thursday, 4 for Friday, 5 for Saturday, 6 for Sunday.
+- 'time_start' and 'time_end' are strings formatted as 'HH:MM' (24-hour time) or null.
+- 'keywords' are substring matches (case-insensitive) for event titles or descriptions.
+- 'passenger_ids' is a list of calendar IDs/Passenger IDs.
+- 'location' is a substring match for the event location field.
+- All rules must include 'is_ai_generated': true.
+
+You MUST respond with a single valid JSON object of the following exact structure:
+{{
+  "rules": [
+    {{
+      "driver_id": "{cluster.get('new_driver_id')}",
+      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'duplicate')",
+      "keywords": ["list of strings"],
+      "passenger_ids": ["list of Passenger IDs"],
+      "days_of_week": [],
+      "time_start": null,
+      "time_end": null,
+      "location": null,
+      "is_ai_generated": true
+    }}
+  ],
+  "priority_rules": []
+}}
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
+"""
+    
+    res = _call_llm_json(provider, url, api_key, model, system_prompt, daily_schedules_context)
+    return res

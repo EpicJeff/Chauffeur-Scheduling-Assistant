@@ -867,14 +867,27 @@
                     <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
                         <div class="flex items-center justify-between mb-6">
                             <h2 class="text-3xl font-bold text-indigo-300">Scheduling Rules & Priorities</h2>
-                            <button @click="openRuleModal()"
-                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
-                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M12 4v16m8-8H4"></path>
-                                </svg>
-                                New Rule
-                            </button>
+                            <div class="flex gap-4">
+                                <button @click="analyzeHabits()" :disabled="analyzingHabits"
+                                    class="bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg x-show="!analyzingHabits" class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    <svg x-show="analyzingHabits" class="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span x-text="analyzingHabits ? 'Analyzing Overrides...' : 'Analyze My Habits'"></span>
+                                </button>
+                                <button @click="openRuleModal()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M12 4v16m8-8H4"></path>
+                                    </svg>
+                                    New Rule
+                                </button>
+                            </div>
                         </div>
 
                         <div
@@ -1782,6 +1795,7 @@
                 activeTab: 'general',
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 saving: false,
+                analyzingHabits: false,
                 daysToShow: 7,
                 routeCacheDurationMins: 1440,
                 timeFormat24h: false,
@@ -1978,6 +1992,28 @@
                         }
                     } catch (e) {
                         console.error("Failed to fetch calendar metadata", e);
+                    }
+                },
+
+                async analyzeHabits() {
+                    this.analyzingHabits = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rules/analyze-overrides`, {
+                            method: 'POST'
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed to analyze habits');
+                        
+                        if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
+                            alert("Analysis complete. No new significant patterns were found that aren't already covered by your existing rules.");
+                        } else {
+                            alert(`Analysis complete!\nAdded ${data.new_rules_count} new standard rules.\nAdded ${data.new_priority_rules_count} new priority rules.\n(Duplicates were ignored)`);
+                        }
+                        await this.loadRules();
+                    } catch (e) {
+                        alert(e.message);
+                    } finally {
+                        this.analyzingHabits = false;
                     }
                 },
 
