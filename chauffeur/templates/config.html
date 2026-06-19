@@ -592,34 +592,51 @@
         <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
             <div class="flex items-center justify-between mb-6">
                 <h2 class="text-3xl font-bold text-blue-300">Routing Rules</h2>
-                <button @click="openRuleModal()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+<button @click="openRuleModal()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                     New Rule
                 </button>
             </div>
-            
-            <div class="flex flex-col sm:flex-row gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                <div class="flex items-center space-x-3">
+            <div x-show="activeTab === 'rules'" x-cloak x-transition.opacity class="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700">
+            <h2 class="text-3xl font-bold mb-6 text-indigo-300">Scheduling Rules & Priorities</h2>
+
+            <div class="flex flex-col sm:flex-row flex-wrap gap-6 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                <div class="flex items-center space-x-3 w-full sm:w-auto">
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" x-model="enableStandardRules" @change="saveSettings()" class="sr-only peer">
                         <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                     </label>
-                    <span class="font-bold text-gray-300">Enable Standard Rules</span>
+                    <span class="font-bold text-gray-300">Standard Rules</span>
                 </div>
-                <div class="flex items-center space-x-3">
+                <div class="flex items-center space-x-3 w-full sm:w-auto">
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" x-model="enableAiRules" @change="saveSettings()" class="sr-only peer">
                         <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                     </label>
-                    <span class="font-bold text-gray-300">Enable AI Generated Rules</span>
+                    <span class="font-bold text-gray-300">AI Rules</span>
+                </div>
+                <div class="flex items-center space-x-3 w-full sm:w-auto">
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" x-model="enableStandardPriorityRules" @change="saveSettings()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                    <span class="font-bold text-gray-300">Standard Priorities</span>
+                </div>
+                <div class="flex items-center space-x-3 w-full sm:w-auto">
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" x-model="enableAiPriorityRules" @change="saveSettings()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                    <span class="font-bold text-gray-300">AI Priorities</span>
                 </div>
             </div>
 
             <div class="space-y-4 mb-8">
                 <h3 class="text-lg font-bold text-gray-300 mb-2 uppercase tracking-wide">Manual Routing Rules</h3>
-                <template x-for="rule in rules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
-                    <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled !== false ? '' : 'opacity-50 grayscale'">
-                        <div class="flex flex-col md:flex-row items-start md:items-center w-full gap-4">
+                <div class="space-y-4">
+                    <template x-for="rule in rules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
+                        <div class="bg-gray-900 border border-gray-700 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled === false || !enableStandardRules ? 'opacity-50 grayscale' : ''">
+                            <div class="flex flex-col md:flex-row items-start md:items-center w-full gap-4">
                             <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1 md:mt-0">
                                 <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'rule')" class="sr-only peer">
                                 <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
@@ -680,7 +697,7 @@
                     AI Generated Routing Rules
                 </h3>
                 <template x-for="rule in rules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
-                    <div class="bg-gray-900 border border-indigo-900/50 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled !== false ? '' : 'opacity-50 grayscale'">
+                    <div class="bg-gray-900 border border-indigo-900/50 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled === false || !enableAiRules ? 'opacity-50 grayscale' : ''">
                         <div class="flex flex-col md:flex-row items-start md:items-center w-full gap-4">
                             <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1 md:mt-0">
                                 <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'rule')" class="sr-only peer">
@@ -954,7 +971,7 @@
             <div class="space-y-4 mb-8">
                 <h3 class="text-lg font-bold text-gray-300 mb-2 uppercase tracking-wide">Manual Event Priorities</h3>
                 <template x-for="rule in priorityRules.filter(r => !r.is_ai_generated)" :key="rule.doc_id || rule.id">
-                    <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled !== false ? '' : 'opacity-50 grayscale'">
+                    <div class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled === false || !enableStandardPriorityRules ? 'opacity-50 grayscale' : ''">
                         <div class="flex flex-col md:flex-row items-start md:items-center w-full gap-4">
                             <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1 md:mt-0">
                                 <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'priority_rule')" class="sr-only peer">
@@ -1007,7 +1024,7 @@
                 </h3>
                 <div class="space-y-4">
                     <template x-for="rule in priorityRules.filter(r => r.is_ai_generated)" :key="rule.doc_id || rule.id">
-                        <div class="bg-gray-900 border border-indigo-900/50 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled !== false ? '' : 'opacity-50 grayscale'">
+                        <div class="bg-gray-900 border border-indigo-900/50 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm transition-opacity" :class="rule.is_enabled === false || !enableAiPriorityRules ? 'opacity-50 grayscale' : ''">
                             <div class="flex flex-col md:flex-row items-start md:items-center w-full gap-4">
                                 <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1 md:mt-0">
                                     <input type="checkbox" :checked="rule.is_enabled !== false" @change="toggleRule(rule, 'priority_rule')" class="sr-only peer">
@@ -1150,14 +1167,14 @@
             </div>
             <div class="space-y-4">
                 <template x-for="theme in themes" :key="theme.doc_id">
-                    <div class="bg-gray-900 p-5 rounded-xl flex items-center justify-between border border-gray-700">
+                    <div class="bg-gray-900 p-5 rounded-xl flex items-center justify-between border border-gray-700 transition-opacity" :class="theme.is_enabled === false || !enableAiThemes ? 'opacity-50 grayscale' : ''">
                         <div class="flex items-center gap-4">
                             <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" :checked="theme.is_enabled" @change="toggleTheme(theme)" class="sr-only peer">
+                                <input type="checkbox" :checked="theme.is_enabled !== false" @change="toggleTheme(theme)" class="sr-only peer">
                                 <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
                             </label>
                             <div>
-                                <h3 class="font-bold text-white" x-text="theme.name"></h3>
+                                <h3 class="font-bold text-white" x-text="theme.theme_name || theme.name"></h3>
                                 <p class="text-sm text-gray-400" x-text="theme.description"></p>
                             </div>
                         </div>
@@ -1218,6 +1235,8 @@
                 // Rule Toggles
                 enableStandardRules: true,
                 enableAiRules: true,
+                enableStandardPriorityRules: true,
+                enableAiPriorityRules: true,
                 enableAiThemes: true,
                 llmTestResult: null,
                 llmTestSuccess: null,
@@ -1403,6 +1422,8 @@
                     
                     this.enableStandardRules = data.enable_standard_rules !== false;
                     this.enableAiRules = data.enable_ai_rules !== false;
+                    this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
+                    this.enableAiPriorityRules = data.enable_ai_priority_rules !== false;
                     this.enableAiThemes = data.enable_ai_themes !== false;
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -1459,6 +1480,8 @@
                             family_philosophy: this.familyPhilosophy,
                             enable_standard_rules: this.enableStandardRules,
                             enable_ai_rules: this.enableAiRules,
+                            enable_standard_priority_rules: this.enableStandardPriorityRules,
+                            enable_ai_priority_rules: this.enableAiPriorityRules,
                             enable_ai_themes: this.enableAiThemes
                         };
                         
@@ -1959,8 +1982,12 @@
                         this.aiRulesResult = data.message;
                         
                         if (data.success) {
+                            alert("AI Rules Synthesized Successfully!");
                             await this.loadRules();
                             await this.loadPriorityRules();
+                            await this.loadThemes();
+                        } else {
+                            throw new Error(data.message);
                         }
                     } catch (e) {
                         this.aiRulesSuccess = false;

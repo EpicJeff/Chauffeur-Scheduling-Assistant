@@ -478,7 +478,7 @@
     </div>
 
     <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-full max-w-5xl border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
+        <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-[95vw] max-w-[1600px] border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
             <div class="flex justify-between items-center mb-6 shrink-0 gap-4">
                 <h3 class="text-2xl md:text-3xl font-bold text-indigo-300 flex items-center">
                     <svg class="w-8 h-8 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
@@ -2825,7 +2825,9 @@
                 unassigned: sched ? sched.unassigned || [] : [],
                 no_location: sched ? sched.no_location || [] : [],
                 lateness_warnings: sched ? sched.lateness_warnings || [] : [],
-                driver_events: window.currentData ? window.currentData.driver_events : {}
+                driver_events: window.currentData ? window.currentData.driver_events : {},
+                calendar_metadata: window.currentData ? window.currentData.calendar_metadata : {},
+                solving_dates: [window.activeAITargetDate]
             };
             
             renderSchedule(modalData, { 

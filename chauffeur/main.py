@@ -867,12 +867,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             logger.warning(f"Skipping invalid rule from database: {err}. Rule data: {r}")
 
     priority_rules = []
+    enable_standard_priority_rules = settings.get("enable_standard_priority_rules", True)
+    enable_ai_priority_rules = settings.get("enable_ai_priority_rules", True)
     for pr in priority_rules_data:
         try:
             p_rule_obj = PriorityRule(**pr)
             if not p_rule_obj.is_enabled: continue
-            if p_rule_obj.is_ai_generated and not enable_ai_rules: continue
-            if not p_rule_obj.is_ai_generated and not enable_standard_rules: continue
+            if p_rule_obj.is_ai_generated and not enable_ai_priority_rules: continue
+            if not p_rule_obj.is_ai_generated and not enable_standard_priority_rules: continue
             priority_rules.append(p_rule_obj)
         except Exception as err:
             logger.warning(f"Skipping invalid priority rule from database: {err}. Rule data: {pr}")
