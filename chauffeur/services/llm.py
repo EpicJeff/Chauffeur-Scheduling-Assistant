@@ -210,7 +210,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('message', {}).get('content', '')
         except Exception as e:
@@ -239,7 +239,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
         except urllib.error.HTTPError as e:
@@ -347,7 +347,7 @@ def refine_scheduling_text(
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('message', {}).get('content', '')
         except Exception as e:
@@ -376,7 +376,7 @@ def refine_scheduling_text(
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
         except urllib.error.HTTPError as e:
@@ -468,7 +468,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 "options": {"temperature": 0.1}
             }
             req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('message', {}).get('content', '')
         except Exception as e:
@@ -490,7 +490,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 "generationConfig": {"temperature": 0.1}
             }
             req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 raw_response = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
         except Exception as e:
