@@ -141,4 +141,5 @@ class Theme(BaseModel):
     primary_driver_bonus_multiplier: float = 1.0
     same_location_bonus_multiplier: float = 1.0
     is_ai_generated: bool = False
+    is_enabled: bool = True
 
