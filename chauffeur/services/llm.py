@@ -99,7 +99,7 @@ def generate_rules_from_philosophy(
         feedback_context = "\nRecent user feedback to learn from:\n" + "\n".join([f"- {f}" for f in feedback]) + "\nAdjust your generated themes and rules to respect this past feedback."
 
     system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
-Your task is to translate a natural language 'Family Philosophy' and individual driver/passenger biographies into structured constraint rules, priority rules, and solver themes.
+Your task is to infer a set of useful and meaningful structured constraint rules, priority rules, and solver themes from a natural language 'Family Philosophy' and individual driver/passenger biographies to be used to generate a schedule that will be used to generate a schedule for the family's driving activities so the parents can focus on time with their children instead of on driving logistics.    
 
 Available Drivers (use only these IDs for rules):
 {chr(10).join(driver_context)}
@@ -109,12 +109,12 @@ Available Passengers (use only these passenger IDs for rules):
 {feedback_context}
 
 Rule Types available:
-1. 'required': A driver MUST drive for events matching these filters.
-2. 'preferred': A driver is preferred (weight bonus) for events matching these filters.
-3. 'unavailable': A driver cannot drive for events matching these filters.
+1. 'required': This specific driver MUST be assigned to drive for events matching these filters.
+2. 'preferred': This specific driver is preferred (has higher weight) for events matching these filters.
+3. 'unavailable': This specific driver cannot drive for events matching these filters.
 4. 'tolerance': Defines acceptable late arrival or early departure in minutes (tolerance_mins) and applies to ('arrival', 'departure', 'both').
-5. 'duplicate': Action for duplicate events ('schedule_one' or 'schedule_all') in a grouping_period ('daily', 'weekly', 'monthly', 'all').
-6. 'buffer': Extra prep time needed in minutes before (buffer_before_mins) or after (buffer_after_mins) events.
+5. 'duplicate': Action for duplicate events for the same attendees ('schedule_one' or 'schedule_all') if they occur within the same grouping_period ('daily', 'weekly', 'monthly', 'all').
+6. 'buffer': Extra prep time needed in minutes before (buffer_before_mins) or after (buffer_after_mins) events, e.g. to warm up for a game or change clothes after a swim meet.
 
 Priority Rule modifiers (weight_modifier values):
 - 10000: Critical (must-attend events)
@@ -297,29 +297,28 @@ def refine_scheduling_text(
     if context_type == "philosophy":
         system_prompt = (
             "You are an expert family scheduling assistant.\n"
-            "Your task is to refine and rewrite a natural language 'Family Philosophy' "
-            "to make it extremely clear, structured, and easy for an AI scheduling engine to understand.\n"
+            "Your task is to expand and improve a natural language 'Family Philosophy for kids activities' "
+            "to help the AI scheduling engine understand the goals for the family and turn those into a set of structured constraint rules, priority rules, and solver themes.\n"
             "Keep the scheduling guidelines, names, days, times, and preferences accurate, "
-            "but organize them into a clean, concise, and structured bulleted list.\n"
-            "Do not add rules that are not in the original text, but make existing rules explicit.\n"
+            "but add potentially useful prompts with placeholders like 'We are an [INSERT ADJECTIVE HERE] family so [INSERT ACTIVITY TYPE HERE] is something we prioritize not missing' that will help the user build a rich and detailed family philosophy.\n"
             "Respond ONLY with the refined text. No introductory remarks, explanations, or code blocks."
         )
     elif context_type == "driver_bio":
         system_prompt = (
             "You are an expert family scheduling assistant.\n"
-            "Your task is to rewrite a driver's biography / context description to be clear, "
-            "precise, and easy for an AI rules generator to parse.\n"
+            "Your task is to expand and improve a natural language driver's biography / context description "
+            "to help the AI scheduling engine understand the strengths and preferences of the driver and turn those into a set of structured constraint rules, priority rules, and solver themes.\n"
             "Make driver preferences, home location details, anxieties (e.g. driving after dark or in rain), "
-            "and constraints explicit, while keeping the description concise (1-3 sentences).\n"
+            "and constraints explicit, add potentially useful prompts with placeholders like 'I work during the day so I prefer to drive to events after [INSERT TIME HERE]' that will help the user build a rich and detailed bio while keeping the description concise (1-3 sentences).\n"
             "Respond ONLY with the refined text. No introductory remarks, explanations, or code blocks."
         )
     elif context_type == "passenger_bio":
         system_prompt = (
             "You are an expert family scheduling assistant.\n"
-            "Your task is to rewrite a passenger's biography / context description to be clear, "
-            "precise, and easy for an AI rules generator to parse.\n"
+            "Your task is to expand and improve a natural language passenger's biography / context description "
+            "to help the AI scheduling engine understand the needs and preferences of the passenger and turn those into a set of structured constraint rules, priority rules, and solver themes.\n"
             "Make passenger preferences, specific routines, anxieties, and dropoff/pickup needs explicit, "
-            "while keeping the description concise (1-3 sentences).\n"
+            "add potentially useful prompts with placeholders like 'I like [INSERT DRIVER HERE] to take me to [INSERT ACTIVITY HERE]' that will help the user build a rich and detailed bio while keeping the description concise (1-3 sentences).\n"
             "Respond ONLY with the refined text. No introductory remarks, explanations, or code blocks."
         )
     else:
