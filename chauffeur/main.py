@@ -1577,10 +1577,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')
 
-        # Background Evaluation
+        # Background Evaluation (Disabled to save tokens/quota)
         other_themes = [t for t in themes if t.get('doc_id') != default_theme.get('doc_id')]
         provider = settings.get('llm_provider', '')
-        if other_themes and provider:
+        if False:  # Disabled: AI multi-schedule evaluation disabled to save tokens/quota
             url = settings.get('llm_ollama_url', 'http://localhost:11434')
             api_key = settings.get('llm_gemini_api_key', '')
             model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
