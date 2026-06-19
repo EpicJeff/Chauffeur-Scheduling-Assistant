@@ -1031,10 +1031,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
             # If no rule matched, fallback to hashtags and calendar_ids
             if not rule_matched:
-                is_passenger = any(c in calendar_ids for c in valid_passenger_cals)
+                is_passenger = any(c in calendar_ids for c in original_calendar_ids)
                 
                 for p in passengers:
-                    if any(c in p.calendar_ids for c in valid_passenger_cals):
+                    if any(c in p.calendar_ids for c in original_calendar_ids):
                         is_passenger = True
                         if p not in matched_passengers:
                             matched_passengers.append(p)
