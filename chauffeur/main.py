@@ -1453,7 +1453,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')
 
         # Background Evaluation
-        other_themes = [t for t in themes if t.get('id') != default_theme.get('id')]
+        other_themes = [t for t in themes if t.get('doc_id') != default_theme.get('doc_id')]
         provider = settings.get('llm_provider', '')
         if other_themes and provider:
             url = settings.get('llm_ollama_url', 'http://localhost:11434')
@@ -1516,8 +1516,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             import threading
             threading.Thread(target=bg_eval, args=(date_str, daily_hash, encoded_schedule, default_theme, other_themes, daily_events_to_solve, drivers, rules, priority_rules, overrides, previous_assignments, driver_events_map, passengers, trip_metadata, home_location, driver_events_ids, provider, url, api_key, model, philosophy)).start()
         else:
-            debug_str = f"DEBUG_IDLE: themes={len(themes)}, others={len(other_themes)}, prov='{provider}'"
-            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=debug_str)
+            storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status=None)
 
         # Day finished, remove it from solving list and save combined!
         schedule_coordinator.finish_solving(date_str)
