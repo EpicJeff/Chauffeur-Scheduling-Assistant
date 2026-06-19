@@ -1731,33 +1731,38 @@
                                         </svg>
                                     </button>
                                 </div>
-                                <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-gray-700 pt-4">
+                                <div class="mt-4 grid grid-cols-2 md:grid-cols-5 gap-4 border-t border-gray-700 pt-4">
                                     <div>
                                         <label class="block text-xs font-bold text-gray-400 mb-1">Travel Time
                                             Multiplier</label>
-                                        <input type="number" step="0.1" x-model.number="theme.travel_time_penalty_mult"
+                                        <input type="number" step="0.1" x-model.number="theme.travel_time_penalty_multiplier"
                                             @change="updateTheme(theme)"
                                             class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
                                     </div>
                                     <div>
                                         <label class="block text-xs font-bold text-gray-400 mb-1">Unassigned
                                             Multiplier</label>
-                                        <input type="number" step="0.1" x-model.number="theme.unassigned_penalty_mult"
+                                        <input type="number" step="0.1" x-model.number="theme.unassigned_penalty_multiplier"
                                             @change="updateTheme(theme)"
                                             class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
                                     </div>
                                     <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Overlap
-                                            Multiplier</label>
-                                        <input type="number" step="0.1" x-model.number="theme.overlap_penalty_mult"
+                                        <label class="block text-xs font-bold text-gray-400 mb-1">Stickiness Bonus</label>
+                                        <input type="number" step="0.1" x-model.number="theme.stickiness_bonus_multiplier"
                                             @change="updateTheme(theme)"
                                             class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
                                     </div>
                                     <div>
-                                        <label class="block text-xs font-bold text-gray-400 mb-1">Wait Time
-                                            Multiplier</label>
+                                        <label class="block text-xs font-bold text-gray-400 mb-1">Primary Driver Bonus</label>
                                         <input type="number" step="0.1"
-                                            x-model.number="theme.passenger_wait_penalty_mult"
+                                            x-model.number="theme.primary_driver_bonus_multiplier"
+                                            @change="updateTheme(theme)"
+                                            class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-gray-400 mb-1">Same Loc Bonus</label>
+                                        <input type="number" step="0.1"
+                                            x-model.number="theme.same_location_bonus_multiplier"
                                             @change="updateTheme(theme)"
                                             class="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm">
                                     </div>
