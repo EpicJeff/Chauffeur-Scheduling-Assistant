@@ -286,8 +286,21 @@ def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
     return {"status": "deleted"}
 
 
-@app.post("/api/rules/analyze-overrides")
-def analyze_overrides(background_tasks: BackgroundTasks):
+analysis_tasks = {}
+
+@app.post("/api/rules/analyze-overrides/start")
+def start_analyze_overrides(background_tasks: BackgroundTasks):
+    import uuid
+    task_id = str(uuid.uuid4())
+    analysis_tasks[task_id] = {"status": "running"}
+    background_tasks.add_task(_run_analysis_task, task_id)
+    return {"task_id": task_id}
+
+@app.get("/api/rules/analyze-overrides/status/{task_id}")
+def get_analyze_status(task_id: str):
+    return analysis_tasks.get(task_id, {"status": "not_found"})
+
+def _run_analysis_task(task_id: str):
     try:
         from services.llm import identify_override_patterns, deduce_rules_from_context
         import json
@@ -301,7 +314,8 @@ def analyze_overrides(background_tasks: BackgroundTasks):
         # 1. Fetch Overrides
         overrides = storage.get_all_overrides()
         if not overrides:
-            return {"new_rules_count": 0, "new_priority_rules_count": 0}
+            analysis_tasks[task_id] = {"status": "completed", "result": {"new_rules_count": 0, "new_priority_rules_count": 0}}
+            return
             
         # Enrich overrides with event titles and cache schedules
         enriched_overrides = []
@@ -342,11 +356,12 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             clusters = identify_override_patterns(llm_provider, llm_url, llm_api_key, llm_model, enriched_overrides)
         except Exception as e:
             logger.error(f"Failed to identify override patterns: {e}")
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=500, content={"detail": f"Failed to identify override patterns: {str(e)}"})
+            analysis_tasks[task_id] = {"status": "failed", "error": f"Failed to identify override patterns: {str(e)}"}
+            return
             
         if not clusters:
-            return {"new_rules_count": 0, "new_priority_rules_count": 0}
+            analysis_tasks[task_id] = {"status": "completed", "result": {"new_rules_count": 0, "new_priority_rules_count": 0}}
+            return
             
         passengers_data = storage.get_all_passengers()
         existing_rules = storage.get_all_rules()

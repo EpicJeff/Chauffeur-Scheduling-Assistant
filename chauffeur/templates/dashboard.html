@@ -837,18 +837,22 @@
             
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/rules/analyze-overrides`, { method: 'POST' });
-                
-                if (!res.ok) {
-                    let errMsg = "Analysis failed.";
-                    try {
-                        const errData = await res.json();
-                        errMsg = errData.error || errMsg;
-                    } catch(err) {}
-                    throw new Error(errMsg);
+                const res = await fetch(`${apiBase}api/rules/analyze-overrides/start`, { method: 'POST' });
+                if (!res.ok) throw new Error("Failed to start analysis");
+                const { task_id } = await res.json();
+                let data = null;
+                while (true) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    const statusRes = await fetch(`${apiBase}api/rules/analyze-overrides/status/${task_id}`);
+                    if (!statusRes.ok) throw new Error("Failed to check analysis status");
+                    const statusData = await statusRes.json();
+                    if (statusData.status === 'completed') {
+                        data = statusData.result;
+                        break;
+                    } else if (statusData.status === 'failed') {
+                        throw new Error(statusData.error || "Analysis failed internally");
+                    }
                 }
-                
-                const data = await res.json();
                 
                 if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
                     alert("No new rules were generated (either no consistent patterns found or rules already exist).");

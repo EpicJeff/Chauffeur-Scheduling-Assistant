@@ -1998,11 +1998,24 @@
                 async analyzeHabits() {
                     this.analyzingHabits = true;
                     try {
-                        const res = await fetch(`${this.apiBase}api/rules/analyze-overrides`, {
+                        const res = await fetch(`${this.apiBase}api/rules/analyze-overrides/start`, {
                             method: 'POST'
                         });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Failed to analyze habits');
+                        if (!res.ok) throw new Error('Failed to start analysis');
+                        const { task_id } = await res.json();
+                        let data = null;
+                        while (true) {
+                            await new Promise(r => setTimeout(r, 2000));
+                            const statusRes = await fetch(`${this.apiBase}api/rules/analyze-overrides/status/${task_id}`);
+                            if (!statusRes.ok) throw new Error("Failed to check analysis status");
+                            const statusData = await statusRes.json();
+                            if (statusData.status === 'completed') {
+                                data = statusData.result;
+                                break;
+                            } else if (statusData.status === 'failed') {
+                                throw new Error(statusData.error || "Analysis failed internally");
+                            }
+                        }
                         
                         if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
                             alert("Analysis complete. No new significant patterns were found that aren't already covered by your existing rules.");
