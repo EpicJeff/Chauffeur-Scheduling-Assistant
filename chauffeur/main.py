@@ -303,9 +303,37 @@ def analyze_overrides(background_tasks: BackgroundTasks):
         if not overrides:
             return {"new_rules_count": 0, "new_priority_rules_count": 0}
             
+        # Enrich overrides with event titles and cache schedules
+        enriched_overrides = []
+        schedule_cache = {}
+        for o in overrides:
+            date_str = o.get('date_str')
+            event_id = o.get('event_id')
+            if date_str not in schedule_cache:
+                try:
+                    schedule_cache[date_str] = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=True)
+                except Exception as e:
+                    logger.error(f"Failed to fetch schedule context for {date_str}: {e}")
+                    schedule_cache[date_str] = {'events': []}
+            
+            event_title = event_id
+            for evt in schedule_cache[date_str].get('events', []):
+                if hasattr(evt, 'dict'): evt = evt.dict()
+                elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
+                if evt.get('id') == event_id:
+                    event_title = evt.get('title')
+                    break
+                    
+            enriched_overrides.append({
+                "date_str": date_str,
+                "event_id": event_id,
+                "event_title": event_title,
+                "driver_id": o.get('driver_id')
+            })
+            
         # Phase 1: Map
         try:
-            clusters = identify_override_patterns(llm_provider, llm_url, llm_api_key, llm_model, overrides)
+            clusters = identify_override_patterns(llm_provider, llm_url, llm_api_key, llm_model, enriched_overrides)
         except Exception as e:
             logger.error(f"Failed to identify override patterns: {e}")
             from fastapi.responses import JSONResponse
@@ -335,7 +363,7 @@ def analyze_overrides(background_tasks: BackgroundTasks):
                 
                 try:
                     # Get Original Schedule (ignoring overrides)
-                    res_orig = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=True)
+                    res_orig = schedule_cache.get(date_str, {'events': []})
                     for evt in res_orig.get('events', []):
                         if hasattr(evt, 'dict'): evt = evt.dict()
                         elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
@@ -385,6 +413,19 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             except Exception as e:
                 logger.error(f"Failed to deduce rules for cluster {cluster.get('description')}: {e}")
                 
+        # Map passenger IDs to names for UI display
+        passenger_map = {}
+        for p in passengers_data:
+            p_name = p.get('name', p.get('id'))
+            for cid in p.get('calendar_ids', [p.get('id')]):
+                passenger_map[cid] = p_name
+
+        for cluster in clusters:
+            for r in cluster.get('proposed_rules', []):
+                r['passenger_names'] = [passenger_map.get(pid, pid) for pid in r.get('passenger_ids', [])]
+            for pr in cluster.get('proposed_priority_rules', []):
+                pr['passenger_names'] = [passenger_map.get(pid, pid) for pid in pr.get('passenger_ids', [])]
+
         return {"status": "success", "new_rules_count": new_rules_count, "new_priority_rules_count": new_priority_rules_count, "clusters": clusters}
     except Exception as e:
         import traceback

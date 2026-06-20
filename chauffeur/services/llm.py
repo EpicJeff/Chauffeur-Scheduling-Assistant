@@ -621,7 +621,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     
     overrides_text = "List of Overrides:\n"
     for o in overrides:
-        overrides_text += f"Date: {o.get('date_str')}, Event ID: {o.get('event_id')}, Reassigned to Driver: {o.get('driver_id')}\n"
+        event_str = f"Event '{o.get('event_title')}'" if o.get('event_title') else f"Event ID: {o.get('event_id')}"
+        overrides_text += f"Date: {o.get('date_str')}, {event_str}, Reassigned to Driver: {o.get('driver_id')}\n"
         
     res = _call_llm_json(provider, url, api_key, model, system_prompt, overrides_text)
     return res.get('clusters', [])

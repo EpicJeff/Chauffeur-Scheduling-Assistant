@@ -878,7 +878,7 @@
                                     <div class="font-semibold text-white">Driver: ${r.driver_id} | Type: ${r.constraint_type}</div>
                                     <div class="text-sm text-gray-400">
                                         ${r.keywords && r.keywords.length ? `Keywords: ${r.keywords.join(', ')}<br>` : ''}
-                                        ${r.passenger_ids && r.passenger_ids.length ? `Passengers: ${r.passenger_ids.join(', ')}<br>` : ''}
+                                        ${r.passenger_names && r.passenger_names.length ? `Passengers: ${r.passenger_names.join(', ')}<br>` : (r.passenger_ids && r.passenger_ids.length ? `Passengers: ${r.passenger_ids.join(', ')}<br>` : '')}
                                         ${r.time_start ? `Time: ${r.time_start} - ${r.time_end}<br>` : ''}
                                         ${r.tolerance_mins ? `Tolerance: ${r.tolerance_mins}m (${r.tolerance_type})<br>` : ''}
                                         ${r.buffer_before_mins || r.buffer_after_mins ? `Buffer: ${r.buffer_before_mins}m before, ${r.buffer_after_mins}m after<br>` : ''}
@@ -903,7 +903,7 @@
                                     <div class="font-semibold text-white">Weight: ${pr.weight_modifier > 0 ? '+'+pr.weight_modifier : pr.weight_modifier}</div>
                                     <div class="text-sm text-gray-400">
                                         ${pr.keywords && pr.keywords.length ? `Keywords: ${pr.keywords.join(', ')}<br>` : ''}
-                                        ${pr.passenger_ids && pr.passenger_ids.length ? `Passengers: ${pr.passenger_ids.join(', ')}<br>` : ''}
+                                        ${pr.passenger_names && pr.passenger_names.length ? `Passengers: ${pr.passenger_names.join(', ')}<br>` : (pr.passenger_ids && pr.passenger_ids.length ? `Passengers: ${pr.passenger_ids.join(', ')}<br>` : '')}
                                         ${pr.time_start ? `Time: ${pr.time_start} - ${pr.time_end}<br>` : ''}
                                     </div>
                                 </div>
