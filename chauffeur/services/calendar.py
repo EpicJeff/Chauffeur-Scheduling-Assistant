@@ -217,7 +217,7 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
                         summary = f"{p.name}'s Calendar"
                         break
                 if not summary:
-                    for d in storage.get_drivers():
+                    for d in storage.get_all_drivers():
                         if cal_id in d.calendar_ids:
                             summary = f"{d.name}'s Calendar"
                             break

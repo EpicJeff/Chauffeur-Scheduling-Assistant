@@ -311,7 +311,7 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             event_id = o.get('event_id')
             if date_str not in schedule_cache:
                 try:
-                    schedule_cache[date_str] = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=True)
+                    schedule_cache[date_str] = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=False, ignore_overrides=True)
                 except Exception as e:
                     logger.error(f"Failed to fetch schedule context for {date_str}: {e}")
                     schedule_cache[date_str] = {'events': []}
@@ -326,7 +326,7 @@ def analyze_overrides(background_tasks: BackgroundTasks):
                     if (evt.get('id') == event_id or 
                         evt.get('recurring_event_id') == event_id or 
                         evt.get('original_event_id') == event_id or 
-                        event_id in evt.get('source_event_ids', [])):
+                        event_id in (evt.get('source_event_ids') or [])):
                         event_title = evt.get('title')
                         break
                     
@@ -377,7 +377,7 @@ def analyze_overrides(background_tasks: BackgroundTasks):
                         original_schedules_context += f"{evt.get('time_start')} - {evt.get('time_end')} | {evt.get('title')} | Assigned: {driver_name} | Location: {evt.get('location')}\n"
                         
                     # Get Modified Schedule (with overrides)
-                    res_mod = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=False)
+                    res_mod = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=False, ignore_overrides=False)
                     for evt in res_mod.get('events', []):
                         if hasattr(evt, 'dict'): evt = evt.dict()
                         elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
