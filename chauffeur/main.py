@@ -1296,21 +1296,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         )
 
         duplicate_groups = []
-        schedule_one_keywords = []
-        schedule_all_keywords = []
+        schedule_one_rules = []
+        schedule_all_rules = []
         for r in rules:
             if r.constraint_type == 'duplicate':
                 action = getattr(r, 'duplicate_action', 'schedule_one')
-                if getattr(r, 'event_keyword', None):
-                    if action == 'schedule_all':
-                        schedule_all_keywords.append(r.event_keyword.lower())
-                    else:
-                        schedule_one_keywords.append(r.event_keyword.lower())
-                if hasattr(r, 'keywords') and r.keywords:
-                    if action == 'schedule_all':
-                        schedule_all_keywords.extend([kw.lower() for kw in r.keywords])
-                    else:
-                        schedule_one_keywords.extend([kw.lower() for kw in r.keywords])
+                if action == 'schedule_all':
+                    schedule_all_rules.append(r)
+                else:
+                    schedule_one_rules.append(r)
 
         from collections import defaultdict
         import datetime
@@ -1331,11 +1325,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             e_id = e.id
             e_title = e.title
 
-            e_title_lower = e_title.lower()
-            if any(kw in e_title_lower for kw in schedule_one_keywords):
+            if any(matcher.does_event_match_rule(e, r, passengers) for r in schedule_one_rules):
                 continue
-            if any(kw in e_title_lower for kw in schedule_all_keywords):
+            if any(matcher.does_event_match_rule(e, r, passengers) for r in schedule_all_rules):
                 continue
+                
             if len(core_title) > 3:
                 key = (cal_ids, core_title)
                 dup_groups[key].append((e_title, e_id, date_str))
