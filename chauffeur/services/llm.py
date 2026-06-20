@@ -567,8 +567,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     }
                 ],
                 "generationConfig": {
-                    "temperature": temperature,
-                    "responseMimeType": "application/json"
+                    "temperature": temperature
                 }
             }
             req = urllib.request.Request(
@@ -583,6 +582,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     raw_response = data['candidates'][0]['content']['parts'][0]['text']
                 except (KeyError, IndexError):
                     raise RuntimeError("Unexpected response format from Gemini API")
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
         except Exception as e:
             raise RuntimeError(f"Gemini request failed: {str(e)}")
     else:
