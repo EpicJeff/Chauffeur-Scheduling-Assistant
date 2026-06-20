@@ -1315,19 +1315,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         from collections import defaultdict
         import datetime
         dup_groups = defaultdict(list)
-        for e in combined_events_to_solve:
-            if isinstance(e, dict):
-                date_str = e['start'][:10] if 'start' in e and isinstance(e['start'], str) else e['start'].strftime('%Y-%m-%d')
-                core_title = e.get('title', '').split(' - ')[0].split(':')[0].strip()
-                cal_ids = tuple(sorted(e.get('calendar_ids', [])))
-                e_id = e.get('id')
-                e_title = e.get('title')
-            else:
-                date_str = e.start.strftime('%Y-%m-%d')
-                core_title = e.title.split(' - ')[0].split(':')[0].strip()
-                cal_ids = tuple(sorted(e.calendar_ids))
-                e_id = e.id
-                e_title = e.title
+        for e in all_events_for_ui.values():
+            event_type = getattr(e, 'event_type', None)
+            if event_type in ('pickup', 'dropoff', 'background_trip'):
+                continue
+
+            date_str = e.start.strftime('%Y-%m-%d')
+            core_title = e.title.split(' - ')[0].split(':')[0].strip()
+            cal_ids = tuple(sorted(e.calendar_ids))
+            
+            # Skip driver-only events
+            if cal_ids and all(c in driver_calendar_ids for c in cal_ids):
+                continue
+                
+            e_id = e.id
+            e_title = e.title
 
             e_title_lower = e_title.lower()
             if any(kw in e_title_lower for kw in schedule_one_keywords):
