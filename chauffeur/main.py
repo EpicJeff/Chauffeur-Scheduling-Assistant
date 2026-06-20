@@ -1004,8 +1004,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         is_passenger = False
 
         driver_calendar_ids = [c for d in drivers for c in d.calendar_ids]
-        passenger_calendar_ids = [c for p in passengers for c in p.calendar_ids]
-        is_driver_only = all(c in driver_calendar_ids and c not in passenger_calendar_ids for c in original_calendar_ids) and len(original_calendar_ids) > 0
+        is_driver_only = (
+            all(c in driver_calendar_ids for c in original_calendar_ids) and 
+            len(original_calendar_ids) > 0 and 
+            not any(c in calendar_ids for c in original_calendar_ids)
+        )
         
         if config and config.get('passenger_ids'):
             is_passenger = True
