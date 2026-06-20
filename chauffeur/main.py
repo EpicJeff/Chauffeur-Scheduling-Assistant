@@ -312,7 +312,11 @@ def _run_analysis_task(task_id: str):
         llm_model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
         
         # 1. Fetch Overrides
-        overrides = storage.get_all_overrides()
+        raw_overrides = storage.get_all_overrides()
+        
+        # Filter out legacy overrides that don't have date_str/event_title
+        overrides = [o for o in raw_overrides if o.get('date_str') and o.get('event_title')]
+        
         if not overrides:
             analysis_tasks[task_id] = {"status": "completed", "result": {"new_rules_count": 0, "new_priority_rules_count": 0}}
             return
