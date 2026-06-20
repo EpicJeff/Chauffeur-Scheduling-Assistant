@@ -294,9 +294,9 @@ def analyze_overrides(background_tasks: BackgroundTasks):
         
         settings = storage.get_settings()
         llm_provider = settings.get('llm_provider', 'gemini')
-        llm_url = settings.get('llm_url', 'http://localhost:11434')
-        llm_api_key = settings.get('llm_api_key', '')
-        llm_model = settings.get('llm_model', '')
+        llm_url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        llm_api_key = settings.get('llm_gemini_api_key', '')
+        llm_model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
         
         # 1. Fetch Overrides
         overrides = storage.get_all_overrides()
