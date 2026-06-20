@@ -456,12 +456,18 @@ def _run_analysis_task(task_id: str):
                 pr['passenger_names'] = [passenger_map.get(pid, pid) for pid in pr.get('passenger_ids', [])]
                 pr['driver_name'] = driver_map.get(pr.get('driver_id'), pr.get('driver_id'))
 
-        return {"status": "success", "new_rules_count": new_rules_count, "new_priority_rules_count": new_priority_rules_count, "clusters": clusters}
+        analysis_tasks[task_id] = {
+            "status": "completed", 
+            "result": {
+                "new_rules_count": new_rules_count, 
+                "new_priority_rules_count": new_priority_rules_count, 
+                "clusters": clusters
+            }
+        }
     except Exception as e:
         import traceback
         logger.error(f"Analyze overrides failed with {e}\n{traceback.format_exc()}")
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})
+        analysis_tasks[task_id] = {"status": "failed", "error": str(e), "traceback": traceback.format_exc()}
 
 # --- Bulk Rules API ---
 from pydantic import BaseModel
