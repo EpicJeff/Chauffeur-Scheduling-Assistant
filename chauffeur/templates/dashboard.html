@@ -846,13 +846,12 @@
                     msg += "No new rules were generated (either no consistent patterns found or rules already exist).";
                 } else {
                     msg += `Generated ${data.new_rules_count} new constraint rules and ${data.new_priority_rules_count} new priority rules!\n\n`;
-                    msg += "Turning off Draft Mode to let the solver apply your new AI rules...";
+                    msg += "AI rules have been created. Toggle Draft Mode OFF when you are ready to let the solver apply them.";
                 }
                 alert(msg);
                 
-                if (isDraftMode) {
-                    toggleDraftMode(); // This will auto-sync
-                }
+                // Keep draft mode ON but force a refresh to compute diagnostics
+                forceSync(true, isDraftMode).catch(console.error);
             } catch (e) {
                 console.error(e);
                 alert("Failed to analyze draft.");

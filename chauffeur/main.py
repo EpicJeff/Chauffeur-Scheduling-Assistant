@@ -1291,9 +1291,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     "foregroundColor": fg_color
                 }
 
-        diagnostics = matcher.compute_diagnostics(
-            combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
-        )
+        if draft and not force_refresh:
+            diagnostics = {}
+        else:
+            diagnostics = matcher.compute_diagnostics(
+                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
+            )
 
         duplicate_groups = []
         schedule_one_rules = []
