@@ -105,10 +105,10 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                     Draft Mode: OFF
                 </button>
-                <button id="btn-analyze-draft" onclick="analyzeDraft()"
-                    class="hidden bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-3 md:px-4 rounded-lg shadow-md transition-colors text-sm md:text-base flex items-center gap-2">
+                <button id="btn-analyze-overrides" onclick="analyzeOverrides()"
+                    class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-3 md:px-4 rounded-lg shadow-md transition-colors text-sm md:text-base flex items-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
-                    Analyze Draft
+                    AI: Learn from Overrides
                 </button>
             </div>
             <button onclick="forceSync()" id="sync-btn"
@@ -809,29 +809,28 @@
         function toggleDraftMode() {
             isDraftMode = !isDraftMode;
             const btn = document.getElementById('btn-draft-mode');
-            const analyzeBtn = document.getElementById('btn-analyze-draft');
             if (isDraftMode) {
                 btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg> Draft Mode: ON`;
                 btn.classList.replace('bg-gray-700', 'bg-yellow-600');
                 btn.classList.replace('hover:bg-gray-600', 'hover:bg-yellow-500');
                 btn.classList.replace('text-gray-300', 'text-white');
                 btn.classList.replace('border-gray-600', 'border-yellow-500');
-                analyzeBtn.classList.remove('hidden');
             } else {
                 btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg> Draft Mode: OFF`;
                 btn.classList.replace('bg-yellow-600', 'bg-gray-700');
                 btn.classList.replace('hover:bg-yellow-500', 'hover:bg-gray-600');
                 btn.classList.replace('text-white', 'text-gray-300');
                 btn.classList.replace('border-yellow-500', 'border-gray-600');
-                analyzeBtn.classList.add('hidden');
                 
                 // When turning off draft mode, sync with backend to let solver run
                 forceSync(false, false).catch(console.error);
             }
         }
 
-        async function analyzeDraft() {
-            const analyzeBtn = document.getElementById('btn-analyze-draft');
+        let proposedRulesPayload = { rules: [], priority_rules: [] };
+
+        async function analyzeOverrides() {
+            const analyzeBtn = document.getElementById('btn-analyze-overrides');
             const originalHtml = analyzeBtn.innerHTML;
             analyzeBtn.innerHTML = `<svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing...`;
             analyzeBtn.disabled = true;
@@ -851,23 +850,120 @@
                 
                 const data = await res.json();
                 
-                let msg = "AI Analysis Complete!\n\n";
                 if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
-                    msg += "No new rules were generated (either no consistent patterns found or rules already exist).";
-                } else {
-                    msg += `Generated ${data.new_rules_count} new constraint rules and ${data.new_priority_rules_count} new priority rules!\n\n`;
-                    msg += "AI rules have been created. Toggle Draft Mode OFF when you are ready to let the solver apply them.";
+                    alert("No new rules were generated (either no consistent patterns found or rules already exist).");
+                    return;
                 }
-                alert(msg);
                 
-                // Keep draft mode ON but force a refresh to compute diagnostics
-                forceSync(true, isDraftMode).catch(console.error);
+                // Show Modal
+                proposedRulesPayload = { rules: [], priority_rules: [] };
+                let modalContent = document.getElementById('ai-rules-modal-content');
+                let html = '';
+                
+                let ruleIndex = 0;
+                let prIndex = 0;
+
+                data.clusters.forEach(c => {
+                    html += `<div class="mb-6 p-4 bg-gray-800 rounded-lg border border-purple-500">`;
+                    html += `<h3 class="text-lg font-bold text-purple-400 mb-2">Pattern: ${c.description}</h3>`;
+                    
+                    if (c.proposed_rules && c.proposed_rules.length > 0) {
+                        html += `<div class="mb-4"><h4 class="font-bold text-gray-300 mb-2">Proposed Constraint Rules:</h4>`;
+                        c.proposed_rules.forEach(r => {
+                            proposedRulesPayload.rules.push(r);
+                            html += `
+                            <div class="flex items-start gap-3 p-3 bg-gray-700 rounded mb-2">
+                                <input type="checkbox" id="prop-rule-${ruleIndex}" class="mt-1 w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500" checked onchange="toggleProposedRule('rule', ${ruleIndex}, this.checked)">
+                                <div>
+                                    <div class="font-semibold text-white">Driver: ${r.driver_id} | Type: ${r.constraint_type}</div>
+                                    <div class="text-sm text-gray-400">
+                                        ${r.keywords && r.keywords.length ? `Keywords: ${r.keywords.join(', ')}<br>` : ''}
+                                        ${r.passenger_ids && r.passenger_ids.length ? `Passengers: ${r.passenger_ids.join(', ')}<br>` : ''}
+                                        ${r.time_start ? `Time: ${r.time_start} - ${r.time_end}<br>` : ''}
+                                    </div>
+                                </div>
+                            </div>`;
+                            ruleIndex++;
+                        });
+                        html += `</div>`;
+                    }
+                    
+                    if (c.proposed_priority_rules && c.proposed_priority_rules.length > 0) {
+                        html += `<div><h4 class="font-bold text-gray-300 mb-2">Proposed Priority Rules:</h4>`;
+                        c.proposed_priority_rules.forEach(pr => {
+                            proposedRulesPayload.priority_rules.push(pr);
+                            html += `
+                            <div class="flex items-start gap-3 p-3 bg-gray-700 rounded mb-2">
+                                <input type="checkbox" id="prop-pr-${prIndex}" class="mt-1 w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500" checked onchange="toggleProposedRule('priority', ${prIndex}, this.checked)">
+                                <div>
+                                    <div class="font-semibold text-white">Weight: ${pr.weight_modifier > 0 ? '+'+pr.weight_modifier : pr.weight_modifier}</div>
+                                    <div class="text-sm text-gray-400">
+                                        ${pr.keywords && pr.keywords.length ? `Keywords: ${pr.keywords.join(', ')}<br>` : ''}
+                                        ${pr.passenger_ids && pr.passenger_ids.length ? `Passengers: ${pr.passenger_ids.join(', ')}<br>` : ''}
+                                        ${pr.time_start ? `Time: ${pr.time_start} - ${pr.time_end}<br>` : ''}
+                                    </div>
+                                </div>
+                            </div>`;
+                            prIndex++;
+                        });
+                        html += `</div>`;
+                    }
+                    
+                    html += `</div>`;
+                });
+                
+                modalContent.innerHTML = html;
+                document.getElementById('ai-rules-modal').classList.remove('hidden');
+
             } catch (e) {
                 console.error(e);
-                alert(`Failed to analyze draft: ${e.message}`);
+                alert(`Failed to analyze: ${e.message}`);
             } finally {
                 analyzeBtn.innerHTML = originalHtml;
                 analyzeBtn.disabled = false;
+            }
+        }
+        
+        const skippedProposedRules = { rules: new Set(), priority_rules: new Set() };
+        
+        function toggleProposedRule(type, index, isChecked) {
+            if (type === 'rule') {
+                if (isChecked) skippedProposedRules.rules.delete(index);
+                else skippedProposedRules.rules.add(index);
+            } else {
+                if (isChecked) skippedProposedRules.priority_rules.delete(index);
+                else skippedProposedRules.priority_rules.add(index);
+            }
+        }
+        
+        function closeAiRulesModal() {
+            document.getElementById('ai-rules-modal').classList.add('hidden');
+        }
+        
+        async function saveAiRules() {
+            const finalPayload = {
+                rules: proposedRulesPayload.rules.filter((_, i) => !skippedProposedRules.rules.has(i)),
+                priority_rules: proposedRulesPayload.priority_rules.filter((_, i) => !skippedProposedRules.priority_rules.has(i))
+            };
+            
+            if (finalPayload.rules.length === 0 && finalPayload.priority_rules.length === 0) {
+                closeAiRulesModal();
+                return;
+            }
+            
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/rules/bulk-add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(finalPayload)
+                });
+                if (!res.ok) throw new Error("Failed to save rules.");
+                closeAiRulesModal();
+                alert("Rules saved successfully! The schedule will now recalculate.");
+                forceSync(false, isDraftMode).catch(console.error);
+            } catch (e) {
+                alert(e.message);
             }
         }
 

@@ -626,7 +626,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     res = _call_llm_json(provider, url, api_key, model, system_prompt, overrides_text)
     return res.get('clusters', [])
 
-def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str, cluster: dict, daily_schedules_context: str, passengers: list) -> dict:
+def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str, cluster: dict, original_schedules_context: str, modified_schedules_context: str, passengers: list) -> dict:
     passenger_context = []
     for p in passengers:
         cal_ids = p.get('calendar_ids', [])
@@ -637,10 +637,16 @@ def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str,
         
     system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
 You identified a Pattern Cluster: {cluster.get('description')} where the user repeatedly reassigned an event to driver '{cluster.get('new_driver_id')}'.
-I will provide you with the full daily schedules for the dates this occurred.
-Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at the surrounding context (e.g., was that driver already at that location? were there other specific passengers involved?).
+I will provide you with the full daily schedules for the dates this occurred, BOTH before the user's manual changes (Original) and after their changes (Modified).
+Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at what changed and the surrounding context (e.g., was that driver already at that location? were there other specific passengers involved?).
 
 Based on your deduction, you MUST generate structured JSON rules that codify this behavior.
+
+Original Schedules (Before changes):
+{original_schedules_context}
+
+Modified Schedules (After manual user overrides):
+{modified_schedules_context}
 
 Available Passengers (use only these passenger IDs for rules):
 {chr(10).join(passenger_context)}
@@ -679,5 +685,5 @@ You MUST respond with a single valid JSON object of the following exact structur
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
-    res = _call_llm_json(provider, url, api_key, model, system_prompt, daily_schedules_context)
+    res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res

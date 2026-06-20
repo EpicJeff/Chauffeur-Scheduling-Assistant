@@ -326,28 +326,37 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             if not dates: continue
             
             # 2. Reconstruct Context
-            daily_schedules_context = f"Cluster: {cluster.get('description')}\n\n"
+            original_schedules_context = f"Cluster: {cluster.get('description')}\n\n"
+            modified_schedules_context = f"Cluster: {cluster.get('description')}\n\n"
+            
             for date_str in dates:
-                daily_schedules_context += f"--- Schedule for {date_str} ---\n"
-                # Force refresh to get exact events (solver might re-assign differently but events are accurate)
+                original_schedules_context += f"--- Schedule for {date_str} ---\n"
+                modified_schedules_context += f"--- Schedule for {date_str} ---\n"
+                
                 try:
-                    res = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True)
-                    events = res.get('events', [])
-                    for evt in events:
-                        if hasattr(evt, 'dict'):
-                            evt = evt.dict()
-                        elif hasattr(evt, 'model_dump'):
-                            evt = evt.model_dump()
+                    # Get Original Schedule (ignoring overrides)
+                    res_orig = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=True)
+                    for evt in res_orig.get('events', []):
+                        if hasattr(evt, 'dict'): evt = evt.dict()
+                        elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
                         driver_name = evt.get('driver', {}).get('name', 'Unassigned')
-                        daily_schedules_context += f"{evt.get('time_start')} - {evt.get('time_end')} | {evt.get('title')} | Assigned: {driver_name} | Location: {evt.get('location')}\n"
+                        original_schedules_context += f"{evt.get('time_start')} - {evt.get('time_end')} | {evt.get('title')} | Assigned: {driver_name} | Location: {evt.get('location')}\n"
+                        
+                    # Get Modified Schedule (with overrides)
+                    res_mod = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True, ignore_overrides=False)
+                    for evt in res_mod.get('events', []):
+                        if hasattr(evt, 'dict'): evt = evt.dict()
+                        elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
+                        driver_name = evt.get('driver', {}).get('name', 'Unassigned')
+                        modified_schedules_context += f"{evt.get('time_start')} - {evt.get('time_end')} | {evt.get('title')} | Assigned: {driver_name} | Location: {evt.get('location')}\n"
                 except Exception as e:
                     logger.error(f"Failed to fetch schedule context for {date_str}: {e}")
                     
             # Phase 2: Reduce
             try:
-                deduced_data = deduce_rules_from_context(llm_provider, llm_url, llm_api_key, llm_model, cluster, daily_schedules_context, passengers_data)
+                deduced_data = deduce_rules_from_context(llm_provider, llm_url, llm_api_key, llm_model, cluster, original_schedules_context, modified_schedules_context, passengers_data)
                 
-                # Phase 3: Duplicate Detection & Save
+                # Phase 3: Duplicate Detection & Collect
                 def is_duplicate(new_r, existing_list, is_priority=False):
                     for er in existing_list:
                         if er.get('constraint_type') == new_r.get('constraint_type') and er.get('driver_id') == new_r.get('driver_id') and set(er.get('keywords', [])) == set(new_r.get('keywords', [])) and set(er.get('passenger_ids', [])) == set(new_r.get('passenger_ids', [])) and er.get('location') == new_r.get('location') and set(er.get('days_of_week', [])) == set(new_r.get('days_of_week', [])) and er.get('time_start') == new_r.get('time_start') and er.get('time_end') == new_r.get('time_end'):
@@ -356,27 +365,50 @@ def analyze_overrides(background_tasks: BackgroundTasks):
                             return True
                     return False
                     
+                cluster_rules = []
+                cluster_priority_rules = []
+                    
                 for r in deduced_data.get('rules', []):
                     if not is_duplicate(r, existing_rules):
-                        storage.add_rule(r)
-                        existing_rules.append(r)
+                        cluster_rules.append(r)
+                        existing_rules.append(r) # Add to temporary list so we don't duplicate within the same session
                         new_rules_count += 1
                         
                 for pr in deduced_data.get('priority_rules', []):
                     if not is_duplicate(pr, existing_priority_rules, is_priority=True):
-                        storage.add_priority_rule(pr)
+                        cluster_priority_rules.append(pr)
                         existing_priority_rules.append(pr)
                         new_priority_rules_count += 1
+                        
+                cluster['proposed_rules'] = cluster_rules
+                cluster['proposed_priority_rules'] = cluster_priority_rules
             except Exception as e:
                 logger.error(f"Failed to deduce rules for cluster {cluster.get('description')}: {e}")
                 
-        background_tasks.add_task(refresh_schedule_logic)
-        return {"new_rules_count": new_rules_count, "new_priority_rules_count": new_priority_rules_count}
+        return {"status": "success", "new_rules_count": new_rules_count, "new_priority_rules_count": new_priority_rules_count, "clusters": clusters}
     except Exception as e:
         import traceback
         logger.error(f"Analyze overrides failed with {e}\n{traceback.format_exc()}")
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})
+
+# --- Bulk Rules API ---
+from pydantic import BaseModel
+from typing import List
+
+class BulkRulesPayload(BaseModel):
+    rules: List[dict]
+    priority_rules: List[dict]
+
+@app.post("/api/rules/bulk-add")
+def bulk_add_rules(payload: BulkRulesPayload, background_tasks: BackgroundTasks):
+    for r in payload.rules:
+        storage.add_rule(r)
+    for pr in payload.priority_rules:
+        storage.add_priority_rule(pr)
+        
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "success", "message": f"Added {len(payload.rules)} rules and {len(payload.priority_rules)} priority rules."}
 
 # --- Priority Rules API ---
 @app.get("/api/priority_rules")
@@ -818,7 +850,7 @@ def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh
         import traceback
         return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
-def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
+def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
@@ -946,7 +978,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     rules_data = storage.get_all_rules()
     priority_rules_data = storage.get_all_priority_rules()
-    overrides_data = storage.get_all_overrides()
+    overrides_data = [] if ignore_overrides else storage.get_all_overrides()
 
     enable_standard_rules = settings.get("enable_standard_rules", True)
     enable_ai_rules = settings.get("enable_ai_rules", True)
