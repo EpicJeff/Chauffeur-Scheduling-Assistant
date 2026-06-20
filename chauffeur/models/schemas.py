@@ -96,6 +96,8 @@ class ManualOverride(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     event_id: str
     driver_id: str
+    event_title: Optional[str] = None
+    date_str: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class Settings(BaseModel):

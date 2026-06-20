@@ -316,17 +316,19 @@ def analyze_overrides(background_tasks: BackgroundTasks):
                     logger.error(f"Failed to fetch schedule context for {date_str}: {e}")
                     schedule_cache[date_str] = {'events': []}
             
-            event_title = event_id
-            for evt in schedule_cache[date_str].get('events', []):
-                if hasattr(evt, 'dict'): evt = evt.dict()
-                elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
-                
-                if (evt.get('id') == event_id or 
-                    evt.get('recurring_event_id') == event_id or 
-                    evt.get('original_event_id') == event_id or 
-                    event_id in evt.get('source_event_ids', [])):
-                    event_title = evt.get('title')
-                    break
+            event_title = o.get('event_title')
+            if not event_title:
+                event_title = event_id
+                for evt in schedule_cache[date_str].get('events', []):
+                    if hasattr(evt, 'dict'): evt = evt.dict()
+                    elif hasattr(evt, 'model_dump'): evt = evt.model_dump()
+                    
+                    if (evt.get('id') == event_id or 
+                        evt.get('recurring_event_id') == event_id or 
+                        evt.get('original_event_id') == event_id or 
+                        event_id in evt.get('source_event_ids', [])):
+                        event_title = evt.get('title')
+                        break
                     
             enriched_overrides.append({
                 "date_str": date_str,

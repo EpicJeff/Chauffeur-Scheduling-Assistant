@@ -1585,7 +1585,7 @@
                 await fetch(`api/overrides?draft=${isDraftMode}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_id: targetEventId, driver_id: driverId })
+                    body: JSON.stringify({ event_id: targetEventId, driver_id: driverId, event_title: ev?.title, date_str: ev ? ev.start.split('T')[0] : null })
                 });
 
                 // Optimistic UI update
