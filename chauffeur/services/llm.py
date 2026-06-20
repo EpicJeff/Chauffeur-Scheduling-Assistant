@@ -639,7 +639,15 @@ def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str,
     system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
 You identified a Pattern Cluster: {cluster.get('description')} where the user repeatedly reassigned an event to driver '{cluster.get('new_driver_id')}'.
 I will provide you with the full daily schedules for the dates this occurred, BOTH before the user's manual changes (Original) and after their changes (Modified).
-Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at what changed and the surrounding context (e.g., was that driver already at that location? were there other specific passengers involved?).
+Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at what changed and the surrounding context.
+
+CRITICAL INSTRUCTION: Do NOT just blindly output 'required' or 'preferred' driver rules. You MUST analyze the surrounding schedule to find the true root cause:
+- Did the user move this event so it could be driven together with another event at the same time/location? -> Generate a 'group' rule to combine them!
+- Did the original driver not have enough travel time between events? -> Generate a 'buffer' rule to ensure they have enough time!
+- Does the new driver have an overlapping event, but the user assigned it anyway? -> Generate a 'tolerance' rule to explicitly allow the overlap!
+- Does the event overlap with something that shouldn't be attended? -> Generate an 'attendance' rule!
+
+Think deeply about the relationships between the events. The driver reassignment is just the symptom; the rule you generate should fix the root cause.
 
 Based on your deduction, you MUST generate structured JSON rules that codify this behavior.
 
