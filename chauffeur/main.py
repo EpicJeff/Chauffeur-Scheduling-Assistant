@@ -292,7 +292,7 @@ analysis_tasks = {}
 def start_analyze_overrides(background_tasks: BackgroundTasks):
     import uuid
     task_id = str(uuid.uuid4())
-    analysis_tasks[task_id] = {"status": "running"}
+    analysis_tasks[task_id] = {"status": "running", "logs": []}
     background_tasks.add_task(_run_analysis_task, task_id)
     return {"task_id": task_id}
 
@@ -300,7 +300,16 @@ def start_analyze_overrides(background_tasks: BackgroundTasks):
 def get_analyze_status(task_id: str):
     return analysis_tasks.get(task_id, {"status": "not_found"})
 
+def log_task(task_id: str, msg: str):
+    import datetime
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+    log_line = f"[{ts}] {msg}"
+    logger.info(f"[Task {task_id}] {msg}")
+    if task_id in analysis_tasks:
+        analysis_tasks[task_id].setdefault('logs', []).append(log_line)
+
 def _run_analysis_task(task_id: str):
+    log_task(task_id, "Starting analysis task...")
     try:
         from services.llm import identify_override_patterns, deduce_rules_from_context
         import json
@@ -312,11 +321,13 @@ def _run_analysis_task(task_id: str):
         llm_model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
         
         # 1. Fetch Overrides
+        log_task(task_id, "Fetching overrides from database...")
         raw_overrides = storage.get_all_overrides()
         
         # Filter out legacy overrides that don't have date_str/event_title
         overrides = [o for o in raw_overrides if o.get('date_str') and o.get('event_title')]
         
+        log_task(task_id, f"Found {len(overrides)} valid overrides to analyze.")
         if not overrides:
             analysis_tasks[task_id] = {"status": "completed", "result": {"new_rules_count": 0, "new_priority_rules_count": 0}}
             return
@@ -357,9 +368,12 @@ def _run_analysis_task(task_id: str):
             
         # Phase 1: Map
         try:
+            log_task(task_id, "Phase 1: Calling LLM to identify pattern clusters...")
             clusters = identify_override_patterns(llm_provider, llm_url, llm_api_key, llm_model, enriched_overrides)
+            log_task(task_id, f"Phase 1 Complete: LLM identified {len(clusters)} clusters.")
         except Exception as e:
             logger.error(f"Failed to identify override patterns: {e}")
+            log_task(task_id, f"Error identifying patterns: {e}")
             analysis_tasks[task_id] = {"status": "failed", "error": f"Failed to identify override patterns: {str(e)}"}
             return
             
@@ -374,7 +388,8 @@ def _run_analysis_task(task_id: str):
         new_rules_count = 0
         new_priority_rules_count = 0
         
-        for cluster in clusters:
+        for i, cluster in enumerate(clusters):
+            log_task(task_id, f"Phase 2: Analyzing cluster {i+1}/{len(clusters)}: {cluster.get('description')}")
             dates = cluster.get('dates', [])
             if not dates: continue
             
@@ -407,7 +422,9 @@ def _run_analysis_task(task_id: str):
                     
             # Phase 2: Reduce
             try:
+                log_task(task_id, f"Asking LLM to deduce logical rules for cluster '{cluster.get('description')}'...")
                 deduced_data = deduce_rules_from_context(llm_provider, llm_url, llm_api_key, llm_model, cluster, original_schedules_context, modified_schedules_context, passengers_data)
+                log_task(task_id, f"LLM proposed {len(deduced_data.get('rules', []))} rules and {len(deduced_data.get('priority_rules', []))} priority rules.")
                 
                 # Phase 3: Duplicate Detection & Collect
                 def is_duplicate(new_r, existing_list, is_priority=False):
@@ -456,6 +473,7 @@ def _run_analysis_task(task_id: str):
                 pr['passenger_names'] = [passenger_map.get(pid, pid) for pid in pr.get('passenger_ids', [])]
                 pr['driver_name'] = driver_map.get(pr.get('driver_id'), pr.get('driver_id'))
 
+        log_task(task_id, f"Analysis complete! Generated {new_rules_count} unique rules and {new_priority_rules_count} unique priority rules.")
         analysis_tasks[task_id] = {
             "status": "completed", 
             "result": {
@@ -467,6 +485,7 @@ def _run_analysis_task(task_id: str):
     except Exception as e:
         import traceback
         logger.error(f"Analyze overrides failed with {e}\n{traceback.format_exc()}")
+        log_task(task_id, f"Fatal Error: {str(e)}")
         analysis_tasks[task_id] = {"status": "failed", "error": str(e), "traceback": traceback.format_exc()}
 
 # --- Bulk Rules API ---
