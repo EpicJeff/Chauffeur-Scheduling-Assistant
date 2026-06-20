@@ -289,7 +289,7 @@ def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
 @app.post("/api/rules/analyze-overrides")
 def analyze_overrides(background_tasks: BackgroundTasks):
     try:
-        from chauffeur.services.llm import identify_override_patterns, deduce_rules_from_context
+        from services.llm import identify_override_patterns, deduce_rules_from_context
         import json
         
         settings = storage.get_settings()
