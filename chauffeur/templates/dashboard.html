@@ -837,7 +837,8 @@
             analyzeBtn.disabled = true;
             
             try {
-                const res = await fetch('/api/rules/analyze-overrides', { method: 'POST' });
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/rules/analyze-overrides`, { method: 'POST' });
                 if (!res.ok) throw new Error('Analysis failed');
                 const data = await res.json();
                 

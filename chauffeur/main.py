@@ -330,8 +330,12 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             # Force refresh to get exact events (solver might re-assign differently but events are accurate)
             try:
                 res = _refresh_schedule_logic_impl(date_str, date_str, force_refresh=True)
-                events = res.get('schedule', [])
+                events = res.get('events', [])
                 for evt in events:
+                    if hasattr(evt, 'dict'):
+                        evt = evt.dict()
+                    elif hasattr(evt, 'model_dump'):
+                        evt = evt.model_dump()
                     driver_name = evt.get('driver', {}).get('name', 'Unassigned')
                     daily_schedules_context += f"{evt.get('time_start')} - {evt.get('time_end')} | {evt.get('title')} | Assigned: {driver_name} | Location: {evt.get('location')}\n"
             except Exception as e:
