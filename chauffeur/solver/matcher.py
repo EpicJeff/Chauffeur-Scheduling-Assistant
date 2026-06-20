@@ -44,6 +44,9 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
                 for p in passengers:
                     if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
                         resolved_pids.add(str(p.id))
+                        if p.calendar_ids:
+                            for cid in p.calendar_ids:
+                                resolved_pids.add(str(cid))
                         
         for pid in resolved_pids:
             if pid in event.calendar_ids:

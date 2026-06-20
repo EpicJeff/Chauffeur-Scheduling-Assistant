@@ -1246,8 +1246,8 @@
                                                 match one)</label>
                                             <div class="flex flex-wrap gap-2">
                                                 <template x-for="p in passengers">
-                                                    <button @click.prevent="toggleRulePassenger(p.calendar_ids[0])"
-                                                        :class="newRule.passenger_ids.includes(p.calendar_ids[0]) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                    <button @click.prevent="toggleRulePassenger(p)"
+                                                        :class="isPassengerInList(newRule.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
                                                         class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
                                                         x-text="p.name"></button>
                                                 </template>
@@ -1347,8 +1347,8 @@
                                                         <div class="flex flex-wrap gap-2">
                                                             <template x-for="p in passengers">
                                                                 <button
-                                                                    @click.prevent="fs.passenger_ids.includes(p.calendar_ids[0]) ? fs.passenger_ids = fs.passenger_ids.filter(id => id !== p.calendar_ids[0]) : fs.passenger_ids.push(p.calendar_ids[0])"
-                                                                    :class="fs.passenger_ids.includes(p.calendar_ids[0]) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                                    @click.prevent="togglePassengerInList(fs.passenger_ids, p)"
+                                                                    :class="isPassengerInList(fs.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
                                                                     class="border px-2 py-1 rounded text-xs font-bold transition-colors"
                                                                     x-text="p.name"></button>
                                                             </template>
@@ -1632,8 +1632,8 @@
                                             one)</label>
                                         <div class="flex flex-wrap gap-2">
                                             <template x-for="p in passengers">
-                                                <button @click.prevent="togglePriorityRulePassenger(p.calendar_ids[0])"
-                                                    :class="newPriorityRule.passenger_ids.includes(p.calendar_ids[0]) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                <button @click.prevent="togglePriorityRulePassenger(p)"
+                                                    :class="isPassengerInList(newPriorityRule.passenger_ids, p) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
                                                     class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
                                                     x-text="p.name"></button>
                                             </template>
@@ -2528,8 +2528,24 @@
                     return d ? d.name : id;
                 },
                 getPassengerName(id) {
-                    const p = this.passengers.find(x => x.calendar_ids && x.calendar_ids.includes(id));
+                    const p = this.passengers.find(x => x.id === id || x.doc_id === id || (x.calendar_ids && x.calendar_ids.includes(id)));
                     return p ? p.name : id;
+                },
+                isPassengerInList(list, p) {
+                    if (!list || !p) return false;
+                    if (list.includes(p.id) || list.includes(p.doc_id)) return true;
+                    if (p.calendar_ids && p.calendar_ids.some(cid => list.includes(cid))) return true;
+                    return false;
+                },
+                togglePassengerInList(list, p) {
+                    if (this.isPassengerInList(list, p)) {
+                        const toRemove = [p.id, p.doc_id].concat(p.calendar_ids || []);
+                        for (let i = list.length - 1; i >= 0; i--) {
+                            if (toRemove.includes(list[i])) list.splice(i, 1);
+                        }
+                    } else {
+                        list.push(p.id);
+                    }
                 },
                 addRuleKeyword() {
                     const val = this.newRuleKeywordInput.trim();
@@ -2544,10 +2560,8 @@
                     if (idx === -1) this.newRule.days_of_week.push(day);
                     else this.newRule.days_of_week.splice(idx, 1);
                 },
-                toggleRulePassenger(pid) {
-                    const idx = this.newRule.passenger_ids.indexOf(pid);
-                    if (idx === -1) this.newRule.passenger_ids.push(pid);
-                    else this.newRule.passenger_ids.splice(idx, 1);
+                toggleRulePassenger(p) {
+                    this.togglePassengerInList(this.newRule.passenger_ids, p);
                 },
                 addPriorityRuleKeyword() {
                     const val = this.newPriorityRuleKeywordInput.trim();
@@ -2562,10 +2576,8 @@
                     if (idx === -1) this.newPriorityRule.days_of_week.push(day);
                     else this.newPriorityRule.days_of_week.splice(idx, 1);
                 },
-                togglePriorityRulePassenger(pid) {
-                    const idx = this.newPriorityRule.passenger_ids.indexOf(pid);
-                    if (idx === -1) this.newPriorityRule.passenger_ids.push(pid);
-                    else this.newPriorityRule.passenger_ids.splice(idx, 1);
+                togglePriorityRulePassenger(p) {
+                    this.togglePassengerInList(this.newPriorityRule.passenger_ids, p);
                 },
                 async testLLMConnection() {
                     this.llmTestResult = 'Testing connection...';
