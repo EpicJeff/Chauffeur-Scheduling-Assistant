@@ -3065,7 +3065,64 @@
                 alert("Failed to submit feedback.");
             }
         }
+
+        async function submitFeedback() {
+            const btn = document.getElementById('btn-submit-feedback');
+            const input = document.getElementById('feedback-input');
+            const text = input.value.trim();
+            if (!text) return;
+            
+            btn.innerHTML = 'Submitting...';
+            btn.disabled = true;
+            
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                await fetch(`${apiBase}api/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: text})
+                });
+                input.value = '';
+                btn.innerHTML = 'Send';
+                btn.disabled = false;
+                alert("Feedback submitted!");
+                forceSync(true);
+            } catch (e) {
+                alert("Failed to submit feedback.");
+            }
+        }
     </script>
+    
+    <!-- AI Rules Modal -->
+    <div id="ai-rules-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-900 rounded-lg shadow-xl border border-gray-700 w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-lg">
+                <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    AI Proposed Rules
+                </h2>
+                <button onclick="closeAiRulesModal()" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto flex-1">
+                <p class="text-gray-300 mb-6">The AI has analyzed your manual drag-and-drop overrides and found the following patterns. Review the proposed rules below. Uncheck any rules you do not want to apply.</p>
+                <div id="ai-rules-modal-content">
+                    <!-- Dynamic content populated by JS -->
+                </div>
+            </div>
+            
+            <div class="p-6 border-t border-gray-700 bg-gray-800 rounded-b-lg flex justify-end gap-3">
+                <button onclick="closeAiRulesModal()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition-colors">
+                    Dismiss All
+                </button>
+                <button onclick="saveAiRules()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 rounded transition-colors shadow-lg">
+                    Save Selected Rules
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 
 
