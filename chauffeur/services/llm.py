@@ -656,6 +656,10 @@ Rule Types available:
 2. 'preferred': This specific driver is preferred (has higher weight) for events matching these filters.
 3. 'unavailable': This specific driver cannot drive for events matching these filters.
 4. 'duplicate': Action for duplicate events for the same attendees ('schedule_one' or 'schedule_all') if they occur within the same grouping_period.
+5. 'tolerance': Defines acceptable late arrival or early departure for events (uses tolerance_mins and tolerance_type).
+6. 'group': Combines events matching the filters into a single logical trip.
+7. 'buffer': Requires buffer_before_mins and/or buffer_after_mins around matched events.
+8. 'attendance': Overrides default attendance behavior for events (uses attendance_action).
 
 Constraints & rules details:
 - 'days_of_week' is a list of integers: 0 for Monday, 1 for Tuesday, 2 for Wednesday, 3 for Thursday, 4 for Friday, 5 for Saturday, 6 for Sunday.
@@ -663,6 +667,10 @@ Constraints & rules details:
 - 'keywords' are substring matches (case-insensitive) for event titles or descriptions.
 - 'passenger_ids' is a list of calendar IDs/Passenger IDs.
 - 'location' is a substring match for the event location field.
+- For 'tolerance' rules, you must set 'tolerance_mins' (integer) and 'tolerance_type' ('arrival', 'departure', or 'both').
+- For 'buffer' rules, you must set 'buffer_before_mins' and/or 'buffer_after_mins' (integers).
+- For 'duplicate' rules, you must set 'duplicate_action' ('schedule_one' or 'schedule_all').
+- For 'attendance' rules, you must set 'attendance_action' (e.g. 'ignore', 'require').
 - All rules must include 'is_ai_generated': true.
 
 You MUST respond with a single valid JSON object of the following exact structure:
@@ -670,13 +678,19 @@ You MUST respond with a single valid JSON object of the following exact structur
   "rules": [
     {{
       "driver_id": "{cluster.get('new_driver_id')}",
-      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'duplicate')",
+      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'duplicate' | 'tolerance' | 'group' | 'buffer' | 'attendance')",
       "keywords": ["list of strings"],
       "passenger_ids": ["list of Passenger IDs"],
       "days_of_week": [],
       "time_start": null,
       "time_end": null,
       "location": null,
+      "tolerance_mins": 0,
+      "tolerance_type": "both",
+      "buffer_before_mins": 0,
+      "buffer_after_mins": 0,
+      "duplicate_action": null,
+      "attendance_action": null,
       "is_ai_generated": true
     }}
   ],

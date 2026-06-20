@@ -880,6 +880,10 @@
                                         ${r.keywords && r.keywords.length ? `Keywords: ${r.keywords.join(', ')}<br>` : ''}
                                         ${r.passenger_ids && r.passenger_ids.length ? `Passengers: ${r.passenger_ids.join(', ')}<br>` : ''}
                                         ${r.time_start ? `Time: ${r.time_start} - ${r.time_end}<br>` : ''}
+                                        ${r.tolerance_mins ? `Tolerance: ${r.tolerance_mins}m (${r.tolerance_type})<br>` : ''}
+                                        ${r.buffer_before_mins || r.buffer_after_mins ? `Buffer: ${r.buffer_before_mins}m before, ${r.buffer_after_mins}m after<br>` : ''}
+                                        ${r.duplicate_action ? `Duplicate Action: ${r.duplicate_action}<br>` : ''}
+                                        ${r.attendance_action ? `Attendance: ${r.attendance_action}<br>` : ''}
                                     </div>
                                 </div>
                             </div>`;
