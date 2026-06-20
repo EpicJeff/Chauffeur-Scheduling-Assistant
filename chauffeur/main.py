@@ -423,21 +423,24 @@ def get_overrides():
     return storage.get_all_overrides()
 
 @app.post("/api/overrides")
-def create_override(override: ManualOverride, background_tasks: BackgroundTasks):
+def create_override(override: ManualOverride, background_tasks: BackgroundTasks, draft: bool = False):
     doc_id = storage.add_override(override.model_dump() if hasattr(override, 'model_dump') else override.dict())
-    background_tasks.add_task(trigger_background_refresh)
+    if not draft:
+        background_tasks.add_task(trigger_background_refresh)
     return {"doc_id": doc_id, "status": "created"}
 
 @app.delete("/api/overrides/{doc_id}")
-def delete_override(doc_id: int, background_tasks: BackgroundTasks):
+def delete_override(doc_id: int, background_tasks: BackgroundTasks, draft: bool = False):
     storage.delete_override(doc_id)
-    background_tasks.add_task(trigger_background_refresh)
+    if not draft:
+        background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
 
 @app.delete("/api/overrides/event/{event_id}")
-def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks):
+def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks, draft: bool = False):
     storage.delete_override_by_event(event_id)
-    background_tasks.add_task(trigger_background_refresh)
+    if not draft:
+        background_tasks.add_task(trigger_background_refresh)
     return {"status": "deleted"}
 
 # --- Event Configs API ---
@@ -1580,21 +1583,30 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         
             unassigned = [e.id for e in daily_events_to_solve if e.id not in assignments]
             lateness_warnings = []
+            
+            # Draft mode is extremely lightweight, skip everything else
+            ghost_assignments = {}
+            ghost_drivers = []
+            route_edges = {}
+            initial_edges = {}
+            final_edges = {}
+            conflicts = []
+            true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings = matcher.solve_schedule(
                 daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
             )
 
-        unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
-        assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
-        ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
-
-        all_assignments = {**assignments, **ghost_assignments}
-        route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
-
-        true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
-
-        conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
+            unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
+            assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
+            ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
+    
+            all_assignments = {**assignments, **ghost_assignments}
+            route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
+    
+            true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
+    
+            conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
 
         daily_schedule = {
             "assignments": assignments,

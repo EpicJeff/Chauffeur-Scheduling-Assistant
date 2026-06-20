@@ -1473,7 +1473,7 @@
             
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
-                await fetch('api/overrides', {
+                await fetch(`api/overrides?draft=${isDraftMode}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ event_id: targetEventId, driver_id: driverId })
@@ -1494,7 +1494,10 @@
                     renderSchedule(currentData);
                 }
 
-                forceSync(false, isDraftMode).catch(console.error);
+                // If not in draft mode, forceSync to trigger background refresh
+                if (!isDraftMode) {
+                    forceSync(false, false).catch(console.error);
+                }
             } catch (e) {
                 alert("Failed to force swap");
             } finally {
@@ -1518,7 +1521,7 @@
             }
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
-                await fetch(`api/overrides/event/${encodeURIComponent(targetEventId)}`, {
+                await fetch(`api/overrides/event/${encodeURIComponent(targetEventId)}?draft=${isDraftMode}`, {
                     method: 'DELETE'
                 });
                 
@@ -1528,7 +1531,10 @@
                     renderSchedule(currentData);
                 }
                 
-                forceSync(false, isDraftMode).catch(console.error);
+                // If not in draft mode, forceSync
+                if (!isDraftMode) {
+                    forceSync(false, false).catch(console.error);
+                }
             } catch (e) {
                 alert("Failed to remove override");
             } finally {
