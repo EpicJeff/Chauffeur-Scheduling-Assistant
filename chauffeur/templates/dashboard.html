@@ -875,7 +875,7 @@
                             <div class="flex items-start gap-3 p-3 bg-gray-700 rounded mb-2">
                                 <input type="checkbox" id="prop-rule-${ruleIndex}" class="mt-1 w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500" checked onchange="toggleProposedRule('rule', ${ruleIndex}, this.checked)">
                                 <div>
-                                    <div class="font-semibold text-white">Driver: ${r.driver_id} | Type: ${r.constraint_type}</div>
+                                    <div class="font-semibold text-white">Driver: ${r.driver_name || r.driver_id} | Type: ${r.constraint_type}</div>
                                     <div class="text-sm text-gray-400">
                                         ${r.keywords && r.keywords.length ? `Keywords: ${r.keywords.join(', ')}<br>` : ''}
                                         ${r.passenger_names && r.passenger_names.length ? `Passengers: ${r.passenger_names.join(', ')}<br>` : (r.passenger_ids && r.passenger_ids.length ? `Passengers: ${r.passenger_ids.join(', ')}<br>` : '')}

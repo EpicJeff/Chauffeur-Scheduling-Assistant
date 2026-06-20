@@ -420,11 +420,16 @@ def analyze_overrides(background_tasks: BackgroundTasks):
             for cid in p.get('calendar_ids', [p.get('id')]):
                 passenger_map[cid] = p_name
 
+        drivers_data = storage.get_all_drivers()
+        driver_map = {d.get('id'): d.get('name', d.get('id')) for d in drivers_data}
+
         for cluster in clusters:
             for r in cluster.get('proposed_rules', []):
                 r['passenger_names'] = [passenger_map.get(pid, pid) for pid in r.get('passenger_ids', [])]
+                r['driver_name'] = driver_map.get(r.get('driver_id'), r.get('driver_id'))
             for pr in cluster.get('proposed_priority_rules', []):
                 pr['passenger_names'] = [passenger_map.get(pid, pid) for pid in pr.get('passenger_ids', [])]
+                pr['driver_name'] = driver_map.get(pr.get('driver_id'), pr.get('driver_id'))
 
         return {"status": "success", "new_rules_count": new_rules_count, "new_priority_rules_count": new_priority_rules_count, "clusters": clusters}
     except Exception as e:
