@@ -213,13 +213,13 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
             if not summary or summary == "Unknown Calendar":
                 from services import storage
                 for p in storage.get_passengers():
-                    if cal_id in p.calendar_ids:
-                        summary = f"{p.name}'s Calendar"
+                    if cal_id in p.get('calendar_ids', []):
+                        summary = f"{p.get('name', 'Unknown')}'s Calendar"
                         break
                 if not summary:
                     for d in storage.get_all_drivers():
-                        if cal_id in d.calendar_ids:
-                            summary = f"{d.name}'s Calendar"
+                        if cal_id in d.get('calendar_ids', []):
+                            summary = f"{d.get('name', 'Driver')}'s Calendar"
                             break
                             
             if not summary:
