@@ -343,7 +343,7 @@ def analyze_overrides(background_tasks: BackgroundTasks):
         except Exception as e:
             logger.error(f"Failed to identify override patterns: {e}")
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=500, content={"error": str(e)})
+            return JSONResponse(status_code=500, content={"detail": f"Failed to identify override patterns: {str(e)}"})
             
         if not clusters:
             return {"new_rules_count": 0, "new_priority_rules_count": 0}
