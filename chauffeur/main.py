@@ -1569,11 +1569,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 assignments = dict(previous_assignments)
             
             for ov in overrides:
-                if ov.date_str == date_str:
-                    if ov.driver_id == 'unassigned':
-                        assignments.pop(ov.event_id, None)
-                    else:
-                        assignments[ov.event_id] = ov.driver_id
+                if ov.driver_id == 'unassigned':
+                    assignments.pop(ov.event_id, None)
+                else:
+                    assignments[ov.event_id] = ov.driver_id
                         
             unassigned = [e.id for e in daily_events_to_solve if e.id not in assignments]
             lateness_warnings = []
