@@ -879,6 +879,13 @@
                                     </svg>
                                     <span x-text="analyzingHabits ? 'Analyzing Overrides...' : 'Analyze My Habits'"></span>
                                 </button>
+                                <button @click="showDebugLogs = !showDebugLogs" x-show="debugLogs.length > 0" x-cloak
+                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-2 rounded-lg transition-colors flex items-center shadow-lg">
+                                    <svg class="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Logs
+                                </button>
                                 <button @click="openRuleModal()"
                                     class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded-lg transition-colors flex items-center shadow-lg">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -891,17 +898,17 @@
                         </div>
 
                         <!-- Debug Panel -->
-                        <div x-show="analyzingHabits || debugLogs.length > 0" x-cloak class="mb-6 bg-gray-900 border border-gray-700 rounded-lg shadow-inner overflow-hidden">
-                            <div class="flex justify-between items-center bg-gray-800 px-4 py-2 border-b border-gray-700">
+                        <div x-show="showDebugLogs" x-transition.opacity x-cloak class="fixed bottom-4 right-4 z-[60] w-[calc(100%-2rem)] max-w-[640px] max-h-[80vh] md:max-h-[960px] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl flex flex-col">
+                            <div class="flex justify-between items-center bg-gray-800 px-4 py-2 border-b border-gray-700 shrink-0 rounded-t-lg">
                                 <h3 class="text-gray-300 font-bold text-sm flex items-center gap-2">
                                     <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
                                     Analysis Progress
                                 </h3>
-                                <button @click="debugLogs = []" x-show="!analyzingHabits" class="text-gray-500 hover:text-gray-300">
+                                <button @click="showDebugLogs = false" class="text-gray-500 hover:text-gray-300">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                 </button>
                             </div>
-                            <div class="p-4 max-h-64 overflow-y-auto font-mono text-xs md:text-sm text-green-400" id="config-debug-output">
+                            <div class="p-4 overflow-y-auto font-mono text-xs md:text-sm text-green-400 flex-1" id="config-debug-output">
                                 <template x-for="log in debugLogs">
                                     <div x-text="log"></div>
                                 </template>
@@ -1814,6 +1821,8 @@
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 saving: false,
                 analyzingHabits: false,
+                debugLogs: [],
+                showDebugLogs: false,
                 daysToShow: 7,
                 routeCacheDurationMins: 1440,
                 timeFormat24h: false,
@@ -1835,7 +1844,6 @@
                 newTripHashtagInput: '',
                 tripHashtags: [],
                 calendarMetadata: {},
-                debugLogs: [],
                 isHomeAssistant: false,
                 drivers: [],
                 passengers: [],
@@ -2016,6 +2024,7 @@
 
                 async analyzeHabits() {
                     this.analyzingHabits = true;
+                    this.showDebugLogs = true;
                     this.debugLogs = ['Starting background task...'];
                     try {
                         const res = await fetch(`${this.apiBase}api/rules/analyze-overrides/start`, {
