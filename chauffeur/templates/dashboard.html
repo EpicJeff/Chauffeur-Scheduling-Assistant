@@ -839,7 +839,16 @@
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/rules/analyze-overrides`, { method: 'POST' });
-                if (!res.ok) throw new Error('Analysis failed');
+                
+                if (!res.ok) {
+                    let errMsg = "Analysis failed.";
+                    try {
+                        const errData = await res.json();
+                        errMsg = errData.error || errMsg;
+                    } catch(err) {}
+                    throw new Error(errMsg);
+                }
+                
                 const data = await res.json();
                 
                 let msg = "AI Analysis Complete!\n\n";
@@ -855,7 +864,7 @@
                 forceSync(true, isDraftMode).catch(console.error);
             } catch (e) {
                 console.error(e);
-                alert("Failed to analyze draft.");
+                alert(`Failed to analyze draft: ${e.message}`);
             } finally {
                 analyzeBtn.innerHTML = originalHtml;
                 analyzeBtn.disabled = false;
