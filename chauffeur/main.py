@@ -1358,7 +1358,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     "keyword": key[1],
                     "time_period": time_period,
                     "original_titles": [e[0] for e in evs],
-                    "event_ids": [e[1] for e in evs]
+                    "event_ids": [e[1] for e in evs],
+                    "passenger_ids": list(key[0])
                 })
 
         data_payload = jsonable_encoder({

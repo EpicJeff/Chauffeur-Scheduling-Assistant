@@ -1994,7 +1994,7 @@
                 mainWrapper.className = "flex flex-col gap-4 mt-0";
 
                 if (data.duplicate_groups) {
-                    const daySuggestions = data.duplicate_groups.filter(g => formatDateStr(g.date + "T12:00:00") === date);
+                    const daySuggestions = data.duplicate_groups.filter(g => g.date === date);
                     if (daySuggestions.length > 0) {
                         const suggDiv = document.createElement('div');
                         suggDiv.className = "space-y-3 mb-2";
@@ -2038,8 +2038,8 @@
                                         </div>
                                     </div>
                                     <div class="flex-shrink-0 flex items-center h-full gap-2">
-                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_all', '${group.time_period}')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
-                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_one', '${group.time_period}')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_all', '${group.time_period}', '${encodeURIComponent(JSON.stringify(group.passenger_ids || []))}')" class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Dismiss (Schedule All)</button>
+                                        <button onclick="createRule('any', '${encodeURIComponent(JSON.stringify(group.original_titles))}', 'duplicate', 0, 'both', this, 'schedule_one', '${group.time_period}', '${encodeURIComponent(JSON.stringify(group.passenger_ids || []))}')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-md font-bold text-sm transition-colors h-full flex-shrink-0">Create Global Rule (Schedule One)</button>
                                     </div>
                                 </div>
                             `;
@@ -2542,7 +2542,7 @@
             }
         };
 
-        async function createRule(driverId, keyword, constraintType, toleranceMins, toleranceType = 'both', btnElement = null, duplicateAction = null, groupingPeriod = null) {
+        async function createRule(driverId, keyword, constraintType, toleranceMins, toleranceType = 'both', btnElement = null, duplicateAction = null, groupingPeriod = null, passengerIdsStr = null) {
             if (btnElement) {
                 btnElement.disabled = true;
                 const originalText = btnElement.innerHTML;
@@ -2562,13 +2562,22 @@
                 keywordsToUse = [keyword.split(' - ')[0].split(':')[0].trim()];
             }
 
+            let passengerIds = [];
+            if (passengerIdsStr) {
+                try {
+                    passengerIds = JSON.parse(decodeURIComponent(passengerIdsStr));
+                } catch (e) {
+                    console.error("Failed to parse passengerIds", e);
+                }
+            }
+
             const payload = {
                 driver_id: driverId,
                 constraint_type: constraintType,
                 tolerance_mins: toleranceMins,
                 tolerance_type: toleranceType,
                 keywords: keywordsToUse,
-                passenger_ids: [],
+                passenger_ids: passengerIds,
                 grouping_period: groupingPeriod || 'daily',
                 days_of_week: [],
                 time_start: null,
