@@ -1894,7 +1894,20 @@
             } // Close if (!isModal)
 
             const scheduleByDate = {};
-            if (data.solving_dates) {
+            if (currentStartDate && currentEndDate && isPagination) {
+                let currDate = new Date(currentStartDate);
+                currDate.setHours(0,0,0,0);
+                const endD = new Date(currentEndDate);
+                endD.setHours(23,59,59,999);
+                while (currDate <= endD) {
+                    const year = currDate.getFullYear();
+                    const month = String(currDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(currDate.getDate()).padStart(2, '0');
+                    const dateKey = `${year}-${month}-${day}`;
+                    scheduleByDate[dateKey] = {};
+                    currDate.setDate(currDate.getDate() + 1);
+                }
+            } else if (data.solving_dates) {
                 data.solving_dates.forEach(d_str => {
                     if (!scheduleByDate[d_str]) {
                         scheduleByDate[d_str] = {};
@@ -1973,7 +1986,17 @@
             scheduleContainer.innerHTML = '';
 
             if (Object.keys(scheduleByDate).length === 0) {
-                scheduleContainer.innerHTML = `<p class="text-center text-gray-500 text-xl mt-20">No scheduled activities for the next 7 days.</p>`;
+                let msg = "No scheduled activities for the next 7 days.";
+                if (isPagination && currentStartDate && currentEndDate) {
+                    const sStr = currentStartDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+                    const eStr = currentEndDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+                    if (sStr === eStr) {
+                        msg = `No scheduled activities for ${sStr}.`;
+                    } else {
+                        msg = `No scheduled activities for ${sStr} to ${eStr}.`;
+                    }
+                }
+                scheduleContainer.innerHTML = `<p class="text-center text-gray-500 text-xl mt-20">${msg}</p>`;
                 return;
             }
 

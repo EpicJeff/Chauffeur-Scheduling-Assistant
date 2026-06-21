@@ -245,7 +245,8 @@ def solve_schedule(
                     if f"driver_{d.id}" in trip.get('entities', set()) or 'global' in trip.get('entities', set()):
                         if e.start < trip['end'] and e.end > trip['start']:
                             if not e_ents.intersection(trip.get('entities', set())) and 'global' not in trip.get('entities', set()):
-                                model.Add(assign_vars[(e.id, d.id)] == 0)
+                                if (e.id, d.id) not in overridden_pairs:
+                                    model.Add(assign_vars[(e.id, d.id)] == 0)
                                 break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
@@ -403,7 +404,8 @@ def solve_schedule(
                 
                 # True physical overlap in time
                 if e.start < de.end and e.end > de.start:
-                    model.Add(assign_vars[(e.id, d.id)] == 0)
+                    if (e.id, d.id) not in overridden_pairs:
+                        model.Add(assign_vars[(e.id, d.id)] == 0)
                 else:
                     # Transit overlap
                     if not e_before_de and not de_before_e:
@@ -484,7 +486,8 @@ def solve_schedule(
                     elif r.constraint_type == 'preferred':
                         weight += 10000
                     elif r.constraint_type == 'unavailable':
-                        model.Add(assign_vars[(e.id, d.id)] == 0)
+                        if (e.id, d.id) not in overridden_pairs:
+                            model.Add(assign_vars[(e.id, d.id)] == 0)
                         
             objective_terms.append(assign_vars[(e.id, d.id)] * weight)
             
@@ -1237,21 +1240,22 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     e_before_de = (de.start - e.end).total_seconds() >= needed_secs
                     de_before_e = (e.start - de.end).total_seconds() >= needed_secs
                     if not e_before_de and not de_before_e:
-                        if e.start <= de.start:
-                            gap = (de.start - e.end).total_seconds()
-                        else:
-                            gap = (e.start - de.end).total_seconds()
-                        e_duration = (e.end - e.start).total_seconds() / 60
-                        lateness_mins = math.ceil((needed_secs - gap) / 60.0)
-                        if lateness_mins > min(60, e_duration * 0.75):
-                            lateness_mins = 0
-                        reason = {
-                            "text": f"Conflicts with driver's personal event: '{de.title}'",
-                            "type": "personal_conflict",
-                            "conflict_event_title": de.title,
-                            "lateness_mins": lateness_mins if lateness_mins > 0 else None
-                        }
-                        break
+                        if (e.id, d.id) not in overridden_pairs:
+                            if e.start <= de.start:
+                                gap = (de.start - e.end).total_seconds()
+                            else:
+                                gap = (e.start - de.end).total_seconds()
+                            e_duration = (e.end - e.start).total_seconds() / 60
+                            lateness_mins = math.ceil((needed_secs - gap) / 60.0)
+                            if lateness_mins > min(60, e_duration * 0.75):
+                                lateness_mins = 0
+                            reason = {
+                                "text": f"Conflicts with driver's personal event: '{de.title}'",
+                                "type": "personal_conflict",
+                                "conflict_event_title": de.title,
+                                "lateness_mins": lateness_mins if lateness_mins > 0 else None
+                            }
+                            break
                         
             # 2.5 Passenger Transit Check
             if not reason:
@@ -1319,8 +1323,9 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                 for r in rules:
                     if does_event_match_rule(e, r, passengers):
                         if r.constraint_type == 'unavailable' and r.driver_id == d.id:
-                            reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
-                            break
+                            if (e.id, d.id) not in overridden_pairs:
+                                reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
+                                break
                         elif r.constraint_type == 'required' and r.driver_id != d.id:
                             if (e.id, d.id) not in overridden_pairs:
                                 reason = {"text": "Blocked by 'Required' rule for another driver.", "type": "rule"}
