@@ -758,7 +758,10 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
                 "model": model,
                 "messages": messages,
                 "stream": False,
-                "tools": tools
+                "tools": tools,
+                "options": {
+                    "num_ctx": 16384
+                }
             }
             req = urllib.request.Request(
                 f"{url.rstrip('/')}/api/chat",
@@ -787,10 +790,15 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
                         except: args = {}
                     
                     res = agent_tools.execute_tool(name, args)
-                    messages.append({
+                    tool_msg = {
                         "role": "tool",
                         "content": json.dumps(res)
-                    })
+                    }
+                    # Include tool_call_id and name for strict model parsing
+                    if "id" in tc:
+                        tool_msg["tool_call_id"] = tc["id"]
+                    tool_msg["name"] = name
+                    messages.append(tool_msg)
             else:
                 final_text = msg_resp.get("content", "")
                 storage.add_chat_message('assistant', final_text)
