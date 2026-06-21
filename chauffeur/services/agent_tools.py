@@ -111,13 +111,18 @@ def handle_get_current_state(args: dict) -> dict:
         import datetime
         date_str = datetime.datetime.now().strftime('%Y-%m-%d')
         
-    schedule = storage.get_cached_daily_schedule(date_str)
-    if schedule:
-        clean_events = []
-        for e in schedule.get("events", []):
-            clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
-            clean_events.append(clean_e)
-        state["schedule"] = clean_events
+    import main
+    res = main.refresh_schedule_logic(date_str, date_str, force_refresh=False)
+    
+    clean_events = []
+    if "events" in res:
+        for e in res["events"]:
+            # Make sure to only include events for the requested date, just in case
+            if e.get("start_date") == date_str:
+                clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
+                clean_events.append(clean_e)
+                
+    state["schedule"] = clean_events
     return state
 
 def handle_add_routing_rule(args: dict) -> dict:
