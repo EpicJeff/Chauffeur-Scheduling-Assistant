@@ -7,7 +7,7 @@ class GetCurrentStateTool(BaseModel):
     Retrieves the current state of the Chauffeur schedule, including drivers, passengers, and active rules.
     If date is provided, fetches the schedule for that date. Otherwise, fetches today.
     """
-    date: Optional[str] = Field(None, description="The date to fetch the schedule for (YYYY-MM-DD). If omitted, fetches today.")
+    date: str = Field("", description="The date to fetch the schedule for (YYYY-MM-DD). If omitted or empty, fetches today.")
 
 class AddRoutingRuleTool(BaseModel):
     """
@@ -51,7 +51,7 @@ class RunSolverTool(BaseModel):
     Triggers the graph scheduling solver to evaluate the current events and rules.
     Always run this after modifying rules to check if your changes created a valid schedule.
     """
-    date: Optional[str] = Field(None, description="The date to solve for (YYYY-MM-DD). If omitted, solves today.")
+    date: str = Field("", description="The date to solve for (YYYY-MM-DD). If omitted or empty, solves today.")
 
 class AddOverrideTool(BaseModel):
     """
@@ -61,7 +61,7 @@ class AddOverrideTool(BaseModel):
     event_id: str = Field(..., description="The ID of the event to override (fetch schedule first to get this).")
     driver_id: str = Field(..., description="The ID of the driver to assign.")
     date_str: str = Field(..., description="The date of the event (YYYY-MM-DD).")
-    event_title: Optional[str] = Field(None, description="Optional title of the event for display purposes.")
+    event_title: str = Field("", description="Optional title of the event for display purposes. Leave empty if none.")
 
 class DeleteOverrideTool(BaseModel):
     """
@@ -110,7 +110,11 @@ def handle_get_current_state(args: dict) -> dict:
     if date_str:
         schedule = storage.get_cached_daily_schedule(date_str)
         if schedule:
-            state["schedule"] = schedule.get("events", [])
+            clean_events = []
+            for e in schedule.get("events", []):
+                clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
+                clean_events.append(clean_e)
+            state["schedule"] = clean_events
     return state
 
 def handle_add_routing_rule(args: dict) -> dict:
@@ -148,7 +152,7 @@ def handle_delete_priority_rule(args: dict) -> dict:
 
 def handle_run_solver(args: dict) -> dict:
     import main
-    date = args.get('date')
+    date = args.get('date') or None
     res = main.refresh_schedule_logic(date, date, force_refresh=True)
     if 'events' in res:
         for e in res['events']:
