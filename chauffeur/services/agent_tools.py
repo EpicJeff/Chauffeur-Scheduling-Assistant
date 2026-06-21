@@ -53,6 +53,22 @@ class RunSolverTool(BaseModel):
     """
     date: Optional[str] = Field(None, description="The date to solve for (YYYY-MM-DD). If omitted, solves today.")
 
+class AddOverrideTool(BaseModel):
+    """
+    Creates a direct override for a specific event to assign a specific driver.
+    This is for one-off manual assignments. It supersedes all routing rules.
+    """
+    event_id: str = Field(..., description="The ID of the event to override (fetch schedule first to get this).")
+    driver_id: str = Field(..., description="The ID of the driver to assign.")
+    date_str: str = Field(..., description="The date of the event (YYYY-MM-DD).")
+    event_title: Optional[str] = Field(None, description="Optional title of the event for display purposes.")
+
+class DeleteOverrideTool(BaseModel):
+    """
+    Deletes an existing manual override for an event.
+    """
+    event_id: str = Field(..., description="The ID of the event whose override should be removed.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -61,6 +77,8 @@ TOOL_SCHEMAS = {
     "add_priority_rule": AddPriorityRuleTool.model_json_schema(),
     "delete_priority_rule": DeletePriorityRuleTool.model_json_schema(),
     "run_solver": RunSolverTool.model_json_schema(),
+    "add_override": AddOverrideTool.model_json_schema(),
+    "delete_override": DeleteOverrideTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -81,12 +99,19 @@ def get_openai_tools() -> List[Dict[str, Any]]:
 
 def handle_get_current_state(args: dict) -> dict:
     from services import storage
-    return {
-        "drivers": storage.get_drivers(),
-        "passengers": storage.get_passengers(),
-        "routing_rules": storage.get_rules(),
-        "priority_rules": storage.get_priority_rules(),
+    state = {
+        "drivers": storage.get_all_drivers(),
+        "passengers": storage.get_all_passengers(),
+        "routing_rules": storage.get_all_rules(),
+        "priority_rules": storage.get_all_priority_rules(),
+        "overrides": storage.get_all_overrides(),
     }
+    date_str = args.get("date")
+    if date_str:
+        schedule = storage.get_cached_daily_schedule(date_str)
+        if schedule:
+            state["schedule"] = schedule.get("events", [])
+    return state
 
 def handle_add_routing_rule(args: dict) -> dict:
     from services import storage
@@ -130,6 +155,24 @@ def handle_run_solver(args: dict) -> dict:
             e.pop('description', None)
     return res
 
+def handle_add_override(args: dict) -> dict:
+    from services import storage
+    import uuid
+    override_data = {
+        "id": uuid.uuid4().hex,
+        "event_id": args.get("event_id"),
+        "driver_id": args.get("driver_id"),
+        "date_str": args.get("date_str"),
+        "event_title": args.get("event_title")
+    }
+    storage.add_override(override_data)
+    return {"status": "success", "message": f"Assigned driver {override_data['driver_id']} to event {override_data['event_id']}."}
+
+def handle_delete_override(args: dict) -> dict:
+    from services import storage
+    storage.delete_override_by_event(args.get("event_id"))
+    return {"status": "success", "message": f"Removed override for event {args.get('event_id')}."}
+
 TOOL_HANDLERS = {
     "get_current_state": handle_get_current_state,
     "add_routing_rule": handle_add_routing_rule,
@@ -137,6 +180,8 @@ TOOL_HANDLERS = {
     "add_priority_rule": handle_add_priority_rule,
     "delete_priority_rule": handle_delete_priority_rule,
     "run_solver": handle_run_solver,
+    "add_override": handle_add_override,
+    "delete_override": handle_delete_override,
 }
 
 def execute_tool(name: str, args: dict) -> dict:
