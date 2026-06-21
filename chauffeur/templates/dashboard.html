@@ -3204,7 +3204,8 @@
 
         async function loadChatHistory() {
             try {
-                const res = await fetch('/api/chat/history');
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/chat/history`);
                 const data = await res.json();
                 chatMessages.innerHTML = '';
                 if (data.history && data.history.length > 0) {
@@ -3220,7 +3221,8 @@
 
         async function clearChatHistory() {
             if (!confirm('Clear all AI chat history? The AI might forget learned patterns.')) return;
-            await fetch('/api/chat/history', { method: 'DELETE' });
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            await fetch(`${apiBase}api/chat/history`, { method: 'DELETE' });
             loadChatHistory();
         }
 
@@ -3256,11 +3258,17 @@
             scrollToBottom();
 
             try {
-                const res = await fetch('/api/chat', {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 });
+                
+                if (!res.ok) {
+                    throw new Error(`Server returned status ${res.status}`);
+                }
+                
                 const data = await res.json();
                 
                 typingDiv.remove();
