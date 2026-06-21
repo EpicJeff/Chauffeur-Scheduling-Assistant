@@ -710,3 +710,154 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     
     res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
+
+def agentic_chat_loop(user_msg: str) -> str:
+    import json
+    import urllib.request
+    from services import storage
+    from services import agent_tools
+    
+    settings_docs = storage.settings_table.all()
+    settings = settings_docs[0] if settings_docs else {}
+    provider = settings.get('llm_provider', 'gemini')
+    
+    storage.add_chat_message('user', user_msg)
+    raw_history = storage.get_chat_history(limit=20)
+    
+    SYSTEM_PROMPT = """You are the Chauffeur AI Assistant. 
+Your job is to help the user manage their family's calendar, routing, and driving schedule.
+Use the tools provided to fetch the current state, add rules, and run the solver.
+Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
+If the solver returns an error, explain the conflict to the user and ask how they want to resolve it.
+Do NOT guess driver IDs or rule IDs. Always use get_current_state to see the IDs first if you don't know them."""
+
+    if provider == 'ollama':
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for msg in raw_history:
+            # We don't save tool outputs to DB across sessions right now, so we only see user and assistant
+            messages.append({"role": msg['role'], "content": msg['content']})
+            
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+        tools = agent_tools.get_openai_tools()
+        
+        for _ in range(5):
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "tools": tools
+            }
+            req = urllib.request.Request(
+                f"{url.rstrip('/')}/api/chat",
+                data=json.dumps(payload).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=180) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    msg_resp = data.get('message', {})
+            except Exception as e:
+                err = f"Ollama request failed: {str(e)}"
+                storage.add_chat_message('assistant', err)
+                return err
+                
+            messages.append(msg_resp)
+            
+            if msg_resp.get("tool_calls"):
+                for tc in msg_resp["tool_calls"]:
+                    func = tc["function"]
+                    name = func["name"]
+                    args = func.get("arguments", {})
+                    if isinstance(args, str):
+                        try: args = json.loads(args)
+                        except: args = {}
+                    
+                    res = agent_tools.execute_tool(name, args)
+                    messages.append({
+                        "role": "tool",
+                        "content": json.dumps(res)
+                    })
+            else:
+                final_text = msg_resp.get("content", "")
+                storage.add_chat_message('assistant', final_text)
+                return final_text
+                
+    elif provider == 'gemini':
+        api_key = settings.get('llm_gemini_api_key', '')
+        gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        if gemini_model.startswith('models/'): gemini_model = gemini_model[7:]
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
+        
+        gemini_tools = [{"functionDeclarations": []}]
+        for t in agent_tools.get_openai_tools():
+            gemini_tools[0]["functionDeclarations"].append(t["function"])
+            
+        gemini_msgs = []
+        for msg in raw_history:
+            role = "user" if msg["role"] in ["user", "tool"] else "model"
+            gemini_msgs.append({"role": role, "parts": [{"text": msg["content"]}]})
+            
+        system_instruction = {"parts": [{"text": SYSTEM_PROMPT}]}
+        
+        for _ in range(5):
+            payload = {
+                "systemInstruction": system_instruction,
+                "contents": gemini_msgs,
+                "tools": gemini_tools,
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=180) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+            except Exception as e:
+                err = f"Gemini request failed: {str(e)}"
+                try:
+                    if hasattr(e, 'read'):
+                        err += f" {e.read().decode('utf-8')}"
+                except: pass
+                storage.add_chat_message('assistant', err)
+                return err
+                
+            if "candidates" not in data or not data["candidates"]:
+                err = "Gemini returned empty response."
+                storage.add_chat_message('assistant', err)
+                return err
+                
+            candidate = data["candidates"][0]
+            parts = candidate.get("content", {}).get("parts", [])
+            
+            gemini_msgs.append(candidate.get("content", {"role": "model", "parts": parts}))
+            
+            has_tool_call = False
+            for part in parts:
+                if "functionCall" in part:
+                    has_tool_call = True
+                    fc = part["functionCall"]
+                    name = fc["name"]
+                    args = fc.get("args", {})
+                    res = agent_tools.execute_tool(name, args)
+                    
+                    gemini_msgs.append({
+                        "role": "user",
+                        "parts": [{
+                            "functionResponse": {
+                                "name": name,
+                                "response": res
+                            }
+                        }]
+                    })
+            
+            if not has_tool_call:
+                final_text = "".join([p.get("text", "") for p in parts if "text" in p])
+                storage.add_chat_message('assistant', final_text)
+                return final_text
+
+    return "Error: Max loops reached or unknown provider."

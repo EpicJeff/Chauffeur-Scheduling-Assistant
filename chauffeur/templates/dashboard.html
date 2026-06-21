@@ -563,6 +563,30 @@
         <p class="text-center text-gray-500 text-xl mt-20 animate-pulse">Loading schedule...</p>
     </div>
 
+    <!-- Agentic Chat UI -->
+    <div id="chat-container" class="mt-8 mb-20 bg-gray-800 rounded-xl shadow-xl border border-gray-700 overflow-hidden max-w-4xl mx-auto">
+        <div class="bg-gray-900 p-4 border-b border-gray-700 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-blue-300 flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                </svg>
+                Chauffeur AI Assistant
+            </h2>
+            <button onclick="clearChatHistory()" class="text-xs text-gray-400 hover:text-red-400 transition">Clear History</button>
+        </div>
+        <div id="chat-messages" class="p-4 h-80 overflow-y-auto flex flex-col gap-3 bg-gray-800">
+            <div class="text-center text-gray-500 text-sm mt-4">Loading chat history...</div>
+        </div>
+        <div class="p-3 bg-gray-900 border-t border-gray-700">
+            <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
+                <input type="text" id="chat-input" autocomplete="off" placeholder="Tell me what you want to change (e.g., 'Group Lily and Nathan today')" class="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition-colors flex items-center gap-2">
+                    Send
+                </button>
+            </form>
+        </div>
+    </div>
+
     <script>
         const isReadOnly = urlParams.get('readonly') === 'true' || urlParams.get('kiosk') === 'true';
         if (isReadOnly) {
@@ -3186,6 +3210,96 @@
                 alert("Failed to submit feedback.");
             }
         }
+
+        // --- Agentic Chat Logic ---
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const chatSubmitBtn = document.getElementById('chat-submit-btn');
+
+        async function loadChatHistory() {
+            try {
+                const res = await fetch('/api/chat/history');
+                const data = await res.json();
+                chatMessages.innerHTML = '';
+                if (data.history && data.history.length > 0) {
+                    data.history.forEach(msg => appendMessage(msg.role, msg.content));
+                } else {
+                    appendMessage('assistant', 'Hello! I am your scheduling assistant. Tell me what routing rules you want to add or change, and I will handle it.');
+                }
+                scrollToBottom();
+            } catch (err) {
+                console.error('Failed to load chat history', err);
+            }
+        }
+
+        async function clearChatHistory() {
+            if (!confirm('Clear all AI chat history? The AI might forget learned patterns.')) return;
+            await fetch('/api/chat/history', { method: 'DELETE' });
+            loadChatHistory();
+        }
+
+        function appendMessage(role, content) {
+            const div = document.createElement('div');
+            div.className = `max-w-[85%] rounded-lg p-3 text-sm ${role === 'user' ? 'bg-blue-600 text-white self-end rounded-tr-none' : 'bg-gray-700 text-gray-100 self-start rounded-tl-none border border-gray-600'}`;
+            // Simple markdown rendering for boldness and line breaks
+            let formatted = content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            div.innerHTML = formatted;
+            chatMessages.appendChild(div);
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function submitChat(e) {
+            e.preventDefault();
+            const text = chatInput.value.trim();
+            if (!text) return;
+
+            // UI Optimistic Update
+            appendMessage('user', text);
+            chatInput.value = '';
+            chatInput.disabled = true;
+            chatSubmitBtn.disabled = true;
+            
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'text-gray-400 text-xs italic self-start mt-1 mb-2 animate-pulse';
+            typingDiv.innerText = 'Assistant is thinking...';
+            chatMessages.appendChild(typingDiv);
+            scrollToBottom();
+
+            try {
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                
+                typingDiv.remove();
+                
+                if (data.error) {
+                    appendMessage('assistant', `⚠️ Error: ${data.error}`);
+                } else {
+                    appendMessage('assistant', data.reply);
+                    // Refresh the calendar to show the changes the LLM made!
+                    forceSync();
+                }
+            } catch (err) {
+                typingDiv.remove();
+                appendMessage('assistant', `⚠️ Connection error: ${err.message}`);
+            } finally {
+                chatInput.disabled = false;
+                chatSubmitBtn.disabled = false;
+                chatInput.focus();
+            }
+        }
+
+        // Initialize chat
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!isReadOnly) loadChatHistory();
+        });
     </script>
     
     <!-- AI Rules Modal -->

@@ -604,6 +604,28 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 
+class ChatMessagePayload(BaseModel):
+    message: str
+
+@app.post("/api/chat")
+def handle_chat(payload: ChatMessagePayload):
+    from services.llm import agentic_chat_loop
+    try:
+        reply = agentic_chat_loop(payload.message)
+        return {"reply": reply}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.get("/api/chat/history")
+def get_chat_history():
+    return {"history": storage.get_chat_history()}
+
+@app.delete("/api/chat/history")
+def clear_chat_history():
+    storage.clear_chat_history()
+    return {"status": "cleared"}
+
 class LLMTestPayload(BaseModel):
     provider: str
     url: Optional[str] = None

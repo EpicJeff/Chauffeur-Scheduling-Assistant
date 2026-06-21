@@ -55,6 +55,7 @@ with db_lock:
     pending_notifications_table = db.table('pending_notifications')
     event_configs_table = db.table('event_configs')
     api_requests_log_table = db.table('api_requests_log')
+    chat_history_table = db.table('chat_history')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -307,6 +308,25 @@ def get_all_passengers() -> List[dict]:
 def get_passengers() -> List[dict]:
     with db_lock:
         return passengers_table.all()
+
+def add_chat_message(role: str, content: str) -> None:
+    import time
+    with db_lock:
+        chat_history_table.insert({
+            'role': role,
+            'content': content,
+            'timestamp': time.time()
+        })
+
+def get_chat_history(limit: int = 100) -> list:
+    with db_lock:
+        msgs = chat_history_table.all()
+        msgs.sort(key=lambda x: x.get('timestamp', 0))
+        return msgs[-limit:]
+
+def clear_chat_history() -> None:
+    with db_lock:
+        chat_history_table.truncate()
 
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
