@@ -734,7 +734,9 @@ def agentic_chat_loop(user_msg: str) -> str:
     storage.add_chat_message('user', user_msg)
     raw_history = storage.get_chat_history(limit=20)
     
-    SYSTEM_PROMPT = """You are the Chauffeur AI Assistant. 
+    import datetime
+    today_str = datetime.datetime.now().strftime('%A, %B %d, %Y')
+    SYSTEM_PROMPT = f"""You are the Chauffeur AI Assistant. Today is {today_str}.
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
 Use the tools provided to fetch the current state, add rules, add overrides, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
