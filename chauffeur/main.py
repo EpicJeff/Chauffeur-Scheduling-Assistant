@@ -775,6 +775,13 @@ def get_maps_stats():
             "rpm": storage.get_rolling_usage('geocode', 60),
             "limit": maps.get_map_option('mapbox_geocode_limit', 90000),
             "disabled": maps.get_map_option('disable_mapbox', False)
+        },
+        "searchbox": {
+            "monthly": storage.get_mapbox_usage(current_month, 'searchbox_sessions'),
+            "rolling_24h": storage.get_rolling_usage('searchbox_sessions', 86400),
+            "rpm": storage.get_rolling_usage('searchbox_sessions', 60),
+            "limit": 500,
+            "disabled": maps.get_map_option('disable_mapbox', False)
         }
     }
 
@@ -845,9 +852,17 @@ def get_route_info(origin: str, destination: str):
     return {"duration": f"{mins * 60}s", "distanceMeters": mins * 1000}  # Mock distance
 
 @app.get("/api/places/autocomplete")
-def get_places_autocomplete(input: str):
-    suggestions = maps.autocomplete_location(input)
+def get_places_autocomplete(input: str, session_token: str = None):
+    suggestions = maps.autocomplete_location(input, session_token)
     return {"suggestions": suggestions}
+
+@app.get("/api/places/retrieve")
+def get_places_retrieve(mapbox_id: str, session_token: str):
+    result = maps.retrieve_location(mapbox_id, session_token)
+    if result:
+        return result
+    from fastapi import HTTPException
+    raise HTTPException(status_code=400, detail="Failed to retrieve location")
 
 # --- Schedule API ---
 import hashlib

@@ -305,6 +305,24 @@
                             </span>
                         </div>
                     </div>
+
+                    <!-- Search Box Card -->
+                    <div class="bg-gray-900/60 p-4 rounded-xl border border-gray-700/80">
+                        <div class="flex items-center justify-between text-xs mb-2">
+                            <span class="font-bold text-gray-400 uppercase">Search Box API</span>
+                            <span id="searchbox-monthly-text" class="text-yellow-400 font-mono font-bold"></span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden mb-3">
+                            <div id="searchbox-progress" class="h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-gray-500 font-mono font-bold">
+                            <span>Rolling 24h: <strong id="searchbox-24h-text" class="text-gray-300"></strong></span>
+                            <span class="flex items-center gap-1 font-bold">
+                                RPM: 
+                                <span id="searchbox-rpm-text" class="px-1.5 py-0.5 bg-gray-900 text-yellow-400 rounded font-bold border border-yellow-900/30"></span>
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1542,25 +1560,32 @@
         }
 
         let autocompleteTimeout = null;
+        let currentSessionToken = null;
         async function handleLocationInput() {
             const input = document.getElementById('edit-location').value;
             const dropdown = document.getElementById('autocomplete-dropdown');
 
             if (input.length < 3) {
                 dropdown.classList.add('hidden');
+                currentSessionToken = null;
                 return;
+            }
+            if (!currentSessionToken) {
+                currentSessionToken = crypto.randomUUID();
             }
 
             clearTimeout(autocompleteTimeout);
             autocompleteTimeout = setTimeout(async () => {
                 try {
-                    const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(input)}`);
+                    const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(input)}&session_token=${currentSessionToken}`);
                     const data = await res.json();
 
                     if (data.suggestions && data.suggestions.length > 0) {
-                        dropdown.innerHTML = data.suggestions.map(s =>
-                            `<div onclick="selectLocation('${s.description.replace(/'/g, "\\'")}')" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm">${s.description}</div>`
-                        ).join('');
+                        dropdown.innerHTML = data.suggestions.map(s => {
+                            const escapedDesc = s.description.replace(/'/g, "\\'");
+                            const mapboxId = s.mapbox_id ? `'${s.mapbox_id}'` : 'null';
+                            return `<div onclick="selectLocation('${escapedDesc}', ${mapboxId})" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm">${s.description}</div>`;
+                        }).join('');
                         dropdown.classList.remove('hidden');
                     } else {
                         dropdown.classList.add('hidden');
@@ -1571,9 +1596,24 @@
             }, 300); // 300ms debounce
         }
 
-        function selectLocation(loc) {
+        async function selectLocation(loc, mapboxId = null) {
             document.getElementById('edit-location').value = loc;
             document.getElementById('autocomplete-dropdown').classList.add('hidden');
+            
+            if (mapboxId && currentSessionToken) {
+                try {
+                    const res = await fetch(`api/places/retrieve?mapbox_id=${mapboxId}&session_token=${currentSessionToken}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.name) {
+                            document.getElementById('edit-location').value = data.name;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Retrieve failed", e);
+                }
+            }
+            currentSessionToken = null;
         }
 
         async function saveEventDetails() {
@@ -2916,6 +2956,23 @@
                 } else {
                     geoRpm.textContent = "0";
                     geoRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
+                }
+
+                // Search Box updates
+                const sbPct = Math.min(100, (stats.searchbox.monthly / stats.searchbox.limit) * 100);
+                document.getElementById('searchbox-monthly-text').textContent = `${stats.searchbox.monthly} / ${stats.searchbox.limit}`;
+                const sbProgress = document.getElementById('searchbox-progress');
+                sbProgress.style.width = `${sbPct}%`;
+                sbProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.searchbox.monthly >= stats.searchbox.limit ? 'bg-red-500' : (stats.searchbox.monthly >= stats.searchbox.limit * 0.8 ? 'bg-amber-500' : 'bg-yellow-500')}`;
+                document.getElementById('searchbox-24h-text').textContent = stats.searchbox.rolling_24h;
+                
+                const sbRpm = document.getElementById('searchbox-rpm-text');
+                if (stats.searchbox.rpm > 0) {
+                    sbRpm.textContent = stats.searchbox.rpm;
+                    sbRpm.className = "px-1.5 py-0.5 bg-gray-900 text-yellow-400 rounded font-bold border border-yellow-900/30 animate-pulse";
+                } else {
+                    sbRpm.textContent = "0";
+                    sbRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
                 }
 
                 // Update warning dot on API Stats button in header

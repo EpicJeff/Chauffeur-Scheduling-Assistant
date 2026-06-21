@@ -574,11 +574,11 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
 
 
 
-def autocomplete_location(input_text: str) -> list[dict]:
+def autocomplete_location(input_text: str, session_token: str = None) -> list[dict]:
     """
-    Calls Mapbox Geocoding API for autocomplete if safe limit.
-    Falls back to Photon API (based on OpenStreetMap).
-    Returns a list of dicts: {"description": "123 Main St..."}
+    Calls Mapbox Search Box API if session token is provided and within limits.
+    Otherwise falls back to Geocoding API, then to Photon API.
+    Returns a list of dicts: {"description": "...", "mapbox_id": "...", "is_searchbox": bool}
     """
     if not input_text or len(input_text) < 3:
         return []
@@ -588,24 +588,62 @@ def autocomplete_location(input_text: str) -> list[dict]:
     mapbox_key = get_mapbox_api_key()
     disable_mapbox = get_map_option('disable_mapbox', False)
     
-    if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
-        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(input_text)}.json"
-        params = {
-            "access_token": mapbox_key,
-            "autocomplete": "true",
-            "limit": 5,
-            "types": "address,poi"
-        }
-        try:
-            resp = requests.get(url, params=params, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                features = data.get("features", [])
-                return [{"description": f.get("place_name")} for f in features if f.get("place_name")]
-            else:
-                print(f"Mapbox Autocomplete API failed: {resp.status_code}")
-        except Exception as ex:
-            print(f"Mapbox Autocomplete API exception: {ex}")
+    if mapbox_key and not disable_mapbox:
+        current_month = datetime.datetime.now().strftime("%Y-%m")
+        # Check if we can use Search Box API
+        if session_token:
+            session_usage = storage.get_mapbox_usage(current_month, 'searchbox_sessions')
+            if session_usage < 450:
+                # Use Search Box API
+                url = "https://api.mapbox.com/search/searchbox/v1/suggest"
+                params = {
+                    "access_token": mapbox_key,
+                    "session_token": session_token,
+                    "q": input_text,
+                    "limit": 5,
+                    "types": "address,poi"
+                }
+                try:
+                    resp = requests.get(url, params=params, timeout=5)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        suggestions = data.get("suggestions", [])
+                        results = []
+                        for s in suggestions:
+                            name = s.get("name")
+                            place = s.get("place_formatted")
+                            desc = f"{name}, {place}" if place else name
+                            if desc:
+                                results.append({
+                                    "description": desc,
+                                    "mapbox_id": s.get("mapbox_id"),
+                                    "is_searchbox": True
+                                })
+                        return results
+                    else:
+                        print(f"Mapbox Search Box Suggest API failed: {resp.status_code} {resp.text}")
+                except Exception as ex:
+                    print(f"Mapbox Search Box Suggest API exception: {ex}")
+
+        # Fallback to Geocoding API v5
+        if check_usage_limits_and_spikes('geocode', 1):
+            url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(input_text)}.json"
+            params = {
+                "access_token": mapbox_key,
+                "autocomplete": "true",
+                "limit": 5,
+                "types": "address,poi"
+            }
+            try:
+                resp = requests.get(url, params=params, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    features = data.get("features", [])
+                    return [{"description": f.get("place_name")} for f in features if f.get("place_name")]
+                else:
+                    print(f"Mapbox Autocomplete API failed: {resp.status_code}")
+            except Exception as ex:
+                print(f"Mapbox Autocomplete API exception: {ex}")
             
     # Fallback to Photon
     url = "https://photon.komoot.io/api/"
@@ -643,6 +681,50 @@ def autocomplete_location(input_text: str) -> list[dict]:
     except Exception as ex:
         print(f"Photon autocomplete error: {ex}")
         return []
+
+def retrieve_location(mapbox_id: str, session_token: str) -> Optional[dict]:
+    import datetime
+    mapbox_key = get_mapbox_api_key()
+    if not mapbox_key or not mapbox_id or not session_token:
+        return None
+        
+    url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
+    params = {
+        "access_token": mapbox_key,
+        "session_token": session_token
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            features = data.get("features", [])
+            if features:
+                f = features[0]
+                props = f.get("properties", {})
+                name = props.get("name", "")
+                place = props.get("place_formatted", "")
+                desc = f"{name}, {place}".strip(', ') if place else name
+                
+                coords = f.get("geometry", {}).get("coordinates", [])
+                if desc and coords and len(coords) >= 2:
+                    lon, lat = coords[0], coords[1]
+                    # Cache the geocode so backend doesn't need to look it up later
+                    storage.set_cached_geocode(desc, float(lat), float(lon), desc)
+                    
+                    # Increment session usage since a retrieve was successfully made
+                    current_month = datetime.datetime.now().strftime("%Y-%m")
+                    storage.increment_mapbox_usage(current_month, 'searchbox_sessions', 1)
+                    
+                    return {
+                        "name": desc,
+                        "lat": lat,
+                        "lon": lon
+                    }
+        else:
+            print(f"Mapbox Search Box Retrieve API failed: {resp.status_code} {resp.text}")
+    except Exception as ex:
+        print(f"Mapbox Search Box Retrieve API exception: {ex}")
+    return None
 
 def get_google_maps_url(locations: list[str]) -> str:
     import urllib.parse
