@@ -719,6 +719,16 @@ def agentic_chat_loop(user_msg: str) -> str:
     
     settings_docs = storage.settings_table.all()
     settings = settings_docs[0] if settings_docs else {}
+    
+    import os
+    if os.path.exists('/data/options.json'):
+        try:
+            with open('/data/options.json', 'r') as f:
+                opts = json.load(f)
+                settings.update(opts)
+        except:
+            pass
+            
     provider = settings.get('llm_provider', 'gemini')
     
     storage.add_chat_message('user', user_msg)
@@ -786,6 +796,11 @@ Do NOT guess driver IDs or rule IDs. Always use get_current_state to see the IDs
                 
     elif provider == 'gemini':
         api_key = settings.get('llm_gemini_api_key', '')
+        if not api_key:
+            err = "Error: Gemini API Key is missing. Please configure it in the settings."
+            storage.add_chat_message('assistant', err)
+            return err
+            
         gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
         if gemini_model.startswith('models/'): gemini_model = gemini_model[7:]
         
