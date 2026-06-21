@@ -709,7 +709,7 @@
 
                 hideError();
                 currentData = data;
-                renderSchedule(data);
+                renderSchedule(data, { isPagination });
             } catch (err) {
                 console.error(err);
                 showError("Error: " + err.message + "\n" + err.stack);
@@ -1778,7 +1778,8 @@
             const { 
                 targetContainerId = 'schedule-container',
                 isModal = false,
-                dateFilter = null 
+                dateFilter = null,
+                isPagination = false
             } = options;
 
             const { 
