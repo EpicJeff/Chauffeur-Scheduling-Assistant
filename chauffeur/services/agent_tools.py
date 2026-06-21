@@ -107,14 +107,17 @@ def handle_get_current_state(args: dict) -> dict:
         "overrides": storage.get_all_overrides(),
     }
     date_str = args.get("date")
-    if date_str:
-        schedule = storage.get_cached_daily_schedule(date_str)
-        if schedule:
-            clean_events = []
-            for e in schedule.get("events", []):
-                clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
-                clean_events.append(clean_e)
-            state["schedule"] = clean_events
+    if not date_str:
+        import datetime
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        
+    schedule = storage.get_cached_daily_schedule(date_str)
+    if schedule:
+        clean_events = []
+        for e in schedule.get("events", []):
+            clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry']}
+            clean_events.append(clean_e)
+        state["schedule"] = clean_events
     return state
 
 def handle_add_routing_rule(args: dict) -> dict:
