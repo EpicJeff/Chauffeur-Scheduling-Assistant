@@ -1108,24 +1108,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                     
                     if e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower():
                         drive_from_pickup, delay_from = 0, 0
-                        if e1.start == e2.start:
-                            pickup_waypoint = None
-                        else:
-                            pickup_waypoint = {
-                                "to_pickup_mins": 0,
-                                "from_pickup_mins": drive_from_pickup,
-                                "pickup_location": e1.location,
-                                "pickup_event_title": e1.title
-                            }
                     else:
                         drive_from_pickup, delay_from = get_travel_time_minutes(e1.location, e2.location, departure_time=int(dep_time), return_traffic=True)
-                        pickup_waypoint = {
-                            "to_pickup_mins": 0,
-                            "from_pickup_mins": drive_from_pickup,
-                            "pickup_location": e1.location,
-                            "pickup_event_title": e1.title
-                        }
                     
+                    pickup_waypoint = None
                     travel = drive_from_pickup
                     delay = delay_from
                 else:
