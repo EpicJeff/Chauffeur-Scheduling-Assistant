@@ -29,6 +29,24 @@ def get_event_passenger_ids(event, passengers):
             result.add(p.id)
     return result
 
+def get_effective_overridden_event_ids(events, overrides) -> list:
+    overridden_ids = set()
+    sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', x.get('created_at', 0) if isinstance(x, dict) else 0) or 0, reverse=True)
+    for e in events:
+        instance_o = next((o for o in sorted_overrides if (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.id)), None)
+        original_o = next((o for o in sorted_overrides if getattr(e, 'original_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.original_event_id)), None)
+        series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.recurring_event_id)), None)
+        
+        if instance_o or original_o or series_o:
+            overridden_ids.add(e.id)
+            
+    for o in overrides:
+        eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
+        if eid:
+            overridden_ids.add(eid)
+            
+    return list(overridden_ids)
+
 def does_event_match_rule(event, rule, passengers=None) -> bool:
     has_any_criteria = False
     

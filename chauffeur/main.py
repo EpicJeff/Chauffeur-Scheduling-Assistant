@@ -1552,7 +1552,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": combined_conflicts,
             "unassigned": combined_true_unassigned,
             "no_location": no_location_events,
-            "overridden_events": [o.event_id for o in overrides],
+            "overridden_events": matcher.get_effective_overridden_event_ids(list(all_events_for_ui.values()), overrides),
             "calendar_metadata": calendar_metadata,
             "lateness_warnings": combined_lateness_warnings,
             "passenger_calendar_ids": calendar_ids,
