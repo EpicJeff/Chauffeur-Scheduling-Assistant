@@ -142,8 +142,8 @@ def prime_matrix_cache(locations: list[str]):
     from itertools import combinations
     missing_locs = set()
     for l1, l2 in combinations(unique_locs, 2):
-        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=True)
-        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=True)
+        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=False)
+        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=False)
         if c1 is None or c2 is None:
             missing_locs.add(l1)
             missing_locs.add(l2)
@@ -343,13 +343,18 @@ def prime_matrix_cache(locations: list[str]):
                     if elapsed < 1.1:
                         time.sleep(1.1 - elapsed)
                     resp = requests.get(url, params=params, timeout=10)
-                    fetch_matrix_chunk.last_osrm_time = time.time()
+                    
+                    if resp.status_code == 429:
+                        # Tell all other threads to back off for 2 extra seconds
+                        fetch_matrix_chunk.last_osrm_time = time.time() + 2.0
+                    else:
+                        fetch_matrix_chunk.last_osrm_time = time.time()
                     
                 if resp.status_code == 200:
                     break
                 elif resp.status_code == 429:
                     print(f"OSRM API rate limited. Retrying attempt {attempt+1}/3...")
-                    time.sleep(2)
+                    # We already backed off the global timer, so just wait for our next turn
                 else:
                     break
                     
