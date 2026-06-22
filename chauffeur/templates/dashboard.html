@@ -776,7 +776,7 @@
                     throw new Error(`Sync request failed with status ${res.status}: ${errText}`);
                 }
                 // Now that refresh is synchronous, fetch the new schedule!
-                await fetchSchedule();
+                await fetchSchedule(!!currentStartDate);
             } catch (e) {
                 showError("Manual sync failed: " + e.message);
                 if (btn) {
