@@ -18,6 +18,11 @@ def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=Fa
 from datetime import datetime
 import math
 
+def get_event_passenger_ids(event, passengers):
+    if not passengers: return set()
+    e_cals = set(event.calendar_ids)
+    return set(p.id for p in passengers if set(p.calendar_ids).intersection(e_cals))
+
 def does_event_match_rule(event, rule, passengers=None) -> bool:
     has_any_criteria = False
     
@@ -261,7 +266,7 @@ def solve_schedule(
             # True physical overlap in time
             if e1.start < e2.end and e2.start < e1.end:
                 # Share passengers
-                shared = set(e1.passenger_ids).intersection(set(e2.passenger_ids))
+                shared = get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers))
                 if shared:
                     # Different locations
                     if e1.location and e2.location and e1.location.strip().lower() != e2.location.strip().lower():
@@ -314,7 +319,7 @@ def solve_schedule(
             if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
-            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
+            shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
             
             if shares_passenger:
                 if getattr(e1, 'original_event_id', None) and getattr(e1, 'original_event_id', None) == getattr(e2, 'original_event_id', None):
@@ -517,7 +522,7 @@ def solve_schedule(
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
             e2 = sorted_events[j]
-            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
+            shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
             same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
             
             if e1.start.date() == e2.start.date():
@@ -657,7 +662,7 @@ def solve_schedule(
                 d2_id = assignments.get(e2.id)
                 
                 if d1_id and d2_id:
-                    shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
+                    shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
                     if shares_passenger:
                         travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
                         total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
@@ -725,7 +730,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
     for e in events:
         is_impossible = False
         for ae in assigned_events:
-            shares_passenger = bool(set(e.passenger_ids).intersection(set(ae.passenger_ids)))
+            shares_passenger = bool(get_event_passenger_ids(e, passengers).intersection(get_event_passenger_ids(ae, passengers)))
             if shares_passenger:
                 travel_time_mins = get_travel_time_minutes(e.location, ae.location)
                 
@@ -788,7 +793,7 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
-            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
+            shares_passenger = bool(get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers)))
             
             if shares_passenger:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
@@ -1043,8 +1048,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             for i in range(len(date_evs) - 1):
                 e1 = date_evs[i]
                 e2 = date_evs[i+1]
-                e1_pax = set(e1.passenger_ids)
-                e2_pax = set(e2.passenger_ids)
+                e1_pax = get_event_passenger_ids(e1, passengers)
+                e2_pax = get_event_passenger_ids(e2, passengers)
                 shares_passenger = bool(e1_pax.intersection(e2_pax))
                 new_passengers = e2_pax - e1_pax
                 if getattr(e2, 'event_type', 'standard') == 'pickup':
@@ -1358,7 +1363,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if a_d_id == d.id and a_id != e.id:
                         a_e = event_map.get(a_id)
                         if a_e:
-                            shares_passenger = bool(set(e.passenger_ids).intersection(set(a_e.passenger_ids)))
+                            shares_passenger = bool(get_event_passenger_ids(e, passengers).intersection(get_event_passenger_ids(a_e, passengers)))
                             if shares_passenger:
                                 travel = get_travel_time_minutes(e.location, a_e.location) if e.location and a_e.location else 20
                             else:
