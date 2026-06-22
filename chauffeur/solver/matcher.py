@@ -201,17 +201,21 @@ def solve_schedule(
     # Resolve effective overrides (instance overrides take precedence over series overrides)
     effective_overrides_list = []
     # Sort descending by created_at to ensure newer overrides take precedence if duplicate
-    sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', 0) or 0, reverse=True)
+    sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', x.get('created_at', 0) if isinstance(x, dict) else 0) or 0, reverse=True)
     
     for e in events:
-        instance_o = next((o for o in sorted_overrides if o.event_id == e.id), None)
-        original_o = next((o for o in sorted_overrides if getattr(e, 'original_event_id', None) and o.event_id == e.original_event_id), None)
-        series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and o.event_id == e.recurring_event_id), None)
+        instance_o = next((o for o in sorted_overrides if (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.id)), None)
+        original_o = next((o for o in sorted_overrides if getattr(e, 'original_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.original_event_id)), None)
+        series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.recurring_event_id)), None)
         
         effective_o = instance_o or original_o or series_o
         if effective_o:
-            effective_copy = type(effective_o)(**effective_o.model_dump()) if hasattr(effective_o, 'model_dump') else type(effective_o)(**effective_o.dict()) if hasattr(effective_o, 'dict') else type(effective_o)(**effective_o)
-            effective_copy.event_id = e.id
+            if isinstance(effective_o, dict):
+                effective_copy = dict(**effective_o)
+                effective_copy['event_id'] = e.id
+            else:
+                effective_copy = type(effective_o)(**effective_o.model_dump()) if hasattr(effective_o, 'model_dump') else type(effective_o)(**effective_o.dict()) if hasattr(effective_o, 'dict') else type(effective_o)(**effective_o)
+                effective_copy.event_id = e.id
             effective_overrides_list.append(effective_copy)
             
     overrides = effective_overrides_list
@@ -293,11 +297,11 @@ def solve_schedule(
                 # Share passengers
                 shared = get_event_passenger_ids(e1, passengers).intersection(get_event_passenger_ids(e2, passengers))
                 if shared:
-                    # Different locations
-                    if e1.location and e2.location and e1.location.strip().lower() != e2.location.strip().lower():
+                    # Block overlap if they are at different locations OR if either is missing a location
+                    if not (e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower()):
                         # However, if BOTH are overridden, we shouldn't add this constraint to prevent INFEASIBLE
-                        o1 = any(o.event_id == e1.id for o in effective_overrides_list)
-                        o2 = any(o.event_id == e2.id for o in effective_overrides_list)
+                        o1 = any((o.get('event_id') if isinstance(o, dict) else o.event_id) == e1.id for o in effective_overrides_list)
+                        o2 = any((o.get('event_id') if isinstance(o, dict) else o.event_id) == e2.id for o in effective_overrides_list)
                         if not (o1 and o2):
                             model.Add(
                                 sum(assign_vars[(e1.id, d.id)] for d in drivers) +
@@ -428,7 +432,11 @@ def solve_schedule(
                     objective_terms.append(both * -50)
 
     # 3b. Overridden pairs
-    overridden_pairs = set((o.event_id, o.driver_id) for o in overrides)
+    overridden_pairs = set(
+        (o.event_id if not isinstance(o, dict) else o.get('event_id'),
+         o.driver_id if not isinstance(o, dict) else o.get('driver_id'))
+        for o in overrides
+    )
 
     # 3c. Driver Personal Calendar Overlaps
     for d in drivers:
@@ -633,21 +641,23 @@ def solve_schedule(
     import time
     base_time = time.time()
     for o in overrides:
-        if any(e.id == o.event_id for e in assignable_events):
-            if o.driver_id == 'unassigned':
+        o_event_id = o.get('event_id') if isinstance(o, dict) else o.event_id
+        o_driver_id = o.get('driver_id') if isinstance(o, dict) else o.driver_id
+        if any(e.id == o_event_id for e in assignable_events):
+            if o_driver_id == 'unassigned':
                 for d in drivers:
                     if d.id != 'unassigned_ghost':
-                        model.Add(assign_vars[(o.event_id, d.id)] == 0)
-            elif any(d.id == o.driver_id for d in drivers):
+                        model.Add(assign_vars[(o_event_id, d.id)] == 0)
+            elif any(d.id == o_driver_id for d in drivers):
                 # Calculate weight: Base 1,000,000 + seconds since override was created
                 # This ensures newer overrides always win over older ones if they conflict
                 try:
                     # If created_at is not present (old overrides), default to 0
-                    created_at = getattr(o, 'created_at', 0)
+                    created_at = getattr(o, 'created_at', o.get('created_at', 0) if isinstance(o, dict) else 0)
                     time_weight = int(created_at) if created_at else 0
                 except:
                     time_weight = 0
-                objective_terms.append(assign_vars[(o.event_id, o.driver_id)] * (1000000 + time_weight))
+                objective_terms.append(assign_vars[(o_event_id, o_driver_id)] * (1000000 + time_weight))
             
     # Maximize total score
     model.Maximize(sum(objective_terms))
