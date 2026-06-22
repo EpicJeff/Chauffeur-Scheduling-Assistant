@@ -406,8 +406,60 @@ def get_all_rules() -> List[dict]:
             rules.append(doc)
         return rules
 
+def _is_duplicate_rule(r1: dict, r2: dict) -> bool:
+    import json
+    def normalize(v):
+        if isinstance(v, dict):
+            return {k: normalize(val) for k, val in v.items() if k not in ('id', 'doc_id', 'created_at')}
+        elif isinstance(v, list):
+            norm_list = [normalize(val) for val in v]
+            try:
+                return sorted(norm_list)
+            except TypeError:
+                return sorted(norm_list, key=lambda x: json.dumps(x, sort_keys=True))
+        return v
+    return normalize(r1) == normalize(r2)
+
+def purge_duplicate_rules():
+    with db_lock:
+        seen = []
+        to_delete = []
+        for r in rules_table.all():
+            is_dup = False
+            for s in seen:
+                if _is_duplicate_rule(s, r):
+                    is_dup = True
+                    break
+            if is_dup:
+                to_delete.append(r.doc_id)
+            else:
+                seen.append(r)
+        if to_delete:
+            rules_table.remove(doc_ids=to_delete)
+            
+        seen_p = []
+        to_delete_p = []
+        for p in priority_rules_table.all():
+            is_dup = False
+            for s in seen_p:
+                if _is_duplicate_rule(s, p):
+                    is_dup = True
+                    break
+            if is_dup:
+                to_delete_p.append(p.doc_id)
+            else:
+                seen_p.append(p)
+        if to_delete_p:
+            priority_rules_table.remove(doc_ids=to_delete_p)
+
+purge_duplicate_rules()
+
 def add_rule(rule_data: dict) -> int:
     with db_lock:
+        for existing in rules_table.all():
+            if _is_duplicate_rule(existing, rule_data):
+                return existing.doc_id
+                
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
@@ -472,6 +524,10 @@ def get_all_priority_rules() -> List[dict]:
 
 def add_priority_rule(rule_data: dict) -> int:
     with db_lock:
+        for existing in priority_rules_table.all():
+            if _is_duplicate_rule(existing, rule_data):
+                return existing.doc_id
+                
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
