@@ -72,6 +72,7 @@
             background-color: #1a202c;
             color: #e2e8f0;
             font-family: 'Inter', sans-serif;
+            transition: padding-right 0.3s ease-in-out;
         }
 
         body.ha-theme {
@@ -3286,6 +3287,10 @@
                 sidebar.classList.remove('translate-x-full');
                 sidebar.classList.add('translate-x-0');
                 
+                if (window.innerWidth >= 768) {
+                    document.body.style.paddingRight = '466px'; // 450px sidebar + 16px default padding
+                }
+                
                 // Fetch content for expanded accordions
                 if (!document.getElementById('notif-content').classList.contains('hidden')) {
                     fetchNotifications();
@@ -3297,12 +3302,23 @@
             } else {
                 sidebar.classList.remove('translate-x-0');
                 sidebar.classList.add('translate-x-full');
+                document.body.style.paddingRight = '';
                 if (mapsStatsInterval) {
                     clearInterval(mapsStatsInterval);
                     mapsStatsInterval = null;
                 }
             }
         }
+
+        window.addEventListener('resize', () => {
+            if (isOperationsSidebarOpen) {
+                if (window.innerWidth >= 768) {
+                    document.body.style.paddingRight = '466px';
+                } else {
+                    document.body.style.paddingRight = '';
+                }
+            }
+        });
 
         function toggleAccordion(contentId, chevronId) {
             const content = document.getElementById(contentId);
