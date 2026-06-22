@@ -767,6 +767,7 @@ Always call run_solver after adding or deleting rules to ensure the schedule res
 If the user asks for a one-off change to a specific event, DO NOT create a rule. Instead, use get_current_state with the specific date to get the schedule, find the event_id, and then use add_override to directly assign the driver.
 If the user wants a persistent pattern, use add_routing_rule.
 If the solver returns an error, explain the conflict to the user and ask how they want to resolve it.
+Once you have run the solver successfully or finished your task, you MUST reply to the user with a final text summary.
 Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to see the IDs first if you don't know them.
 You can use update_memory to save persistent rules, preferences, or global instructions for yourself across sessions."""
 

@@ -189,12 +189,18 @@ def handle_run_solver(args: dict) -> dict:
     import main
     date = args.get('date') or None
     res = main.refresh_schedule_logic(date, date, force_refresh=True)
+    
+    clean_events = []
     if 'events' in res:
         for e in res['events']:
-            e.pop('description', None)
-    res["status"] = "success"
-    res["message"] = "Solver completed successfully."
-    return res
+            clean_e = {k: v for k, v in e.items() if k not in ['polyline', 'distance_matrix', 'steps', 'geometry', 'description']}
+            clean_events.append(clean_e)
+            
+    return {
+        "status": "success",
+        "message": "Solver completed successfully.",
+        "schedule": clean_events
+    }
 
 def handle_add_override(args: dict) -> dict:
     from services import storage
