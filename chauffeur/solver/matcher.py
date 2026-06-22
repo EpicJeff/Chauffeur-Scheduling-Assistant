@@ -187,9 +187,10 @@ def solve_schedule(
     
     for e in events:
         instance_o = next((o for o in sorted_overrides if o.event_id == e.id), None)
+        original_o = next((o for o in sorted_overrides if getattr(e, 'original_event_id', None) and o.event_id == e.original_event_id), None)
         series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and o.event_id == e.recurring_event_id), None)
         
-        effective_o = instance_o or series_o
+        effective_o = instance_o or original_o or series_o
         if effective_o:
             effective_copy = type(effective_o)(**effective_o.model_dump()) if hasattr(effective_o, 'model_dump') else type(effective_o)(**effective_o.dict()) if hasattr(effective_o, 'dict') else type(effective_o)(**effective_o)
             effective_copy.event_id = e.id
@@ -1258,9 +1259,10 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             for o in overrides:
                 eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
                 did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
-                if eid == e.id and did != d.id and did != 'unassigned':
+                e_match = (eid == e.id or eid == getattr(e, 'original_event_id', None))
+                if e_match and did != d.id and did != 'unassigned':
                     reason = {"text": "Blocked by Manual Override for another driver.", "type": "override"}
-                if eid == e.id and did == 'unassigned':
+                if e_match and did == 'unassigned':
                     reason = {"text": "Blocked by 'Unassigned' override.", "type": "override"}
                 
             # 2. Driver Personal Calendar
