@@ -20,8 +20,14 @@ import math
 
 def get_event_passenger_ids(event, passengers):
     if not passengers: return set()
+    result = set()
     e_cals = set(event.calendar_ids)
-    return set(p.id for p in passengers if set(p.calendar_ids).intersection(e_cals))
+    for p in passengers:
+        if str(p.id) in e_cals:
+            result.add(p.id)
+        elif set(p.calendar_ids).intersection(e_cals):
+            result.add(p.id)
+    return result
 
 def does_event_match_rule(event, rule, passengers=None) -> bool:
     has_any_criteria = False
