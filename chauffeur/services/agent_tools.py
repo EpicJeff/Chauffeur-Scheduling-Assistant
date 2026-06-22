@@ -11,7 +11,7 @@ class GetCurrentStateTool(BaseModel):
 
 class AddRoutingRuleTool(BaseModel):
     """
-    Creates a new routing rule (e.g. required driver, excluded driver).
+    Creates a new routing rule. Use this for strict constraints (required, excluded), time buffers, tolerances, attendance actions, or to GROUP multiple events together into a single trip.
     """
     driver_id: str = Field(..., description="The ID of the driver this rule applies to.")
     constraint_type: str = Field(..., description="Type of constraint: 'required', 'excluded', 'preferred', 'attendance', 'buffer', 'tolerance', 'duplicate', 'group'.")
@@ -21,7 +21,7 @@ class AddRoutingRuleTool(BaseModel):
     time_start: str = Field(default="", description="Start time constraint (HH:MM). Empty means anytime.")
     time_end: str = Field(default="", description="End time constraint (HH:MM). Empty means anytime.")
     location: str = Field(default="", description="Location string to match.")
-    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here to group events together.")
     attendance_action: str = Field(default="", description="For 'attendance' rules: 'stay' or 'dropoff_pickup'.")
     tolerance_mins: int = Field(default=0, description="For 'tolerance' rules: minutes allowed.")
     tolerance_type: str = Field(default="both", description="For 'tolerance' rules: 'arrival', 'departure', 'both'.")
@@ -38,9 +38,10 @@ class DeleteRoutingRuleTool(BaseModel):
 
 class AddPriorityRuleTool(BaseModel):
     """
-    Creates a new priority rule to modify the weight of routes (e.g. grouping events).
+    Creates a new priority rule to mark an event's relative IMPORTANCE.
+    Do NOT use this for grouping events (use AddRoutingRuleTool with constraint_type='group' instead).
     """
-    weight_modifier: int = Field(..., description="Score modifier. Positive values (e.g., 100) encourage grouping/routing. Negative values penalize. Use 10000 for critical must-route events. Do NOT use this for 'staying' at an event, that is an attendance rule.")
+    weight_modifier: int = Field(..., description="Score modifier. Use 10000 for critical must-route events. Do NOT use this for 'staying' at an event, that is an attendance rule.")
     keywords: List[str] = Field(..., description="List of keywords to match against event titles.")
     passenger_ids: List[str] = Field(default=[], description="List of passenger IDs this rule applies to.")
     days_of_week: List[int] = Field(default=[], description="Days of week (0=Mon, 6=Sun). Empty means all days.")
