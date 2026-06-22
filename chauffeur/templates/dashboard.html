@@ -659,7 +659,7 @@
                 driversMap = {};
                 driversList.filter(d => !d.is_disabled).forEach(d => { driversMap[d.id] = d; });
 
-                let url = `${apiBase}api/schedule?force_refresh=${force}`;
+                let url = `${apiBase}api/schedule?force_refresh=false`;
                 if (currentStartDate && currentEndDate && isPagination) {
                     const s = toLocalIsoString(currentStartDate);
 
@@ -667,7 +667,7 @@
                     endOfDay.setHours(23, 59, 59, 999);
                     const e = toLocalIsoString(endOfDay);
 
-                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=${force}`;
+                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
                 } else if (!isPagination) {
                     if (!currentStartDate || !currentEndDate) {
                         currentStartDate = new Date();
@@ -679,7 +679,7 @@
 
                     const s = toLocalIsoString(currentStartDate);
                     const e = toLocalIsoString(currentEndDate);
-                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=${force}`;
+                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
                 }
                 
                 url += (url.includes('?') ? '&' : '?') + '_cb=' + new Date().getTime();
