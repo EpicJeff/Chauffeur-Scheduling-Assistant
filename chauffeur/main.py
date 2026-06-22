@@ -1722,6 +1722,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for e in daily_events_to_solve:
             if getattr(e, 'location', None):
                 daily_locations.add(e.location)
+        for trip in trip_metadata:
+            if trip.get('location'):
+                daily_locations.add(trip['location'])
 
         maps.prime_matrix_cache(list(daily_locations))
 
