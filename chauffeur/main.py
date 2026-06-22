@@ -2119,12 +2119,8 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
 
 @app.post("/api/schedule/refresh")
 async def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True, draft: bool = False):
-    if draft:
-        refresh_schedule_logic(start_date, end_date, force_refresh=force, draft=True)
-        return {"status": "sync_started_and_finished_draft"}
-    else:
-        background_tasks.add_task(trigger_background_refresh, start_date, end_date, force, draft=False)
-        return {"status": "sync_started"}
+    refresh_schedule_logic(start_date, end_date, force_refresh=force, draft=draft)
+    return {"status": "sync_finished"}
 
 
 
