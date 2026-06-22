@@ -755,7 +755,7 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
         tools = agent_tools.get_openai_tools()
         
-        for _ in range(5):
+        for _ in range(10):
             payload = {
                 "model": model,
                 "messages": messages,
@@ -829,7 +829,7 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
             
         system_instruction = {"parts": [{"text": SYSTEM_PROMPT}]}
         
-        for _ in range(5):
+        for _ in range(10):
             payload = {
                 "systemInstruction": system_instruction,
                 "contents": gemini_msgs,
@@ -844,6 +844,9 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
             try:
                 with urllib.request.urlopen(req, timeout=180) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
+                    with open('/data/gemini_debug.log', 'a') as f:
+                        f.write(f"\n--- LOOP {_} ---\n")
+                        f.write(json.dumps(data, indent=2))
             except Exception as e:
                 err = f"Gemini request failed: {str(e)}"
                 try:

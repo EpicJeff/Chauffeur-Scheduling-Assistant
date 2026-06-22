@@ -165,6 +165,8 @@ def handle_run_solver(args: dict) -> dict:
     if 'events' in res:
         for e in res['events']:
             e.pop('description', None)
+    res["status"] = "success"
+    res["message"] = "Solver completed successfully."
     return res
 
 def handle_add_override(args: dict) -> dict:
