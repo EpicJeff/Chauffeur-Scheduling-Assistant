@@ -314,9 +314,9 @@ def solve_schedule(
             if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
-            shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
             
-            if shares_calendar:
+            if shares_passenger:
                 if getattr(e1, 'original_event_id', None) and getattr(e1, 'original_event_id', None) == getattr(e2, 'original_event_id', None):
                     pass
                 else:
@@ -517,11 +517,11 @@ def solve_schedule(
         for j in range(i + 1, len(sorted_events)):
             e1 = sorted_events[i]
             e2 = sorted_events[j]
-            shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
             same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
             
             if e1.start.date() == e2.start.date():
-                if shares_calendar or same_loc:
+                if shares_passenger or same_loc:
                     for d in drivers:
                         both_assigned = model.NewBoolVar(f'both_{e1.id}_{e2.id}_{d.id}')
                         model.AddImplication(both_assigned, assign_vars[(e1.id, d.id)])
@@ -533,12 +533,12 @@ def solve_schedule(
                         elif (e2.start - e1.end).total_seconds() > 3600:
                             travel_mins = 99  # Skip Maps API query for events far apart
                         else:
-                            travel_mins = get_travel_time_minutes(e1.location, e2.location) if shares_calendar else get_switch_travel_time(e1, e2, events)
+                            travel_mins = get_travel_time_minutes(e1.location, e2.location) if shares_passenger else get_switch_travel_time(e1, e2, events)
                         
-                        if shares_calendar:
+                        if shares_passenger:
                             objective_terms.append(both_assigned * 50)
                             
-                        if same_loc or ((travel_mins <= 5) and shares_calendar):
+                        if same_loc or ((travel_mins <= 5) and shares_passenger):
                             # Higher bonus for doing things at the exact same location (reduces travel)
                             objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
                             
@@ -657,8 +657,8 @@ def solve_schedule(
                 d2_id = assignments.get(e2.id)
                 
                 if d1_id and d2_id:
-                    shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
-                    if shares_calendar:
+                    shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
+                    if shares_passenger:
                         travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
                         total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                         gap_seconds = (e2.start - e1.end).total_seconds()
@@ -725,8 +725,8 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
     for e in events:
         is_impossible = False
         for ae in assigned_events:
-            shares_calendar = bool(set(e.calendar_ids).intersection(set(ae.calendar_ids)))
-            if shares_calendar:
+            shares_passenger = bool(set(e.passenger_ids).intersection(set(ae.passenger_ids)))
+            if shares_passenger:
                 travel_time_mins = get_travel_time_minutes(e.location, ae.location)
                 
                 if e.start <= ae.start:
@@ -788,9 +788,9 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             if (e2.start - e1.end).total_seconds() > 10800:
                 break
                 
-            shares_calendar = bool(set(e1.calendar_ids).intersection(set(e2.calendar_ids)))
+            shares_passenger = bool(set(e1.passenger_ids).intersection(set(e2.passenger_ids)))
             
-            if shares_calendar:
+            if shares_passenger:
                 travel_time_mins = get_travel_time_minutes(e1.location, e2.location)
                 total_needed_seconds = (travel_time_mins) * 60 + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
                 if (e2.start - e1.end).total_seconds() < total_needed_seconds:
@@ -1043,10 +1043,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
             for i in range(len(date_evs) - 1):
                 e1 = date_evs[i]
                 e2 = date_evs[i+1]
-                e1_cals = set(e1.calendar_ids)
-                e2_cals = set(e2.calendar_ids)
-                shares_calendar = bool(e1_cals.intersection(e2_cals))
-                new_passengers = e2_cals - e1_cals
+                e1_pax = set(e1.passenger_ids)
+                e2_pax = set(e2.passenger_ids)
+                shares_passenger = bool(e1_pax.intersection(e2_pax))
+                new_passengers = e2_pax - e1_pax
                 if getattr(e2, 'event_type', 'standard') == 'pickup':
                     new_passengers = set()
                 
@@ -1358,8 +1358,8 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if a_d_id == d.id and a_id != e.id:
                         a_e = event_map.get(a_id)
                         if a_e:
-                            shares_calendar = bool(set(e.calendar_ids).intersection(set(a_e.calendar_ids)))
-                            if shares_calendar:
+                            shares_passenger = bool(set(e.passenger_ids).intersection(set(a_e.passenger_ids)))
+                            if shares_passenger:
                                 travel = get_travel_time_minutes(e.location, a_e.location) if e.location and a_e.location else 20
                             else:
                                 travel = get_switch_travel_time(e, a_e, events)
