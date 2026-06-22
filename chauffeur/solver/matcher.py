@@ -1241,11 +1241,21 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
     diagnostics = {}
     event_map = {e.id: e for e in events}
     overridden_pairs = set()
-    for o in overrides:
-        eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
-        did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
-        if eid and did:
-            overridden_pairs.add((eid, did))
+    effective_override_map = {}
+    
+    # Resolve effective overrides for diagnostics
+    sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', x.get('created_at', 0) if isinstance(x, dict) else 0) or 0, reverse=True)
+    for e in events:
+        instance_o = next((o for o in sorted_overrides if (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.id)), None)
+        original_o = next((o for o in sorted_overrides if getattr(e, 'original_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.original_event_id)), None)
+        series_o = next((o for o in sorted_overrides if getattr(e, 'recurring_event_id', None) and (getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None) == e.recurring_event_id)), None)
+        
+        effective_o = instance_o or original_o or series_o
+        if effective_o:
+            did = getattr(effective_o, 'driver_id', effective_o.get('driver_id') if isinstance(effective_o, dict) else None)
+            if did:
+                overridden_pairs.add((e.id, did))
+                effective_override_map[e.id] = did
     
     for u_id in unassigned_ids:
         e = event_map.get(u_id)
@@ -1256,13 +1266,11 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             reason = None
             
             # 1. Overrides
-            for o in overrides:
-                eid = getattr(o, 'event_id', o.get('event_id') if isinstance(o, dict) else None)
-                did = getattr(o, 'driver_id', o.get('driver_id') if isinstance(o, dict) else None)
-                e_match = (eid == e.id or eid == getattr(e, 'original_event_id', None))
-                if e_match and did != d.id and did != 'unassigned':
+            eff_did = effective_override_map.get(e.id)
+            if eff_did:
+                if eff_did != d.id and eff_did != 'unassigned':
                     reason = {"text": "Blocked by Manual Override for another driver.", "type": "override"}
-                if e_match and did == 'unassigned':
+                if eff_did == 'unassigned':
                     reason = {"text": "Blocked by 'Unassigned' override.", "type": "override"}
                 
             # 2. Driver Personal Calendar
