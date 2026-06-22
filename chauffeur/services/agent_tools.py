@@ -14,14 +14,21 @@ class AddRoutingRuleTool(BaseModel):
     Creates a new routing rule (e.g. required driver, excluded driver).
     """
     driver_id: str = Field(..., description="The ID of the driver this rule applies to.")
-    constraint_type: str = Field(..., description="Type of constraint: 'required' or 'excluded'.")
+    constraint_type: str = Field(..., description="Type of constraint: 'required', 'excluded', 'preferred', 'attendance', 'buffer', 'tolerance', 'duplicate', 'group'.")
     keywords: List[str] = Field(..., description="List of keywords to match against event titles.")
     passenger_ids: List[str] = Field(default=[], description="List of passenger IDs this rule applies to.")
     days_of_week: List[int] = Field(default=[], description="Days of week (0=Mon, 6=Sun). Empty means all days.")
     time_start: str = Field(default="", description="Start time constraint (HH:MM). Empty means anytime.")
     time_end: str = Field(default="", description="End time constraint (HH:MM). Empty means anytime.")
     location: str = Field(default="", description="Location string to match.")
-    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here. Each dict can have 'keywords', 'passenger_ids', 'time_start', 'time_end', 'days_of_week'. Leave top-level keywords empty if using this.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here.")
+    attendance_action: str = Field(default="", description="For 'attendance' rules: 'stay' or 'dropoff_pickup'.")
+    tolerance_mins: int = Field(default=0, description="For 'tolerance' rules: minutes allowed.")
+    tolerance_type: str = Field(default="both", description="For 'tolerance' rules: 'arrival', 'departure', 'both'.")
+    buffer_before_mins: int = Field(default=0, description="For 'buffer' rules: minutes before event.")
+    buffer_after_mins: int = Field(default=0, description="For 'buffer' rules: minutes after event.")
+    duplicate_action: str = Field(default="", description="For 'duplicate' rules: 'schedule_one' or 'schedule_all'.")
+    grouping_period: str = Field(default="daily", description="For 'duplicate' rules: 'daily', 'weekly', 'monthly'.")
 
 class DeleteRoutingRuleTool(BaseModel):
     """
@@ -33,7 +40,7 @@ class AddPriorityRuleTool(BaseModel):
     """
     Creates a new priority rule to modify the weight of routes (e.g. grouping events).
     """
-    weight_modifier: int = Field(..., description="Score modifier. Positive values (e.g., 100) encourage grouping/routing. Negative values penalize.")
+    weight_modifier: int = Field(..., description="Score modifier. Positive values (e.g., 100) encourage grouping/routing. Negative values penalize. Use 10000 for critical must-route events. Do NOT use this for 'staying' at an event, that is an attendance rule.")
     keywords: List[str] = Field(..., description="List of keywords to match against event titles.")
     passenger_ids: List[str] = Field(default=[], description="List of passenger IDs this rule applies to.")
     days_of_week: List[int] = Field(default=[], description="Days of week (0=Mon, 6=Sun). Empty means all days.")

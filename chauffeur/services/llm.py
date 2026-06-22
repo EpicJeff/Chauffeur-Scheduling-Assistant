@@ -119,7 +119,7 @@ Rule Types available:
 8. 'attendance': tells the driver whether to stay at the event or just drop off and pick up (uses attendance_action).
 
 Priority Rule modifiers (weight_modifier values):
-- 10000: Critical (must-attend events)
+- 10000: Critical Importance (must route a driver to this event at all costs)
 - 1000: High priority
 - -1000: Low priority
 - -10000: Ignore (do not assign drivers)
@@ -138,7 +138,8 @@ CRITICAL INSTRUCTIONS:
 2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location, filter_sets). Do NOT generate rules with empty filters.
 3. The "passenger_ids" inside rules MUST match the Passenger IDs provided in the context above (not names or emails).
 4. CONFLICT AVOIDANCE: Avoid generating redundant or conflicting rules.
-5. THEMES: You MUST generate 3-5 custom "Solver Themes" that represent different strategic ways to fulfill the family philosophy.
+5. ATTENDANCE vs PRIORITY: If the user says a driver must "stay" or "attend" an event (instead of dropping off), generate an 'attendance' rule with attendance_action='stay'. Do NOT generate a priority rule unless the user is talking about how important the event is to be scheduled!
+6. THEMES: You MUST generate 3-5 custom "Solver Themes" that represent different strategic ways to fulfill the family philosophy.
    - The first theme should ALWAYS be the "Standard" or "Balanced" default theme with 1.0 multipliers for everything.
    - Additional themes should tweak the multipliers to optimize for specific behaviors. CRITICAL: You must use multipliers scaled high enough to actually bridge the gap between the underlying engine's base weights!
      * The base weight for Primary Driver Bonus is 2000.
