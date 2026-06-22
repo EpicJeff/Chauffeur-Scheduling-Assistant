@@ -48,22 +48,23 @@ def get_effective_overridden_event_ids(events, overrides) -> list:
     return list(overridden_ids)
 
 def does_event_match_rule(event, rule, passengers=None) -> bool:
-    has_any_criteria = False
+    has_top_criteria = False
+    top_matches = True
     
     # 1. Keywords
     if hasattr(rule, 'keywords') and rule.keywords:
-        has_any_criteria = True
+        has_top_criteria = True
         match_kw = False
         event_text = (event.title + " " + (event.description or "")).lower()
         for kw in rule.keywords:
             if kw.lower() in event_text:
                 match_kw = True
                 break
-        if not match_kw: return False
+        if not match_kw: top_matches = False
         
     # 2. Passengers
-    if hasattr(rule, 'passenger_ids') and rule.passenger_ids:
-        has_any_criteria = True
+    if top_matches and hasattr(rule, 'passenger_ids') and rule.passenger_ids:
+        has_top_criteria = True
         match_pax = False
         
         resolved_pids = set()
@@ -81,34 +82,43 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
             if pid in event.calendar_ids:
                 match_pax = True
                 break
-        if not match_pax: return False
+        if not match_pax: top_matches = False
         
     # 3. Days of Week
-    if hasattr(rule, 'days_of_week') and rule.days_of_week:
-        has_any_criteria = True
-        if event.start.weekday() not in rule.days_of_week: return False
+    if top_matches and hasattr(rule, 'days_of_week') and rule.days_of_week:
+        has_top_criteria = True
+        if event.start.weekday() not in rule.days_of_week: top_matches = False
         
     # 4. Time Window
-    if hasattr(rule, 'time_start') and rule.time_start:
-        has_any_criteria = True
+    if top_matches and hasattr(rule, 'time_start') and rule.time_start:
+        has_top_criteria = True
         try:
             h, m = map(int, rule.time_start.split(':'))
-            if event.start.hour * 60 + event.start.minute < h * 60 + m: return False
+            if event.start.hour * 60 + event.start.minute < h * 60 + m: top_matches = False
         except: pass
         
-    if hasattr(rule, 'time_end') and rule.time_end:
-        has_any_criteria = True
+    if top_matches and hasattr(rule, 'time_end') and rule.time_end:
+        has_top_criteria = True
         try:
             h, m = map(int, rule.time_end.split(':'))
-            if event.end.hour * 60 + event.end.minute > h * 60 + m: return False
+            if event.end.hour * 60 + event.end.minute > h * 60 + m: top_matches = False
         except: pass
+
     # 5. Location
-    if hasattr(rule, 'location') and rule.location:
-        has_any_criteria = True
+    if top_matches and hasattr(rule, 'location') and rule.location:
+        has_top_criteria = True
         if not event.location or rule.location.lower() not in event.location.lower():
-            return False
-            
-    return has_any_criteria
+            top_matches = False
+
+    if has_top_criteria and top_matches:
+        return True
+        
+    if hasattr(rule, 'filter_sets') and rule.filter_sets:
+        for fs in rule.filter_sets:
+            if does_event_match_rule(event, fs, passengers):
+                return True
+
+    return False
 
 def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: List[Passenger]) -> set:
     grouped_event_pairs = set()
@@ -117,18 +127,16 @@ def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: 
     for r in group_rules:
         daily_matches = defaultdict(list)
         for e in events:
-            # Match any of the filter sets
-            for fs in getattr(r, 'filter_sets', []):
-                if does_event_match_rule(e, fs, passengers):
-                    daily_matches[e.start.date()].append(e)
-                    break
+            if does_event_match_rule(e, r, passengers):
+                daily_matches[e.start.date()].append(e)
         for group_events in daily_matches.values():
             if len(group_events) > 1:
+                # Group all pairs in this day that matched this rule
                 for i in range(len(group_events)):
                     for j in range(i + 1, len(group_events)):
                         grouped_event_pairs.add((group_events[i].id, group_events[j].id))
                         grouped_event_pairs.add((group_events[j].id, group_events[i].id))
-                        
+    
     # Implicitly group events that are physically the same event
     # (Same base ID, or Same title + start time + location)
     implicit_groups = defaultdict(list)
