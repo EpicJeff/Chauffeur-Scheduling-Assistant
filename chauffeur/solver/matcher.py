@@ -253,6 +253,27 @@ def solve_schedule(
     for e in assignable_events:
         model.AddAtMostOne(assign_vars[(e.id, d.id)] for d in drivers)
 
+    # 2b. Constraint: A passenger cannot be scheduled for overlapping events at different locations
+    for i in range(len(assignable_events)):
+        for j in range(i + 1, len(assignable_events)):
+            e1 = assignable_events[i]
+            e2 = assignable_events[j]
+            # True physical overlap in time
+            if e1.start < e2.end and e2.start < e1.end:
+                # Share passengers
+                shared = set(e1.passenger_ids).intersection(set(e2.passenger_ids))
+                if shared:
+                    # Different locations
+                    if e1.location and e2.location and e1.location.strip().lower() != e2.location.strip().lower():
+                        # However, if BOTH are overridden, we shouldn't add this constraint to prevent INFEASIBLE
+                        o1 = any(o.event_id == e1.id for o in effective_overrides_list)
+                        o2 = any(o.event_id == e2.id for o in effective_overrides_list)
+                        if not (o1 and o2):
+                            model.Add(
+                                sum(assign_vars[(e1.id, d.id)] for d in drivers) +
+                                sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1
+                            )
+
     # 3. Constraint: No Overlap + Travel Time
     objective_terms = []
     
