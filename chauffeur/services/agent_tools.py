@@ -66,16 +66,22 @@ class AddOverrideTool(BaseModel):
     Creates a direct override for a specific event to assign a specific driver.
     This is for one-off manual assignments. It supersedes all routing rules.
     """
-    event_id: str = Field(..., description="The ID of the event to override (fetch schedule first to get this).")
-    driver_id: str = Field(..., description="The ID of the driver to assign.")
+    event_id: str = Field(..., description="The ID of the event.")
+    driver_id: str = Field(..., description="The ID of the driver to manually assign.")
     date_str: str = Field(..., description="The date of the event (YYYY-MM-DD).")
     event_title: str = Field("", description="Optional title of the event for display purposes. Leave empty if none.")
 
 class DeleteOverrideTool(BaseModel):
     """
-    Deletes an existing manual override for an event.
+    Removes a manual driver assignment for a specific event.
     """
-    event_id: str = Field(..., description="The ID of the event whose override should be removed.")
+    event_id: str = Field(..., description="The ID of the event to clear the override for.")
+
+class UpdateMemoryTool(BaseModel):
+    """
+    Saves custom instructions or rules for yourself to remember persistently across sessions. Use this when the user tells you to 'remember' a global preference or instruction.
+    """
+    memory_text: str = Field(..., description="The complete text of all custom instructions you want to persist.")
 
 # A unified schema registry
 TOOL_SCHEMAS = {
@@ -87,6 +93,7 @@ TOOL_SCHEMAS = {
     "run_solver": RunSolverTool.model_json_schema(),
     "add_override": AddOverrideTool.model_json_schema(),
     "delete_override": DeleteOverrideTool.model_json_schema(),
+    "update_memory": UpdateMemoryTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -195,6 +202,13 @@ def handle_delete_override(args: dict) -> dict:
     storage.delete_override_by_event(args.get("event_id"))
     return {"status": "success", "message": f"Removed override for event {args.get('event_id')}."}
 
+def handle_update_memory(args: dict) -> dict:
+    from services import storage
+    settings = storage.get_settings()
+    settings['ai_memory'] = args.get("memory_text", "")
+    storage.update_settings(settings)
+    return {"status": "success", "message": "Memory updated successfully."}
+
 TOOL_HANDLERS = {
     "get_current_state": handle_get_current_state,
     "add_routing_rule": handle_add_routing_rule,
@@ -204,6 +218,7 @@ TOOL_HANDLERS = {
     "run_solver": handle_run_solver,
     "add_override": handle_add_override,
     "delete_override": handle_delete_override,
+    "update_memory": handle_update_memory,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

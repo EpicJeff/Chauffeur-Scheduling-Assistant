@@ -98,8 +98,13 @@ def generate_rules_from_philosophy(
     if feedback:
         feedback_context = "\nRecent user feedback to learn from:\n" + "\n".join([f"- {f}" for f in feedback]) + "\nAdjust your generated themes and rules to respect this past feedback."
 
+    from services import storage
+    settings = storage.get_settings()
+    ai_memory = settings.get('ai_memory', '')
+    memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
+
     system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
-Your task is to infer a set of useful and meaningful structured constraint rules, priority rules, and solver themes from a natural language 'Family Philosophy' and individual driver/passenger biographies to be used to generate a schedule that will be used to generate a schedule for the family's driving activities so the parents can focus on time with their children instead of on driving logistics.    
+Your task is to infer a set of useful and meaningful structured constraint rules, priority rules, and solver themes from a natural language 'Family Philosophy' and individual driver/passenger biographies to be used to generate a schedule that will be used to generate a schedule for the family's driving activities so the parents can focus on time with their children instead of on driving logistics.    {memory_str}
 
 Available Drivers (use only these IDs for rules):
 {chr(10).join(driver_context)}
@@ -643,7 +648,12 @@ def deduce_rules_from_context(provider: str, url: str, api_key: str, model: str,
             f"- Passenger ID: '{p_id}' (matches calendar ID), Name: '{p['name']}', Hashtags: {p.get('hashtags', [])}"
         )
         
-    system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.
+    from services import storage
+    settings = storage.get_settings()
+    ai_memory = settings.get('ai_memory', '')
+    memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
+
+    system_prompt = f"""You are the backend AI assistant for 'Chauffeur', a family driving scheduler.{memory_str}
 You identified a Pattern Cluster: {cluster.get('description')} where the user repeatedly reassigned an event to driver '{cluster.get('new_driver_id')}'.
 I will provide you with the full daily schedules for the dates this occurred, BOTH before the user's manual changes (Original) and after their changes (Modified).
 Your goal is to deduce the LOGICAL REASON (the "Why") behind this pattern by looking at what changed and the surrounding context.
@@ -745,16 +755,20 @@ def agentic_chat_loop(user_msg: str) -> str:
     storage.add_chat_message('user', user_msg)
     raw_history = storage.get_chat_history(limit=20)
     
+    ai_memory = settings.get('ai_memory', '')
+    memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
+
     import datetime
     today_str = datetime.datetime.now().strftime('%A, %B %d, %Y')
-    SYSTEM_PROMPT = f"""You are the Chauffeur AI Assistant. Today is {today_str}.
+    SYSTEM_PROMPT = f"""You are the Chauffeur AI Assistant. Today is {today_str}.{memory_str}
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
-Use the tools provided to fetch the current state, add rules, add overrides, and run the solver.
+Use the tools provided to fetch the current state, add rules, add overrides, update your memory, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
 If the user asks for a one-off change to a specific event, DO NOT create a rule. Instead, use get_current_state with the specific date to get the schedule, find the event_id, and then use add_override to directly assign the driver.
 If the user wants a persistent pattern, use add_routing_rule.
 If the solver returns an error, explain the conflict to the user and ask how they want to resolve it.
-Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to see the IDs first if you don't know them."""
+Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to see the IDs first if you don't know them.
+You can use update_memory to save persistent rules, preferences, or global instructions for yourself across sessions."""
 
     if provider == 'ollama':
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
