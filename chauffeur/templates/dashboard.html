@@ -2834,7 +2834,6 @@
         }
 
         
-        let mapsStatsInterval = null;
 
         
 
@@ -3332,15 +3331,6 @@
             }
         }
         
-        // Auto-scroll chat observer
-        const chatMessages = document.getElementById('chat-messages');
-        if (chatMessages) {
-            const observer = new MutationObserver(() => {
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            });
-            observer.observe(chatMessages, { childList: true, subtree: true });
-        }
-
     </script>
     
     <!-- AI Rules Modal -->
