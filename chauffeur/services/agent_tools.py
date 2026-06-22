@@ -21,6 +21,7 @@ class AddRoutingRuleTool(BaseModel):
     time_start: str = Field(default="", description="Start time constraint (HH:MM). Empty means anytime.")
     time_end: str = Field(default="", description="End time constraint (HH:MM). Empty means anytime.")
     location: str = Field(default="", description="Location string to match.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'group' rules, specify multiple independent event filters here. Each dict can have 'keywords', 'passenger_ids', 'time_start', 'time_end', 'days_of_week'. Leave top-level keywords empty if using this.")
 
 class DeleteRoutingRuleTool(BaseModel):
     """

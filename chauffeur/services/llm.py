@@ -115,6 +115,8 @@ Rule Types available:
 4. 'tolerance': Defines acceptable late arrival or early departure in minutes (tolerance_mins) and applies to ('arrival', 'departure', 'both').
 5. 'duplicate': Action for duplicate events for the same attendees ('schedule_one' or 'schedule_all') if they occur within the same grouping_period ('daily', 'weekly', 'monthly', 'all').
 6. 'buffer': Extra prep time needed in minutes before (buffer_before_mins) or after (buffer_after_mins) events, e.g. to warm up for a game or change clothes after a swim meet.
+7. 'group': Combines events matching the array of filters into a single logical trip.
+8. 'attendance': tells the driver whether to stay at the event or just drop off and pick up (uses attendance_action).
 
 Priority Rule modifiers (weight_modifier values):
 - 10000: Critical (must-attend events)
@@ -129,10 +131,11 @@ Constraints & rules details:
 - 'passenger_ids' is a list of calendar IDs/passenger IDs.
 - 'location' is a substring match for the event location field.
 - All rules must include 'is_ai_generated': true.
+- For 'group' rules, you must define multiple independent objects in the 'filter_sets' array to match the events to be grouped (e.g. one object for 'Soccer' and one for 'Basketball'). If you use 'filter_sets', leave the top-level 'keywords' and 'passenger_ids' empty.
 
 CRITICAL INSTRUCTIONS:
 1. Every rule in the "rules" array MUST use the key "constraint_type" to specify the type (do NOT use "type" or "rule_type").
-2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location). Do NOT generate rules with empty filters.
+2. Every rule and priority rule MUST contain at least one non-empty filtering field (keywords, passenger_ids, days_of_week, time_start, time_end, location, filter_sets). Do NOT generate rules with empty filters.
 3. The "passenger_ids" inside rules MUST match the Passenger IDs provided in the context above (not names or emails).
 4. CONFLICT AVOIDANCE: Avoid generating redundant or conflicting rules.
 5. THEMES: You MUST generate 3-5 custom "Solver Themes" that represent different strategic ways to fulfill the family philosophy.
@@ -152,7 +155,7 @@ You MUST respond with a single valid JSON object of the following exact structur
   "rules": [
     {{
       "driver_id": "string (e.g. 'mom')",
-      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'tolerance' | 'duplicate' | 'buffer' | 'attendance')",
+      "constraint_type": "string ('required' | 'preferred' | 'unavailable' | 'tolerance' | 'duplicate' | 'buffer' | 'attendance' | 'group')",
       "duplicate_action": "string or null ('schedule_one' | 'schedule_all')",
       "tolerance_mins": 0,
       "tolerance_type": "string ('arrival' | 'departure' | 'both')",
@@ -166,6 +169,9 @@ You MUST respond with a single valid JSON object of the following exact structur
       "time_start": "string ('HH:MM' or null)",
       "time_end": "string ('HH:MM' or null)",
       "location": "string or null",
+      "filter_sets": [
+        {{ "keywords": ["string"], "passenger_ids": ["string"] }}
+      ],
       "is_ai_generated": true
     }}
   ],
@@ -664,11 +670,11 @@ Rule Types available:
 1. 'required': This specific driver MUST be assigned to drive for events matching these filters.
 2. 'preferred': This specific driver is preferred (has higher weight) for events matching these filters.
 3. 'unavailable': This specific driver cannot drive for events matching these filters.
-4. 'duplicate': Action for duplicate events for the same attendees ('schedule_one' or 'schedule_all') if they occur within the same grouping_period.
+4. 'duplicate': tells the solver to ('schedule_one' or 'schedule_all') for duplicate events for the same attendees if they occur within the same grouping_period.
 5. 'tolerance': Defines acceptable late arrival or early departure for events (uses tolerance_mins and tolerance_type).
-6. 'group': Combines events matching the filters into a single logical trip.
-7. 'buffer': Requires buffer_before_mins and/or buffer_after_mins around matched events.
-8. 'attendance': Overrides default attendance behavior for events (uses attendance_action).
+6. 'group': Combines events matching the array of filters into a single logical trip.
+7. 'buffer': tells the solver to add buffer_before_mins and/or buffer_after_mins around matched events.
+8. 'attendance': tells the driver whether to stay at the event or just drop off and pick up (uses attendance_action).
 
 Constraints & rules details:
 - 'days_of_week' is a list of integers: 0 for Monday, 1 for Tuesday, 2 for Wednesday, 3 for Thursday, 4 for Friday, 5 for Saturday, 6 for Sunday.
@@ -681,6 +687,7 @@ Constraints & rules details:
 - For 'duplicate' rules, you must set 'duplicate_action' ('schedule_one' or 'schedule_all').
 - For 'attendance' rules, you must set 'attendance_action' (e.g. 'ignore', 'require').
 - All rules must include 'is_ai_generated': true.
+- For 'group' rules, you must define multiple independent objects in the 'filter_sets' array to match the events to be grouped (e.g. one object for 'Soccer' and one for 'Basketball'). If you use 'filter_sets', leave the top-level 'keywords' and 'passenger_ids' empty.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
@@ -694,6 +701,9 @@ You MUST respond with a single valid JSON object of the following exact structur
       "time_start": null,
       "time_end": null,
       "location": null,
+      "filter_sets": [
+        {{ "keywords": ["Soccer"], "passenger_ids": [] }}
+      ],
       "tolerance_mins": 0,
       "tolerance_type": "both",
       "buffer_before_mins": 0,
@@ -844,9 +854,6 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
             try:
                 with urllib.request.urlopen(req, timeout=180) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
-                    with open('/data/gemini_debug.log', 'a') as f:
-                        f.write(f"\n--- LOOP {_} ---\n")
-                        f.write(json.dumps(data, indent=2))
             except Exception as e:
                 err = f"Gemini request failed: {str(e)}"
                 try:
