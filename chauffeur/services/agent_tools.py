@@ -98,16 +98,28 @@ TOOL_SCHEMAS = {
 
 def get_openai_tools() -> List[Dict[str, Any]]:
     """Formats schemas for OpenAI/Ollama tool calling API."""
+    import copy
+    
+    def scrub_schema(obj):
+        if isinstance(obj, dict):
+            obj.pop("title", None)
+            obj.pop("additionalProperties", None)
+            for k, v in list(obj.items()):
+                scrub_schema(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                scrub_schema(item)
+        return obj
+
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
-        if "title" in schema:
-            del schema["title"]
+        clean_schema = scrub_schema(copy.deepcopy(schema))
         tools.append({
             "type": "function",
             "function": {
                 "name": name,
-                "description": schema.get("description", ""),
-                "parameters": schema
+                "description": clean_schema.get("description", ""),
+                "parameters": clean_schema
             }
         })
     return tools
