@@ -899,8 +899,15 @@ def get_passenger_pickup_event_for_subset(e2: Event, subset_cals: set, all_event
     
     if b_events_before:
         e_b_prev = max(b_events_before, key=lambda x: x.end)
-        # We know where they are coming from on the same day, don't restrict to 15 minutes.
-        # They can just wait or be dropped off early.
+        
+        # If the passenger has a large gap (> 60 mins) and the next event is not at the same location,
+        # we can safely assume they were dropped off at home rather than waiting for hours.
+        gap_minutes = (e2.start.timestamp() - e_b_prev.end.timestamp()) / 60
+        same_loc = bool(e_b_prev.location and e2.location and e_b_prev.location.strip().lower() == e2.location.strip().lower())
+        
+        if gap_minutes > 60 and not same_loc:
+            return None
+            
         return e_b_prev
     return None
 
