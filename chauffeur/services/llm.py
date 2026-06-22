@@ -760,7 +760,7 @@ def agentic_chat_loop(user_msg: str) -> str:
 
     import datetime
     today_str = datetime.datetime.now().strftime('%A, %B %d, %Y')
-    SYSTEM_PROMPT = f"""You are the Chauffeur AI Assistant. Today is {today_str}.{memory_str}
+    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
 Use the tools provided to fetch the current state, add rules, add overrides, update your memory, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
@@ -818,6 +818,12 @@ You can use update_memory to save persistent rules, preferences, or global instr
                         except: args = {}
                     
                     res = agent_tools.execute_tool(name, args)
+                    
+                    if provider == 'ollama':
+                        # Inject explicit instructions into the tool result for local models 
+                        # to guide them out of the tool loop and back to conversational replies.
+                        res["_system_instruction"] = "Tool execution complete. Reply to the user acknowledging completion and summarizing what you just did based on this output."
+
                     tool_msg = {
                         "role": "tool",
                         "content": json.dumps(res)
