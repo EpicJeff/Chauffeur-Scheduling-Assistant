@@ -334,16 +334,26 @@ def prime_matrix_cache(locations: list[str]):
             "annotations": "duration,distance"
         }
         try:
-            with api_rate_lock:
-                if not hasattr(fetch_matrix_chunk, "last_osrm_time"):
-                    fetch_matrix_chunk.last_osrm_time = 0
-                elapsed = time.time() - fetch_matrix_chunk.last_osrm_time
-                if elapsed < 1.1:
-                    time.sleep(1.1 - elapsed)
-                resp = requests.get(url, params=params, timeout=10)
-                fetch_matrix_chunk.last_osrm_time = time.time()
-                
-            if resp.status_code == 200:
+            resp = None
+            for attempt in range(3):
+                with api_rate_lock:
+                    if not hasattr(fetch_matrix_chunk, "last_osrm_time"):
+                        fetch_matrix_chunk.last_osrm_time = 0
+                    elapsed = time.time() - fetch_matrix_chunk.last_osrm_time
+                    if elapsed < 1.1:
+                        time.sleep(1.1 - elapsed)
+                    resp = requests.get(url, params=params, timeout=10)
+                    fetch_matrix_chunk.last_osrm_time = time.time()
+                    
+                if resp.status_code == 200:
+                    break
+                elif resp.status_code == 429:
+                    print(f"OSRM API rate limited. Retrying attempt {attempt+1}/3...")
+                    time.sleep(2)
+                else:
+                    break
+                    
+            if resp and resp.status_code == 200:
                 data = resp.json()
                 durations = data.get("durations", [])
                 for s_i, src_idx in enumerate(src_indices):
@@ -449,12 +459,29 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
     mapbox_key = get_mapbox_api_key()
     disable_mapbox = get_map_option('disable_mapbox', False)
     
+    # Try to get a local coordinate center from home_location to improve geocoding
+    center_lon, center_lat = None, None
+    settings = storage.get_settings()
+    home_loc = settings.get('home_location')
+    if home_loc:
+        cached_home = storage.get_cached_geocode(home_loc)
+        if cached_home:
+            try:
+                clat = float(cached_home.get('lat', 0))
+                clon = float(cached_home.get('lon', 0))
+                if clat != 0.0 and clon != 0.0:
+                    center_lat, center_lon = clat, clon
+            except (ValueError, TypeError):
+                pass
+    
     if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
         url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(address)}.json"
         params = {
             "access_token": mapbox_key,
             "limit": 1
         }
+        if center_lon is not None and center_lat is not None:
+            params['proximity'] = f"{center_lon},{center_lat}"
         try:
             resp = requests.get(url, params=params, timeout=5)
             if resp.status_code == 200:
@@ -485,6 +512,11 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
             "format": "json",
             "limit": 1
         }
+        if center_lon is not None and center_lat is not None:
+            # Create a ~50km viewbox around home for Nominatim
+            params["viewbox"] = f"{center_lon-0.5},{center_lat-0.5},{center_lon+0.5},{center_lat+0.5}"
+            params["bounded"] = 1
+            
         headers = {
             "User-Agent": "ChauffeurScheduleAssistant/1.0"
         }
