@@ -604,7 +604,9 @@
             }
             const startD = new Date(currentStartDate);
             startD.setDate(startD.getDate() - 1);
+            startD.setHours(0, 0, 0, 0);
             const endD = new Date(startD);
+            endD.setHours(23, 59, 59, 999);
 
             currentStartDate = startD;
             currentEndDate = endD;
@@ -618,7 +620,9 @@
             }
             const startD = new Date(currentEndDate);
             startD.setDate(startD.getDate() + 1);
+            startD.setHours(0, 0, 0, 0);
             const endD = new Date(startD);
+            endD.setHours(23, 59, 59, 999);
 
             currentStartDate = startD;
             currentEndDate = endD;
@@ -660,27 +664,23 @@
                 driversList.filter(d => !d.is_disabled).forEach(d => { driversMap[d.id] = d; });
 
                 let url = `${apiBase}api/schedule?force_refresh=false`;
-                if (currentStartDate && currentEndDate && isPagination) {
-                    const s = toLocalIsoString(currentStartDate);
+                
+                if (!currentStartDate || !currentEndDate) {
+                    currentStartDate = new Date();
+                    currentStartDate.setHours(0, 0, 0, 0);
 
-                    const endOfDay = new Date(currentEndDate);
-                    endOfDay.setHours(23, 59, 59, 999);
-                    const e = toLocalIsoString(endOfDay);
-
-                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
-                } else if (!isPagination) {
-                    if (!currentStartDate || !currentEndDate) {
-                        currentStartDate = new Date();
-                        currentStartDate.setHours(0, 0, 0, 0);
-
-                        currentEndDate = new Date(currentStartDate);
-                        currentEndDate.setHours(23, 59, 59, 999);
-                    }
-
-                    const s = toLocalIsoString(currentStartDate);
-                    const e = toLocalIsoString(currentEndDate);
-                    url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
+                    currentEndDate = new Date(currentStartDate);
+                    currentEndDate.setHours(23, 59, 59, 999);
                 }
+
+                currentStartDate.setHours(0, 0, 0, 0);
+                const s = toLocalIsoString(currentStartDate);
+
+                const endOfDay = new Date(currentEndDate);
+                endOfDay.setHours(23, 59, 59, 999);
+                const e = toLocalIsoString(endOfDay);
+
+                url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
                 
                 url += (url.includes('?') ? '&' : '?') + '_cb=' + new Date().getTime();
                 
