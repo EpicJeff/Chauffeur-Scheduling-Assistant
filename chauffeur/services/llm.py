@@ -864,6 +864,7 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
             gemini_msgs.append(candidate.get("content", {"role": "model", "parts": parts}))
             
             has_tool_call = False
+            function_response_parts = []
             for part in parts:
                 if "functionCall" in part:
                     has_tool_call = True
@@ -872,17 +873,19 @@ Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to
                     args = fc.get("args", {})
                     res = agent_tools.execute_tool(name, args)
                     
-                    gemini_msgs.append({
-                        "role": "user",
-                        "parts": [{
-                            "functionResponse": {
-                                "name": name,
-                                "response": res
-                            }
-                        }]
+                    function_response_parts.append({
+                        "functionResponse": {
+                            "name": name,
+                            "response": res
+                        }
                     })
             
-            if not has_tool_call:
+            if has_tool_call:
+                gemini_msgs.append({
+                    "role": "function",
+                    "parts": function_response_parts
+                })
+            else:
                 final_text = "".join([p.get("text", "") for p in parts if "text" in p])
                 storage.add_chat_message('assistant', final_text)
                 return final_text
