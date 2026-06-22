@@ -970,18 +970,22 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
             schedule_coordinator.is_running = False
             schedule_coordinator.clear_solving_dates()
 
+import threading
+global_sync_lock = threading.Lock()
+
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
-    try:
-        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
-        global LAST_UPDATE_TIME
-        LAST_UPDATE_TIME = time.time()
-        return res
-    except AbortRefreshException as e:
-        raise e
-    except Exception as e:
-        logger.error("Fatal error during schedule generation", exc_info=True)
-        import traceback
-        return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
+    with global_sync_lock:
+        try:
+            res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
+            global LAST_UPDATE_TIME
+            LAST_UPDATE_TIME = time.time()
+            return res
+        except AbortRefreshException as e:
+            raise e
+        except Exception as e:
+            logger.error("Fatal error during schedule generation", exc_info=True)
+            import traceback
+            return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
 def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
     settings = storage.get_settings()
