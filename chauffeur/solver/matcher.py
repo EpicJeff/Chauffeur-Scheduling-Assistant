@@ -385,7 +385,7 @@ def solve_schedule(
                         objective_terms.append(both * -50)
                                 
             # Driver Conflict Logic
-            travel_time_mins = get_switch_travel_time(e1, e2, events)
+            travel_time_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
             min_needed_seconds = (travel_time_mins) * 60
             desired_needed_seconds = min_needed_seconds + e_buffer_after.get(e1.id, 0) * 60 + e_buffer_before.get(e2.id, 0) * 60
             gap_seconds = (e2.start - e1.end).total_seconds()
@@ -395,7 +395,7 @@ def solve_schedule(
                     gap_seconds = float('inf')
             attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
             if not attendance_conflict and e1.location and e2.location:
-                req_d1_d2 = get_switch_travel_time(e1, e2, events) * 60
+                req_d1_d2 = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None) * 60
                 late_drop_e2 = max(0, req_d1_d2 - (e2.start - e1.start).total_seconds())
                 
                 # In profile overlap checks, we use min_needed_seconds strictly since it's already tight
@@ -574,17 +574,23 @@ def solve_schedule(
                         model.AddImplication(both_assigned, assign_vars[(e2.id, d.id)])
                         model.AddBoolOr([both_assigned, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
                         
-                        if same_loc:
-                            travel_mins = 0
-                        elif (e2.start - e1.end).total_seconds() > 3600:
-                            travel_mins = 99  # Skip Maps API query for events far apart
+                        if shares_passenger:
+                            if same_loc:
+                                travel_mins = 0
+                            elif (e2.start - e1.end).total_seconds() > 3600:
+                                travel_mins = 99  # Skip Maps API query for events far apart
+                            else:
+                                travel_mins = get_travel_time_minutes(e1.location, e2.location)
                         else:
-                            travel_mins = get_travel_time_minutes(e1.location, e2.location) if shares_passenger else get_switch_travel_time(e1, e2, events)
+                            if (e2.start - e1.end).total_seconds() > 3600:
+                                travel_mins = 99
+                            else:
+                                travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
                         
                         if shares_passenger:
                             objective_terms.append(both_assigned * 50)
                             
-                        if same_loc or ((travel_mins <= 5) and shares_passenger):
+                        if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
                             # Higher bonus for doing things at the exact same location (reduces travel)
                             objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
                             
@@ -922,14 +928,21 @@ def get_passenger_pickup_event_for_subset(e2: Event, subset_cals: set, all_event
 def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[Event]:
     return get_passenger_pickup_event_for_subset(e2, set(e2.calendar_ids), all_events)
 
-def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event]) -> int:
+def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_location: Optional[str] = None) -> int:
     pickup = get_passenger_pickup_event(e2, all_events)
     if pickup:
         t1 = get_travel_time_minutes(e1.location, pickup.location)
         t2 = get_travel_time_minutes(pickup.location, e2.location)
         return t1 + t2
     
-    # Default 30 min buffer ONLY if locations are different
+    if home_location and e1.location and e2.location:
+        # If no pickup event is found, it means the passenger is at home.
+        # The driver must travel from e1 to home, then home to e2.
+        t1 = get_travel_time_minutes(e1.location, home_location)
+        t2 = get_travel_time_minutes(home_location, e2.location)
+        return t1 + t2
+    
+    # Fallback if no home location
     same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
     if same_loc:
         return 0
