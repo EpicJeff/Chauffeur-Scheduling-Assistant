@@ -1124,8 +1124,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     for r in rules_data:
         try:
             rule_obj = Rule(**r)
-            if 'doc_id' in r:
-                setattr(rule_obj, 'doc_id', r['doc_id'])
             if not rule_obj.is_enabled: continue
             if rule_obj.is_ai_generated and not enable_ai_rules: continue
             if not rule_obj.is_ai_generated and not enable_standard_rules: continue
@@ -1139,8 +1137,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     for pr in priority_rules_data:
         try:
             p_rule_obj = PriorityRule(**pr)
-            if 'doc_id' in pr:
-                setattr(p_rule_obj, 'doc_id', pr['doc_id'])
             if not p_rule_obj.is_enabled: continue
             if p_rule_obj.is_ai_generated and not enable_ai_priority_rules: continue
             if not p_rule_obj.is_ai_generated and not enable_standard_priority_rules: continue
@@ -1555,15 +1551,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             for pr in priority_rules:
                 if matcher.does_event_match_rule(e, pr, passengers):
                     pr_dict = pr.dict() if hasattr(pr, 'dict') else pr
-                    if hasattr(pr, 'doc_id'):
-                        pr_dict['doc_id'] = getattr(pr, 'doc_id')
                     pr_dict['_is_priority'] = True
                     m_rules.append(pr_dict)
             for r in rules:
                 if matcher.does_event_match_rule(e, r, passengers):
                     r_dict = r.dict() if hasattr(r, 'dict') else r
-                    if hasattr(r, 'doc_id'):
-                        r_dict['doc_id'] = getattr(r, 'doc_id')
                     r_dict['_is_priority'] = False
                     m_rules.append(r_dict)
             if m_rules:

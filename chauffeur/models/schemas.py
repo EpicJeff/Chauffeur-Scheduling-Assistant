@@ -60,6 +60,7 @@ class EventFilter(BaseModel):
 
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
     driver_id: str
     event_keyword: Optional[str] = None # Deprecated
     constraint_type: str  # e.g., 'required', 'preferred', 'unavailable', 'tolerance', 'duplicate', 'group', 'buffer'
@@ -84,6 +85,7 @@ class Rule(BaseModel):
 
 class PriorityRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
     match_type: Optional[str] = None       # Deprecated
     match_value: Optional[str] = None      # Deprecated
     weight_modifier: int
