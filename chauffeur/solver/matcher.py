@@ -374,7 +374,11 @@ def solve_schedule(
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                     
                     gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
-                    if gap_seconds_with_tolerance < min_needed_seconds:
+                    # If they share a passenger, the passenger is attending both events and will simply arrive late.
+                    # We do not ban them with a hard penalty here, as it would prevent BOTH events from being scheduled.
+                    # BUT we must enforce it if the events overlap heavily (e.g., > 30 minutes), because then it's a true double-booking.
+                    is_true_double_booking = (gap_seconds < -1800)
+                    if gap_seconds_with_tolerance < min_needed_seconds and not (shares_passenger and not is_true_double_booking):
                         # Passenger conflict hard penalty (impossible)
                         model.Add(sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1)
                     elif gap_seconds < desired_needed_seconds:
@@ -424,7 +428,11 @@ def solve_schedule(
                 gap_seconds = float('inf')
 
             gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
-            if gap_seconds_with_tolerance < min_needed_seconds:
+            
+            # If they share a passenger, the driver is transporting the passenger between their back-to-back events.
+            # Even if the calendar events overlap, they must be allowed to make the drive. We bypass the hard driver conflict penalty.
+            is_true_double_booking = (gap_seconds < -1800)
+            if gap_seconds_with_tolerance < min_needed_seconds and not (shares_passenger and not is_true_double_booking):
                 # Driver conflict hard penalty (impossible)
                 for d in drivers:
                     if d.id == 'unassigned_ghost': continue
@@ -587,16 +595,16 @@ def solve_schedule(
                             else:
                                 travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
                         
-                        if shares_passenger:
-                            objective_terms.append(both_assigned * int(50000 * stickiness_bonus_mult))
-                            
-                        if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
-                            # Higher bonus for doing things at the exact same location (reduces travel)
-                            objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
-                            
-                        # Penalize travel time for events assigned to the same driver
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds < 10800: # 3 hours
+                            if shares_passenger:
+                                objective_terms.append(both_assigned * int(50000 * stickiness_bonus_mult))
+                                
+                            if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
+                                # Higher bonus for doing things at the exact same location (reduces travel)
+                                objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
+                                
+                            # Penalize travel time for events assigned to the same driver
                             objective_terms.append(both_assigned * (-int(travel_mins * travel_time_penalty_mult)))
                     
     # 4c. Mutually Exclusive Event Groups
