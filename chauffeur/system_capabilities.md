@@ -72,3 +72,9 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 1. **Never use "Avoid" to completely block a driver.** If the driver absolutely cannot do it, use `unavailable`. Only use `avoid` if the driver should be a last resort.
 2. **Use Group Events sparingly.** Grouping large chains of events can drastically reduce solver feasibility (making it "too sticky").
 3. **Recommend Tolerance for tight schedules.** If the user complains that events are going unassigned due to 5-10 minute overlaps, recommend adding a `tolerance` rule to allow minor late arrivals.
+
+
+## User Interface Architecture
+- The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state ulesSubTab.
+- Rule creation forms are located at the top of each sub-tab, before the respective rule lists.
+

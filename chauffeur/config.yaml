@@ -1,6 +1,6 @@
 name: "Chauffeur"
 description: "A smart Graph-based Calendar Assistant for mapping overlapping family driving routes."
-version: "v2.0.52"
+version: "v2.0.53"
 slug: "chauffeur"
 init: false
 arch:
@@ -37,5 +37,6 @@ ingress: true
 ingress_port: 8000
 panel_icon: mdi:car-multiple
 panel_title: "Chauffeur"
+
 
 
