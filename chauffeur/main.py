@@ -1544,6 +1544,23 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     "passenger_ids": list(key[0])
                 })
 
+        # Calculate matched rules for each event
+        matched_rules = {}
+        for e in all_events_for_ui.values():
+            m_rules = []
+            for pr in priority_rules:
+                if matcher.does_event_match_rule(e, pr, passengers):
+                    pr_dict = pr.dict() if hasattr(pr, 'dict') else pr
+                    pr_dict['_is_priority'] = True
+                    m_rules.append(pr_dict)
+            for r in rules:
+                if matcher.does_event_match_rule(e, r, passengers):
+                    r_dict = r.dict() if hasattr(r, 'dict') else r
+                    r_dict['_is_priority'] = False
+                    m_rules.append(r_dict)
+            if m_rules:
+                matched_rules[e.id] = m_rules
+
         data_payload = jsonable_encoder({
             "duplicate_groups": duplicate_groups,
             "events": list(all_events_for_ui.values()),
@@ -1563,6 +1580,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "driver_events": driver_events_ids,
             "home_location": home_location or "",
             "diagnostics": diagnostics,
+            "matched_rules": matched_rules,
             "passengers": passengers,
             "drivers": drivers,
             "solving_dates": schedule_coordinator.get_solving_dates(),

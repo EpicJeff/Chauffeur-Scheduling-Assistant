@@ -240,34 +240,48 @@
                     </div>
                 </div>
 
-                <div id="conflicts-section" class="hidden mt-6 pt-6 border-t border-gray-700">
-                    <h4 class="text-xl font-bold text-red-400 mb-3 flex items-center">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
-                            </path>
-                        </svg>
-                        Conflicting Events
-                    </h4>
-                    <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because they
-                        conflict with this event. Click Swap to override the schedule.</p>
-                    <div id="conflicts-list" class="space-y-3"></div>
+                <!-- Tabs -->
+                <div id="modal-tabs" class="mt-6 flex space-x-2 border-b border-gray-700 hidden">
+                    <button id="tab-btn-rules" onclick="switchModalTab('rules')" class="px-4 py-2 text-sm font-bold text-blue-400 hover:text-blue-300 border-b-2 border-blue-500 transition-colors focus:outline-none">Matched Rules</button>
+                    <button id="tab-btn-diagnostics" onclick="switchModalTab('diagnostics')" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-white border-b-2 border-transparent transition-colors focus:outline-none">Diagnostics</button>
                 </div>
 
-                <div id="diagnostics-section" class="hidden mt-6 pt-6 border-t border-gray-700">
-                    <h4 class="text-xl font-bold text-yellow-400 mb-3 flex items-center">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
-                            </path>
-                        </svg>
-                        Solver Diagnostics
-                    </h4>
-                    <p class="text-gray-400 text-sm mb-4">Why couldn't this event be assigned to a driver?</p>
-                    <div id="diagnostics-list" class="space-y-3"></div>
+                <!-- Tab: Rules -->
+                <div id="tab-content-rules" class="hidden mt-4">
+                    <div id="matched-rules-list" class="space-y-3"></div>
                 </div>
 
-                <div id="view-unassigned-reason"></div>
+                <!-- Tab: Diagnostics -->
+                <div id="tab-content-diagnostics" class="hidden mt-4 space-y-6">
+                    <div id="conflicts-section" class="hidden">
+                        <h4 class="text-xl font-bold text-red-400 mb-3 flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                                </path>
+                            </svg>
+                            Conflicting Events
+                        </h4>
+                        <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because they
+                            conflict with this event. Click Swap to override the schedule.</p>
+                        <div id="conflicts-list" class="space-y-3"></div>
+                    </div>
+
+                    <div id="diagnostics-section" class="hidden">
+                        <h4 class="text-xl font-bold text-yellow-400 mb-3 flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                </path>
+                            </svg>
+                            Solver Diagnostics
+                        </h4>
+                        <p class="text-gray-400 text-sm mb-4">Why couldn't this event be assigned to a driver?</p>
+                        <div id="diagnostics-list" class="space-y-3"></div>
+                    </div>
+
+                    <div id="view-unassigned-reason"></div>
+                </div>
 
                 <div class="mt-8 flex justify-end space-x-4">
                     <button id="remove-override-btn" onclick="removeOverride(activeEventId)"
@@ -1020,6 +1034,32 @@
             return new Date(localStr).toISOString();
         }
 
+        function switchModalTab(tabId) {
+            const rulesBtn = document.getElementById('tab-btn-rules');
+            const diagBtn = document.getElementById('tab-btn-diagnostics');
+            const rulesContent = document.getElementById('tab-content-rules');
+            const diagContent = document.getElementById('tab-content-diagnostics');
+            
+            const activeClass = ['text-blue-400', 'border-blue-500'];
+            const inactiveClass = ['text-gray-400', 'border-transparent'];
+            
+            if (tabId === 'rules') {
+                rulesBtn.classList.add(...activeClass);
+                rulesBtn.classList.remove(...inactiveClass);
+                diagBtn.classList.add(...inactiveClass);
+                diagBtn.classList.remove(...activeClass);
+                rulesContent.classList.remove('hidden');
+                diagContent.classList.add('hidden');
+            } else {
+                diagBtn.classList.add(...activeClass);
+                diagBtn.classList.remove(...inactiveClass);
+                rulesBtn.classList.add(...inactiveClass);
+                rulesBtn.classList.remove(...activeClass);
+                diagContent.classList.remove('hidden');
+                rulesContent.classList.add('hidden');
+            }
+        }
+
         function openEventModal(eventId, originLocationEnc) {
             activeEventId = eventId;
             const ev = currentEventsMap[eventId];
@@ -1248,6 +1288,52 @@
                 document.getElementById('view-unassigned-reason').innerHTML = unassignedHtml;
             } else {
                 document.getElementById('view-unassigned-reason').innerHTML = '';
+            }
+
+            // Matched Rules
+            const rulesSection = document.getElementById('matched-rules-list');
+            const mRules = currentData.matched_rules && currentData.matched_rules[eventId] ? currentData.matched_rules[eventId] : [];
+            if (mRules.length > 0) {
+                rulesSection.innerHTML = mRules.map(r => {
+                    const badgeColor = r._is_priority ? 'bg-purple-900 text-purple-200 border-purple-500' : 'bg-blue-900 text-blue-200 border-blue-500';
+                    const badgeText = r._is_priority ? 'Priority' : 'Routing';
+                    return `
+                        <div class="bg-gray-800 border border-gray-700 p-3 rounded-lg flex flex-col">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="font-bold text-white text-sm">${r.name || 'Unnamed Rule'}</span>
+                                <span class="text-xs px-2 py-0.5 rounded border ${badgeColor}">${badgeText}</span>
+                            </div>
+                            <span class="text-xs text-gray-400">${r.description || ''}</span>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                rulesSection.innerHTML = '<p class="text-sm text-gray-500 italic">No rules matched this event.</p>';
+            }
+
+            // Tab visibility logic
+            const hasDiagnostics = !document.getElementById('diagnostics-section').classList.contains('hidden') || 
+                                   !document.getElementById('conflicts-section').classList.contains('hidden') ||
+                                   document.getElementById('view-unassigned-reason').innerHTML.trim() !== '';
+            
+            const tabsContainer = document.getElementById('modal-tabs');
+            const tabBtnDiag = document.getElementById('tab-btn-diagnostics');
+            const tabContentRules = document.getElementById('tab-content-rules');
+            const tabContentDiag = document.getElementById('tab-content-diagnostics');
+
+            if (mRules.length === 0 && !hasDiagnostics) {
+                tabsContainer.classList.add('hidden');
+                tabContentRules.classList.add('hidden');
+                tabContentDiag.classList.add('hidden');
+            } else {
+                tabsContainer.classList.remove('hidden');
+                if (hasDiagnostics) {
+                    tabBtnDiag.classList.remove('hidden');
+                    switchModalTab('diagnostics');
+                } else {
+                    tabBtnDiag.classList.add('hidden');
+                    switchModalTab('rules');
+                }
             }
 
             if (ev.needs_triage) {
