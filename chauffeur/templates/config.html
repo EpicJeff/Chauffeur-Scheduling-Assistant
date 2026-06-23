@@ -915,8 +915,6 @@
                             </div>
                         </div>
 
-                        <div
-
                     <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2">
                         <button @click="rulesSubTab = 'routing'" :class="rulesSubTab === 'routing' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Routing Rules</button>
                         <button @click="rulesSubTab = 'priority'" :class="rulesSubTab === 'priority' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Priority Rules</button>
@@ -1506,9 +1504,6 @@
                                         class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center justify-center">Cancel</button>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                </div>
 
 
 <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
@@ -1657,8 +1652,7 @@
         </template>
     </div>
 </div>
-                            </div>
-
+                        </div>
                     </div>
                 <!-- Themes -->
                 <div x-show="activeTab === 'themes'" x-cloak x-transition.opacity
@@ -1747,8 +1741,6 @@
                 </div>
             </div>
         </div>
-    </div>
-    </div>
 
     <script>
         function configApp() {
@@ -2467,10 +2459,10 @@
                             if (this.newRule.filter_sets.length < 2) return alert('You must specify at least two filter sets to group');
                             for (let i = 0; i < this.newRule.filter_sets.length; i++) {
                                 let fs = this.newRule.filter_sets[i];
-                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0) return alert('Event Filter ' + (i + 1) + ' must have at least one keyword or passenger');
+                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.time_start && !fs.time_end && !fs.location) return alert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, time, etc)');
                             }
                         } else {
-                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return alert('You must specify at least one constraint (keyword, passenger, time, etc)');
                         }
 
                         const payload = JSON.parse(JSON.stringify(this.newRule));
@@ -2542,7 +2534,7 @@
                         }
                         this.newPriorityRuleKeywordInput = '';
 
-                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0) return alert('You must specify at least one keyword or passenger');
+                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return alert('You must specify at least one constraint (keyword, passenger, time, etc)');
                         this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
 
                         const payload = JSON.parse(JSON.stringify(this.newPriorityRule));
