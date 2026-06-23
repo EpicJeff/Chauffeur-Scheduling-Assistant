@@ -68,6 +68,13 @@ Enforces artificial padding around an event for a driver.
 Distinct from standard rules, priority rules allow dynamic modification of the `Base Assignment Reward` (`100`) on an event-by-event basis.
 - **Why use this?** If the user says "Doctor appointments are the most important thing to schedule," you create a Priority Rule with `keywords: ["Doctor"]` and `weight_modifier: 10000`. This ensures the solver prioritizes finding *any* driver for the doctor appointment before solving other low-priority events.
 
+## Matching Logic
+- **AND vs OR:** Across different criteria types in a single rule (e.g., Keywords AND Passengers AND Days), the solver uses `AND` logic. An event must meet all configured criteria types.
+- **Match Any vs Match All:** For criteria that support multiple selections (Keywords, Passengers), the solver defaults to "Match Any" (OR logic). 
+  - For example, if two passengers are selected, the rule matches if *either* is an attendee.
+  - This behavior can be toggled using the `keywords_match_all` and `passengers_match_all` boolean flags. When set to `true`, the solver switches to "Match All" (AND logic) for that specific criterion, requiring all listed keywords or passengers to be present on the event for the rule to match.
+- **Filter Sets (Groups):** For grouped rules with multiple `filter_sets`, the evaluation across sets is an `OR` logic (matches if it hits Group A OR Group B).
+
 ## Best Practices for AI Recommendations
 1. **Never use "Avoid" to completely block a driver.** If the driver absolutely cannot do it, use `unavailable`. Only use `avoid` if the driver should be a last resort.
 2. **Use Group Events sparingly.** Grouping large chains of events can drastically reduce solver feasibility (making it "too sticky").

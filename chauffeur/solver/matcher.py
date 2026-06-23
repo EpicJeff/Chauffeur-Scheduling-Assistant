@@ -54,34 +54,68 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
     # 1. Keywords
     if hasattr(rule, 'keywords') and rule.keywords:
         has_top_criteria = True
-        match_kw = False
         event_text = (event.title + " " + (event.description or "")).lower()
-        for kw in rule.keywords:
-            if kw.lower() in event_text:
-                match_kw = True
-                break
+        match_all = getattr(rule, 'keywords_match_all', False)
+        
+        if match_all:
+            match_kw = True
+            for kw in rule.keywords:
+                if kw.lower() not in event_text:
+                    match_kw = False
+                    break
+        else:
+            match_kw = False
+            for kw in rule.keywords:
+                if kw.lower() in event_text:
+                    match_kw = True
+                    break
+                    
         if not match_kw: top_matches = False
         
     # 2. Passengers
     if top_matches and hasattr(rule, 'passenger_ids') and rule.passenger_ids:
         has_top_criteria = True
-        match_pax = False
+        match_all = getattr(rule, 'passengers_match_all', False)
         
-        resolved_pids = set()
-        for pid in rule.passenger_ids:
-            resolved_pids.add(str(pid))
-            if passengers:
-                for p in passengers:
-                    if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
-                        resolved_pids.add(str(p.id))
-                        if p.calendar_ids:
-                            for cid in p.calendar_ids:
-                                resolved_pids.add(str(cid))
-                        
-        for pid in resolved_pids:
-            if pid in event.calendar_ids:
-                match_pax = True
-                break
+        if match_all:
+            match_pax = True
+            for pid in rule.passenger_ids:
+                resolved_pids_for_this_passenger = {str(pid)}
+                if passengers:
+                    for p in passengers:
+                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
+                            resolved_pids_for_this_passenger.add(str(p.id))
+                            if p.calendar_ids:
+                                for cid in p.calendar_ids:
+                                    resolved_pids_for_this_passenger.add(str(cid))
+                
+                passenger_found = False
+                for r_pid in resolved_pids_for_this_passenger:
+                    if r_pid in event.calendar_ids:
+                        passenger_found = True
+                        break
+                
+                if not passenger_found:
+                    match_pax = False
+                    break
+        else:
+            match_pax = False
+            resolved_pids = set()
+            for pid in rule.passenger_ids:
+                resolved_pids.add(str(pid))
+                if passengers:
+                    for p in passengers:
+                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
+                            resolved_pids.add(str(p.id))
+                            if p.calendar_ids:
+                                for cid in p.calendar_ids:
+                                    resolved_pids.add(str(cid))
+                            
+            for pid in resolved_pids:
+                if pid in event.calendar_ids:
+                    match_pax = True
+                    break
+                    
         if not match_pax: top_matches = False
         
     # 3. Days of Week

@@ -1031,8 +1031,18 @@
                                     <div
                                         class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 border-t border-gray-600 pt-4">
                                         <div>
-                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Keywords (Must
-                                                match one)</label>
+                                            <div class="flex items-center justify-between mb-1">
+                                                <label class="block text-gray-400 text-sm font-bold">Keywords</label>
+                                                <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newRule.keywords.length > 1">
+                                                    <span class="text-gray-500" :class="newRule.keywords_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                    <div class="relative">
+                                                        <input type="checkbox" x-model="newRule.keywords_match_all" class="sr-only">
+                                                        <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newRule.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                        <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newRule.keywords_match_all ? 'translate-x-3' : ''"></div>
+                                                    </div>
+                                                    <span class="text-gray-500" :class="newRule.keywords_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                                </label>
+                                            </div>
                                             <div class="flex gap-2 mb-2">
                                                 <input type="text" x-model="newRuleKeywordInput"
                                                     @keydown.enter.prevent="addRuleKeyword()" placeholder="e.g. Soccer"
@@ -1052,8 +1062,18 @@
                                             </div>
                                         </div>
                                         <div>
-                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Passengers (Must
-                                                match one)</label>
+                                            <div class="flex items-center justify-between mb-1">
+                                                <label class="block text-gray-400 text-sm font-bold">Passengers</label>
+                                                <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newRule.passenger_ids.length > 1">
+                                                    <span class="text-gray-500" :class="newRule.passengers_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                    <div class="relative">
+                                                        <input type="checkbox" x-model="newRule.passengers_match_all" class="sr-only">
+                                                        <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newRule.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                        <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newRule.passengers_match_all ? 'translate-x-3' : ''"></div>
+                                                    </div>
+                                                    <span class="text-gray-500" :class="newRule.passengers_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                                </label>
+                                            </div>
                                             <div class="flex flex-wrap gap-2">
                                                 <template x-for="p in passengers">
                                                     <button @click.prevent="toggleRulePassenger(p)"
@@ -1124,8 +1144,18 @@
                                                 </div>
                                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                     <div>
-                                                        <label class="block text-gray-400 mb-1 text-xs">Keywords (Must
-                                                            match one)</label>
+                                                        <div class="flex items-center justify-between mb-1">
+                                                            <label class="block text-gray-400 text-xs font-bold">Keywords</label>
+                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.keywords.length > 1">
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                                <div class="relative">
+                                                                    <input type="checkbox" x-model="fs.keywords_match_all" class="sr-only">
+                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.keywords_match_all ? 'translate-x-2' : ''"></div>
+                                                                </div>
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                            </label>
+                                                        </div>
                                                         <div class="flex gap-2 mb-2">
                                                             <input type="text" :id="'kwInput_' + fidx"
                                                                 @keydown.enter.prevent="let val = document.getElementById('kwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('kwInput_' + fidx).value = '';"
@@ -1148,8 +1178,18 @@
                                                         </div>
                                                     </div>
                                                     <div>
-                                                        <label class="block text-gray-400 mb-1 text-xs">Passengers (Must
-                                                            match one)</label>
+                                                        <div class="flex items-center justify-between mb-1">
+                                                            <label class="block text-gray-400 text-xs font-bold">Passengers</label>
+                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.passenger_ids.length > 1">
+                                                                <span class="text-gray-500" :class="fs.passengers_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                                <div class="relative">
+                                                                    <input type="checkbox" x-model="fs.passengers_match_all" class="sr-only">
+                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.passengers_match_all ? 'translate-x-2' : ''"></div>
+                                                                </div>
+                                                                <span class="text-gray-500" :class="fs.passengers_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                            </label>
+                                                        </div>
                                                         <div class="flex flex-wrap gap-2">
                                                             <template x-for="p in passengers">
                                                                 <button
@@ -1262,10 +1302,10 @@
                             </template>
                             <span class="font-bold">IF</span>
                             <template x-if="rule.keywords && rule.keywords.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
@@ -1339,10 +1379,10 @@
                             </template>
                             <span class="font-bold">IF</span>
                             <template x-if="rule.keywords && rule.keywords.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
@@ -1416,8 +1456,18 @@
 
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-600 pt-4">
                                     <div>
-                                        <label class="block text-gray-400 mb-1 text-sm font-bold">Keywords (Must match
-                                            one)</label>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="block text-gray-400 text-sm font-bold">Keywords</label>
+                                            <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newPriorityRule.keywords.length > 1">
+                                                <span class="text-gray-500" :class="newPriorityRule.keywords_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                <div class="relative">
+                                                    <input type="checkbox" x-model="newPriorityRule.keywords_match_all" class="sr-only">
+                                                    <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newPriorityRule.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                    <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newPriorityRule.keywords_match_all ? 'translate-x-3' : ''"></div>
+                                                </div>
+                                                <span class="text-gray-500" :class="newPriorityRule.keywords_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                            </label>
+                                        </div>
                                         <div class="flex gap-2 mb-2">
                                             <input type="text" x-model="newPriorityRuleKeywordInput"
                                                 @keydown.enter.prevent="addPriorityRuleKeyword()"
@@ -1438,8 +1488,18 @@
                                         </div>
                                     </div>
                                     <div>
-                                        <label class="block text-gray-400 mb-1 text-sm font-bold">Passengers (Must match
-                                            one)</label>
+                                        <div class="flex items-center justify-between mb-1">
+                                            <label class="block text-gray-400 text-sm font-bold">Passengers</label>
+                                            <label class="flex items-center space-x-2 cursor-pointer text-xs" x-show="newPriorityRule.passenger_ids.length > 1">
+                                                <span class="text-gray-500" :class="newPriorityRule.passengers_match_all ? '' : 'text-blue-400 font-bold'">Match Any</span>
+                                                <div class="relative">
+                                                    <input type="checkbox" x-model="newPriorityRule.passengers_match_all" class="sr-only">
+                                                    <div class="block bg-gray-600 w-8 h-5 rounded-full" :class="newPriorityRule.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                    <div class="dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition transform" :class="newPriorityRule.passengers_match_all ? 'translate-x-3' : ''"></div>
+                                                </div>
+                                                <span class="text-gray-500" :class="newPriorityRule.passengers_match_all ? 'text-blue-400 font-bold' : ''">Match All</span>
+                                            </label>
+                                        </div>
                                         <div class="flex flex-wrap gap-2">
                                             <template x-for="p in passengers">
                                                 <button @click.prevent="togglePriorityRulePassenger(p)"
@@ -1546,10 +1606,10 @@
                             </template>
                             <span class="font-bold">IF</span>
                             <template x-if="rule.keywords && rule.keywords.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
@@ -1620,10 +1680,10 @@
                             </template>
                             <span class="font-bold">IF</span>
                             <template x-if="rule.keywords && rule.keywords.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword: ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic" x-text="'Keyword ' + (rule.keywords.length > 1 ? (rule.keywords_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.keywords) ? rule.keywords.join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.passenger_ids && rule.passenger_ids.length > 0">
-                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger: ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
+                                <span class="bg-gray-800 px-2 py-1 rounded text-green-300" x-text="'Passenger ' + (rule.passenger_ids.length > 1 ? (rule.passengers_match_all ? '(ALL)' : '(ANY)') : '') + ': ' + (Array.isArray(rule.passenger_ids) ? rule.passenger_ids.map(p => getPassengerName(p)).join(', ') : '')"></span>
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
@@ -2424,7 +2484,9 @@
                         buffer_after_mins: rule.buffer_after_mins || 0,
                         grouping_period: rule.grouping_period || 'daily',
                         keywords: [...(rule.keywords || [])],
+                        keywords_match_all: rule.keywords_match_all || false,
                         passenger_ids: [...(rule.passenger_ids || [])],
+                        passengers_match_all: rule.passengers_match_all || false,
                         days_of_week: [...(rule.days_of_week || [])],
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || '',
@@ -2441,7 +2503,7 @@
                 resetRuleForm() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
                 },
                 cancelEditRule() {
                     this.resetRuleForm();
@@ -2512,7 +2574,9 @@
                     this.newPriorityRule = {
                         weight_modifier: rule.weight_modifier,
                         keywords: [...(rule.keywords || [])],
+                        keywords_match_all: rule.keywords_match_all || false,
                         passenger_ids: [...(rule.passenger_ids || [])],
+                        passengers_match_all: rule.passengers_match_all || false,
                         days_of_week: [...(rule.days_of_week || [])],
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || '',
@@ -2528,7 +2592,7 @@
                 cancelEditPriorityRule() {
                     this.editPriorityRuleId = null;
                     this.newPriorityRuleKeywordInput = '';
-                    this.newPriorityRule = { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' };
+                    this.newPriorityRule = { weight_modifier: 100, keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], time_start: '', time_end: '', location: '' };
                 },
                 async submitPriorityRule() {
                     this.saving = true;

@@ -1331,11 +1331,13 @@
                         filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-orange-300 italic">Tolerance (${r.tolerance_type === 'arrival' ? 'Arrival' : (r.tolerance_type === 'departure' ? 'Departure' : 'Both')}): ${r.tolerance_mins}m</span>`;
                     }
                     if (r.keywords && r.keywords.length > 0) {
-                        filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic">Keyword: ${r.keywords.join(', ')}</span>`;
+                        const kwLabel = r.keywords.length > 1 ? (r.keywords_match_all ? '(ALL)' : '(ANY)') : '';
+                        filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-yellow-300 italic">Keyword ${kwLabel}: ${r.keywords.join(', ')}</span>`;
                     }
                     if (r.passenger_ids && r.passenger_ids.length > 0) {
                         const passNames = r.passenger_ids.map(pId => passengersMap[pId] ? passengersMap[pId].name : 'Unknown');
-                        filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-green-300">Passenger: ${passNames.join(', ')}</span>`;
+                        const paxLabel = r.passenger_ids.length > 1 ? (r.passengers_match_all ? '(ALL)' : '(ANY)') : '';
+                        filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-green-300">Passenger ${paxLabel}: ${passNames.join(', ')}</span>`;
                     }
                     if (r.days_of_week && r.days_of_week.length > 0) {
                         const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
