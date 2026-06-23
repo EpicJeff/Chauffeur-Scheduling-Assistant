@@ -548,22 +548,35 @@ def solve_schedule(
                 weight += int(5 * stickiness_bonus_mult)
                 
             # Apply Driver Rules
+            avoid_penalty = 0
             for r in rules:
+                r_type = getattr(r, 'constraint_type', '')
+                a_type = getattr(r, 'assignment_type', '')
+                if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
+                    a_type = r_type
+                    r_type = 'assignment'
+
                 # Simple keyword matching (case-insensitive)
                 if does_event_match_rule(e, r, passengers) and r.driver_id == d.id:
-                    if r.constraint_type == 'required':
-                        # This driver MUST do it, meaning all other drivers cannot
-                        for other_d in drivers:
-                            if other_d.id != d.id:
-                                if (e.id, other_d.id) not in overridden_pairs:
-                                    model.Add(assign_vars[(e.id, other_d.id)] == 0)
-                        weight += 500
-                    elif r.constraint_type == 'preferred':
-                        weight += 10000
-                    elif r.constraint_type == 'unavailable':
-                        if (e.id, d.id) not in overridden_pairs:
-                            model.Add(assign_vars[(e.id, d.id)] == 0)
-                        
+                    if r_type == 'assignment':
+                        if a_type == 'required':
+                            # This driver MUST do it, meaning all other drivers cannot
+                            for other_d in drivers:
+                                if other_d.id != d.id:
+                                    if (e.id, other_d.id) not in overridden_pairs:
+                                        model.Add(assign_vars[(e.id, other_d.id)] == 0)
+                            weight += 500
+                        elif a_type == 'preferred':
+                            weight += 10000
+                        elif a_type == 'unavailable':
+                            if (e.id, d.id) not in overridden_pairs:
+                                model.Add(assign_vars[(e.id, d.id)] == 0)
+                        elif a_type == 'avoid':
+                            avoid_penalty = 100000
+                            
+            if avoid_penalty > 0:
+                weight = min(weight - avoid_penalty, 1)
+
             objective_terms.append(assign_vars[(e.id, d.id)] * weight)
             
     # 4b. Passenger and Location Continuity Bonus
@@ -1413,15 +1426,22 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             # 3. Rule constraints
             if not reason:
                 for r in rules:
+                    r_type = getattr(r, 'constraint_type', '')
+                    a_type = getattr(r, 'assignment_type', '')
+                    if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
+                        a_type = r_type
+                        r_type = 'assignment'
+
                     if does_event_match_rule(e, r, passengers):
-                        if r.constraint_type == 'unavailable' and r.driver_id == d.id:
-                            if (e.id, d.id) not in overridden_pairs:
-                                reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
-                                break
-                        elif r.constraint_type == 'required' and r.driver_id != d.id:
-                            if (e.id, d.id) not in overridden_pairs:
-                                reason = {"text": "Blocked by 'Required' rule for another driver.", "type": "rule"}
-                                break
+                        if r_type == 'assignment':
+                            if a_type == 'unavailable' and r.driver_id == d.id:
+                                if (e.id, d.id) not in overridden_pairs:
+                                    reason = {"text": "Prohibited by 'Unavailable' rule.", "type": "rule"}
+                                    break
+                            elif a_type == 'required' and r.driver_id != d.id:
+                                if (e.id, d.id) not in overridden_pairs:
+                                    reason = {"text": "Blocked by 'Required' rule for another driver.", "type": "rule"}
+                                    break
             
             # 4. Overlap with existing assignments
             if not reason:
