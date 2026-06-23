@@ -374,7 +374,9 @@ def solve_schedule(
                     attendance_conflict = event_requires_attendance.get(e1.id, False) or event_requires_attendance.get(e2.id, False)
                     
                     gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
-                    if gap_seconds_with_tolerance < min_needed_seconds:
+                    # If they share a passenger, the passenger is attending both events and will simply arrive late.
+                    # We do not ban them with a hard penalty here, as it would prevent BOTH events from being scheduled.
+                    if gap_seconds_with_tolerance < min_needed_seconds and not shares_passenger:
                         # Passenger conflict hard penalty (impossible)
                         model.Add(sum(assign_vars[(e1.id, d.id)] for d in drivers) + sum(assign_vars[(e2.id, d.id)] for d in drivers) <= 1)
                     elif gap_seconds < desired_needed_seconds:
@@ -424,7 +426,10 @@ def solve_schedule(
                 gap_seconds = float('inf')
 
             gap_seconds_with_tolerance = gap_seconds + (e_tolerances.get(e2.id, {}).get('arrival', 0) * 60) + (e_tolerances.get(e1.id, {}).get('departure', 0) * 60)
-            if gap_seconds_with_tolerance < min_needed_seconds:
+            
+            # If they share a passenger, the driver is transporting the passenger between their back-to-back events.
+            # Even if the calendar events overlap, they must be allowed to make the drive. We bypass the hard driver conflict penalty.
+            if gap_seconds_with_tolerance < min_needed_seconds and not shares_passenger:
                 # Driver conflict hard penalty (impossible)
                 for d in drivers:
                     if d.id == 'unassigned_ghost': continue
