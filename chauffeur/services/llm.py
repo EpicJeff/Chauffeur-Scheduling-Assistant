@@ -759,8 +759,18 @@ def agentic_chat_loop(user_msg: str) -> str:
     memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
 
     import datetime
+    import os
     today_str = datetime.datetime.now().strftime('%A, %B %d, %Y')
-    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}
+    
+    capabilities_str = ""
+    capabilities_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "system_capabilities.md")
+    try:
+        with open(capabilities_path, "r", encoding="utf-8") as f:
+            capabilities_str = f"\n\nSYSTEM CAPABILITIES AND CONSTRAINTS:\n{f.read()}\n"
+    except Exception:
+        pass
+
+    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}{capabilities_str}
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
 Use the tools provided to fetch the current state, add rules, add overrides, update your memory, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
