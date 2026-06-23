@@ -1327,6 +1327,18 @@
                             </button>
                         </div>
                     </div>
+                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Matched Events in Schedule</div>
+                        <div class="space-y-1">
+                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                                <div class="text-sm text-gray-300 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span x-text="ev.title" class="font-medium"></span>
+                                    <span x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'})" class="text-xs text-gray-500"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                 </div>
             </div>
         </template>
@@ -1402,6 +1414,18 @@
                             <button @click.stop="deleteRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Matched Events in Schedule</div>
+                        <div class="space-y-1">
+                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                                <div class="text-sm text-gray-300 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span x-text="ev.title" class="font-medium"></span>
+                                    <span x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'})" class="text-xs text-gray-500"></span>
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -1631,6 +1655,18 @@
                             </button>
                         </div>
                     </div>
+                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Matched Events in Schedule</div>
+                        <div class="space-y-1">
+                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                                <div class="text-sm text-gray-300 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span x-text="ev.title" class="font-medium"></span>
+                                    <span x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'})" class="text-xs text-gray-500"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                 </div>
             </div>
         </template>
@@ -1703,6 +1739,18 @@
                             <button @click.stop="deletePriorityRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
+                        </div>
+                    </div>
+                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Matched Events in Schedule</div>
+                        <div class="space-y-1">
+                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                                <div class="text-sm text-gray-300 flex items-center gap-2">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span x-text="ev.title" class="font-medium"></span>
+                                    <span x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'})" class="text-xs text-gray-500"></span>
+                                </div>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -1866,6 +1914,7 @@
                 refiningPhilosophy: false,
                 refiningDriverBio: false,
                 refiningPassengerBio: false,
+                matchedEventsByRule: {},
 
                 newDriver: { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' },
                 newDriverCalendarInput: '',
@@ -1892,6 +1941,7 @@
                     await this.loadRules();
                     await this.loadPriorityRules();
                     await this.loadThemes();
+                    this.loadMatchedEvents();
                     console.log("configApp init complete");
                 },
 
@@ -2469,6 +2519,33 @@
                     } catch (e) {
                         console.error("Failed to load rules", e);
                         this.rules = [];
+                    }
+                },
+                async loadMatchedEvents() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/schedule`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (data && data.matched_rules && data.events) {
+                            const mapping = {};
+                            const eventsMap = {};
+                            data.events.forEach(ev => eventsMap[ev.id] = ev);
+                            
+                            Object.keys(data.matched_rules).forEach(eventId => {
+                                const rulesMatchingEvent = data.matched_rules[eventId];
+                                const eventObj = eventsMap[eventId];
+                                if (eventObj) {
+                                    rulesMatchingEvent.forEach(rule => {
+                                        const rId = rule.doc_id || rule.id;
+                                        if (!mapping[rId]) mapping[rId] = [];
+                                        mapping[rId].push(eventObj);
+                                    });
+                                }
+                            });
+                            this.matchedEventsByRule = mapping;
+                        }
+                    } catch(e) {
+                        console.error("Failed to load matched events", e);
                     }
                 },
                 editRule(rule) {
