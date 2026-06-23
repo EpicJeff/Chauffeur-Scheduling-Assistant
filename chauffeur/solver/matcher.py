@@ -588,7 +588,7 @@ def solve_schedule(
                                 travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
                         
                         if shares_passenger:
-                            objective_terms.append(both_assigned * 50)
+                            objective_terms.append(both_assigned * int(50000 * stickiness_bonus_mult))
                             
                         if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
                             # Higher bonus for doing things at the exact same location (reduces travel)
