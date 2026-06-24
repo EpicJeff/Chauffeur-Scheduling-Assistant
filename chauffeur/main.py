@@ -198,7 +198,7 @@ def config(request: Request):
 
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request):
-    return templates.TemplateResponse("calendar.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="calendar.html")
 
 @app.get("/errands")
 def errands(request: Request):

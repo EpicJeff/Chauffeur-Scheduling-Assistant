@@ -606,22 +606,25 @@
     <script>
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
-        if (isReadOnly) {
-            const headerBtns = document.getElementById('header-buttons');
-            if (headerBtns) headerBtns.classList.add('hidden');
-            const pageHeader = document.getElementById('page-header');
-            if (pageHeader) pageHeader.classList.add('hidden');
-        }
-        if (isKiosk) {
-            const inboxPanel = document.getElementById('inbox-panel');
-            if (inboxPanel) inboxPanel.classList.add('hidden');
-
-            const fab = document.getElementById('kiosk-chat-fab');
-            if (fab) {
-                fab.classList.remove('hidden');
-                fab.classList.add('flex');
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            if (isReadOnly) {
+                const headerBtns = document.getElementById('header-buttons');
+                if (headerBtns) headerBtns.classList.add('hidden');
+                const pageHeader = document.getElementById('page-header');
+                if (pageHeader) pageHeader.classList.add('hidden');
             }
-        }
+            if (isKiosk) {
+                const inboxContainer = document.getElementById('inbox-container');
+                if (inboxContainer) inboxContainer.classList.add('hidden');
+
+                const fab = document.getElementById('kiosk-chat-fab');
+                if (fab) {
+                    fab.classList.remove('hidden');
+                    fab.classList.add('flex');
+                }
+            }
+        });
 
         const localSolvingDates = new Set();
         let routeEdges = {};
