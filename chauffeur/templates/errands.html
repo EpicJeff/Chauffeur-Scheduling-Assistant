@@ -100,9 +100,10 @@
         <!-- Input Area -->
         <div class="px-8 pb-6">
             <div class="relative bg-gray-800 rounded-xl shadow-sm border border-gray-700/50 flex flex-col focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
-                <input type="text" id="new-errand-input" placeholder="e.g. Pick up dry cleaning at 123 Main St (30m) !1" 
+                <input type="text" id="new-errand-input" onkeyup="handleNewErrandInput()" placeholder="e.g. Pick up dry cleaning at 123 Main St (30m) !1" 
                     class="w-full bg-transparent text-white px-5 py-4 outline-none placeholder-gray-500 text-lg rounded-t-xl"
                     autocomplete="off">
+                <div id="new-errand-autocomplete-dropdown" class="hidden absolute w-full top-14 mt-2 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto"></div>
                 
                 <!-- Quick Properties Bar -->
                 <div class="flex items-center justify-between px-4 py-3 border-t border-gray-700/50 bg-gray-800/80 rounded-b-xl">
@@ -181,7 +182,8 @@
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-1">Location</label>
-                        <input type="text" id="edit-location" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
+                        <div class="relative"><input type="text" id="edit-location" onkeyup="handleEditLocationInput()" autocomplete="off" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
+                        <div id="edit-autocomplete-dropdown" class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto"></div></div>
                     </div>
                     
                     <div class="grid grid-cols-2 gap-4">
@@ -224,6 +226,139 @@
     </div>
 
     <script>
+        
+        let autocompleteTimeout = null;
+        let currentSessionToken = null;
+
+        // Inbox Input Autocomplete
+        function handleNewErrandInput() {
+            const inputEl = document.getElementById('new-errand-input');
+            const dropdown = document.getElementById('new-errand-autocomplete-dropdown');
+            const text = inputEl.value;
+
+            const locMatch = text.match(/(?:@| at )([^!]+)$/i);
+            
+            if (!locMatch || locMatch[1].trim().length < 3) {
+                dropdown.classList.add('hidden');
+                currentSessionToken = null;
+                return;
+            }
+
+            const query = locMatch[1].trim();
+            if (!currentSessionToken) {
+                currentSessionToken = crypto.randomUUID();
+            }
+
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                try {
+                    const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(query)}&session_token=${currentSessionToken}`);
+                    const data = await res.json();
+
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        dropdown.innerHTML = data.suggestions.map(s => {
+                            const escapedDesc = s.description.replace(/'/g, "\\'");
+                            const mapboxId = s.mapbox_id ? `'${s.mapbox_id}'` : 'null';
+                            return `<div onclick="selectNewErrandLocation('${escapedDesc}', ${mapboxId})" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm text-left">${s.description}</div>`;
+                        }).join('');
+                        dropdown.classList.remove('hidden');
+                    } else {
+                        dropdown.classList.add('hidden');
+                    }
+                } catch (e) {
+                    console.error("Autocomplete failed", e);
+                }
+            }, 300);
+        }
+
+        async function selectNewErrandLocation(loc, mapboxId = null) {
+            const inputEl = document.getElementById('new-errand-input');
+            document.getElementById('new-errand-autocomplete-dropdown').classList.add('hidden');
+            
+            const text = inputEl.value;
+            const locMatch = text.match(/(?:@| at )([^!]+)$/i);
+            
+            if (locMatch) {
+                inputEl.value = text.replace(locMatch[0], locMatch[0].replace(locMatch[1], loc + ' '));
+                inputEl.focus();
+            }
+            
+            if (mapboxId && currentSessionToken) {
+                try {
+                    const res = await fetch(`api/places/retrieve?mapbox_id=${mapboxId}&session_token=${currentSessionToken}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.name) {
+                            const currentText = inputEl.value;
+                            const currentLocMatch = currentText.match(/(?:@| at )([^!]+)$/i);
+                            if (currentLocMatch) {
+                                inputEl.value = currentText.replace(currentLocMatch[0], currentLocMatch[0].replace(currentLocMatch[1].trim(), data.name + ' '));
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Retrieve failed", e);
+                }
+            }
+            currentSessionToken = null;
+        }
+
+        // Edit Modal Autocomplete
+        function handleEditLocationInput() {
+            const input = document.getElementById('edit-location').value;
+            const dropdown = document.getElementById('edit-autocomplete-dropdown');
+
+            if (input.length < 3) {
+                dropdown.classList.add('hidden');
+                currentSessionToken = null;
+                return;
+            }
+            if (!currentSessionToken) {
+                currentSessionToken = crypto.randomUUID();
+            }
+
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                try {
+                    const res = await fetch(`api/places/autocomplete?input=${encodeURIComponent(input)}&session_token=${currentSessionToken}`);
+                    const data = await res.json();
+
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        dropdown.innerHTML = data.suggestions.map(s => {
+                            const escapedDesc = s.description.replace(/'/g, "\\'");
+                            const mapboxId = s.mapbox_id ? `'${s.mapbox_id}'` : 'null';
+                            return `<div onclick="selectEditLocation('${escapedDesc}', ${mapboxId})" class="p-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 text-sm text-left">${s.description}</div>`;
+                        }).join('');
+                        dropdown.classList.remove('hidden');
+                    } else {
+                        dropdown.classList.add('hidden');
+                    }
+                } catch (e) {
+                    console.error("Autocomplete failed", e);
+                }
+            }, 300);
+        }
+
+        async function selectEditLocation(loc, mapboxId = null) {
+            document.getElementById('edit-location').value = loc;
+            document.getElementById('edit-autocomplete-dropdown').classList.add('hidden');
+            
+            if (mapboxId && currentSessionToken) {
+                try {
+                    const res = await fetch(`api/places/retrieve?mapbox_id=${mapboxId}&session_token=${currentSessionToken}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.name) {
+                            document.getElementById('edit-location').value = data.name;
+                        }
+                    }
+                } catch (e) {
+                    console.error("Retrieve failed", e);
+                }
+            }
+            currentSessionToken = null;
+        }
+
         let errands = [];
 
         async function fetchErrands() {
