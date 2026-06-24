@@ -1981,7 +1981,7 @@
             let localAssignments = {...assignments};
             let localRouteEdges = JSON.parse(JSON.stringify(data.route_edges || {}));
 
-            if (scheduled_errands && scheduled_errands.length > 0) {
+            if (window.showErrands && scheduled_errands && scheduled_errands.length > 0) {
                 scheduled_errands.forEach(errand => {
                     localEvents.push(errand);
                     localAssignments[errand.id] = errand.driver.id;

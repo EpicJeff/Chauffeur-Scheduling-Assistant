@@ -1,7 +1,8 @@
 <script>
     const urlParamsTheme = new URLSearchParams(window.location.search);
     const themeParam = urlParamsTheme.get('theme');
-    const isHaTheme = themeParam && themeParam.startsWith('ha');
+    const isKioskTheme = urlParamsTheme.get('kiosk') === 'true';
+    const isHaTheme = (themeParam && themeParam.startsWith('ha')) || isKioskTheme;
 
     function syncHaTheme() {
         try {
