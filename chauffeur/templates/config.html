@@ -2579,6 +2579,11 @@
                         const res = await fetch(`${this.apiBase}api/schedule`);
                         if (!res.ok) return;
                         const data = await res.json();
+                        
+                        if (data && data.calendar_metadata) {
+                            Object.assign(this.calendarMetadata, data.calendar_metadata);
+                        }
+                        
                         if (data && data.matched_rules && data.events) {
                             const mapping = {};
                             const eventsMap = {};
