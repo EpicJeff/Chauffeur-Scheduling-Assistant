@@ -87,6 +87,7 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 - **Kiosk Mode (`?kiosk=true`)**: A streamlined display state that hides the triage inbox and converts the full sidebar chat into a floating popup, maintaining chat history while maximizing schedule visibility.
 - **HA Theme (`?theme=ha`)**: Supports Home Assistant integrations via CSS variable propagation without overwriting the core Tailwind configuration palette. State is persisted across navigation views.
 - **Dynamic Drive Times**: The UI intelligently handles drive-time calculations when errands are toggled off. It accumulates the time of the hidden `A -> Errand` and `Errand -> B` edges so the gap accurately reflects the total actual drive time.
+- **Calendar Passenger Resolution**: The `calendar.html` view shares the same deep passenger resolution logic as the dashboard, analyzing `matched_rules` to display non-attendee passengers as colorful pills.
 
 ## Errands Scheduling Logic
 - **Errands Inbox**: A dynamic management UI allows users to add errands using natural language.
