@@ -166,5 +166,6 @@ class Errand(BaseModel):
     tags: List[str] = Field(default_factory=list)
     recurrence_rule: Optional[str] = None # e.g. 'daily', 'weekly', 'monthly'
     created_at: float = Field(default_factory=time.time)
+    starts_on: Optional[float] = None # Optional Unix timestamp overriding created_at for cycle anchors
 
 

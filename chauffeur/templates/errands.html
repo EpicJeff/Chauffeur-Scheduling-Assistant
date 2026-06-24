@@ -116,6 +116,10 @@
                             <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             30m
                         </button>
+                        <div class="flex items-center gap-2 border-l border-gray-700 pl-2 ml-1">
+                            <span class="text-sm font-medium text-gray-400">Starts On:</span>
+                            <input type="date" id="new-errand-starts-on" class="bg-gray-900 border border-gray-700 text-white rounded px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-blue-500">
+                        </div>
                     </div>
                     <button onclick="addErrand()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-semibold shadow-md shadow-blue-500/20 transition-all active:scale-95 flex items-center gap-2">
                         Add Errand
@@ -201,14 +205,20 @@
                             <input type="number" id="edit-duration" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Recurrence</label>
-                        <select id="edit-recurrence" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none appearance-none">
-                            <option value="">None</option>
-                            <option value="daily">Daily</option>
-                            <option value="weekly">Weekly</option>
-                            <option value="monthly">Monthly</option>
-                        </select>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Recurrence</label>
+                            <select id="edit-recurrence" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none appearance-none">
+                                <option value="">None</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-1">Starts On / Next Occurrence</label>
+                            <input type="date" id="edit-starts-on" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -419,6 +429,7 @@
                         <div class="flex items-center gap-3 text-xs text-gray-500 mt-1">
                             ${errand.location ? `<span class="flex items-center gap-1 truncate"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>${errand.location}</span>` : ''}
                             <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${errand.duration_mins}m</span>
+                            ${errand.starts_on && !errand.is_completed ? `<span class="flex items-center gap-1 text-blue-400 font-medium ml-2"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>${new Date(errand.starts_on * 1000).toLocaleDateString([], {month: 'short', day: 'numeric'})}</span>` : ''}
                         </div>
                     </div>
                 `;
@@ -487,6 +498,14 @@
                 title = title.replace(locMatch[0], '');
             }
 
+            const startsOnInput = document.getElementById('new-errand-starts-on');
+            let starts_on = Math.floor(Date.now() / 1000);
+            if (startsOnInput && startsOnInput.value) {
+                const parts = startsOnInput.value.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0);
+                starts_on = Math.floor(d.getTime() / 1000);
+            }
+
             return {
                 title: title.trim(),
                 duration_mins,
@@ -494,9 +513,18 @@
                 location,
                 is_completed: false,
                 status: 'pending',
-                recurrence_rule: null
+                recurrence_rule: null,
+                starts_on
             };
         }
+        
+        // Initialize Starts On input to today's date
+        window.addEventListener('DOMContentLoaded', () => {
+            const startsOnInput = document.getElementById('new-errand-starts-on');
+            if (startsOnInput) {
+                startsOnInput.value = new Date().toISOString().split('T')[0];
+            }
+        });
         
         async function rescheduleErrand(id) {
             const errand = errands.find(e => e.id === id);
@@ -574,6 +602,11 @@
             document.getElementById('edit-priority').value = errand.priority || 2;
             document.getElementById('edit-duration').value = errand.duration_mins || 30;
             document.getElementById('edit-recurrence').value = errand.recurrence_rule || '';
+            if (errand.starts_on) {
+                document.getElementById('edit-starts-on').value = new Date(errand.starts_on * 1000).toISOString().split('T')[0];
+            } else {
+                document.getElementById('edit-starts-on').value = '';
+            }
             
             document.getElementById('edit-modal').classList.remove('hidden');
         }
@@ -592,6 +625,14 @@
             errand.priority = parseInt(document.getElementById('edit-priority').value);
             errand.duration_mins = parseInt(document.getElementById('edit-duration').value);
             errand.recurrence_rule = document.getElementById('edit-recurrence').value || null;
+            const startsOnStr = document.getElementById('edit-starts-on').value;
+            if (startsOnStr) {
+                const parts = startsOnStr.split('-');
+                const d = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0);
+                errand.starts_on = Math.floor(d.getTime() / 1000);
+            } else {
+                errand.starts_on = Math.floor(Date.now() / 1000);
+            }
 
             closeEditModal();
             renderErrands();

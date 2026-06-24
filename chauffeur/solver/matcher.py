@@ -1569,28 +1569,28 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
 
     for errand in active_errands:
         # Calculate target window
-        created_at_ts = errand.get('created_at', 0)
+        anchor_ts = errand.get('starts_on') or errand.get('created_at', 0)
         try:
-            created_at = datetime.fromtimestamp(created_at_ts)
+            anchor_date = datetime.fromtimestamp(anchor_ts)
         except:
-            created_at = datetime.now()
+            anchor_date = datetime.now()
             
         rule = errand.get('recurrence_rule')
         
         if rule == 'weekly':
-            target_date = created_at + timedelta(days=7)
+            target_date = anchor_date + timedelta(days=7)
             window_start = (target_date - timedelta(days=2)).date()
             window_end = (target_date + timedelta(days=2)).date()
         elif rule == 'daily':
-            target_date = created_at + timedelta(days=1)
+            target_date = anchor_date + timedelta(days=1)
             window_start = target_date.date()
             window_end = target_date.date()
         elif rule == 'monthly':
-            target_date = created_at + timedelta(days=30)
+            target_date = anchor_date + timedelta(days=30)
             window_start = (target_date - timedelta(days=5)).date()
             window_end = (target_date + timedelta(days=5)).date()
         else: # One-off
-            target_date = created_at
+            target_date = anchor_date
             window_start = target_date.date()
             window_end = datetime.max.date()
             

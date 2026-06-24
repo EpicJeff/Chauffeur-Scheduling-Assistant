@@ -2130,6 +2130,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             current += timedelta(days=1)
                             
                         if all_cached:
+                            global_cache = storage.get_cached_schedule() or {}
                             cached = {
                                 "assignments": combined_assignments,
                                 "unassigned": combined_unassigned,
@@ -2143,6 +2144,10 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "true_unassigned": combined_true_unassigned,
                                 "conflicts": combined_conflicts,
                                 "scheduled_errands": combined_scheduled_errands,
+                                "calendar_metadata": global_cache.get("calendar_metadata", {}),
+                                "drivers": global_cache.get("drivers", []),
+                                "passengers": global_cache.get("passengers", []),
+                                "no_location": global_cache.get("no_location", [])
                             }
                             storage.save_custom_schedule(start_date, end_date, cached)
                     except Exception as ex:

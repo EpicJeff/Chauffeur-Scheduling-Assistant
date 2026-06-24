@@ -1130,6 +1130,13 @@
                             scheduleData.driver_events[dId] = [...new Set([...scheduleData.driver_events[dId], ...data.driver_events[dId]])];
                         }
                     }
+                    if (data.scheduled_errands) {
+                        const existingErrandIds = new Set((scheduleData.scheduled_errands || []).map(e => e.id));
+                        if (!scheduleData.scheduled_errands) scheduleData.scheduled_errands = [];
+                        data.scheduled_errands.forEach(e => {
+                            if (!existingErrandIds.has(e.id)) scheduleData.scheduled_errands.push(e);
+                        });
+                    }
 
                     buildTimeline();
 
@@ -1138,7 +1145,7 @@
                     if (direction === 'next') {
                         activeDateIndex++;
                         const paneWidth = container.clientWidth;
-                        container.scrollBy({ left: paneWidth, behavior: 'instant' });
+                        container.scrollTo({ left: activeDateIndex * paneWidth, behavior: 'instant' });
                     } else {
                         // The entire timeline shifted right by 1, so our activeDateIndex is now +1
                         // We want to move to the newly inserted day at index 0, which means we do nothing to activeDateIndex but scroll left
