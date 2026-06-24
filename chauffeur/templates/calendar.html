@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chauffeur - Calendar</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    {% include 'ha_theme.html' %}
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
     <style>
         body { background-color: #111827; color: white; }
@@ -50,6 +51,12 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     </svg>
                     <span id="modal-location" class="break-words flex-1"></span>
+                </div>
+                <div class="flex items-start text-gray-300">
+                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                    </svg>
+                    <span id="modal-passengers" class="break-words flex-1"></span>
                 </div>
                 <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
                     <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -98,7 +105,8 @@
                                         backgroundColor: color,
                                         extendedProps: { 
                                             location: ev.location,
-                                            description: ev.description
+                                            description: ev.description,
+                                            passengers: ev.passengers
                                         }
                                     });
                                 }
@@ -140,6 +148,13 @@
                     document.getElementById('modal-time').textContent = startStr + endStr;
                     
                     document.getElementById('modal-location').textContent = info.event.extendedProps.location || 'No location provided.';
+                    
+                    let passengersStr = 'No passengers';
+                    if (info.event.extendedProps.passengers && info.event.extendedProps.passengers.length > 0) {
+                        passengersStr = info.event.extendedProps.passengers.join(', ');
+                    }
+                    document.getElementById('modal-passengers').textContent = passengersStr;
+                    
                     document.getElementById('modal-description').textContent = info.event.extendedProps.description || 'No description provided.';
                     
                     document.getElementById('simple-event-modal').classList.remove('hidden');
