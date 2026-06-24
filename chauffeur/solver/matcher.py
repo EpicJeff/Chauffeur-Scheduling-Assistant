@@ -1538,9 +1538,9 @@ def insert_errands_into_schedule(assignments: Dict[str, str], daily_events: List
     if not active_errands:
         return []
         
-    driver_map = {d['id']: d for d in drivers if d['id'] != 'unassigned_ghost'}
+    driver_map = {d.id: d for d in drivers if d.id != 'unassigned_ghost'}
     
-    driver_schedules = {d['id']: [] for d in drivers if d['id'] != 'unassigned_ghost'}
+    driver_schedules = {d.id: [] for d in drivers if d.id != 'unassigned_ghost'}
     for e in daily_events:
         d_id = assignments.get(e.id)
         if d_id and d_id in driver_schedules:
@@ -1603,7 +1603,7 @@ def insert_errands_into_schedule(assignments: Dict[str, str], daily_events: List
             scheduled_errands.append({
                 "id": errand.get('id'),
                 "doc_id": errand.get('doc_id'),
-                "driver": driver_map[d_id],
+                "driver": driver_map[d_id].model_dump() if hasattr(driver_map[d_id], 'model_dump') else driver_map[d_id].dict(),
                 "event_type": "errand",
                 "start": start_time.isoformat(),
                 "end": end_time.isoformat(),
