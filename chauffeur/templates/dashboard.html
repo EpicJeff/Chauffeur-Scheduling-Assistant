@@ -537,6 +537,19 @@
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
         
+        // Kiosk Chat functionality
+        function toggleKioskChat() {
+            const popup = document.getElementById('kiosk-chat-popup');
+            if (popup) {
+                popup.classList.toggle('hidden');
+                popup.classList.toggle('flex');
+                if (!popup.classList.contains('hidden')) {
+                    const input = document.getElementById('chat-input');
+                    if (input) input.focus();
+                }
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             if (isReadOnly) {
                 const headerBtns = document.getElementById('header-buttons');
@@ -552,6 +565,16 @@
                 if (fab) {
                     fab.classList.remove('hidden');
                     fab.classList.add('flex');
+                }
+                
+                // Move chat UI to floating popup
+                const chatContent = document.getElementById('chat-content');
+                const popupBody = document.getElementById('kiosk-chat-popup-body');
+                if (chatContent && popupBody) {
+                    popupBody.appendChild(chatContent);
+                    // Hide the original accordion toggle button if it exists
+                    const accordionBtn = chatContent.previousElementSibling;
+                    if (accordionBtn) accordionBtn.style.display = 'none';
                 }
             }
         });
@@ -3590,8 +3613,26 @@
         </div>
     </div>
 
+    <!-- Kiosk Chat Popup -->
+    <div id="kiosk-chat-popup" class="hidden fixed bottom-24 right-6 w-80 h-[30rem] max-h-[70vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
+        <div class="bg-indigo-600 px-4 py-3 flex justify-between items-center text-white shrink-0 shadow-sm border-b border-indigo-700">
+            <span class="font-bold flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                </svg>
+                Argyle Agent
+            </span>
+            <button onclick="toggleKioskChat()" class="text-white hover:text-gray-200 focus:outline-none transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <div id="kiosk-chat-popup-body" class="flex-1 flex flex-col min-h-0 bg-gray-900">
+            <!-- Chat content will be moved here -->
+        </div>
+    </div>
+
     <!-- Kiosk Mode Floating Action Button for Argyle Chat -->
-    <button id="kiosk-chat-fab" onclick="toggleOperationsSidebar()" class="hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
+    <button id="kiosk-chat-fab" onclick="toggleKioskChat()" class="hidden fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
         <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
         </svg>
