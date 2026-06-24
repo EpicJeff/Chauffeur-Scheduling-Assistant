@@ -228,7 +228,7 @@
 
         async function fetchErrands() {
             try {
-                const response = await fetch('{{ url_for("get_errands") }}');
+                const response = await fetch('api/errands');
                 errands = await response.json();
                 renderErrands();
             } catch (err) {
@@ -359,7 +359,7 @@
             errand.last_scheduled_end = null;
             
             try {
-                await fetch(`{{ url_for("get_errands") }}/${errand.doc_id}`, {
+                await fetch(`api/errands/${errand.doc_id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errand)
@@ -378,7 +378,7 @@
             const errandData = parseErrandInput(text);
 
             try {
-                const res = await fetch('{{ url_for("get_errands") }}', {
+                const res = await fetch('api/errands', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errandData)
@@ -408,7 +408,7 @@
             renderErrands(); // Optimistic update
             
             try {
-                await fetch(`{{ url_for("get_errands") }}/${id}`, {
+                await fetch(`api/errands/${id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errand)
@@ -450,7 +450,7 @@
             renderErrands();
 
             try {
-                await fetch(`{{ url_for("get_errands") }}/${id}`, {
+                await fetch(`api/errands/${id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errand)
@@ -470,7 +470,7 @@
             renderErrands();
 
             try {
-                await fetch(`{{ url_for("get_errands") }}/${id}`, { method: 'DELETE' });
+                await fetch(`api/errands/${id}`, { method: 'DELETE' });
             } catch (err) {
                 console.error(err);
                 fetchErrands();
