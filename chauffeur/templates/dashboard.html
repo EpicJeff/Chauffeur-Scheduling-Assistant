@@ -2594,7 +2594,8 @@
                             widthStyle = `calc(${colWidth} - 2px)`;
                         }
 
-                        const calMetas = ev.calendar_ids.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
+                        const safeCalendarIds = ev.calendar_ids || [];
+                        const calMetas = safeCalendarIds.length > 0 ? safeCalendarIds.map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' }) : [{ backgroundColor: '#F59E0B', summary: ev.event_type === 'errand' ? 'Errand' : 'System' }];
                         const evColor = calMetas[0].backgroundColor;
                         const colorDots = calMetas.map(m => `<div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" style="background-color: ${m.backgroundColor};"></div>`).join('');
                         const summaries = calMetas.map(m => m.summary).join(' + ');
