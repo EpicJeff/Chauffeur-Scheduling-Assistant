@@ -6,20 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Driver Schedule</title>
     <script>
-        window.tailwind = window.tailwind || {};
-        window.tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                    animation: {
-                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            sans: ['Inter', 'sans-serif'],
+                        },
+                        animation: {
+                            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        }
                     }
                 }
             }
-        }
+        };
     </script>
     {% include 'ha_theme.html' %}
     <script src="https://cdn.tailwindcss.com"></script>
@@ -563,6 +564,7 @@
                 if (!popup.classList.contains('hidden')) {
                     const input = document.getElementById('chat-input');
                     if (input) input.focus();
+                    if (typeof scrollToBottom === 'function') scrollToBottom();
                 }
             }
         }
@@ -2731,9 +2733,31 @@
 
                         // Routing pill between events
                         if (localRouteEdges[c_id] && localRouteEdges[c_id][ev.id]) {
-                            const edge = localRouteEdges[c_id][ev.id];
-                            const nextEv = uniqueColEvents.find(e => e.id === edge.to_event);
-                            if (nextEv) {
+                            let currentEvId = ev.id;
+                            let edge = localRouteEdges[c_id][currentEvId];
+                            let accumulatedTravel = 0;
+                            let accumulatedDelay = 0;
+                            let nextEv = null;
+                            let firstEdge = edge;
+                            
+                            while (edge) {
+                                accumulatedTravel += edge.travel_mins || 0;
+                                accumulatedDelay += edge.delay_mins || 0;
+                                nextEv = uniqueColEvents.find(e => e.id === edge.to_event);
+                                if (nextEv) {
+                                    break;
+                                } else {
+                                    currentEvId = edge.to_event;
+                                    edge = localRouteEdges[c_id][currentEvId];
+                                }
+                            }
+                            
+                            if (nextEv && edge) {
+                                let effectiveEdge = Object.assign({}, firstEdge);
+                                effectiveEdge.travel_mins = accumulatedTravel;
+                                effectiveEdge.delay_mins = accumulatedDelay;
+                                edge = effectiveEdge;
+                                
                                 const nextStartY = getTimeY(nextEv.start);
                                 const distance = nextStartY - endY;
                                 const trafficWarn = edge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${edge.delay_mins}min traffic delay">⚠</span>` : '';
