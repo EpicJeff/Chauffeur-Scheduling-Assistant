@@ -1148,7 +1148,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "buffer_after_mins": e_buffer_after.get(last_ev.id, 0),
                         "dropoff_waypoint": {
                             "to_global_home_mins": travel_to_dropoff,
-                            "to_driver_home_mins": travel_to_home,
+                            "travel_mins": travel_to_home,
                             "dropoff_location": pax_home,
                             "driver_home_location": driver_home_at_end
                         }
@@ -1638,8 +1638,33 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 driver = driver_map.get(d_id)
                 if not driver: continue
                 
+                driver_home = getattr(driver, 'home_location', None)
+                if not driver_home and hasattr(driver, 'get'):
+                    driver_home = driver.get('home_location')
+                
                 if not schedule:
+                    if driver_home:
+                        t1 = get_travel_time_minutes(driver_home, loc)
+                        detour = t1 * 2  # round trip from home
+                        start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
+                        if detour < best_detour:
+                            best_detour = detour
+                            best_gap = (date_str, d_id, start_time, -1)
                     continue
+                    
+                # Before first event
+                first_event = schedule[0]
+                t_home_to_loc = get_travel_time_minutes(driver_home, loc) if driver_home else 0
+                t_loc_to_first = get_travel_time_minutes(loc, first_event.location)
+                t_home_to_first = get_travel_time_minutes(driver_home, first_event.location) if driver_home else 0
+                
+                detour = t_home_to_loc + t_loc_to_first - t_home_to_first
+                start_time = first_event.start - timedelta(minutes=t_loc_to_first + duration)
+                
+                if start_time.hour >= 9:
+                    if detour < best_detour:
+                        best_detour = detour
+                        best_gap = (date_str, d_id, start_time, -1)
                     
                 for i in range(len(schedule) - 1):
                     e1 = schedule[i]
@@ -1656,12 +1681,16 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                             best_detour = detour
                             best_gap = (date_str, d_id, e1.end + timedelta(minutes=t1), i)
                             
+                # After last event
                 last_event = schedule[-1]
-                t1 = get_travel_time_minutes(last_event.location, loc)
-                detour = t1
+                t_last_to_loc = get_travel_time_minutes(last_event.location, loc)
+                t_loc_to_home = get_travel_time_minutes(loc, driver_home) if driver_home else 0
+                t_last_to_home = get_travel_time_minutes(last_event.location, driver_home) if driver_home else 0
+                
+                detour = t_last_to_loc + t_loc_to_home - t_last_to_home
                 if detour < best_detour:
                     best_detour = detour
-                    best_gap = (date_str, d_id, last_event.end + timedelta(minutes=t1), len(schedule)-1)
+                    best_gap = (date_str, d_id, last_event.end + timedelta(minutes=t_last_to_loc), len(schedule)-1)
                     
         if best_gap:
             date_str, d_id, start_time, idx = best_gap

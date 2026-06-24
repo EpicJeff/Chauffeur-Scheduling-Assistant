@@ -1980,6 +1980,8 @@
             let localEvents = [...events];
             let localAssignments = {...assignments};
             let localRouteEdges = JSON.parse(JSON.stringify(data.route_edges || {}));
+            let localInitialEdges = JSON.parse(JSON.stringify(initialEdges || {}));
+            let localFinalEdges = JSON.parse(JSON.stringify(finalEdges || {}));
 
             if (window.showErrands && scheduled_errands && scheduled_errands.length > 0) {
                 scheduled_errands.forEach(errand => {
@@ -1989,27 +1991,72 @@
                     // Patch route edges for drive time pills
                     const d_id = errand.driver.id;
                     if (!localRouteEdges[d_id]) localRouteEdges[d_id] = {};
+                    if (!localInitialEdges[d_id]) localInitialEdges[d_id] = {};
+                    if (!localFinalEdges[d_id]) localFinalEdges[d_id] = {};
                     
                     const e1_id = errand.inserted_after_event_id;
                     const e2_id = errand.inserted_before_event_id;
                     
-                    if (localRouteEdges[d_id][e1_id]) {
-                        // Edge from e1 to errand
+                    if (e1_id === null && e2_id === null) {
+                        // Only event of the day
+                        localInitialEdges[d_id][errand.id] = {
+                            to_event: errand.id,
+                            travel_mins: errand.travel_to_mins,
+                            delay_mins: 0
+                        };
+                        localFinalEdges[d_id][errand.id] = {
+                            from_event: errand.id,
+                            travel_mins: errand.travel_from_mins,
+                            delay_mins: 0
+                        };
+                    } else if (e1_id === null) {
+                        // Before first event
+                        localInitialEdges[d_id][errand.id] = {
+                            to_event: errand.id,
+                            travel_mins: errand.travel_to_mins,
+                            delay_mins: 0
+                        };
+                        delete localInitialEdges[d_id][e2_id];
+                        
+                        localRouteEdges[d_id][errand.id] = {
+                            from_event: errand.id,
+                            to_event: e2_id,
+                            travel_mins: errand.travel_from_mins,
+                            delay_mins: 0
+                        };
+                    } else if (e2_id === null) {
+                        // After last event
+                        localFinalEdges[d_id][errand.id] = {
+                            from_event: errand.id,
+                            travel_mins: errand.travel_from_mins,
+                            delay_mins: 0
+                        };
+                        delete localFinalEdges[d_id][e1_id];
+                        
                         localRouteEdges[d_id][e1_id] = {
                             from_event: e1_id,
                             to_event: errand.id,
                             travel_mins: errand.travel_to_mins,
                             delay_mins: 0
                         };
+                    } else {
+                        // Between events
+                        if (localRouteEdges[d_id][e1_id]) {
+                            localRouteEdges[d_id][e1_id] = {
+                                from_event: e1_id,
+                                to_event: errand.id,
+                                travel_mins: errand.travel_to_mins,
+                                delay_mins: 0
+                            };
+                        }
+                        
+                        localRouteEdges[d_id][errand.id] = {
+                            from_event: errand.id,
+                            to_event: e2_id,
+                            travel_mins: errand.travel_from_mins,
+                            delay_mins: 0
+                        };
                     }
-                    
-                    // Edge from errand to e2
-                    localRouteEdges[d_id][errand.id] = {
-                        from_event: errand.id,
-                        to_event: e2_id,
-                        travel_mins: errand.travel_from_mins,
-                        delay_mins: 0
-                    };
                 });
             }
 
@@ -2361,7 +2408,7 @@
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(ev => {
                             if (ev.event_type === 'background_trip') return;
-                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
+                            const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.travel_mins > 0) {
                                 const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
                                 if (targetEvent) {
@@ -2371,7 +2418,7 @@
                                 }
                             }
 
-                            const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
+                            const finalEdge = localFinalEdges[c_id] ? localFinalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.travel_mins > 0) {
                                 const targetEvent = allEventsForDate.find(e => e.id === finalEdge.from_event);
                                 if (targetEvent) {
@@ -2648,7 +2695,7 @@
                                 lateMins = edgeFromPrev.late_mins || 0;
                             }
                         } else {
-                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
+                            const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.pickup_waypoint && initEdge.pickup_waypoint.driver_home_location) {
                                 computedOrigin = initEdge.pickup_waypoint.driver_home_location;
                             } else if (initEdge && initEdge.driver_home_location) {
@@ -2724,8 +2771,8 @@
                         }
 
                         // Initial travel pill from home (before first event)
-                        if (initialEdges[c_id] && initialEdges[c_id][ev.id]) {
-                            const initEdge = initialEdges[c_id] ? initialEdges[c_id][ev.id] : null;
+                        if (localInitialEdges[c_id] && localInitialEdges[c_id][ev.id]) {
+                            const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const bufferMins = 5 + (initEdge.buffer_before_mins || 0); // Add standard 5m buffer + rule buffer
                                 const departureDate = new Date(new Date(ev.start).getTime() - (initEdge.travel_mins + bufferMins) * 60000);
@@ -2874,8 +2921,8 @@
                         }
 
                         // Final travel pill after last event
-                        if (finalEdges[c_id] && finalEdges[c_id][ev.id]) {
-                            const finalEdge = finalEdges[c_id] ? finalEdges[c_id][ev.id] : null;
+                        if (localFinalEdges[c_id] && localFinalEdges[c_id][ev.id]) {
+                            const finalEdge = localFinalEdges[c_id] ? localFinalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
                                 const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins + (finalEdge.buffer_after_mins || 0)) * 60000);
                                 const arriveStr = formatTime(arriveDate.toISOString());
@@ -2895,7 +2942,7 @@
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
                                                 <span class="bg-gray-900 border border-blue-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-md font-mono uppercase flex items-center">
                                                     ${finalEdge.dropoff_waypoint
-                                            ? `${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_global_home_mins)}${trafficWarn}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>${iconArrow}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_driver_home_mins)}${trafficWarn}`
+                                            ? `${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_global_home_mins)}${trafficWarn}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>${iconArrow}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.travel_mins)}${trafficWarn}`
                                             : `${iconCar}${formatDuration(finalEdge.travel_mins)}${trafficWarn}${iconArrow}${iconHome}`}
                                                 </span>
                                                 <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm mt-0.5 whitespace-nowrap">Arrive home at ${arriveStr}</span>
