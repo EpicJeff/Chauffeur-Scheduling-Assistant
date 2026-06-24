@@ -1332,11 +1332,13 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" style="border-left-color: #3B82F6;">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20 bg-blue-500"></div>
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate text-blue-500" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? 'Calendar' : 'Event'"></div>
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
                                         </div>
                                         <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
                                         <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
@@ -1432,11 +1434,13 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" style="border-left-color: #3B82F6;">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20 bg-blue-500"></div>
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate text-blue-500" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? 'Calendar' : 'Event'"></div>
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
                                         </div>
                                         <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
                                         <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
@@ -1682,11 +1686,13 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" style="border-left-color: #3B82F6;">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20 bg-blue-500"></div>
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate text-blue-500" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? 'Calendar' : 'Event'"></div>
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
                                         </div>
                                         <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
                                         <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
@@ -1779,11 +1785,13 @@
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
                             <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
-                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" style="border-left-color: #3B82F6;">
+                                <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20 bg-blue-500"></div>
-                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate text-blue-500" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? 'Calendar' : 'Event'"></div>
+                                            <template x-for="cid in (ev.calendar_ids || [])" :key="cid">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1 shadow-sm border border-black/20" :style="'background-color: ' + (calendarMetadata[cid] ? calendarMetadata[cid].backgroundColor : '#3B82F6')"></div>
+                                            </template>
+                                            <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 ml-0.5 truncate" :style="'color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')" x-text="ev.calendar_ids && ev.calendar_ids.length > 0 ? ev.calendar_ids.map(c => calendarMetadata[c] ? calendarMetadata[c].summary : c).join(' + ') : 'Event'"></div>
                                         </div>
                                         <div class="font-bold text-[11px] text-white leading-tight mt-0.5 truncate" x-text="ev.title"></div>
                                         <div class="text-gray-400 text-[10px] font-medium mt-0.5 truncate flex items-center gap-1" x-text="new Date(ev.start).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'}) + ' - ' + new Date(ev.end).toLocaleString([], {hour: '2-digit', minute:'2-digit'})"></div>
