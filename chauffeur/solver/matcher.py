@@ -1667,6 +1667,29 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             date_str, d_id, start_time, idx = best_gap
             end_time = start_time + timedelta(minutes=duration)
             
+            schedule = day_schedules[d_id]
+            e1_id = None
+            e2_id = None
+            t1 = 0
+            t2 = 0
+            
+            if len(schedule) > 0:
+                if idx == -1:
+                    e2 = schedule[0]
+                    e2_id = e2.id
+                    t2 = get_travel_time_minutes(loc, e2.location)
+                elif idx == len(schedule) - 1:
+                    e1 = schedule[-1]
+                    e1_id = e1.id
+                    t1 = get_travel_time_minutes(e1.location, loc)
+                else:
+                    e1 = schedule[idx]
+                    e2 = schedule[idx + 1]
+                    e1_id = e1.id
+                    e2_id = e2.id
+                    t1 = get_travel_time_minutes(e1.location, loc)
+                    t2 = get_travel_time_minutes(loc, e2.location)
+            
             ve = VirtualEvent(start_time, end_time, loc)
             driver_schedules_by_date[date_str][d_id].insert(idx + 1, ve)
             
@@ -1679,7 +1702,11 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 "end": end_time.isoformat(),
                 "title": errand.get('title'),
                 "location": loc,
-                "priority": errand.get('priority')
+                "priority": errand.get('priority'),
+                "inserted_after_event_id": e1_id,
+                "inserted_before_event_id": e2_id,
+                "travel_to_mins": t1,
+                "travel_from_mins": t2
             })
             
     return scheduled_errands_by_date
