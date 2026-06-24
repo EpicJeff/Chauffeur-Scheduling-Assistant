@@ -26,6 +26,41 @@
         </div>
     </main>
 
+    <!-- Simple Event Modal -->
+    <div id="simple-event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl">
+            <div class="flex justify-between items-start mb-6">
+                <h3 id="modal-title" class="text-3xl font-bold text-blue-200"></h3>
+                <button onclick="document.getElementById('simple-event-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="space-y-4 text-lg">
+                <div class="flex items-center text-gray-300">
+                    <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <span id="modal-time"></span>
+                </div>
+                <div class="flex items-start text-gray-300">
+                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    </svg>
+                    <span id="modal-location" class="break-words flex-1"></span>
+                </div>
+                <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
+                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path>
+                    </svg>
+                    <div id="modal-description" class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         document.addEventListener('DOMContentLoaded', async function() {
             var calendarEl = document.getElementById('calendar');
@@ -61,7 +96,10 @@
                                         start: ev.start,
                                         end: ev.end,
                                         backgroundColor: color,
-                                        extendedProps: { location: ev.location }
+                                        extendedProps: { 
+                                            location: ev.location,
+                                            description: ev.description
+                                        }
                                     });
                                 }
                             });
@@ -76,7 +114,10 @@
                                     start: ev.start_time,
                                     end: ev.end_time,
                                     backgroundColor: '#F59E0B',
-                                    extendedProps: { location: ev.location }
+                                    extendedProps: { 
+                                        location: ev.location,
+                                        description: ev.description || ev.notes
+                                    }
                                 });
                             });
                         }
@@ -88,11 +129,20 @@
                     }
                 },
                 eventClick: function(info) {
-                    if (info.event.extendedProps.location) {
-                        alert(`Event: ${info.event.title}\nLocation: ${info.event.extendedProps.location}`);
-                    } else {
-                        alert(`Event: ${info.event.title}`);
-                    }
+                    document.getElementById('modal-title').textContent = info.event.title;
+                    
+                    const formatTime = (date) => {
+                        return date.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    };
+                    
+                    const startStr = info.event.start ? formatTime(info.event.start) : '';
+                    const endStr = info.event.end ? ' - ' + formatTime(info.event.end) : '';
+                    document.getElementById('modal-time').textContent = startStr + endStr;
+                    
+                    document.getElementById('modal-location').textContent = info.event.extendedProps.location || 'No location provided.';
+                    document.getElementById('modal-description').textContent = info.event.extendedProps.description || 'No description provided.';
+                    
+                    document.getElementById('simple-event-modal').classList.remove('hidden');
                 }
             });
             calendar.render();

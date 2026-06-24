@@ -77,15 +77,18 @@
             const urlParams = new URLSearchParams(window.location.search);
             const isKiosk = urlParams.get('kiosk') === 'true';
             
-            if (isKiosk) {
-                // Append ?kiosk=true to all nav links
-                document.querySelectorAll('a[href]').forEach(link => {
-                    if (link.href && !link.href.includes('javascript:') && !link.href.includes('#')) {
-                        const url = new URL(link.href);
-                        url.searchParams.set('kiosk', 'true');
-                        link.href = url.toString();
+            // Append ALL query parameters to nav links (e.g., kiosk=true, theme=ha)
+            document.querySelectorAll('a[href]').forEach(link => {
+                if (link.href && !link.href.includes('javascript:') && !link.href.includes('#')) {
+                    const url = new URL(link.href, window.location.origin);
+                    for (const [key, value] of urlParams.entries()) {
+                        url.searchParams.set(key, value);
                     }
-                });
+                    link.href = url.pathname + url.search;
+                }
+            });
+
+            if (isKiosk) {
                 // Hide settings gear icon in kiosk mode
                 const settingsIcon = document.getElementById('settings-nav-item');
                 if (settingsIcon) settingsIcon.style.display = 'none';
