@@ -31,6 +31,24 @@
             font-family: 'Inter', sans-serif;
             transition: padding-right 0.3s ease-in-out;
         }
+
+        /* Home Assistant Theme Overrides */
+        body.ha-theme {
+            background-color: var(--primary-background-color, #111827) !important;
+            color: var(--primary-text-color, #e5e7eb) !important;
+        }
+        body.ha-theme .bg-gray-800 {
+            background-color: var(--card-background-color, #1f2937) !important;
+        }
+        body.ha-theme .bg-gray-900 {
+            background-color: var(--primary-background-color, #111827) !important;
+        }
+        body.ha-theme .text-gray-300, body.ha-theme .text-gray-400 {
+            color: var(--secondary-text-color, #9ca3af) !important;
+        }
+        body.ha-theme .border-gray-700 {
+            border-color: var(--divider-color, #374151) !important;
+        }
     </style>
 </head>
 
@@ -512,7 +530,12 @@
     </div>
 
     <script>
-        window.showErrands = localStorage.getItem('chauffeur_show_errands') === 'true';
+        window.showErrands = false;
+        try {
+            window.showErrands = localStorage.getItem('chauffeur_show_errands') === 'true';
+        } catch (e) {
+            console.warn('localStorage not accessible', e);
+        }
         
         document.addEventListener('DOMContentLoaded', () => {
             const track = document.getElementById('errands-toggle-track');
@@ -527,7 +550,11 @@
 
         function toggleErrands() {
             window.showErrands = !window.showErrands;
-            localStorage.setItem('chauffeur_show_errands', window.showErrands);
+            try {
+                localStorage.setItem('chauffeur_show_errands', window.showErrands);
+            } catch (e) {
+                console.warn('localStorage not accessible', e);
+            }
             const track = document.getElementById('errands-toggle-track');
             const knob = document.getElementById('errands-toggle-knob');
             if (window.showErrands) {
@@ -554,6 +581,9 @@
         const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
+        const isHaTheme = urlParams.get('kiosk') === 'true';
+        
+        if (isHaTheme) document.body.classList.add('ha-theme');
         
         // Kiosk Chat functionality
         function toggleKioskChat() {
