@@ -1782,6 +1782,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Save the initial combined cache immediately with the solving_dates list populated
     compile_and_save_combined()
 
+    enable_ai_themes = settings.get("enable_ai_themes", True)
+    all_themes = storage.get_all_themes()
+    themes = []
+    for t in all_themes:
+        if not t.get('is_enabled', True): continue
+        if t.get('is_ai_generated', False) and not enable_ai_themes: continue
+        themes.append(t)
+        
+    default_theme = next((t for t in themes if "default" in (t.get('name') or '').lower() or "standard" in (t.get('name') or '').lower()), {})
+    if not default_theme and themes:
+        default_theme = themes[0]
+
     base_schedules = {}
 
     for date_str, daily_fetched in fetched_by_date.items():
@@ -1829,17 +1841,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort before running solver
         check_abort_refresh()
 
-        enable_ai_themes = settings.get("enable_ai_themes", True)
-        all_themes = storage.get_all_themes()
-        themes = []
-        for t in all_themes:
-            if not t.get('is_enabled', True): continue
-            if t.get('is_ai_generated', False) and not enable_ai_themes: continue
-            themes.append(t)
-            
-        default_theme = next((t for t in themes if "default" in (t.get('name') or '').lower() or "standard" in (t.get('name') or '').lower()), {})
-        if not default_theme and themes:
-            default_theme = themes[0]
 
         if draft:
             assignments = {}

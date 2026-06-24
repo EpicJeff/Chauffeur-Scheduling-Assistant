@@ -534,6 +534,7 @@
     
 
     <script>
+        const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
         

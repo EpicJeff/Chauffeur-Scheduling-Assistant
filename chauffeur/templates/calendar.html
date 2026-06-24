@@ -97,6 +97,13 @@
                                     if (ev.calendar_ids && ev.calendar_ids.length > 0 && data.calendar_metadata && data.calendar_metadata[ev.calendar_ids[0]]) {
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
                                     }
+                                    
+                                    let passengerNames = [];
+                                    if (data.passengers && ev.calendar_ids) {
+                                        let assigned = ev.calendar_ids.map(cid => data.passengers.find(p => p.calendar_ids && p.calendar_ids.includes(cid))).filter(Boolean);
+                                        passengerNames = assigned.map(p => p.name);
+                                    }
+                                    
                                     fcEvents.push({
                                         id: ev.id,
                                         title: ev.title,
@@ -106,7 +113,7 @@
                                         extendedProps: { 
                                             location: ev.location,
                                             description: ev.description,
-                                            passengers: ev.passengers
+                                            passengers: passengerNames
                                         }
                                     });
                                 }
