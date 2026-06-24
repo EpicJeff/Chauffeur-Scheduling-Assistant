@@ -4,8 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chauffeur - Calendar</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        window.tailwind = window.tailwind || {};
+        window.tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        };
+    </script>
     {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
     <style>
         body { background-color: #111827; color: white; }
@@ -56,7 +65,7 @@
                     <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
                     </svg>
-                    <span id="modal-passengers" class="break-words flex-1"></span>
+                    <div id="modal-passengers" class="flex-1 flex flex-wrap gap-1"></div>
                 </div>
                 <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
                     <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -98,11 +107,40 @@
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
                                     }
                                     
-                                    let passengerNames = [];
-                                    if (data.passengers && ev.calendar_ids) {
-                                        let assigned = ev.calendar_ids.map(cid => data.passengers.find(p => p.calendar_ids && p.calendar_ids.includes(cid))).filter(Boolean);
-                                        passengerNames = assigned.map(p => p.name);
+                                    let paxMap = {};
+                                    if (ev.calendar_ids) {
+                                        ev.calendar_ids.forEach(cid => {
+                                            const meta = data.calendar_metadata && data.calendar_metadata[cid];
+                                            const name = meta ? meta.summary : cid;
+                                            const cColor = meta ? meta.backgroundColor : '#3B82F6';
+                                            paxMap[name] = cColor;
+                                        });
                                     }
+                                    
+                                    const mRulesForPax = data.matched_rules && data.matched_rules[ev.id] ? data.matched_rules[ev.id] : [];
+                                    if (data.passengers && mRulesForPax.length > 0) {
+                                        mRulesForPax.forEach(r => {
+                                            if (r.passenger_ids) {
+                                                r.passenger_ids.forEach(pId => {
+                                                    const pax = data.passengers.find(p => p.id === pId);
+                                                    if (pax && !paxMap[pax.name]) {
+                                                        let cColor = '#3B82F6';
+                                                        if (pax.calendar_ids && pax.calendar_ids.length > 0) {
+                                                            const meta = data.calendar_metadata && data.calendar_metadata[pax.calendar_ids[0]];
+                                                            if (meta) cColor = meta.backgroundColor;
+                                                        }
+                                                        paxMap[pax.name] = cColor;
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+                                    
+                                    const paxNames = Object.keys(paxMap);
+                                    const passengerPills = paxNames.map(name => ({
+                                        name: name,
+                                        color: paxMap[name]
+                                    }));
                                     
                                     fcEvents.push({
                                         id: ev.id,
@@ -113,7 +151,7 @@
                                         extendedProps: { 
                                             location: ev.location,
                                             description: ev.description,
-                                            passengers: passengerNames
+                                            passengers: passengerPills
                                         }
                                     });
                                 }
@@ -156,11 +194,13 @@
                     
                     document.getElementById('modal-location').textContent = info.event.extendedProps.location || 'No location provided.';
                     
-                    let passengersStr = 'No passengers';
                     if (info.event.extendedProps.passengers && info.event.extendedProps.passengers.length > 0) {
-                        passengersStr = info.event.extendedProps.passengers.join(', ');
+                        document.getElementById('modal-passengers').innerHTML = info.event.extendedProps.passengers.map(p => {
+                            return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-white mr-1" style="background-color: ${p.color}">${p.name}</span>`;
+                        }).join('');
+                    } else {
+                        document.getElementById('modal-passengers').innerHTML = '<span class="italic text-gray-500">No passengers</span>';
                     }
-                    document.getElementById('modal-passengers').textContent = passengersStr;
                     
                     document.getElementById('modal-description').textContent = info.event.extendedProps.description || 'No description provided.';
                     

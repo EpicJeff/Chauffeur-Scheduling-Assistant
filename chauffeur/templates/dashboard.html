@@ -5,8 +5,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Driver Schedule</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        window.tailwind = window.tailwind || {};
+        window.tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
     {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             background-color: #1a202c;
@@ -1085,12 +1101,40 @@
             const attendeesSection = document.getElementById('view-attendees-section');
             const attendeesEl = document.getElementById('view-attendees');
             const calMeta = currentData.calendar_metadata || {};
-            if (ev.calendar_ids && ev.calendar_ids.length > 0) {
-                attendeesEl.innerHTML = ev.calendar_ids.map(cid => {
+            
+            let paxMap = {};
+            if (ev.calendar_ids) {
+                ev.calendar_ids.forEach(cid => {
                     const meta = calMeta[cid];
                     const name = meta ? meta.summary : cid;
                     const color = meta ? meta.backgroundColor : '#3B82F6';
-                    return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-white" style="background-color: ${color}">${name}</span>`;
+                    paxMap[name] = color;
+                });
+            }
+            
+            const mRulesForPax = currentData.matched_rules && currentData.matched_rules[eventId] ? currentData.matched_rules[eventId] : [];
+            if (currentData.passengers && mRulesForPax.length > 0) {
+                mRulesForPax.forEach(r => {
+                    if (r.passenger_ids) {
+                        r.passenger_ids.forEach(pId => {
+                            const pax = currentData.passengers.find(p => p.id === pId);
+                            if (pax && !paxMap[pax.name]) {
+                                let color = '#3B82F6';
+                                if (pax.calendar_ids && pax.calendar_ids.length > 0) {
+                                    const meta = calMeta[pax.calendar_ids[0]];
+                                    if (meta) color = meta.backgroundColor;
+                                }
+                                paxMap[pax.name] = color;
+                            }
+                        });
+                    }
+                });
+            }
+            
+            const paxNames = Object.keys(paxMap);
+            if (paxNames.length > 0) {
+                attendeesEl.innerHTML = paxNames.map(name => {
+                    return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-white mr-1" style="background-color: ${paxMap[name]}">${name}</span>`;
                 }).join('');
                 attendeesSection.classList.remove('hidden');
             } else {
@@ -1939,31 +1983,6 @@
                 scheduled_errands.forEach(errand => {
                     localEvents.push(errand);
                     localAssignments[errand.id] = errand.driver.id;
-                    
-                    // Patch route edges for drive time pills
-                    const d_id = errand.driver.id;
-                    if (!localRouteEdges[d_id]) localRouteEdges[d_id] = {};
-                    
-                    const e1_id = errand.inserted_after_event_id;
-                    const e2_id = errand.inserted_before_event_id;
-                    
-                    if (localRouteEdges[d_id][e1_id]) {
-                        // Edge from e1 to errand
-                        localRouteEdges[d_id][e1_id] = {
-                            from_event: e1_id,
-                            to_event: errand.id,
-                            travel_mins: errand.travel_to_mins,
-                            delay_mins: 0
-                        };
-                    }
-                    
-                    // Edge from errand to e2
-                    localRouteEdges[d_id][errand.id] = {
-                        from_event: errand.id,
-                        to_event: e2_id,
-                        travel_mins: errand.travel_from_mins,
-                        delay_mins: 0
-                    };
                 });
             }
 
@@ -1997,7 +2016,7 @@
             const inboxList = document.getElementById('inbox-list');
             const inboxCount = document.getElementById('inbox-count');
 
-            if (triageEvents.length > 0) {
+            if (triageEvents.length > 0 && !isKiosk) {
                 inboxCount.textContent = triageEvents.length;
                 inboxContainer.classList.remove('hidden');
                 inboxList.innerHTML = triageEvents.map(ev => {
