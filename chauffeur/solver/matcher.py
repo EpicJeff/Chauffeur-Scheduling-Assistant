@@ -1705,19 +1705,19 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             if len(schedule) > 0:
                 if idx == -1:
                     e2 = schedule[0]
-                    e2_id = e2.id
+                    e2_id = getattr(e2, 'id', None)
                     t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
                     t2 = get_travel_time_minutes(loc, e2.location)
                 elif idx == len(schedule) - 1:
                     e1 = schedule[-1]
-                    e1_id = e1.id
+                    e1_id = getattr(e1, 'id', None)
                     t1 = get_travel_time_minutes(e1.location, loc)
                     t2 = get_travel_time_minutes(loc, driver_home) if driver_home else 0
                 else:
                     e1 = schedule[idx]
                     e2 = schedule[idx + 1]
-                    e1_id = e1.id
-                    e2_id = e2.id
+                    e1_id = getattr(e1, 'id', None)
+                    e2_id = getattr(e2, 'id', None)
                     t1 = get_travel_time_minutes(e1.location, loc)
                     t2 = get_travel_time_minutes(loc, e2.location)
             
