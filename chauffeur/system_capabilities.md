@@ -90,6 +90,6 @@ ulesSubTab.
 
 ## Errands Scheduling Logic
 - **Errands Inbox**: A dynamic management UI allows users to add errands using natural language.
-- **Heuristic Errands Solver**: matcher.py intelligently places errands into gaps that require the least detour time without violating the master route structure.
-- **Past Due State**: Errands that exceed their estimated scheduled time without being completed are placed in a past_due state. The solver safely ignores them so they stop auto-scheduling and wait for manual intervention.
-- **Recurrence**: Errands can be set to recur Daily, Weekly, or Monthly upon completion. When marked complete, a new pending errand is generated automatically.
+- **Global Heuristic Errands Solver**: `matcher.py` intelligently places errands into gaps across the entire 7-day schedule. It targets a specific scheduling window based on the errand's `created_at` date and its `recurrence_rule` to prevent over-scheduling. It then finds the single gap across all valid dates that requires the least detour time without violating the master route structure.
+- **Past Due State**: Errands that exceed their estimated scheduled time without being completed are placed in a `past_due` state. The solver safely ignores them so they stop auto-scheduling and wait for manual intervention.
+- **Recurrence**: Errands can be set to recur Daily, Weekly, or Monthly upon completion. When marked complete, a new pending errand is generated automatically, which will reset the `created_at` anchor date, starting the cycle anew.

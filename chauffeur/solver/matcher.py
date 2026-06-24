@@ -1530,77 +1530,124 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             
 
 
-
-def insert_errands_into_schedule(assignments: Dict[str, str], daily_events: List[Event], errands: List[dict], drivers: List[dict]) -> List[dict]:
+def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict], drivers: List[dict]) -> Dict[str, List[dict]]:
     from datetime import datetime, timedelta
+    
+    scheduled_errands_by_date = {date_str: [] for date_str in base_schedules.keys()}
     
     active_errands = [e for e in errands if not e.get('is_completed')]
     if not active_errands:
-        return []
+        return scheduled_errands_by_date
         
     driver_map = {d.id: d for d in drivers if d.id != 'unassigned_ghost'}
     
-    driver_schedules = {d.id: [] for d in drivers if d.id != 'unassigned_ghost'}
-    for e in daily_events:
-        d_id = assignments.get(e.id)
-        if d_id and d_id in driver_schedules:
-            driver_schedules[d_id].append(e)
-            
-    for d_id in driver_schedules:
-        driver_schedules[d_id].sort(key=lambda x: x.start)
+    # Build driver schedules for each day
+    driver_schedules_by_date = {}
+    for date_str, daily_data in base_schedules.items():
+        assignments = daily_data.get('assignments', {})
+        events = daily_data.get('events', [])
         
-    scheduled_errands = []
-    
+        day_schedules = {d.id: [] for d in drivers if d.id != 'unassigned_ghost'}
+        for e in events:
+            d_id = assignments.get(e.id)
+            if d_id and d_id in day_schedules:
+                day_schedules[d_id].append(e)
+                
+        for d_id in day_schedules:
+            day_schedules[d_id].sort(key=lambda x: x.start)
+            
+        driver_schedules_by_date[date_str] = day_schedules
+
     active_errands.sort(key=lambda x: (x.get('priority', 2), -x.get('duration_mins', 30)))
     
+    class VirtualEvent:
+        def __init__(self, start, end, location):
+            self.start = start
+            self.end = end
+            self.location = location
+
     for errand in active_errands:
+        # Calculate target window
+        created_at_ts = errand.get('created_at', 0)
+        try:
+            created_at = datetime.fromtimestamp(created_at_ts)
+        except:
+            created_at = datetime.now()
+            
+        rule = errand.get('recurrence_rule')
+        
+        if rule == 'weekly':
+            target_date = created_at + timedelta(days=7)
+            window_start = (target_date - timedelta(days=2)).date()
+            window_end = (target_date + timedelta(days=2)).date()
+        elif rule == 'daily':
+            target_date = created_at + timedelta(days=1)
+            window_start = target_date.date()
+            window_end = target_date.date()
+        elif rule == 'monthly':
+            target_date = created_at + timedelta(days=30)
+            window_start = (target_date - timedelta(days=5)).date()
+            window_end = (target_date + timedelta(days=5)).date()
+        else: # One-off
+            target_date = created_at
+            window_start = target_date.date()
+            window_end = datetime.max.date()
+            
+        # If today is past the window end, it's overdue, so it becomes ASAP
+        today_date = datetime.now().date()
+        if today_date > window_end:
+            window_start = today_date
+            window_end = datetime.max.date()
+            
         best_gap = None
         best_detour = float('inf')
         duration = errand.get('duration_mins', 30)
         loc = errand.get('location', '')
         
-        for d_id, schedule in driver_schedules.items():
-            driver = driver_map.get(d_id)
-            if not driver: continue
+        for date_str, day_schedules in driver_schedules_by_date.items():
+            current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             
-            if not schedule:
+            # Check if this date is within the acceptable window
+            if current_date < window_start or current_date > window_end:
                 continue
                 
-            for i in range(len(schedule) - 1):
-                e1 = schedule[i]
-                e2 = schedule[i+1]
-                gap_mins = (e2.start - e1.end).total_seconds() / 60.0
+            for d_id, schedule in day_schedules.items():
+                driver = driver_map.get(d_id)
+                if not driver: continue
                 
-                t1 = get_travel_time_minutes(e1.location, loc)
-                t2 = get_travel_time_minutes(loc, e2.location)
-                
-                total_needed = t1 + duration + t2
-                if gap_mins >= total_needed:
-                    detour = t1 + t2 - get_travel_time_minutes(e1.location, e2.location)
-                    if detour < best_detour:
-                        best_detour = detour
-                        best_gap = (d_id, e1.end + timedelta(minutes=t1), i)
-                        
-            last_event = schedule[-1]
-            t1 = get_travel_time_minutes(last_event.location, loc)
-            detour = t1
-            if detour < best_detour:
-                best_detour = detour
-                best_gap = (d_id, last_event.end + timedelta(minutes=t1), len(schedule)-1)
-                
+                if not schedule:
+                    continue
+                    
+                for i in range(len(schedule) - 1):
+                    e1 = schedule[i]
+                    e2 = schedule[i+1]
+                    gap_mins = (e2.start - e1.end).total_seconds() / 60.0
+                    
+                    t1 = get_travel_time_minutes(e1.location, loc)
+                    t2 = get_travel_time_minutes(loc, e2.location)
+                    
+                    total_needed = t1 + duration + t2
+                    if gap_mins >= total_needed:
+                        detour = t1 + t2 - get_travel_time_minutes(e1.location, e2.location)
+                        if detour < best_detour:
+                            best_detour = detour
+                            best_gap = (date_str, d_id, e1.end + timedelta(minutes=t1), i)
+                            
+                last_event = schedule[-1]
+                t1 = get_travel_time_minutes(last_event.location, loc)
+                detour = t1
+                if detour < best_detour:
+                    best_detour = detour
+                    best_gap = (date_str, d_id, last_event.end + timedelta(minutes=t1), len(schedule)-1)
+                    
         if best_gap:
-            d_id, start_time, idx = best_gap
+            date_str, d_id, start_time, idx = best_gap
             end_time = start_time + timedelta(minutes=duration)
             
-            class VirtualEvent:
-                def __init__(self, start, end, location):
-                    self.start = start
-                    self.end = end
-                    self.location = location
             ve = VirtualEvent(start_time, end_time, loc)
-            driver_schedules[d_id].insert(idx + 1, ve)
+            driver_schedules_by_date[date_str][d_id].insert(idx + 1, ve)
             
-            scheduled_errands.append({
+            scheduled_errands_by_date[date_str].append({
                 "id": errand.get('id'),
                 "doc_id": errand.get('doc_id'),
                 "driver": driver_map[d_id].model_dump() if hasattr(driver_map[d_id], 'model_dump') else driver_map[d_id].dict(),
@@ -1612,4 +1659,4 @@ def insert_errands_into_schedule(assignments: Dict[str, str], daily_events: List
                 "priority": errand.get('priority')
             })
             
-    return scheduled_errands
+    return scheduled_errands_by_date

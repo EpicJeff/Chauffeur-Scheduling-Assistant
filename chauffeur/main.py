@@ -1778,6 +1778,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Save the initial combined cache immediately with the solving_dates list populated
     compile_and_save_combined()
 
+    base_schedules = {}
+
     for date_str, daily_fetched in fetched_by_date.items():
         # Check abort at the start of each daily iteration
         check_abort_refresh()
@@ -1788,6 +1790,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check cache
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh and not draft:
+            sched = daily_cache.get('schedule', {})
+            base_schedules[date_str] = {
+                "assignments": sched.get("assignments", {}),
+                "unassigned": sched.get("unassigned", []),
+                "lateness_warnings": sched.get("lateness_warnings", []),
+                "ghost_assignments": sched.get("ghost_assignments", {}),
+                "ghost_drivers": sched.get("ghost_drivers", []),
+                "events": daily_events_to_solve,
+                "true_unassigned": sched.get("true_unassigned", []),
+                "conflicts": sched.get("conflicts", [])
+            }
             continue
 
         # Else, solve for this day!
@@ -1843,9 +1856,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             # Draft mode is extremely lightweight, skip everything else
             ghost_assignments = {}
             ghost_drivers = []
-            route_edges = {}
-            initial_edges = {}
-            final_edges = {}
             conflicts = []
             true_unassigned = unassigned
         else:
@@ -1853,56 +1863,80 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
             )
             
-            scheduled_errands = matcher.insert_errands_into_schedule(
-                assignments, daily_events_to_solve, errands, drivers
-            )
-            
-            from models.schemas import Event
-            errand_events = []
-            for e_dict in scheduled_errands:
-                try:
-                    errand_ev = Event(
-                        id=e_dict['id'],
-                        title=e_dict['title'],
-                        start=datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
-                        end=datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
-                        location=e_dict['location'],
-                        calendar_ids=[],
-                        source_event_ids=[],
-                        event_type="errand"
-                    )
-                    errand_events.append(errand_ev)
-                except Exception as ex:
-                    logger.error(f"Failed to create errand Event for edges: {ex}")
-
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
             assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
             ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
-    
-            all_assignments = {**assignments, **ghost_assignments}
-            for e_dict in scheduled_errands:
-                all_assignments[e_dict['id']] = e_dict['driver']['id']
-                
-            all_events = daily_events_to_solve + errand_events
-            route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, all_events, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
-    
+            
             true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
-    
             conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
 
-        daily_schedule = {
+        base_schedules[date_str] = {
             "assignments": assignments,
             "unassigned": unassigned,
             "lateness_warnings": lateness_warnings,
             "ghost_assignments": ghost_assignments,
             "ghost_drivers": ghost_drivers,
+            "events": daily_events_to_solve,
+            "true_unassigned": true_unassigned,
+            "conflicts": conflicts
+        }
+
+    # Pass 2: Global Errand Placement
+    scheduled_errands_by_date = matcher.insert_errands_globally(base_schedules, errands, drivers) if not draft else {}
+
+    # Pass 3: Route Edges and Caching
+    from models.schemas import Event
+    for date_str, daily_fetched in fetched_by_date.items():
+        daily_hash = hash_events(daily_fetched)
+        daily_events_to_solve = events_to_solve_by_date[date_str]
+        base = base_schedules[date_str]
+
+        scheduled_errands = scheduled_errands_by_date.get(date_str, [])
+        errand_events = []
+        for e_dict in scheduled_errands:
+            try:
+                errand_ev = Event(
+                    id=e_dict['id'],
+                    title=e_dict['title'],
+                    start=datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
+                    end=datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
+                    location=e_dict['location'],
+                    calendar_ids=[],
+                    source_event_ids=[],
+                    event_type="errand"
+                )
+                errand_events.append(errand_ev)
+            except Exception as ex:
+                logger.error(f"Failed to create errand Event for edges: {ex}")
+
+        all_assignments = {**base['assignments'], **base['ghost_assignments']}
+        for e_dict in scheduled_errands:
+            all_assignments[e_dict['id']] = e_dict['driver']['id']
+            
+        all_events = daily_events_to_solve + errand_events
+        
+        if draft:
+            route_edges, initial_edges, final_edges = {}, {}, {}
+        else:
+            route_edges, initial_edges, final_edges = matcher.compute_route_edges(
+                all_assignments, all_events, drivers, home_location=home_location, 
+                trip_metadata=trip_metadata, driver_attendances=driver_events_ids, 
+                rules=rules, passengers=passengers
+            )
+
+        daily_schedule = {
+            "assignments": base['assignments'],
+            "unassigned": base['unassigned'],
+            "lateness_warnings": base['lateness_warnings'],
+            "ghost_assignments": base['ghost_assignments'],
+            "ghost_drivers": base['ghost_drivers'],
             "route_edges": route_edges,
             "initial_edges": initial_edges,
             "final_edges": final_edges,
             "events": [e.dict() if hasattr(e, 'dict') else e for e in daily_events_to_solve],
-            "true_unassigned": true_unassigned,
-            "conflicts": conflicts,
-            "scheduled_errands": scheduled_errands if not draft else []
+            "true_unassigned": base['true_unassigned'],
+            "conflicts": base['conflicts'],
+            "scheduled_errands": scheduled_errands
         }
 
         encoded_schedule = jsonable_encoder(daily_schedule)
@@ -2031,6 +2065,89 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
             else:
                 cached_custom = storage.get_custom_schedule(start_date, end_date)
                 cached = cached_custom.get('schedule') if cached_custom else None
+                
+                if not cached:
+                    try:
+                        from datetime import datetime, timedelta
+                        s = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                        e = datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
+                        
+                        all_cached = True
+                        combined_assignments = {}
+                        combined_unassigned = []
+                        combined_lateness_warnings = []
+                        combined_ghost_assignments = {}
+                        combined_ghost_drivers = []
+                        combined_events_to_solve = []
+                        combined_route_edges = {}
+                        combined_initial_edges = {}
+                        combined_final_edges = {}
+                        combined_true_unassigned = []
+                        combined_conflicts = []
+                        combined_scheduled_errands = []
+                        
+                        def merge_edges(target, source):
+                            if not source: return
+                            for d_id, edges in source.items():
+                                if d_id not in target:
+                                    target[d_id] = {}
+                                target[d_id].update(edges)
+                                
+                        current = s
+                        while current <= e:
+                            d_str = str(current)
+                            daily_cache = storage.get_cached_daily_schedule(d_str)
+                            if not daily_cache or 'schedule' not in daily_cache:
+                                all_cached = False
+                                break
+                                
+                            sched = daily_cache['schedule']
+                            combined_assignments.update(sched.get('assignments', {}))
+                            combined_unassigned.extend(sched.get('unassigned', []))
+                            combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
+                            combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
+                            
+                            existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
+                            for g in sched.get('ghost_drivers', []):
+                                if g['id'] not in existing_ghost_ids:
+                                    combined_ghost_drivers.append(g)
+                                    existing_ghost_ids.add(g['id'])
+                                    
+                            combined_events_to_solve.extend(sched.get('events', []))
+                            merge_edges(combined_route_edges, sched.get('route_edges', {}))
+                            merge_edges(combined_initial_edges, sched.get('initial_edges', {}))
+                            merge_edges(combined_final_edges, sched.get('final_edges', {}))
+                            
+                            combined_true_unassigned.extend(sched.get('true_unassigned', []))
+                            combined_conflicts.extend(sched.get('conflicts', []))
+                            
+                            existing_errand_ids = {er['id'] for er in combined_scheduled_errands}
+                            for er in sched.get('scheduled_errands', []):
+                                if er['id'] not in existing_errand_ids:
+                                    combined_scheduled_errands.append(er)
+                                    existing_errand_ids.add(er['id'])
+                                    
+                            current += timedelta(days=1)
+                            
+                        if all_cached:
+                            cached = {
+                                "assignments": combined_assignments,
+                                "unassigned": combined_unassigned,
+                                "lateness_warnings": combined_lateness_warnings,
+                                "ghost_assignments": combined_ghost_assignments,
+                                "ghost_drivers": combined_ghost_drivers,
+                                "route_edges": combined_route_edges,
+                                "initial_edges": combined_initial_edges,
+                                "final_edges": combined_final_edges,
+                                "events": combined_events_to_solve,
+                                "true_unassigned": combined_true_unassigned,
+                                "conflicts": combined_conflicts,
+                                "scheduled_errands": combined_scheduled_errands,
+                            }
+                            storage.save_custom_schedule(start_date, end_date, cached)
+                    except Exception as ex:
+                        logger.error(f"Failed to combine daily caches: {ex}")
+                        pass
                 
             if cached:
                 cached["completed_drives"] = completed
