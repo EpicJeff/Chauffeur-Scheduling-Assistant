@@ -82,11 +82,11 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 
 
 ## User Interface Architecture
-- The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state 
-ulesSubTab.
+- The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state.
 - Rule creation forms are located at the top of each sub-tab, before the respective rule lists.
-
-
+- **Kiosk Mode (`?kiosk=true`)**: A streamlined display state that hides the triage inbox and converts the full sidebar chat into a floating popup, maintaining chat history while maximizing schedule visibility.
+- **HA Theme (`?theme=ha`)**: Supports Home Assistant integrations via CSS variable propagation without overwriting the core Tailwind configuration palette. State is persisted across navigation views.
+- **Dynamic Drive Times**: The UI intelligently handles drive-time calculations when errands are toggled off. It accumulates the time of the hidden `A -> Errand` and `Errand -> B` edges so the gap accurately reflects the total actual drive time.
 
 ## Errands Scheduling Logic
 - **Errands Inbox**: A dynamic management UI allows users to add errands using natural language.
