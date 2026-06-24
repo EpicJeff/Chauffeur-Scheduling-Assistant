@@ -21,8 +21,9 @@
     </style>
 </head>
 
-<body class="bg-gray-900 text-white min-h-screen" x-data="configApp()" x-init="init()">
-    <div class="flex h-screen overflow-hidden">
+<body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden" x-data="configApp()" x-init="init()">
+    {% include 'nav.html' %}
+    <div class="flex flex-1 overflow-hidden">
 
         <!-- Sidebar Navigation -->
         <div class="w-72 bg-gray-800 border-r border-gray-700 flex flex-col shrink-0">
@@ -94,12 +95,6 @@
                     </li>
                 </ul>
             </nav>
-            <div class="p-6 border-t border-gray-700">
-                <a href="dashboard_v2"
-                    class="w-full bg-gray-700 hover:bg-gray-600 transition-colors text-white font-bold px-4 py-3 rounded-lg shadow flex items-center justify-center">
-                    &larr; Back to Dashboard
-                </a>
-            </div>
         </div>
 
         <!-- Main Content Area -->

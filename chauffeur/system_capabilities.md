@@ -82,6 +82,14 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 
 
 ## User Interface Architecture
-- The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state ulesSubTab.
+- The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state 
+ulesSubTab.
 - Rule creation forms are located at the top of each sub-tab, before the respective rule lists.
 
+
+
+## Errands Scheduling Logic
+- **Errands Inbox**: A dynamic management UI allows users to add errands using natural language.
+- **Heuristic Errands Solver**: matcher.py intelligently places errands into gaps that require the least detour time without violating the master route structure.
+- **Past Due State**: Errands that exceed their estimated scheduled time without being completed are placed in a past_due state. The solver safely ignores them so they stop auto-scheduling and wait for manual intervention.
+- **Recurrence**: Errands can be set to recur Daily, Weekly, or Monthly upon completion. When marked complete, a new pending errand is generated automatically.

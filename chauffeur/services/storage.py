@@ -56,6 +56,7 @@ with db_lock:
     event_configs_table = db.table('event_configs')
     api_requests_log_table = db.table('api_requests_log')
     chat_history_table = db.table('chat_history')
+    errands_table = db.table('errands')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -848,3 +849,35 @@ def delete_event_config(google_id: str):
 def get_completed_drives():
     with db_lock:
         return [doc['leg_id'] for doc in drive_status_table.search(Query().status == 'completed')]
+
+# --- Errands ---
+def get_all_errands() -> List[dict]:
+    with db_lock:
+        errands = []
+        for e in errands_table.all():
+            doc = dict(e)
+            doc['doc_id'] = e.doc_id
+            errands.append(doc)
+        return errands
+
+def add_errand(errand_data: dict) -> int:
+    with db_lock:
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        custom_schedules_table.truncate()
+        return errands_table.insert(errand_data)
+
+def update_errand(doc_id: int, errand_data: dict):
+    with db_lock:
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        custom_schedules_table.truncate()
+        errands_table.update(errand_data, doc_ids=[doc_id])
+
+def delete_errand(doc_id: int):
+    with db_lock:
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        custom_schedules_table.truncate()
+        errands_table.remove(doc_ids=[doc_id])
+

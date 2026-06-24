@@ -53,7 +53,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent, Errand
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -196,6 +196,10 @@ def driver_app(request: Request):
 def config(request: Request):
     return templates.TemplateResponse(request=request, name="config.html")
 
+@app.get("/errands")
+def errands(request: Request):
+    return templates.TemplateResponse(request=request, name="errands.html")
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
@@ -285,6 +289,58 @@ def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
+# --- Errands API ---
+def check_past_due_errands():
+    errands = storage.get_all_errands()
+    import time
+    now_ts = time.time()
+    for e in errands:
+        if not e.get('is_completed') and e.get('status', 'pending') != 'past_due':
+            lse = e.get('last_scheduled_end')
+            if lse and lse < now_ts:
+                e['status'] = 'past_due'
+                storage.update_errand(e['doc_id'], e)
+
+@app.get("/api/errands")
+def get_errands():
+    check_past_due_errands()
+    raw = storage.get_all_errands()
+    return [Errand(**e).model_dump() if hasattr(Errand(**e), 'model_dump') else Errand(**e).dict() for e in raw]
+
+@app.post("/api/errands")
+def create_errand(errand: Errand, background_tasks: BackgroundTasks):
+    doc_id = storage.add_errand(errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict())
+    background_tasks.add_task(trigger_background_refresh)
+    return {"doc_id": doc_id, "status": "created"}
+
+@app.put("/api/errands/{doc_id}")
+def update_errand(doc_id: int, errand: Errand, background_tasks: BackgroundTasks):
+    # Check for recurrence trigger
+    old_e_list = [e for e in storage.get_all_errands() if e['doc_id'] == doc_id]
+    if old_e_list:
+        old_e = old_e_list[0]
+        if not old_e.get('is_completed') and errand.is_completed and errand.recurrence_rule:
+            new_e = errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict()
+            import uuid
+            import time
+            new_e['id'] = uuid.uuid4().hex
+            new_e['is_completed'] = False
+            new_e['status'] = 'pending'
+            new_e['last_scheduled_end'] = None
+            new_e['created_at'] = time.time()
+            if 'doc_id' in new_e:
+                del new_e['doc_id']
+            storage.add_errand(new_e)
+
+    storage.update_errand(doc_id, errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict())
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "updated"}
+
+@app.delete("/api/errands/{doc_id}")
+def delete_errand(doc_id: int, background_tasks: BackgroundTasks):
+    storage.delete_errand(doc_id)
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "deleted"}
 
 analysis_tasks = {}
 
@@ -991,7 +1047,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     settings = storage.get_settings()
     calendar_ids = settings.get("calendar_ids", [])
     
-
+    errands = storage.get_all_errands()
         
     drivers_data = storage.get_all_drivers()
     # Provide default values for existing drivers to pass Pydantic validation
@@ -1416,6 +1472,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         combined_final_edges = {}
         combined_true_unassigned = []
         combined_conflicts = []
+        combined_scheduled_errands = []
         combined_ai_metadata = {}
         
         def merge_edges(target, source):
@@ -1446,6 +1503,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 merge_edges(combined_final_edges, sched.get('final_edges', {}))
                 combined_true_unassigned.extend(sched.get('true_unassigned', []))
                 combined_conflicts.extend(sched.get('conflicts', []))
+                combined_scheduled_errands.extend(sched.get('scheduled_errands', []))
                 
                 if 'ai_status' in daily_cache:
                     combined_ai_metadata[d_str] = {
@@ -1571,6 +1629,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "initial_edges": combined_initial_edges,
             "final_edges": combined_final_edges,
             "conflicts": combined_conflicts,
+            "scheduled_errands": combined_scheduled_errands,
             "unassigned": combined_true_unassigned,
             "no_location": no_location_events,
             "overridden_events": matcher.get_effective_overridden_event_ids(list(all_events_for_ui.values()), overrides),
@@ -1793,6 +1852,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             assignments, unassigned, lateness_warnings = matcher.solve_schedule(
                 daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
             )
+            
+            scheduled_errands = matcher.insert_errands_into_schedule(
+                assignments, daily_events_to_solve, errands, drivers
+            )
 
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
             assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
@@ -1816,7 +1879,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "final_edges": final_edges,
             "events": [e.dict() if hasattr(e, 'dict') else e for e in daily_events_to_solve],
             "true_unassigned": true_unassigned,
-            "conflicts": conflicts
+            "conflicts": conflicts,
+            "scheduled_errands": scheduled_errands if not draft else []
         }
 
         encoded_schedule = jsonable_encoder(daily_schedule)

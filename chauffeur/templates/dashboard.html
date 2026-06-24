@@ -87,13 +87,27 @@
     </style>
 </head>
 
-<body class="p-2 md:p-4">
-    <script>
-        if (isHaTheme) document.body.classList.add('ha-theme');
-    </script>
-    <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 sticky top-0 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 backdrop-blur-sm bg-opacity-95">
+<body class="p-0 m-0">
+    {% include 'nav.html' %}
+    <div class="p-2 md:p-4">
+        <script>
+            if (isHaTheme) document.body.classList.add('ha-theme');
+        </script>
+        <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 sticky top-[4rem] z-40 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 backdrop-blur-sm bg-opacity-95">
         <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
         <div id="header-buttons" class="grid grid-cols-2 md:flex md:flex-row justify-center gap-2 md:gap-4 mt-2 md:mt-0 w-full md:w-auto">
+            <div class="col-span-2 md:col-span-1 flex gap-2 justify-center order-first md:order-none">
+                <label class="flex items-center gap-2 cursor-pointer bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-700 transition-colors shadow-md mr-2">
+                    <input type="checkbox" id="toggle-errands" class="hidden" onchange="toggleErrands()">
+                    <div class="w-8 h-4 bg-gray-600 rounded-full relative transition-colors duration-200" id="errands-toggle-track">
+                        <div class="w-4 h-4 bg-white rounded-full absolute left-0 top-0 shadow transform transition-transform duration-200" id="errands-toggle-knob"></div>
+                    </div>
+                    <span class="text-sm font-bold text-gray-300 select-none flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                        Errands
+                    </span>
+                </label>
+            </div>
             <div class="col-span-2 md:col-span-1 flex gap-2 w-full justify-center order-first md:order-none">
                 <button id="btn-prev-day" onclick="fetchPrevDay()"
                     class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">&larr; Prev</button>
@@ -120,17 +134,6 @@
                     class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
                 <span id="maps-stats-warning-dot" class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 h-2.5 w-2.5 rounded-full hidden animate-ping"></span>
             </button>
-            <a href="config"
-                class="col-span-2 md:col-span-1 bg-gray-700 hover:bg-gray-600 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
-                <svg class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
-                    </path>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                </svg>
-                Config
-            </a>
         </div>
     </div>
 
@@ -560,6 +563,25 @@
             
         </div>
     </div>
+
+    <script>
+        window.showErrands = false;
+        function toggleErrands() {
+            window.showErrands = !window.showErrands;
+            const track = document.getElementById('errands-toggle-track');
+            const knob = document.getElementById('errands-toggle-knob');
+            if (window.showErrands) {
+                track.classList.replace('bg-gray-600', 'bg-blue-500');
+                knob.classList.add('translate-x-4');
+            } else {
+                track.classList.replace('bg-blue-500', 'bg-gray-600');
+                knob.classList.remove('translate-x-4');
+            }
+            if (currentData) {
+                renderSchedule(currentData);
+            }
+        }
+    </script>
 
     <div id="schedule-container" class="space-y-12 pb-10">
         <p class="text-center text-gray-500 text-xl mt-20 animate-pulse">Loading schedule...</p>
@@ -1913,8 +1935,45 @@
                 no_location = [], 
                 calendar_metadata = {}, 
                 overridden_events = [], 
-                lateness_warnings = [] 
+                lateness_warnings = [],
+                scheduled_errands = []
             } = data;
+            
+            let localEvents = [...events];
+            let localAssignments = {...assignments};
+            let localRouteEdges = JSON.parse(JSON.stringify(data.route_edges || {}));
+
+            if (window.showErrands && scheduled_errands && scheduled_errands.length > 0) {
+                scheduled_errands.forEach(errand => {
+                    localEvents.push(errand);
+                    localAssignments[errand.id] = errand.driver.id;
+                    
+                    // Patch route edges for drive time pills
+                    const d_id = errand.driver.id;
+                    if (!localRouteEdges[d_id]) localRouteEdges[d_id] = {};
+                    
+                    const e1_id = errand.inserted_after_event_id;
+                    const e2_id = errand.inserted_before_event_id;
+                    
+                    if (localRouteEdges[d_id][e1_id]) {
+                        // Edge from e1 to errand
+                        localRouteEdges[d_id][e1_id] = {
+                            from_event: e1_id,
+                            to_event: errand.id,
+                            travel_mins: errand.travel_to_mins,
+                            delay_mins: 0
+                        };
+                    }
+                    
+                    // Edge from errand to e2
+                    localRouteEdges[d_id][errand.id] = {
+                        from_event: errand.id,
+                        to_event: e2_id,
+                        travel_mins: errand.travel_from_mins,
+                        delay_mins: 0
+                    };
+                });
+            }
 
             if (!isModal) {
                 // --- Inbox Logic ---
@@ -2050,7 +2109,7 @@
             const latenessWarningsMap = lateness_warnings || {};
 
             currentEventsMap = {};
-            events.forEach(ev => {
+            localEvents.forEach(ev => {
                 currentEventsMap[ev.id] = ev;
 
                 // An event can belong to multiple columns now.
@@ -2059,7 +2118,7 @@
                 if (no_location && no_location.includes(ev.id)) {
                     targetCols.push('no_location');
                 } else {
-                    if (assignments && assignments[ev.id]) targetCols.push(assignments[ev.id]);
+                    if (localAssignments && localAssignments[ev.id]) targetCols.push(localAssignments[ev.id]);
                     if (ghost_assignments && ghost_assignments[ev.id]) targetCols.push(ghost_assignments[ev.id]);
                     if (unassigned && unassigned.includes(ev.id)) targetCols.push('unassigned');
 
@@ -2138,7 +2197,7 @@
                 const colsObj = scheduleByDate[date];
 
                 function isPassengerTask(ev) {
-                    return (data.assignments && data.assignments[ev.id]) || 
+                    return (localAssignments && localAssignments[ev.id]) || 
                            (data.ghost_assignments && data.ghost_assignments[ev.id]) || 
                            (data.unassigned && data.unassigned.includes(ev.id)) || 
                            (data.no_location && data.no_location.includes(ev.id));
@@ -2239,7 +2298,7 @@
                 colIds.forEach(c_id => {
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(e => {
-                            const isDriverOnlyEv = !(data.assignments && data.assignments[e.id]) && 
+                            const isDriverOnlyEv = !(localAssignments && localAssignments[e.id]) && 
                                                    !(data.ghost_assignments && data.ghost_assignments[e.id]) && 
                                                    !(data.unassigned && data.unassigned.includes(e.id)) && 
                                                    !(data.no_location && data.no_location.includes(e.id));
@@ -2511,7 +2570,7 @@
                             badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
                         }
 
-                        const isAssignedToThisColumn = (assignments && assignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
+                        const isAssignedToThisColumn = (localAssignments && localAssignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
                         const isDriverOnly = !isAssignedToThisColumn;
 
                         let leftStyle = '28px';
@@ -2536,7 +2595,7 @@
                         let lateMins = 0;
                         if (index > 0) {
                             const prevEv = uniqueColEvents[index - 1];
-                            const edgeFromPrev = routeEdges[c_id] ? routeEdges[c_id][prevEv.id] : null;
+                            const edgeFromPrev = localRouteEdges[c_id] ? localRouteEdges[c_id][prevEv.id] : null;
                             if (edgeFromPrev && edgeFromPrev.home_waypoint) {
                                 computedOrigin = edgeFromPrev.home_waypoint.driver_home_location || currentData.home_location || '';
                             } else if (edgeFromPrev && edgeFromPrev.pickup_waypoint) {
@@ -2567,6 +2626,19 @@
                                         <div class="font-bold text-[10px] text-blue-300 uppercase tracking-widest mb-0.5 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Active Trip</div>
                                         <div class="text-[11px] text-blue-200/70 truncate w-full font-medium">${ev.title}</div>
                                         <div class="text-[9px] text-blue-200/50 truncate w-full flex items-center gap-1 mt-0.5"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>${ev.location || 'Unknown Location'}</div>
+                                    </div>
+                                </div>
+                            `;
+                        } else if (ev.event_type === 'errand') {
+                            colEventsHtml += `
+                                <div title="${ev.title}"
+                                     class="absolute rounded-lg overflow-hidden bg-blue-900/30 border border-blue-500/50 shadow-md transition-colors flex flex-col z-10"
+                                     style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; min-height: 24px;">
+                                    <div class="px-2 py-1 flex-1 overflow-hidden flex flex-col justify-center relative">
+                                        <div class="absolute left-0 top-0 bottom-0 w-1 bg-blue-500"></div>
+                                        <div class="font-bold text-[9px] text-blue-300 uppercase tracking-widest mb-0.5 flex items-center gap-1 pl-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg> Errand</div>
+                                        <div class="text-[11px] text-white truncate w-full font-bold pl-1">${ev.title}</div>
+                                        <div class="text-[9px] text-gray-400 truncate w-full flex items-center gap-1 mt-0.5 pl-1"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>${ev.location}</div>
                                     </div>
                                 </div>
                             `;
@@ -2645,8 +2717,8 @@
                         }
 
                         // Routing pill between events
-                        if (routeEdges[c_id] && routeEdges[c_id][ev.id]) {
-                            const edge = routeEdges[c_id][ev.id];
+                        if (localRouteEdges[c_id] && localRouteEdges[c_id][ev.id]) {
+                            const edge = localRouteEdges[c_id][ev.id];
                             const nextEv = uniqueColEvents.find(e => e.id === edge.to_event);
                             if (nextEv) {
                                 const nextStartY = getTimeY(nextEv.start);
@@ -3528,7 +3600,7 @@
             </div>
         </div>
     </div>
+    </div>
 </body>
-
 
 </html>

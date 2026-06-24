@@ -153,3 +153,18 @@ class Theme(BaseModel):
     is_ai_generated: bool = False
     is_enabled: bool = True
 
+class Errand(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    title: str
+    duration_mins: int
+    location: str
+    priority: int = 2 # 1 High, 2 Medium, 3 Low
+    is_completed: bool = False
+    status: str = "pending" # 'pending', 'past_due', 'completed'
+    last_scheduled_end: Optional[float] = None # Unix timestamp
+    tags: List[str] = Field(default_factory=list)
+    recurrence_rule: Optional[str] = None # e.g. 'daily', 'weekly', 'monthly'
+    created_at: float = Field(default_factory=time.time)
+
+
