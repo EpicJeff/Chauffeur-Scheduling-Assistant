@@ -2972,8 +2972,27 @@
         }
 
         // Fetch immediately (which will hit the cache instantly)
-        fetchSchedule();
-        fetchMapsStatsDashboard();
+        async function initDashboard() {
+            if (isReadOnly) {
+                try {
+                    const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                    const confRes = await fetch(`${apiBase}api/config`);
+                    if (confRes.ok) {
+                        const conf = await confRes.json();
+                        if (conf.app && conf.app.days_to_show) {
+                            currentStartDate = new Date();
+                            currentStartDate.setHours(0, 0, 0, 0);
+                            currentEndDate = new Date(currentStartDate);
+                            currentEndDate.setDate(currentEndDate.getDate() + (conf.app.days_to_show - 1));
+                            currentEndDate.setHours(23, 59, 59, 999);
+                        }
+                    }
+                } catch(e) { console.error(e); }
+            }
+            fetchSchedule();
+            fetchMapsStatsDashboard();
+        }
+        initDashboard();
 
         // Listen for real-time updates from the backend
         const evtSource = new EventSource("api/stream");

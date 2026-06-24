@@ -196,6 +196,10 @@ def driver_app(request: Request):
 def config(request: Request):
     return templates.TemplateResponse(request=request, name="config.html")
 
+@app.get("/calendar")
+def calendar(request: Request):
+    return templates.TemplateResponse(request=request, name="calendar.html")
+
 @app.get("/errands")
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
