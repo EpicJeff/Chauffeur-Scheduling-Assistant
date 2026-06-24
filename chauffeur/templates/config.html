@@ -1328,10 +1328,10 @@
                             </button>
                         </div>
                     </div>
-                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                    <div x-show="matchedEventsByRule['s_' + (rule.doc_id || rule.id)] && matchedEventsByRule['s_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
-                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                            <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
                                 <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
@@ -1430,10 +1430,10 @@
                             </button>
                         </div>
                     </div>
-                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                    <div x-show="matchedEventsByRule['s_' + (rule.doc_id || rule.id)] && matchedEventsByRule['s_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
-                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                            <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
                                 <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
@@ -1682,10 +1682,10 @@
                             </button>
                         </div>
                     </div>
-                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                    <div x-show="matchedEventsByRule['s_' + (rule.doc_id || rule.id)] && matchedEventsByRule['s_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
-                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                            <template x-for="ev in matchedEventsByRule['s_' + (rule.doc_id || rule.id)]" :key="ev.id">
                                 <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
@@ -1781,10 +1781,10 @@
                             </button>
                         </div>
                     </div>
-                    <div x-show="matchedEventsByRule[rule.doc_id || rule.id] && matchedEventsByRule[rule.doc_id || rule.id].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                    <div x-show="matchedEventsByRule['p_' + (rule.doc_id || rule.id)] && matchedEventsByRule['p_' + (rule.doc_id || rule.id)].length > 0" class="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                         <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Matched Events in Schedule</div>
                         <div class="space-y-2">
-                            <template x-for="ev in matchedEventsByRule[rule.doc_id || rule.id]" :key="ev.id">
+                            <template x-for="ev in matchedEventsByRule['p_' + (rule.doc_id || rule.id)]" :key="ev.id">
                                 <div class="relative rounded-md overflow-hidden shadow-sm border-l-4 bg-gray-800 border-gray-700 flex flex-col z-10" :style="'border-left-color: ' + (ev.calendar_ids && ev.calendar_ids.length > 0 && calendarMetadata[ev.calendar_ids[0]] ? calendarMetadata[ev.calendar_ids[0]].backgroundColor : '#3B82F6')">
                                     <div class="px-2 py-1.5 w-full flex flex-col">
                                         <div class="flex items-center shrink-0">
@@ -2594,7 +2594,8 @@
                                 const eventObj = eventsMap[eventId];
                                 if (eventObj) {
                                     rulesMatchingEvent.forEach(rule => {
-                                        const rId = rule.doc_id || rule.id;
+                                        const prefix = rule._is_priority ? 'p_' : 's_';
+                                        const rId = prefix + (rule.doc_id || rule.id);
                                         if (!mapping[rId]) mapping[rId] = [];
                                         mapping[rId].push(eventObj);
                                     });
