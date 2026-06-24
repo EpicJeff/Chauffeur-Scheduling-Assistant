@@ -196,9 +196,9 @@ def driver_app(request: Request):
 def config(request: Request):
     return templates.TemplateResponse(request=request, name="config.html")
 
-@app.get("/calendar")
-def calendar(request: Request):
-    return templates.TemplateResponse(request=request, name="calendar.html")
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_view(request: Request):
+    return templates.TemplateResponse("calendar.html", {"request": request})
 
 @app.get("/errands")
 def errands(request: Request):
@@ -1900,7 +1900,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for e_dict in scheduled_errands:
             try:
                 errand_ev = Event(
-                    id=e_dict['id'],
+                    id=f"errand_{e_dict['id']}",
                     title=e_dict['title'],
                     start=datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
                     end=datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
@@ -1915,7 +1915,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         all_assignments = {**base['assignments'], **base['ghost_assignments']}
         for e_dict in scheduled_errands:
-            all_assignments[e_dict['id']] = e_dict['driver']['id']
+            all_assignments[f"errand_{e_dict['id']}"] = e_dict['driver']['id']
             
         all_events = daily_events_to_solve + errand_events
         
@@ -1928,6 +1928,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 rules=rules, passengers=passengers
             )
 
+        # Include all events for this day in the daily cache (not just passenger events)
+        ui_events_for_day = []
+        target_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        for e in all_events_for_ui.values():
+            curr = e.start.astimezone()
+            end = e.end.astimezone()
+            if curr.date() <= target_date <= end.date():
+                if end.date() == target_date and end.hour == 0 and end.minute == 0 and curr.date() != end.date():
+                    continue
+                ui_events_for_day.append(e)
+
         daily_schedule = {
             "assignments": base['assignments'],
             "unassigned": base['unassigned'],
@@ -1937,7 +1948,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "route_edges": route_edges,
             "initial_edges": initial_edges,
             "final_edges": final_edges,
-            "events": [e.dict() if hasattr(e, 'dict') else e for e in daily_events_to_solve],
+            "events": [e.dict() if hasattr(e, 'dict') else e for e in ui_events_for_day],
             "true_unassigned": base['true_unassigned'],
             "conflicts": base['conflicts'],
             "scheduled_errands": scheduled_errands
