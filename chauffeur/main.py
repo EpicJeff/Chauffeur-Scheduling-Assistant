@@ -1087,7 +1087,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         return {"error": "No calendar IDs configured in settings, drivers, or passengers."}
     
     # Fetch events dynamically based on the days_to_show settings
-    days_to_fetch = int(settings.get('days_to_show', 7))
+    days_to_fetch = int(settings.get('days_to_show', 30))
 
     
     import difflib

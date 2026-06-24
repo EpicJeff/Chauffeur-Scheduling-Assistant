@@ -1532,6 +1532,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
 
 def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict], drivers: List[dict]) -> Dict[str, List[dict]]:
     from datetime import datetime, timedelta
+    from services import storage
     
     scheduled_errands_by_date = {date_str: [] for date_str in base_schedules.keys()}
     
@@ -1598,6 +1599,28 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         if today_date > window_end:
             window_start = today_date
             window_end = datetime.max.date()
+            
+        # Check cache to see if already scheduled within the window
+        already_scheduled = False
+        window_days = (window_end - window_start).days
+        max_scan = min(window_days, 60) # cap scan to prevent infinite loop for one-offs
+        
+        for offset in range(max_scan + 1):
+            check_date = window_start + timedelta(days=offset)
+            d_str = str(check_date)
+            # If we are solving this day currently, it will be handled by the loop below
+            if d_str in driver_schedules_by_date:
+                continue
+                
+            cache = storage.get_cached_daily_schedule(d_str)
+            if cache and 'schedule' in cache:
+                cached_errands = cache['schedule'].get('scheduled_errands', [])
+                if any(er.get('id') == errand.get('id') for er in cached_errands):
+                    already_scheduled = True
+                    break
+                    
+        if already_scheduled:
+            continue
             
         best_gap = None
         best_detour = float('inf')

@@ -173,6 +173,7 @@
                 </div>
                 
                 <input type="hidden" id="edit-id">
+                <input type="hidden" id="edit-doc-id">
                 
                 <div class="space-y-4">
                     <div>
@@ -567,6 +568,7 @@
         // --- Modal Logic ---
         function openEditModal(errand) {
             document.getElementById('edit-id').value = errand.id;
+            document.getElementById('edit-doc-id').value = errand.doc_id;
             document.getElementById('edit-title').value = errand.title;
             document.getElementById('edit-location').value = errand.location || '';
             document.getElementById('edit-priority').value = errand.priority || 2;
@@ -608,6 +610,7 @@
 
         async function deleteErrand() {
             const id = document.getElementById('edit-id').value;
+            const docId = document.getElementById('edit-doc-id').value;
             if (!confirm('Are you sure you want to delete this errand?')) return;
             
             closeEditModal();
@@ -615,7 +618,7 @@
             renderErrands();
 
             try {
-                await fetch(`api/errands/${id}`, { method: 'DELETE' });
+                await fetch(`api/errands/${docId}`, { method: 'DELETE' });
             } catch (err) {
                 console.error(err);
                 fetchErrands();

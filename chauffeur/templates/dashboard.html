@@ -565,9 +565,22 @@
     </div>
 
     <script>
-        window.showErrands = false;
+        window.showErrands = localStorage.getItem('chauffeur_show_errands') === 'true';
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            const track = document.getElementById('errands-toggle-track');
+            const knob = document.getElementById('errands-toggle-knob');
+            const checkbox = document.getElementById('toggle-errands');
+            if (window.showErrands && track && knob && checkbox) {
+                track.classList.replace('bg-gray-600', 'bg-blue-500');
+                knob.classList.add('translate-x-4');
+                checkbox.checked = true;
+            }
+        });
+
         function toggleErrands() {
             window.showErrands = !window.showErrands;
+            localStorage.setItem('chauffeur_show_errands', window.showErrands);
             const track = document.getElementById('errands-toggle-track');
             const knob = document.getElementById('errands-toggle-knob');
             if (window.showErrands) {
