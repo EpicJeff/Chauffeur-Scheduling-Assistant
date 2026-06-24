@@ -554,7 +554,7 @@
             renderErrands(); // Optimistic update
             
             try {
-                await fetch(`api/errands/${id}`, {
+                await fetch(`api/errands/${errand.doc_id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errand)
@@ -597,7 +597,7 @@
             renderErrands();
 
             try {
-                await fetch(`api/errands/${id}`, {
+                await fetch(`api/errands/${errand.doc_id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(errand)
