@@ -1856,13 +1856,35 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             scheduled_errands = matcher.insert_errands_into_schedule(
                 assignments, daily_events_to_solve, errands, drivers
             )
+            
+            from models.schemas import Event
+            errand_events = []
+            for e_dict in scheduled_errands:
+                try:
+                    errand_ev = Event(
+                        id=e_dict['id'],
+                        title=e_dict['title'],
+                        start=datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
+                        end=datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
+                        location=e_dict['location'],
+                        calendar_ids=[],
+                        source_event_ids=[],
+                        event_type="errand"
+                    )
+                    errand_events.append(errand_ev)
+                except Exception as ex:
+                    logger.error(f"Failed to create errand Event for edges: {ex}")
 
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
             assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
             ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
     
             all_assignments = {**assignments, **ghost_assignments}
-            route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, daily_events_to_solve, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
+            for e_dict in scheduled_errands:
+                all_assignments[e_dict['id']] = e_dict['driver']['id']
+                
+            all_events = daily_events_to_solve + errand_events
+            route_edges, initial_edges, final_edges = matcher.compute_route_edges(all_assignments, all_events, drivers, home_location=home_location, trip_metadata=trip_metadata, driver_attendances=driver_events_ids, rules=rules, passengers=passengers)
     
             true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
     
