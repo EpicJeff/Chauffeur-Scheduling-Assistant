@@ -721,6 +721,13 @@
             const dId = selectedDriverId;
             if (!scheduleData || !dId) return;
 
+            const savedScrollLeft = container.scrollLeft;
+            const savedPaneScrolls = {};
+            const existingPanes = container.querySelectorAll('[id^="pane-"]');
+            existingPanes.forEach(p => {
+                savedPaneScrolls[p.id] = p.scrollTop;
+            });
+
             const { events, assignments, ghost_assignments, route_edges, initial_edges, final_edges } = scheduleData;
 
             let localRouteEdges = JSON.parse(JSON.stringify(route_edges || {}));
@@ -1052,18 +1059,26 @@
                 container.appendChild(pane);
             });
 
+            // Restore scroll state synchronously to prevent jumping
+            container.scrollLeft = savedScrollLeft;
+            Object.keys(savedPaneScrolls).forEach(id => {
+                const p = document.getElementById(id);
+                if (p) p.scrollTop = savedPaneScrolls[id];
+            });
+
             updateHeaderDate();
 
             // Set up scroll snapping logic
-            container.addEventListener('scroll', () => {
+            container.onscroll = () => {
                 const scrollLeft = container.scrollLeft;
                 const paneWidth = container.clientWidth;
+                if (paneWidth === 0) return;
                 const idx = Math.round(scrollLeft / paneWidth);
                 if (idx !== activeDateIndex) {
                     activeDateIndex = idx;
                     updateHeaderDate();
                 }
-            });
+            };
         }
 
         function updateHeaderDate() {
