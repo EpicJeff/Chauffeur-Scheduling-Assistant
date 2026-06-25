@@ -1263,6 +1263,7 @@
             if (event.data === "update") {
                 if (selectedDriverId) {
                     fetchSchedule(false, true);
+                    fetchNotifications();
                 }
             }
         };
