@@ -630,7 +630,8 @@ def autocomplete_location(input_text: str, session_token: str = None) -> list[di
         # Check if we can use Search Box API
         if session_token:
             session_usage = storage.get_mapbox_usage(current_month, 'searchbox_sessions')
-            if session_usage < 450:
+            limit = get_map_option('mapbox_searchbox_limit', 500)
+            if session_usage < limit:
                 # Use Search Box API
                 url = "https://api.mapbox.com/search/searchbox/v1/suggest"
                 params = {
