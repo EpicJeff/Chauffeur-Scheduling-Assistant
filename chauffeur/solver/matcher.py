@@ -481,15 +481,8 @@ def solve_schedule(
                     model.AddImplication(tol, assign_vars[(e2.id, d.id)])
                     model.AddBoolOr([tol, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
                     
-                    # Calculate estimated weight to negate
-                    est_weight = int(100 * unassigned_penalty_mult)
-                    if d.group == 'primary':
-                        est_weight += int(2000 * primary_driver_bonus_mult)
-                    est_weight += max(0, (10 - d.priority_index) * 150)
-                    
-                    # Negate their base weight so net gain for the second event is tiny, but still > 0
-                    penalty = est_weight - 10
-                    if penalty < 50: penalty = 50
+                    # Fixed massive penalty (overcomes Primary Bonus and Group Bonus)
+                    penalty = 50000
                     objective_terms.append(tol * -penalty)
             elif gap_seconds < desired_needed_seconds:
                 # Driver conflict soft penalty (buffer eaten into)
@@ -499,7 +492,8 @@ def solve_schedule(
                     model.AddImplication(both, assign_vars[(e1.id, d.id)])
                     model.AddImplication(both, assign_vars[(e2.id, d.id)])
                     model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
-                    objective_terms.append(both * -50)
+                    # Scaled to overcome Primary Driver Bonus
+                    objective_terms.append(both * -2000)
 
     # 3b. Overridden pairs
     overridden_pairs = set(
@@ -539,19 +533,19 @@ def solve_schedule(
                     # Transit overlap
                     if not e_before_de and not de_before_e:
                         # Transit impossible. Severely penalize instead of banning so least-bad driver is picked if forced
-                        objective_terms.append(assign_vars[(e.id, d.id)] * -1000000)
+                        objective_terms.append(assign_vars[(e.id, d.id)] * -2000000)
 
     # 4. Rules & Objective
     
     for e in assignable_events:
         # Calculate dynamic base weight for the event
-        base_event_weight = int(100 * unassigned_penalty_mult)
+        base_event_weight = int(1000000 * unassigned_penalty_mult)
         for pr in priority_rules:
             mod = pr.weight_modifier
-            if mod == 500 or mod == 200: mod = 10000
-            elif mod == 100: mod = 1000
-            elif mod == -100: mod = -1000
-            elif mod == -500: mod = -10000
+            if mod == 500 or mod == 200: mod = 500000
+            elif mod == 100: mod = 100000
+            elif mod == -100: mod = -100000
+            elif mod == -500: mod = -500000
             
             if does_event_match_rule(e, pr, passengers):
                 base_event_weight += mod
@@ -572,7 +566,7 @@ def solve_schedule(
                     break
                     
             if is_attendee:
-                weight += 5000
+                weight += 50000000
 
             # Group weight
             if d.group == 'primary':
@@ -593,7 +587,7 @@ def solve_schedule(
                     p_end = datetime.strptime(d.preferred_end, '%H:%M').time() if d.preferred_end else None
                     
                     if (p_start and e_start_time < p_start) or (p_end and e_end_time > p_end):
-                        weight -= 300
+                        weight -= 2000000
                 except ValueError:
                     pass
             
@@ -672,7 +666,7 @@ def solve_schedule(
                                 objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
                                 
                             # Penalize travel time for events assigned to the same driver (scaled up to matter against bonuses)
-                            objective_terms.append(both_assigned * (-int(travel_mins * 30 * travel_time_penalty_mult)))
+                            objective_terms.append(both_assigned * (-int(travel_mins * 60 * travel_time_penalty_mult)))
                     
     # 4c. Mutually Exclusive Event Groups
 
