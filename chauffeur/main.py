@@ -759,6 +759,22 @@ def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
 @app.get("/api/settings")
 def get_settings():
     settings = storage.get_settings()
+    
+    # Merge map options from options.json so UI reflects effective settings
+    import json
+    options_file = '/data/options.json'
+    if os.path.exists(options_file):
+        try:
+            with open(options_file, 'r') as f:
+                options = json.load(f)
+            for k in ['disable_mapbox_matrix', 'disable_mapbox_directions', 'disable_mapbox',
+                      'mapbox_matrix_limit', 'mapbox_directions_limit', 
+                      'mapbox_geocode_limit', 'mapbox_searchbox_limit']:
+                if k not in settings and k in options:
+                    settings[k] = options[k]
+        except Exception:
+            pass
+            
     settings['is_home_assistant'] = os.path.exists('/data/options.json')
     return settings
 
