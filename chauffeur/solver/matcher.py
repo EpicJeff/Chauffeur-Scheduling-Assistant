@@ -15,7 +15,7 @@ def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=Fa
             return 0
         return t
 
-from datetime import datetime
+from datetime import datetime, time, timedelta
 import math
 
 def get_event_passenger_ids(event, passengers):
