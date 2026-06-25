@@ -157,9 +157,9 @@
                         All</button>
                 </div>
 
-                <button onclick="testPushNotification()"
+                <!--<button onclick="testPushNotification()"
                     class="mb-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg active:scale-95 transition-all">Send
-                    Test Push Notification</button>
+                    Test Push Notification</button>-->
                 <button onclick="toggleNotifications()"
                     class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -260,9 +260,9 @@
                 const errands = await res.json();
                 const errand = errands.find(e => e.id === id);
                 if (!errand) return;
-                
+
                 errand.is_completed = true;
-                
+
                 await fetch(`${apiBase}api/errands/${errand.doc_id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -274,7 +274,7 @@
                 alert("Failed to complete errand");
             }
         }
-        
+
         async function checkNotificationStatus() {
             const pushBtn = document.getElementById('btn-push');
             if (Notification.permission === 'granted') {
@@ -557,9 +557,9 @@
 
         function openMaps(provider) {
             if (!routeContext) return;
-            
+
             let destStr = routeContext.destination;
-            
+
             // Apple Maps fuzzy matches poorly on named places (like "Ancient Oaks pool, 8400...").
             // If the first part before a comma contains no numbers but the second part does,
             // we strip the name part so Apple Maps gets a clean street address.
@@ -722,7 +722,7 @@
             if (!scheduleData || !dId) return;
 
             const { events, assignments, ghost_assignments, route_edges, initial_edges, final_edges } = scheduleData;
-            
+
             let localRouteEdges = JSON.parse(JSON.stringify(route_edges || {}));
             let localInitialEdges = JSON.parse(JSON.stringify(initial_edges || {}));
             let localFinalEdges = JSON.parse(JSON.stringify(final_edges || {}));
@@ -740,15 +740,15 @@
                 errand.start = errand.start_time;
                 errand.end = errand.end_time;
                 errand.event_type = 'errand';
-                
+
                 const e1_id = errand.inserted_after_event_id;
                 const e2_id = errand.inserted_before_event_id;
                 const e_id = errand.id;
-                
+
                 if (!localRouteEdges[dId]) localRouteEdges[dId] = {};
                 if (!localInitialEdges[dId]) localInitialEdges[dId] = {};
                 if (!localFinalEdges[dId]) localFinalEdges[dId] = {};
-                
+
                 if (e1_id === null && e2_id === null) {
                     localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
                     localFinalEdges[dId][e_id] = { from_event: e_id, travel_mins: errand.travel_from_mins, delay_mins: 0, dropoff_waypoint: null };
@@ -765,7 +765,7 @@
                     localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
                     localRouteEdges[dId][e_id] = { from_event: e_id, to_event: e2_id, travel_mins: errand.travel_from_mins, delay_mins: 0 };
                 }
-                
+
                 let currDate = new Date(errand.start);
                 const year = currDate.getFullYear();
                 const month = String(currDate.getMonth() + 1).padStart(2, '0');
@@ -780,7 +780,7 @@
                 currDate.setHours(0, 0, 0, 0);
                 let endDate = new Date(ev.end);
                 endDate.setHours(0, 0, 0, 0);
-                
+
                 // If the event ends at midnight, don't include the end date unless it's the same as the start date
                 if (new Date(ev.end).getHours() === 0 && new Date(ev.end).getMinutes() === 0 && currDate < endDate) {
                     endDate.setDate(endDate.getDate() - 1);
@@ -792,7 +792,7 @@
                     const month = String(currDate.getMonth() + 1).padStart(2, '0');
                     const day = String(currDate.getDate()).padStart(2, '0');
                     const dStr = `${year}-${month}-${day}`;
-                    
+
                     if (!byDate[dStr]) byDate[dStr] = [];
                     byDate[dStr].push(ev);
                     currDate.setDate(currDate.getDate() + 1);
@@ -962,12 +962,12 @@
                                 const leg3Mins = edge.pickup_waypoint.from_pickup_mins;
                                 const pickupLocation = edge.pickup_waypoint.pickup_location || globalHome;
                                 const driverHomeLoc = edge.home_waypoint.driver_home_location || globalHome;
-                                
+
                                 const homeLabel = getHomeLabel(driverHomeLoc);
                                 const pickupTitle = edge.pickup_waypoint.pickup_event_title ? `Pickup at ${edge.pickup_waypoint.pickup_event_title}` : 'Pickup';
-                                
+
                                 const leg2DepTime = new Date(new Date(ev.end).getTime() + (leg1Mins + edge.home_waypoint.layover_mins) * 60000);
-                                
+
                                 let args1 = `'${computedOrigin.replace(/'/g, "\\'")}', '${driverHomeLoc.replace(/'/g, "\\'")}', '${homeLabel.replace(/'/g, "\\'")}', '${ev.id}'`;
                                 html += renderLegPill(formatTime(ev.end), homeLabel, leg1Mins, 0, args1 + `, 'route_${ev.id}_1'`, 'blue', '', `route_${ev.id}_1`, new Date(ev.end) < new Date());
 
@@ -1238,7 +1238,7 @@
 
         // Listen for real-time updates from the backend
         const evtSource = new EventSource("/api/stream");
-        evtSource.onmessage = function(event) {
+        evtSource.onmessage = function (event) {
             if (event.data === "update") {
                 if (selectedDriverId) {
                     fetchSchedule(false, true);
