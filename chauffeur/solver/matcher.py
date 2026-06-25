@@ -73,17 +73,24 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
         if not match_kw: top_matches = False
         
     # 2. Passengers
-    if top_matches and hasattr(rule, 'passenger_ids') and rule.passenger_ids:
+    raw_pids = getattr(rule, 'passenger_ids', []) or []
+    if not isinstance(raw_pids, list): raw_pids = [raw_pids]
+    extra_pax = getattr(rule, 'passengers', None)
+    if extra_pax:
+        if isinstance(extra_pax, list): raw_pids.extend(extra_pax)
+        elif isinstance(extra_pax, str): raw_pids.append(extra_pax)
+        
+    if top_matches and raw_pids:
         has_top_criteria = True
         match_all = getattr(rule, 'passengers_match_all', False)
         
         if match_all:
             match_pax = True
-            for pid in rule.passenger_ids:
+            for pid in raw_pids:
                 resolved_pids_for_this_passenger = {str(pid)}
                 if passengers:
                     for p in passengers:
-                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
+                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids) or str(pid).lower() == getattr(p, 'name', '').lower():
                             resolved_pids_for_this_passenger.add(str(p.id))
                             if p.calendar_ids:
                                 for cid in p.calendar_ids:
@@ -101,11 +108,11 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
         else:
             match_pax = False
             resolved_pids = set()
-            for pid in rule.passenger_ids:
+            for pid in raw_pids:
                 resolved_pids.add(str(pid))
                 if passengers:
                     for p in passengers:
-                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids):
+                        if pid == str(p.id) or (p.calendar_ids and pid in p.calendar_ids) or str(pid).lower() == getattr(p, 'name', '').lower():
                             resolved_pids.add(str(p.id))
                             if p.calendar_ids:
                                 for cid in p.calendar_ids:

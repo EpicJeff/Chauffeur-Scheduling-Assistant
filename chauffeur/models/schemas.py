@@ -52,6 +52,7 @@ class EventFilter(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False
     passenger_ids: List[str] = Field(default_factory=list)
+    passengers: Any = None
     passengers_match_all: bool = False
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
@@ -74,6 +75,7 @@ class Rule(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False
     passenger_ids: List[str] = Field(default_factory=list)
+    passengers: Any = None
     passengers_match_all: bool = False
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
@@ -92,6 +94,7 @@ class PriorityRule(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False
     passenger_ids: List[str] = Field(default_factory=list)
+    passengers: Any = None
     passengers_match_all: bool = False
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
