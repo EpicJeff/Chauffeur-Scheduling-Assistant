@@ -699,7 +699,9 @@ def delete_override_by_event(event_id: str):
     from tinydb import Query
     invalidate_daily_schedule_cache_for_event(event_id)
     with db_lock:
-        overrides_table.remove(Query().event_id == event_id)
+        def match_func(val):
+            return val == event_id or str(val).startswith(event_id + '_')
+        overrides_table.remove(Query().event_id.test(match_func))
 
 
 # Schedule Cache
