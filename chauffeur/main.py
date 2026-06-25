@@ -309,11 +309,7 @@ def check_past_due_errands():
 def get_errands():
     check_past_due_errands()
     raw = storage.get_all_errands()
-    cached = storage.get_cached_schedule()
-    errand_schedules = {}
-    if cached and 'scheduled_errands' in cached:
-        for se in cached['scheduled_errands']:
-            errand_schedules[se['id']] = se['start']
+    errand_schedules = storage.get_all_scheduled_errands()
             
     res = []
     for e in raw:

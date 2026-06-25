@@ -715,6 +715,15 @@ def get_cached_daily_schedule(date_str: str):
             return res[0]
         return None
 
+def get_all_scheduled_errands() -> dict:
+    with db_lock:
+        errand_schedules = {}
+        for daily in daily_schedules_table.all():
+            sched = daily.get('schedule', {})
+            for se in sched.get('scheduled_errands', []):
+                errand_schedules[se.get('id')] = se.get('start')
+        return errand_schedules
+
 def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: str, options: list = None, ai_status: str = 'evaluating', selected_index: int = 0, llm_reasoning: str = ""):
     with db_lock:
         existing = daily_schedules_table.get(Query().date_str == date_str)
