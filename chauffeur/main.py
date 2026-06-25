@@ -53,7 +53,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent, Errand
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent, Errand, ErrandRule
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -293,6 +293,29 @@ def delete_rule(doc_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
+# --- Errand Rules API ---
+@app.get("/api/errand_rules")
+def get_errand_rules():
+    return storage.get_all_errand_rules()
+
+@app.post("/api/errand_rules")
+def create_errand_rule(rule: ErrandRule, background_tasks: BackgroundTasks):
+    doc_id = storage.add_errand_rule(rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"doc_id": doc_id, "status": "created"}
+
+@app.put("/api/errand_rules/{doc_id}")
+def update_errand_rule(doc_id: int, rule: ErrandRule, background_tasks: BackgroundTasks):
+    storage.update_errand_rule(doc_id, rule.model_dump() if hasattr(rule, 'model_dump') else rule.dict())
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "updated"}
+
+@app.delete("/api/errand_rules/{doc_id}")
+def delete_errand_rule(doc_id: int, background_tasks: BackgroundTasks):
+    storage.delete_errand_rule(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "deleted"}
+
 # --- Errands API ---
 def check_past_due_errands():
     errands = storage.get_all_errands()
@@ -321,7 +344,38 @@ def get_errands():
 
 @app.post("/api/errands")
 def create_errand(errand: Errand, background_tasks: BackgroundTasks):
-    doc_id = storage.add_errand(errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict())
+    errand_dict = errand.model_dump() if hasattr(errand, 'model_dump') else errand.dict()
+    
+    # Apply Errand Rules
+    rules = storage.get_all_errand_rules()
+    errand_text = (errand.title + " " + (errand.tags and " ".join(errand.tags) or "")).lower()
+    
+    for r in rules:
+        if not r.get('is_enabled', True): continue
+        kws = r.get('keywords', [])
+        if not kws: continue
+        
+        match_all = r.get('keywords_match_all', False)
+        if match_all:
+            match_kw = all(kw.lower() in errand_text for kw in kws)
+        else:
+            match_kw = any(kw.lower() in errand_text for kw in kws)
+            
+        if match_kw:
+            # Apply constraints if not already set manually
+            if r.get('allowed_drivers') and not errand_dict.get('allowed_drivers'): errand_dict['allowed_drivers'] = r['allowed_drivers']
+            if r.get('required_drivers') and not errand_dict.get('required_drivers'): errand_dict['required_drivers'] = r['required_drivers']
+            if r.get('prohibited_drivers') and not errand_dict.get('prohibited_drivers'): errand_dict['prohibited_drivers'] = r['prohibited_drivers']
+            if r.get('allowed_passengers') and not errand_dict.get('allowed_passengers'): errand_dict['allowed_passengers'] = r['allowed_passengers']
+            if r.get('required_passengers') and not errand_dict.get('required_passengers'): errand_dict['required_passengers'] = r['required_passengers']
+            if r.get('prohibited_passengers') and not errand_dict.get('prohibited_passengers'): errand_dict['prohibited_passengers'] = r['prohibited_passengers']
+            if r.get('tolerance_mins') and not errand_dict.get('tolerance_mins'): errand_dict['tolerance_mins'] = r['tolerance_mins']
+            if r.get('buffer_mins') and not errand_dict.get('buffer_mins'): errand_dict['buffer_mins'] = r['buffer_mins']
+            if r.get('time_window_start') and not errand_dict.get('time_window_start'): errand_dict['time_window_start'] = r['time_window_start']
+            if r.get('time_window_end') and not errand_dict.get('time_window_end'): errand_dict['time_window_end'] = r['time_window_end']
+            if r.get('group_keyword') and not errand_dict.get('group_id'): errand_dict['group_id'] = r['group_keyword']
+
+    doc_id = storage.add_errand(errand_dict)
     background_tasks.add_task(trigger_background_refresh)
     return {"doc_id": doc_id, "status": "created"}
 

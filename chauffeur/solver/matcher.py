@@ -1531,9 +1531,49 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
 
 
 def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict], drivers: List[dict]) -> Dict[str, List[dict]]:
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, time
     from services import storage
+    from models.schemas import Rule
     
+    all_rules = storage.get_all_rules()
+    
+    def requires_stay(e):
+        if not hasattr(e, 'title'): return False
+        for r_data in all_rules:
+            if r_data.get('constraint_type') == 'attendance' and r_data.get('attendance_action') == 'stay':
+                r_obj = Rule(**r_data)
+                if does_event_match_rule(e, r_obj):
+                    return True
+        return False
+        
+    def is_valid_time_window(start_t, end_t, tw_start, tw_end):
+        if tw_start:
+            h, m = map(int, tw_start.split(':'))
+            if start_t.time() < time(h, m): return False
+        if tw_end:
+            h, m = map(int, tw_end.split(':'))
+            if end_t.time() > time(h, m): return False
+        return True
+        
+    def get_pax_in_car_at_gap(sched, gap_idx):
+        in_car = set()
+        for i in range(gap_idx + 1):
+            e = sched[i]
+            title = e.title.lower() if hasattr(e, 'title') else ''
+            is_pickup = title.startswith('pickup')
+            is_dropoff = title.startswith('dropoff')
+            pids = []
+            if hasattr(e, 'passengers') and e.passengers:
+                pids = [str(p.id) for p in e.passengers]
+            elif hasattr(e, 'passenger_ids') and e.passenger_ids:
+                pids = [str(pid) for pid in e.passenger_ids]
+                
+            if is_pickup:
+                in_car.update(pids)
+            elif is_dropoff:
+                for pid in pids: in_car.discard(pid)
+        return in_car
+
     scheduled_errands_by_date = {date_str: [] for date_str in base_schedules.keys()}
     
     active_errands = [e for e in errands if not e.get('is_completed')]
@@ -1624,8 +1664,21 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             
         best_gap = None
         best_detour = float('inf')
-        duration = errand.get('duration_mins', 30)
+        duration = errand.get('duration_mins', 30) - errand.get('tolerance_mins', 0)
+        duration = max(5, duration) + errand.get('buffer_mins', 0)
         loc = errand.get('location', '')
+        
+        tw_start = errand.get('time_window_start')
+        tw_end = errand.get('time_window_end')
+        
+        allowed_drivers = errand.get('allowed_drivers', [])
+        required_drivers = errand.get('required_drivers', [])
+        prohibited_drivers = errand.get('prohibited_drivers', [])
+        
+        req_pax = set(str(p) for p in errand.get('required_passengers', []))
+        proh_pax = set(str(p) for p in errand.get('prohibited_passengers', []))
+        
+        group_id = errand.get('group_id')
         
         for date_str, day_schedules in driver_schedules_by_date.items():
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -1638,17 +1691,31 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 driver = driver_map.get(d_id)
                 if not driver: continue
                 
+                group_bonus = 0
+                if group_id:
+                    for e_sched in scheduled_errands_by_date[date_str]:
+                        if e_sched.get('group_id') == group_id and e_sched.get('driver', {}).get('id') == d_id:
+                            group_bonus = 9999
+                            break
+                
+                if required_drivers and d_id not in required_drivers: continue
+                if prohibited_drivers and d_id in prohibited_drivers: continue
+                if allowed_drivers and not required_drivers and d_id not in allowed_drivers: continue
+                
                 driver_home = getattr(driver, 'home_location', None)
                 if not driver_home and hasattr(driver, 'get'):
                     driver_home = driver.get('home_location')
                 
                 if not schedule:
                     t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
-                    detour = t1 * 2
+                    detour = t1 * 2 - group_bonus
                     start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
-                    if detour < best_detour:
-                        best_detour = detour
-                        best_gap = (date_str, d_id, start_time, -1)
+                    end_time = start_time + timedelta(minutes=duration)
+                    
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                        if detour < best_detour:
+                            best_detour = detour
+                            best_gap = (date_str, d_id, start_time, -1)
                     continue
                     
                 # Before first event
@@ -1657,14 +1724,35 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 t_loc_to_first = get_travel_time_minutes(loc, first_event.location)
                 t_home_to_first = get_travel_time_minutes(driver_home, first_event.location) if driver_home else 0
                 
-                detour = t_home_to_loc + t_loc_to_first - t_home_to_first
+                detour = t_home_to_loc + t_loc_to_first - t_home_to_first - group_bonus
                 start_time = first_event.start - timedelta(minutes=t_loc_to_first + duration)
+                end_time = start_time + timedelta(minutes=duration)
                 
                 if start_time.hour >= 9:
-                    if detour < best_detour:
-                        best_detour = detour
-                        best_gap = (date_str, d_id, start_time, -1)
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                        if detour < best_detour:
+                            best_detour = detour
+                            best_gap = (date_str, d_id, start_time, -1)
                     
+                # Intra-event gaps (Drop-off & Run)
+                for i in range(len(schedule)):
+                    e = schedule[i]
+                    if not requires_stay(e):
+                        available_mins = (e.end - e.start).total_seconds() / 60.0
+                        t_event_to_errand = get_travel_time_minutes(e.location, loc)
+                        t_errand_to_event = get_travel_time_minutes(loc, e.location)
+                        total_needed = t_event_to_errand + duration + t_errand_to_event
+                        if total_needed <= available_mins:
+                            start_time = e.start + timedelta(minutes=t_event_to_errand)
+                            end_time = start_time + timedelta(minutes=duration)
+                            
+                            # Passengers are NOT in the car during an event (they are at the event)
+                            if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                                detour = t_event_to_errand + t_errand_to_event - group_bonus
+                                if detour < best_detour:
+                                    best_detour = detour
+                                    best_gap = (date_str, d_id, start_time, float(f"{i}.5"))
+
                 for i in range(len(schedule) - 1):
                     e1 = schedule[i]
                     e2 = schedule[i+1]
@@ -1675,10 +1763,19 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                     
                     total_needed = t1 + duration + t2
                     if gap_mins >= total_needed:
-                        detour = t1 + t2 - get_travel_time_minutes(e1.location, e2.location)
-                        if detour < best_detour:
-                            best_detour = detour
-                            best_gap = (date_str, d_id, e1.end + timedelta(minutes=t1), i)
+                        detour = t1 + t2 - get_travel_time_minutes(e1.location, e2.location) - group_bonus
+                        start_time = e1.end + timedelta(minutes=t1)
+                        end_time = start_time + timedelta(minutes=duration)
+                        
+                        in_car = get_pax_in_car_at_gap(schedule, i)
+                        pax_valid = True
+                        if req_pax and not req_pax.issubset(in_car): pax_valid = False
+                        if proh_pax and not proh_pax.isdisjoint(in_car): pax_valid = False
+                        
+                        if pax_valid and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                            if detour < best_detour:
+                                best_detour = detour
+                                best_gap = (date_str, d_id, start_time, i)
                             
                 # After last event
                 last_event = schedule[-1]
@@ -1686,10 +1783,14 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 t_loc_to_home = get_travel_time_minutes(loc, driver_home) if driver_home else 0
                 t_last_to_home = get_travel_time_minutes(last_event.location, driver_home) if driver_home else 0
                 
-                detour = t_last_to_loc + t_loc_to_home - t_last_to_home
-                if detour < best_detour:
-                    best_detour = detour
-                    best_gap = (date_str, d_id, last_event.end + timedelta(minutes=t_last_to_loc), len(schedule)-1)
+                detour = t_last_to_loc + t_loc_to_home - t_last_to_home - group_bonus
+                start_time = last_event.end + timedelta(minutes=t_last_to_loc)
+                end_time = start_time + timedelta(minutes=duration)
+                
+                if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                    if detour < best_detour:
+                        best_detour = detour
+                        best_gap = (date_str, d_id, start_time, len(schedule)-1)
                     
         if best_gap:
             date_str, d_id, start_time, idx = best_gap
@@ -1713,12 +1814,21 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                     t1 = get_travel_time_minutes(e1.location, loc)
                     t2 = get_travel_time_minutes(loc, driver_home) if driver_home else 0
                 else:
-                    e1 = schedule[idx]
-                    e2 = schedule[idx + 1]
-                    e1_id = getattr(e1, 'id', None)
-                    e2_id = getattr(e2, 'id', None)
-                    t1 = get_travel_time_minutes(e1.location, loc)
-                    t2 = get_travel_time_minutes(loc, e2.location)
+                    if isinstance(idx, float):
+                        real_idx = int(idx)
+                        e1 = schedule[real_idx]
+                        e1_id = getattr(e1, 'id', None)
+                        e2_id = e1_id
+                        t1 = get_travel_time_minutes(e1.location, loc)
+                        t2 = get_travel_time_minutes(loc, e1.location)
+                        idx = real_idx
+                    else:
+                        e1 = schedule[idx]
+                        e2 = schedule[idx + 1]
+                        e1_id = getattr(e1, 'id', None)
+                        e2_id = getattr(e2, 'id', None)
+                        t1 = get_travel_time_minutes(e1.location, loc)
+                        t2 = get_travel_time_minutes(loc, e2.location)
             
             ve = VirtualEvent(start_time, end_time, loc)
             driver_schedules_by_date[date_str][d_id].insert(idx + 1, ve)
@@ -1726,6 +1836,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             scheduled_errands_by_date[date_str].append({
                 "id": errand.get('id'),
                 "doc_id": errand.get('doc_id'),
+                "group_id": errand.get('group_id'),
                 "driver": driver_map[d_id].model_dump() if hasattr(driver_map[d_id], 'model_dump') else driver_map[d_id].dict(),
                 "event_type": "errand",
                 "start": start_time.isoformat(),

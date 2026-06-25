@@ -57,6 +57,7 @@ with db_lock:
     api_requests_log_table = db.table('api_requests_log')
     chat_history_table = db.table('chat_history')
     errands_table = db.table('errands')
+    errand_rules_table = db.table('errand_rules')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -547,6 +548,37 @@ def delete_priority_rule(doc_id: int):
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
         priority_rules_table.remove(doc_ids=[doc_id])
+
+# Errand Rules CRUD
+def get_all_errand_rules() -> List[dict]:
+    with db_lock:
+        rules = []
+        for r in errand_rules_table.all():
+            doc = dict(r)
+            doc['doc_id'] = r.doc_id
+            rules.append(doc)
+        return rules
+
+def add_errand_rule(rule_data: dict) -> int:
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        return errand_rules_table.insert(rule_data)
+
+def update_errand_rule(doc_id: int, rule_data: dict):
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        errand_rules_table.update(rule_data, doc_ids=[doc_id])
+
+def delete_errand_rule(doc_id: int):
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        errand_rules_table.remove(doc_ids=[doc_id])
 
 # Themes CRUD
 def get_all_themes() -> List[dict]:

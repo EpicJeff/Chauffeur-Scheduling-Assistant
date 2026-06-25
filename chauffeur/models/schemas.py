@@ -167,5 +167,32 @@ class Errand(BaseModel):
     recurrence_rule: Optional[str] = None # e.g. 'daily', 'weekly', 'monthly'
     created_at: float = Field(default_factory=time.time)
     starts_on: Optional[float] = None # Optional Unix timestamp overriding created_at for cycle anchors
+    allowed_drivers: List[str] = Field(default_factory=list)
+    required_drivers: List[str] = Field(default_factory=list)
+    prohibited_drivers: List[str] = Field(default_factory=list)
+    allowed_passengers: List[str] = Field(default_factory=list)
+    required_passengers: List[str] = Field(default_factory=list)
+    prohibited_passengers: List[str] = Field(default_factory=list)
+    tolerance_mins: int = 0
+    buffer_mins: int = 0
+    time_window_start: Optional[str] = None
+    time_window_end: Optional[str] = None
+    group_id: Optional[str] = None
 
-
+class ErrandRule(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    keywords: List[str] = Field(default_factory=list)
+    keywords_match_all: bool = False
+    allowed_drivers: List[str] = Field(default_factory=list)
+    required_drivers: List[str] = Field(default_factory=list)
+    prohibited_drivers: List[str] = Field(default_factory=list)
+    allowed_passengers: List[str] = Field(default_factory=list)
+    required_passengers: List[str] = Field(default_factory=list)
+    prohibited_passengers: List[str] = Field(default_factory=list)
+    tolerance_mins: int = 0
+    buffer_mins: int = 0
+    time_window_start: Optional[str] = None
+    time_window_end: Optional[str] = None
+    group_keyword: Optional[str] = None
+    is_enabled: bool = True
