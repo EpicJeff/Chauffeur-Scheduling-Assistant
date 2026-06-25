@@ -17,9 +17,10 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 - **Location/Passenger Continuity:** `+1000` points if a driver handles consecutive events back-to-back with the same passenger or at the same location within 3 hours.
 
 **Penalties:**
-- **Travel Time:** `-10` points per minute of driving from the previous event's location to the next.
+- **Travel Time:** Scaled heavy penalty (approx `-300` points per 10 minutes) of driving from the previous event's location to the next, to ensure the solver will utilize secondary drivers for far-flung events rather than forcing a primary driver to commute excessively.
+- **Tolerance Overlap:** Heavy dynamic penalty if an event relies on a tolerance rule to be feasible for a primary driver. The penalty is scaled to negate the primary driver bonus, ensuring the solver will always prefer a clean secondary driver over a primary driver who has to be late.
 - **Preferred Hours Violation:** `-300` points if an event falls outside the driver's preferred working hours.
-- **Soft Buffer Violation:** `-1000` points if an event slightly overlaps a buffer zone.
+- **Soft Buffer Violation:** `-50` points if an event slightly overlaps a buffer zone.
 
 ---
 

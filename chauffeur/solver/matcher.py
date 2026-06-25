@@ -471,6 +471,26 @@ def solve_schedule(
                 for d in drivers:
                     if d.id == 'unassigned_ghost': continue
                     model.AddImplication(assign_vars[(e1.id, d.id)], assign_vars[(e2.id, d.id)].Not())
+            elif gap_seconds < min_needed_seconds:
+                # Driver relies on tolerance! This is a physical overlap saved by tolerance.
+                # We heavily penalize this so the solver prefers a clean secondary driver over a primary driver using tolerance.
+                for d in drivers:
+                    if d.id == 'unassigned_ghost': continue
+                    tol = model.NewBoolVar(f'drv_tol_conf_{e1.id}_{e2.id}_{d.id}')
+                    model.AddImplication(tol, assign_vars[(e1.id, d.id)])
+                    model.AddImplication(tol, assign_vars[(e2.id, d.id)])
+                    model.AddBoolOr([tol, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                    
+                    # Calculate estimated weight to negate
+                    est_weight = int(100 * unassigned_penalty_mult)
+                    if d.group == 'primary':
+                        est_weight += int(2000 * primary_driver_bonus_mult)
+                    est_weight += max(0, (10 - d.priority_index) * 150)
+                    
+                    # Negate their base weight so net gain for the second event is tiny, but still > 0
+                    penalty = est_weight - 10
+                    if penalty < 50: penalty = 50
+                    objective_terms.append(tol * -penalty)
             elif gap_seconds < desired_needed_seconds:
                 # Driver conflict soft penalty (buffer eaten into)
                 for d in drivers:
@@ -651,8 +671,8 @@ def solve_schedule(
                                 # Higher bonus for doing things at the exact same location (reduces travel)
                                 objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
                                 
-                            # Penalize travel time for events assigned to the same driver
-                            objective_terms.append(both_assigned * (-int(travel_mins * travel_time_penalty_mult)))
+                            # Penalize travel time for events assigned to the same driver (scaled up to matter against bonuses)
+                            objective_terms.append(both_assigned * (-int(travel_mins * 30 * travel_time_penalty_mult)))
                     
     # 4c. Mutually Exclusive Event Groups
 
@@ -723,10 +743,10 @@ def solve_schedule(
                 try:
                     # If created_at is not present (old overrides), default to 0
                     created_at = getattr(o, 'created_at', o.get('created_at', 0) if isinstance(o, dict) else 0)
-                    time_weight = int(created_at) if created_at else 0
+                    time_weight = int(float(created_at)) if created_at else 0
                 except:
                     time_weight = 0
-                objective_terms.append(assign_vars[(o_event_id, o_driver_id)] * (1000000 + time_weight))
+                objective_terms.append(assign_vars[(o_event_id, o_driver_id)] * (100000000 + time_weight))
             
     # Maximize total score
     model.Maximize(sum(objective_terms))
