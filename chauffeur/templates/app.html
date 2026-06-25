@@ -206,7 +206,7 @@
                     </svg>
                     Waze
                 </button>
-                <div class="w-full h-px bg-gray-800 my-2"></div>
+                <div id="mark-completed-separator" class="w-full h-px bg-gray-800 my-2"></div>
                 <button onclick="markCompleted()" id="btn-mark-completed"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
@@ -528,6 +528,16 @@
         function openActionSheet(origin, destination, legTitle, eventId = null, legId = null) {
             routeContext = { origin, destination, legTitle, eventId, legId };
             document.getElementById('sheet-subtitle').textContent = legTitle;
+
+            const btnMarkCompleted = document.getElementById('btn-mark-completed');
+            const btnSeparator = document.getElementById('mark-completed-separator');
+            if (eventId && legId) {
+                if (btnMarkCompleted) btnMarkCompleted.style.display = 'flex';
+                if (btnSeparator) btnSeparator.style.display = 'block';
+            } else {
+                if (btnMarkCompleted) btnMarkCompleted.style.display = 'none';
+                if (btnSeparator) btnSeparator.style.display = 'none';
+            }
 
             const sheet = document.getElementById('action-sheet');
             const content = document.getElementById('action-sheet-content');
