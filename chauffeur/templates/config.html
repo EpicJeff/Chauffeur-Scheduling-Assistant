@@ -195,7 +195,7 @@
                                 <div class="flex items-center justify-between mb-3">
                                     <label class="font-semibold text-gray-300 text-sm">Matrix (Tier 1)</label>
                                     <label class="relative inline-flex items-center cursor-pointer scale-90">
-                                        <input type="checkbox" x-model="disableMapboxMatrix" @change="saveSettings()"
+                                        <input type="checkbox" x-model="enableMapboxMatrix" @change="saveSettings()"
                                             class="sr-only peer">
                                         <div
                                             class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600">
@@ -215,7 +215,7 @@
                                 <div class="flex items-center justify-between mb-3">
                                     <label class="font-semibold text-gray-300 text-sm">Directions (Tier 2)</label>
                                     <label class="relative inline-flex items-center cursor-pointer scale-90">
-                                        <input type="checkbox" x-model="disableMapboxDirections"
+                                        <input type="checkbox" x-model="enableMapboxDirections"
                                             @change="saveSettings()" class="sr-only peer">
                                         <div
                                             class="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600">
@@ -2469,8 +2469,8 @@
                     this.routeCacheDurationMins = data.route_cache_duration_mins || 1440;
                     this.timeFormat24h = data.time_format_24h || false;
                     this.disableMapbox = data.disable_mapbox || false;
-                    this.disableMapboxMatrix = data.disable_mapbox_matrix || false;
-                    this.disableMapboxDirections = data.disable_mapbox_directions || false;
+                    this.enableMapboxMatrix = data.disable_mapbox_matrix === undefined ? true : !data.disable_mapbox_matrix;
+                    this.enableMapboxDirections = data.disable_mapbox_directions === undefined ? true : !data.disable_mapbox_directions;
                     this.mapboxMatrixLimit = data.mapbox_matrix_limit || 90000;
                     this.mapboxDirectionsLimit = data.mapbox_directions_limit || 90000;
                     this.mapboxGeocodeLimit = data.mapbox_geocode_limit || 90000;
@@ -2533,8 +2533,8 @@
                             route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 1440,
                             time_format_24h: this.timeFormat24h,
                             disable_mapbox: this.disableMapbox,
-                            disable_mapbox_matrix: this.disableMapboxMatrix,
-                            disable_mapbox_directions: this.disableMapboxDirections,
+                            disable_mapbox_matrix: !this.enableMapboxMatrix,
+                            disable_mapbox_directions: !this.enableMapboxDirections,
                             mapbox_matrix_limit: parseInt(this.mapboxMatrixLimit) || 90000,
                             mapbox_directions_limit: parseInt(this.mapboxDirectionsLimit) || 90000,
                             mapbox_geocode_limit: parseInt(this.mapboxGeocodeLimit) || 90000,
