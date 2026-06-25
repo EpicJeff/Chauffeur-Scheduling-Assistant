@@ -671,16 +671,25 @@ def solve_schedule(
                                 travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
                         
                         gap_seconds = (e2.start - e1.end).total_seconds()
-                        if gap_seconds < 10800: # 3 hours
+                        if gap_seconds >= 0:
                             if shares_passenger:
-                                objective_terms.append(both_assigned * int(50000 * stickiness_bonus_mult))
-                                
-                            if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
-                                # Higher bonus for doing things at the exact same location (reduces travel)
-                                objective_terms.append(both_assigned * int(5000 * same_loc_bonus_mult))
-                                
-                            # Penalize travel time for events assigned to the same driver (scaled up to matter against bonuses)
-                            objective_terms.append(both_assigned * (-int(travel_mins * 60 * travel_time_penalty_mult)))
+                                # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at 2 hours gap).
+                                # This ensures continuity is massive for back-to-back events, but 
+                                # has ZERO penalty for switching if the events are far apart with a long layover.
+                                decay = max(0.0, 1.0 - (gap_seconds / 7200.0))
+                                if decay > 0:
+                                    objective_terms.append(both_assigned * int(50000 * decay * stickiness_bonus_mult))
+                                    
+                            if gap_seconds < 10800: # 3 hours
+                                if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
+                                    # Higher bonus for doing things at the exact same location (reduces travel)
+                                    decay_loc = max(0.0, 1.0 - (gap_seconds / 10800.0))
+                                    objective_terms.append(both_assigned * int(5000 * decay_loc * same_loc_bonus_mult))
+                                    
+                                # Penalize travel time only if the gap is small enough that the driver wouldn't go home
+                                # If the gap is > 1 hour (3600s), travel_mins is set to 99 to skip API. In this case, there is no direct travel penalty because they went home.
+                                if gap_seconds <= 3600:
+                                    objective_terms.append(both_assigned * (-int(travel_mins * 60 * travel_time_penalty_mult)))
                     
     # 4c. Mutually Exclusive Event Groups
 

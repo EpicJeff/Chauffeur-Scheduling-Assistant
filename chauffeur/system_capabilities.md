@@ -14,10 +14,11 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 - **Driver in Event (Attendee):** `+5000` (Massive bonus if the driver is also attending the event).
 - **Primary Driver Bonus:** `+2000` (modified by `primary_driver_bonus_multiplier`).
 - **Stickiness Bonus:** `+5` points if they drove the same event in the previous run.
-- **Location/Passenger Continuity:** `+1000` points if a driver handles consecutive events back-to-back with the same passenger or at the same location within 3 hours.
+- **Passenger Continuity:** Up to `+50,000` points if a driver handles consecutive events back-to-back with the same passenger, decaying linearly to `0` at a 2-hour gap.
+- **Location Continuity:** Up to `+5,000` points if a driver handles consecutive events at the exact same location, decaying linearly to `0` at a 3-hour gap.
 
 **Penalties:**
-- **Travel Time:** Scaled heavy penalty (approx `-600` points per 10 minutes) of driving from the previous event's location to the next, to ensure the solver will utilize secondary drivers for far-flung events rather than forcing a primary driver to commute excessively.
+- **Travel Time:** Scaled heavy penalty (approx `-600` points per 10 minutes) of driving from the previous event's location to the next. This penalty *only* applies if the gap between events is 1 hour or less, to avoid unfairly penalizing drivers for taking completely independent trips separated by long layovers at home.
 - **Tolerance Overlap:** Heavy dynamic penalty (`-50,000`) if an event relies on a tolerance rule to be feasible for a primary driver. The penalty overcomes the primary driver bonus and group bonus combined, ensuring the solver will always prefer a clean secondary driver over a primary driver who has to be late.
 - **Preferred Hours Violation:** `-2,000,000` points if an event falls outside the driver's preferred working hours, which causes the event score to drop below 0 and remain unassigned.
 - **Soft Buffer Violation:** `-2,000` points if an event slightly overlaps a buffer zone.
