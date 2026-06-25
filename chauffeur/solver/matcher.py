@@ -48,6 +48,13 @@ def get_effective_overridden_event_ids(events, overrides) -> list:
     return list(overridden_ids)
 
 def does_event_match_rule(event, rule, passengers=None) -> bool:
+    if getattr(rule, 'constraint_type', '') == 'group':
+        if hasattr(rule, 'filter_sets') and rule.filter_sets:
+            for fs in rule.filter_sets:
+                if does_event_match_rule(event, fs, passengers):
+                    return True
+        return False
+        
     has_top_criteria = False
     top_matches = True
     
