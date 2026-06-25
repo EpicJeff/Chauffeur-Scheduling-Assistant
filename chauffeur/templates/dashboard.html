@@ -2791,14 +2791,25 @@
                             `;
                         }
 
-                        function getEdgeState(baseEdgeId) {
+                        function getEdgeStateExact(legId) {
                             if (!currentData) return 'pending';
                             const completed = currentData.completed_drives || [];
                             const inProgress = currentData.in_progress_drives || [];
-                            const keys = [baseEdgeId, `${baseEdgeId}_1`, `${baseEdgeId}_2`, `${baseEdgeId}_3`];
-                            if (keys.some(k => inProgress.includes(k) && !completed.includes(k))) return 'in_progress';
-                            if (keys.some(k => completed.includes(k))) return 'completed';
+                            if (inProgress.includes(legId) && !completed.includes(legId)) return 'in_progress';
+                            if (completed.includes(legId)) return 'completed';
                             return 'pending';
+                        }
+                        
+                        function getPillStyle(state) {
+                            if (state === 'in_progress') return 'bg-blue-900/50 border-blue-400 text-blue-100 shadow-[0_0_10px_rgba(59,130,246,0.5)]';
+                            if (state === 'completed') return 'bg-gray-900/50 border-gray-700 text-gray-500 opacity-60 grayscale line-through';
+                            return 'bg-gray-900 border-blue-600 text-blue-200';
+                        }
+
+                        function getPillIcon(state) {
+                            if (state === 'in_progress') return `<svg class="w-3 h-3 mr-1 animate-pulse shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
+                            if (state === 'completed') return `<svg class="w-3 h-3 mr-1 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>`;
+                            return '';
                         }
 
                         // Initial travel pill from home (before first event)
@@ -2814,16 +2825,26 @@
                                 const iconHome = getHomeIcon(initEdge.pickup_waypoint ? initEdge.pickup_waypoint.driver_home_location : initEdge.driver_home_location);
                                 const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
                                 const trafficWarn = initEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${initEdge.delay_mins}min traffic delay">⚠</span>` : '';
-
-                                const edgeState = getEdgeState(`init_${ev.id}`);
-                                let stateStyle = 'bg-gray-900 border-blue-600 text-blue-200';
-                                let stateIcon = '';
-                                if (edgeState === 'in_progress') {
-                                    stateStyle = 'bg-blue-900/50 border-blue-400 text-blue-100 shadow-[0_0_10px_rgba(59,130,246,0.5)]';
-                                    stateIcon = `<svg class="w-3 h-3 mr-1 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
-                                } else if (edgeState === 'completed') {
-                                    stateStyle = 'bg-gray-900/50 border-gray-700 text-gray-500 opacity-60 grayscale';
-                                    stateIcon = `<svg class="w-3 h-3 mr-1 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>`;
+                                let pillsHtml = '';
+                                if (initEdge.pickup_waypoint) {
+                                    const state1 = getEdgeStateExact(`init_${ev.id}_1`);
+                                    const state2 = getEdgeStateExact(`init_${ev.id}_2`);
+                                    pillsHtml = `
+                                        <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state1)}${iconCar}${formatDuration(initEdge.pickup_waypoint.from_driver_home_mins)}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                        </span>
+                                        ${iconArrow}
+                                        <span class="${getPillStyle(state2)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state2)}${iconCar}${formatDuration(initEdge.pickup_waypoint.from_global_home_mins)}${trafficWarn}
+                                        </span>
+                                    `;
+                                } else {
+                                    const state = getEdgeStateExact(`init_${ev.id}`);
+                                    pillsHtml = `
+                                        <span class="${getPillStyle(state)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state)}${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}
+                                        </span>
+                                    `;
                                 }
 
                                 if (distance > 10) {
@@ -2833,12 +2854,9 @@
                                             <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
                                                 <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm">Leave at ${departureStr}</span>
-                                                <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center">
-                                                    ${stateIcon}
-                                                    ${initEdge.pickup_waypoint
-                                            ? `${iconCar}${formatDuration(initEdge.pickup_waypoint.from_driver_home_mins)}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>${iconArrow}${iconCar}${formatDuration(initEdge.pickup_waypoint.from_global_home_mins)}${trafficWarn}`
-                                            : `${iconHome}${iconArrow}${iconCar}${formatDuration(initEdge.travel_mins)}${trafficWarn}`}
-                                                </span>
+                                                <div class="flex items-center">
+                                                    ${pillsHtml}
+                                                </div>
                                             </div>
                                         </div>
                                     `;
@@ -2879,17 +2897,7 @@
 
                                 if (distance > 0 && !(edge.travel_mins === 0 && distance < 20)) {
                                     let pills = [];
-                                    const edgeState = getEdgeState(`route_${ev.id}_${nextEv.id}`);
-                                    let stateStyle = 'bg-gray-900 border-blue-600 text-blue-200';
-                                    let stateIcon = '';
-                                    if (edgeState === 'in_progress') {
-                                        stateStyle = 'bg-blue-900/50 border-blue-400 text-blue-100 shadow-[0_0_10px_rgba(59,130,246,0.5)]';
-                                        stateIcon = `<svg class="w-3 h-3 mr-1 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
-                                    } else if (edgeState === 'completed') {
-                                        stateStyle = 'bg-gray-900/50 border-gray-700 text-gray-500 opacity-60 grayscale line-through';
-                                        stateIcon = `<svg class="w-3 h-3 mr-1 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>`;
-                                    }
-
+                                    const baseRouteId = `route_${ev.id}_${nextEv.id}`;
 
                                     const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
                                     const iconHome = getHomeIcon(edge.home_waypoint ? edge.home_waypoint.driver_home_location : '');
@@ -2903,16 +2911,37 @@
                                         const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
 
                                         if (edge.home_waypoint.from_home_mins === 0) {
+                                            const state1 = getEdgeStateExact(`route_${ev.id}_1`);
+                                            const state3 = getEdgeStateExact(`route_${ev.id}_2`); // the app uses _2 for this in that edge case
                                             pills.push(`
-                                            <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
-                                                ${stateIcon}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
-                                            </span>
+                                            <div class="flex items-center">
+                                                <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                    ${getPillIcon(state1)}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}
+                                                </span>
+                                                ${iconArrow}
+                                                <span class="${getPillStyle(state3)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                    ${getPillIcon(state3)}${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
+                                                </span>
+                                            </div>
                                         `);
                                         } else {
+                                            const state1 = getEdgeStateExact(`route_${ev.id}_1`);
+                                            const state2 = getEdgeStateExact(`route_${ev.id}_2`);
+                                            const state3 = getEdgeStateExact(`route_${ev.id}_3`);
                                             pills.push(`
-                                            <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
-                                                ${stateIcon}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}${iconArrow}${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
-                                            </span>
+                                            <div class="flex items-center">
+                                                <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                    ${getPillIcon(state1)}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}
+                                                </span>
+                                                ${iconArrow}
+                                                <span class="${getPillStyle(state2)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                    ${getPillIcon(state2)}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}${iconArrow}${iconPerson}Pickup
+                                                </span>
+                                                ${iconArrow}
+                                                <span class="${getPillStyle(state3)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                    ${getPillIcon(state3)}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
+                                                </span>
+                                            </div>
                                         `);
                                         }
                                         pills.push(`<span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm -my-0.5">Leave at ${formatTime(leaveHomeDate.toISOString())}</span>`);
@@ -2921,17 +2950,33 @@
                                         const driveFromHome = edge.home_waypoint.from_home_mins;
                                         const leaveHomeDate = new Date(new Date(nextEv.start).getTime() - (driveFromHome + bufferMins) * 60000);
 
+                                        const state1 = getEdgeStateExact(`route_${ev.id}_1`);
+                                        const state2 = getEdgeStateExact(`route_${ev.id}_2`);
                                         pills.push(`
-                                        <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
-                                            ${stateIcon}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}${iconArrow}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
-                                        </span>
+                                        <div class="flex items-center">
+                                            <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                ${getPillIcon(state1)}${iconCar}${formatDuration(edge.home_waypoint.to_home_mins)}${iconArrow}${iconHome}for ${formatDuration(edge.home_waypoint.layover_mins)}
+                                            </span>
+                                            ${iconArrow}
+                                            <span class="${getPillStyle(state2)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                ${getPillIcon(state2)}${iconCar}${formatDuration(edge.home_waypoint.from_home_mins)}
+                                            </span>
+                                        </div>
                                     `);
                                         pills.push(`<span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm -my-0.5">Leave at ${formatTime(leaveHomeDate.toISOString())}</span>`);
                                     } else if (edge.pickup_waypoint) {
+                                        const state1 = getEdgeStateExact(`route_${ev.id}_1`);
+                                        const state2 = getEdgeStateExact(`route_${ev.id}_2`);
                                         pills.push(`
-                                        <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
-                                            ${stateIcon}${iconCar}${formatDuration(edge.pickup_waypoint.to_pickup_mins)}${iconArrow}${iconPerson}Pickup${iconArrow}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
-                                        </span>
+                                        <div class="flex items-center">
+                                            <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0" title="Pickup at ${edge.pickup_waypoint.pickup_event_title}">
+                                                ${getPillIcon(state1)}${iconCar}${formatDuration(edge.pickup_waypoint.to_pickup_mins)}${iconArrow}${iconPerson}Pickup
+                                            </span>
+                                            ${iconArrow}
+                                            <span class="${getPillStyle(state2)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center shrink-0">
+                                                ${getPillIcon(state2)}${iconCar}${formatDuration(edge.pickup_waypoint.from_pickup_mins)}
+                                            </span>
+                                        </div>
                                     `);
                                     }
 
@@ -2944,9 +2989,10 @@
                                             pillText += ` <span class="text-blue-500 ml-1 text-[9px] font-bold">(${iconHourglass}${formatDuration(downTime)})</span>`;
                                         }
 
+                                        const state = getEdgeStateExact(baseRouteId);
                                         pills.push(`
-                                        <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
-                                            ${stateIcon}${pillText}
+                                        <span class="${getPillStyle(state)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
+                                            ${getPillIcon(state)}${pillText}
                                         </span>
                                     `);
                                     }
@@ -2962,11 +3008,13 @@
                                 `;
                                 } else {
                                     const iconCar = `<svg class="w-3 h-3 inline-block mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5-1.5.67-1.5 1.5.67 1.5 1.5 1.5z"/></svg>`;
+                                    const baseRouteId = `route_${ev.id}_${nextEv.id}`;
+                                    const state = getEdgeStateExact(baseRouteId);
                                     colEventsHtml += `
                                     <div class="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20 pointer-events-none" 
                                          style="top: ${endY}px;">
-                                        <span class="bg-gray-900 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full text-blue-200 shadow-sm font-mono uppercase flex items-center">
-                                            ${iconCar}${formatDuration(edge.travel_mins)}${trafficWarn}
+                                        <span class="${getPillStyle(state)} text-[10px] px-2 py-0.5 rounded-full border shadow-sm font-mono uppercase flex items-center">
+                                            ${getPillIcon(state)}${iconCar}${formatDuration(edge.travel_mins)}${trafficWarn}
                                         </span>
                                     </div>
                                 `;
@@ -2988,15 +3036,26 @@
                                 const iconArrow = `<span class="mx-0.5 text-[8px] opacity-70">➔</span>`;
                                 const trafficWarn = finalEdge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${finalEdge.delay_mins}min traffic delay">⚠</span>` : '';
 
-                                const edgeState = getEdgeState(`final_${ev.id}`);
-                                let stateStyle = 'bg-gray-900 border-blue-600 text-blue-200';
-                                let stateIcon = '';
-                                if (edgeState === 'in_progress') {
-                                    stateStyle = 'bg-blue-900/50 border-blue-400 text-blue-100 shadow-[0_0_10px_rgba(59,130,246,0.5)]';
-                                    stateIcon = `<svg class="w-3 h-3 mr-1 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
-                                } else if (edgeState === 'completed') {
-                                    stateStyle = 'bg-gray-900/50 border-gray-700 text-gray-500 opacity-60 grayscale line-through';
-                                    stateIcon = `<svg class="w-3 h-3 mr-1 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg>`;
+                                let pillsHtml = '';
+                                if (finalEdge.dropoff_waypoint) {
+                                    const state1 = getEdgeStateExact(`final_${ev.id}_1`);
+                                    const state2 = getEdgeStateExact(`final_${ev.id}`);
+                                    pillsHtml = `
+                                        <span class="${getPillStyle(state1)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state1)}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_global_home_mins)}${trafficWarn}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                                        </span>
+                                        ${iconArrow}
+                                        <span class="${getPillStyle(state2)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state2)}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.travel_mins)}${trafficWarn}
+                                        </span>
+                                    `;
+                                } else {
+                                    const state = getEdgeStateExact(`final_${ev.id}`);
+                                    pillsHtml = `
+                                        <span class="${getPillStyle(state)} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center shrink-0">
+                                            ${getPillIcon(state)}${iconCar}${formatDuration(finalEdge.travel_mins)}${trafficWarn}${iconArrow}${iconHome}
+                                        </span>
+                                    `;
                                 }
 
                                 if (distance > 10) {
@@ -3005,12 +3064,10 @@
                                              style="top: ${endY}px; height: ${distance}px; width: 100%;">
                                             <div class="w-px h-full bg-blue-500/30 absolute top-0 z-0"></div>
                                             <div class="flex flex-col gap-0.5 items-center z-10 relative">
-                                                <span class="${stateStyle} text-[10px] px-2 py-0.5 rounded-full border shadow-md font-mono uppercase flex items-center">
-                                                    ${stateIcon}${finalEdge.dropoff_waypoint
-                                            ? `${iconCar}${formatDuration(finalEdge.dropoff_waypoint.to_global_home_mins)}${trafficWarn}${iconArrow}<svg class="w-3 h-3 inline-block mx-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>${iconArrow}${iconCar}${formatDuration(finalEdge.dropoff_waypoint.travel_mins)}${trafficWarn}`
-                                            : `${iconCar}${formatDuration(finalEdge.travel_mins)}${trafficWarn}${iconArrow}${iconHome}`}
-                                                </span>
-                                                <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm mt-0.5 whitespace-nowrap">Arrive home at ${arriveStr}</span>
+                                                <div class="flex items-center">
+                                                    ${pillsHtml}
+                                                </div>
+                                                <span class="text-[9px] text-gray-400 font-bold uppercase drop-shadow-sm">Arrive at ${arriveStr}</span>
                                             </div>
                                         </div>
                                     `;
