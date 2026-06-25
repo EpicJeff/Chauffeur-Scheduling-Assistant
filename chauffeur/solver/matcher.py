@@ -193,18 +193,22 @@ def get_grouped_event_pairs(events: List[Event], rules: List[Rule], passengers: 
         base_id = getattr(e, 'original_event_id', None)
         if not base_id:
             base_id = e.id
+            
         if '_unrolled_' in base_id:
             base_id = base_id.split('_unrolled_')[0]
-        if base_id.endswith('_dropoff'):
-            base_id = base_id[:-8]
-        if base_id.endswith('_pickup'):
-            base_id = base_id[:-7]
+            
+        # Differentiate split events so they DO NOT group together (user request)
+        if e.id.endswith('_dropoff'):
+            base_id = f"{base_id}_dropoff"
+        elif e.id.endswith('_pickup'):
+            base_id = f"{base_id}_pickup"
+            
         implicit_groups[base_id].append(e)
         
         # Group by title, start, and location fallback
         if e.title:
             loc = e.location.strip().lower() if e.location else ""
-            normalized_title = e.title.replace('Dropoff: ', '').replace('Pickup: ', '').strip().lower()
+            normalized_title = e.title.strip().lower()
             key = (normalized_title, e.start, loc)
             implicit_groups[key].append(e)
             

@@ -62,7 +62,7 @@ Enforces artificial padding around an event for a driver.
 
 ### 6. Event Attendance (`constraint_type: "attendance"`)
 * `attendance_action: "stay"`: The driver must stay at the event for its entire duration.
-* `attendance_action: "dropoff_pickup"`: The driver will split the event into a distinct Drop-off (at the start time) and a Pickup (at the end time). The driver is free to do other things during the event duration.
+* `attendance_action: "dropoff_pickup"`: The driver will split the event into a distinct Drop-off (at the start time) and a Pickup (at the end time). The driver is free to do other things during the event duration. The Drop-off and Pick-up are treated as independent events and are NOT grouped together, meaning they can be freely assigned to different drivers.
 
 ---
 
