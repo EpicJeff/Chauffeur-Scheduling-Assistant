@@ -966,7 +966,7 @@ def get_maps_stats():
             "monthly": storage.get_mapbox_usage(current_month, 'searchbox_sessions'),
             "rolling_24h": storage.get_rolling_usage('searchbox_sessions', 86400),
             "rpm": storage.get_rolling_usage('searchbox_sessions', 60),
-            "limit": 500,
+            "limit": maps.get_map_option('mapbox_searchbox_limit', 500),
             "disabled": maps.get_map_option('disable_mapbox', False)
         }
     }
