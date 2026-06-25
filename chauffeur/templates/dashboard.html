@@ -32,23 +32,7 @@
             transition: padding-right 0.3s ease-in-out;
         }
 
-        /* Home Assistant Theme Overrides */
-        body.ha-theme {
-            background-color: var(--primary-background-color, #111827) !important;
-            color: var(--primary-text-color, #e5e7eb) !important;
-        }
-        body.ha-theme .bg-gray-800 {
-            background-color: var(--card-background-color, #1f2937) !important;
-        }
-        body.ha-theme .bg-gray-900 {
-            background-color: var(--primary-background-color, #111827) !important;
-        }
-        body.ha-theme .text-gray-300, body.ha-theme .text-gray-400 {
-            color: var(--secondary-text-color, #9ca3af) !important;
-        }
-        body.ha-theme .border-gray-700 {
-            border-color: var(--divider-color, #374151) !important;
-        }
+
     </style>
 </head>
 
@@ -2011,6 +1995,9 @@
 
             if (window.showErrands && scheduled_errands && scheduled_errands.length > 0) {
                 scheduled_errands.forEach(errand => {
+                    errand.start = errand.start_time;
+                    errand.end = errand.end_time;
+                    errand.event_type = 'errand';
                     localEvents.push(errand);
                     localAssignments[errand.id] = errand.driver.id;
                     

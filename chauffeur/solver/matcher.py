@@ -1643,13 +1643,12 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                     driver_home = driver.get('home_location')
                 
                 if not schedule:
-                    if driver_home:
-                        t1 = get_travel_time_minutes(driver_home, loc)
-                        detour = t1 * 2  # round trip from home
-                        start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
-                        if detour < best_detour:
-                            best_detour = detour
-                            best_gap = (date_str, d_id, start_time, -1)
+                    t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
+                    detour = t1 * 2
+                    start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
+                    if detour < best_detour:
+                        best_detour = detour
+                        best_gap = (date_str, d_id, start_time, -1)
                     continue
                     
                 # Before first event
