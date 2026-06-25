@@ -66,7 +66,8 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1, check_only:
     monthly_usage = storage.get_mapbox_usage(current_month, usage_key)
     
     # 2. Get limit setting
-    limit = get_map_option(f'mapbox_{endpoint}_limit', 90000)
+    default_limit = 500 if endpoint == 'searchbox' else 90000
+    limit = get_map_option(f'mapbox_{endpoint}_limit', default_limit)
     
     # Check if monthly limit is already reached
     if monthly_usage >= limit:
