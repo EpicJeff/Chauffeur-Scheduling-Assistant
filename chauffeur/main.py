@@ -2190,6 +2190,7 @@ last_bg_refresh = {}
 def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force_refresh: bool = False):
     try:
         completed = storage.get_completed_drives()
+        in_progress = storage.get_in_progress_drives()
         
         # Check cache instantly
         if not force_refresh:
@@ -2289,6 +2290,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 
             if cached:
                 cached["completed_drives"] = completed
+                cached["in_progress_drives"] = in_progress
                 cached["solving_dates"] = schedule_coordinator.get_solving_dates()
                 # Rate limit background refreshes to every 5 minutes per date range
                 import time
@@ -2306,6 +2308,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
             res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
             if "error" not in res:
                 res["completed_drives"] = completed
+                res["in_progress_drives"] = in_progress
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
             return res
         except Exception as e:

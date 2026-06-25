@@ -893,6 +893,10 @@ def get_completed_drives():
     with db_lock:
         return [doc['leg_id'] for doc in drive_status_table.search(Query().status == 'completed')]
 
+def get_in_progress_drives():
+    with db_lock:
+        return [doc['leg_id'] for doc in drive_status_table.search(Query().status == 'in_progress')]
+
 # --- Errands ---
 def get_all_errands() -> List[dict]:
     with db_lock:

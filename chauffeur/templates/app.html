@@ -181,39 +181,39 @@
             <div class="w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
             <h3 class="text-xl font-bold mb-4 text-white" id="sheet-title">Open in Maps</h3>
             <p class="text-sm text-gray-400 mb-6 font-medium" id="sheet-subtitle"></p>
-            <div class="flex flex-col gap-3">
+            <div id="sheet-state-1" class="flex flex-col gap-3">
+                <button onclick="startDrive()" id="btn-start-drive"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    Start Drive
+                </button>
+                <div id="mark-completed-separator" class="w-full h-px bg-gray-800 my-1"></div>
+                <button onclick="markCompleted()" id="btn-mark-completed"
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                    Mark as Completed
+                </button>
+                <button onclick="closeActionSheet()"
+                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
+                    Cancel
+                </button>
+            </div>
+
+            <div id="sheet-state-2" class="flex flex-col gap-3 hidden">
                 <button onclick="openMaps('google')"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z" />
-                    </svg>
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
                     Google Maps
                 </button>
                 <button onclick="openMaps('apple')"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-800 border border-gray-700 active:bg-gray-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.05 2.46.82 3.12.82.68 0 2.05-.92 3.57-.79 1.45.05 2.56.59 3.26 1.48-2.61 1.63-2.18 4.7.42 5.59-.62 1.77-1.48 3.32-2.37 4.22v1.65zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.02 4.45-3.74 4.25z" />
-                    </svg>
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-white font-bold text-lg shadow-lg">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     Apple Maps
                 </button>
                 <button onclick="openMaps('waze')"
                     class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-600 active:bg-cyan-700 text-white font-bold text-lg shadow-lg">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 13a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-2.5-6.5a4 4 0 00-4 4h-2c0-3.31 2.69-6 6-6v2z" />
-                    </svg>
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
                     Waze
-                </button>
-                <div id="mark-completed-separator" class="w-full h-px bg-gray-800 my-2"></div>
-                <button onclick="markCompleted()" id="btn-mark-completed"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M20 6L9 17l-5-5" />
-                    </svg>
-                    Mark as Completed
                 </button>
                 <button onclick="closeActionSheet()"
                     class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
@@ -531,12 +531,19 @@
 
             const btnMarkCompleted = document.getElementById('btn-mark-completed');
             const btnSeparator = document.getElementById('mark-completed-separator');
+            const sheetState1 = document.getElementById('sheet-state-1');
+            const sheetState2 = document.getElementById('sheet-state-2');
+
             if (eventId && legId) {
                 if (btnMarkCompleted) btnMarkCompleted.style.display = 'flex';
                 if (btnSeparator) btnSeparator.style.display = 'block';
+                if (sheetState1) sheetState1.classList.remove('hidden');
+                if (sheetState2) sheetState2.classList.add('hidden');
             } else {
                 if (btnMarkCompleted) btnMarkCompleted.style.display = 'none';
                 if (btnSeparator) btnSeparator.style.display = 'none';
+                if (sheetState1) sheetState1.classList.add('hidden');
+                if (sheetState2) sheetState2.classList.remove('hidden');
             }
 
             const sheet = document.getElementById('action-sheet');
@@ -603,6 +610,47 @@
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        }
+
+        async function startDrive() {
+            if (!routeContext || !routeContext.eventId || !currentDriverId) return;
+
+            const btn = document.getElementById('btn-start-drive');
+            btn.innerHTML = `<svg class="animate-spin w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> Starting...`;
+            btn.disabled = true;
+
+            try {
+                // ALSO mark it in drive_status backend
+                await fetch(`${apiBase}api/drive_status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        leg_id: routeContext.legId,
+                        status: 'in_progress'
+                    })
+                });
+
+                if (scheduleData) {
+                    if (!scheduleData.in_progress_drives) scheduleData.in_progress_drives = [];
+                    if (!scheduleData.in_progress_drives.includes(routeContext.legId)) {
+                        scheduleData.in_progress_drives.push(routeContext.legId);
+                    }
+                }
+
+                // Switch to map options
+                document.getElementById('sheet-state-1').classList.add('hidden');
+                document.getElementById('sheet-state-2').classList.remove('hidden');
+
+                btn.disabled = false;
+                btn.innerHTML = `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start Drive`;
+                
+                buildTimeline();
+            } catch (e) {
+                console.error("Failed to start drive", e);
+                btn.disabled = false;
+                btn.innerHTML = `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start Drive`;
+                alert("Failed to start drive. Check connection.");
+            }
         }
 
         async function markCompleted() {
@@ -690,6 +738,8 @@
 
         function renderLegPill(timeStr, title, mins, delayMins, actionArgs, colorTheme = 'blue', subtitleHtml = '', legId = null, isPast = false, lateMins = 0) {
             const isCompleted = legId && scheduleData && scheduleData.completed_drives && scheduleData.completed_drives.includes(legId);
+            const isInProgress = legId && scheduleData && scheduleData.in_progress_drives && scheduleData.in_progress_drives.includes(legId) && !isCompleted;
+
             if (isCompleted) {
                 return `
                     <div class="flex items-start mb-2 relative z-10 opacity-60">
@@ -702,9 +752,13 @@
                     </div>`;
             }
 
-            const iconSvg = colorTheme === 'blue'
+            let iconSvg = colorTheme === 'blue'
                 ? `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16z"/></svg>`
                 : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>`;
+            
+            if (isInProgress) {
+                iconSvg = `<svg class="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
+            }
 
             const colorClassBg = colorTheme === 'blue' ? 'bg-blue-900' : 'bg-green-900';
             const colorClassText = colorTheme === 'blue' ? 'text-blue-300' : 'text-green-300';
@@ -713,13 +767,16 @@
 
             const timeLabel = colorTheme === 'blue' ? 'Leave at' : 'Arrive by';
 
+            const pillBg = isInProgress ? 'bg-gray-800 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-gray-900 border-gray-800';
+            const outerCircle = isInProgress ? 'border-blue-500 bg-blue-600 text-white' : `${colorClassBg} border-gray-950 ${colorClassText}`;
+
             return `
-                <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isPast ? 'opacity-40' : ''}" onclick="openActionSheet(${actionArgs})">
-                    <div class="w-10 h-10 rounded-full ${colorClassBg} border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md ${colorClassText}">
+                <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isPast && !isInProgress ? 'opacity-40' : ''}" onclick="openActionSheet(${actionArgs})">
+                    <div class="w-10 h-10 rounded-full ${outerCircle} border-4 flex items-center justify-center shrink-0 shadow-md transition-all duration-300">
                         ${iconSvg}
                     </div>
-                    <div class="ml-4 flex-1 bg-gray-900 border border-gray-800 rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
-                        <div class="text-sm font-bold ${timeColorClassText} mb-1 uppercase tracking-wider">${timeLabel} ${timeStr}</div>
+                    <div class="ml-4 flex-1 ${pillBg} border rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
+                        <div class="text-sm font-bold ${timeColorClassText} mb-1 uppercase tracking-wider">${isInProgress ? 'En Route' : timeLabel + ' ' + timeStr}</div>
                         <div class="text-white font-medium text-lg leading-tight mb-2">${title}</div>
                         ${subtitleHtml ? `<div class="flex flex-wrap gap-1 mb-2">${subtitleHtml}</div>` : ''}
                         <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
