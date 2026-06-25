@@ -26,17 +26,15 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-            background-color: #1a202c;
-            color: #e2e8f0;
             font-family: 'Inter', sans-serif;
             transition: padding-right 0.3s ease-in-out;
         }
 
-
+        /* Improved Scrollbar */
     </style>
 </head>
 
-<body class="p-0 m-0">
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-0 m-0">
     {% include 'nav.html' %}
     <div class="p-2 md:p-4">
 
@@ -512,9 +510,10 @@
     </div>
 
     <script>
-        window.showErrands = false;
+        window.showErrands = true;
         try {
-            window.showErrands = localStorage.getItem('chauffeur_show_errands') === 'true';
+            const stored = localStorage.getItem('chauffeur_show_errands');
+            if (stored !== null) window.showErrands = stored === 'true';
         } catch (e) {
             console.warn('localStorage not accessible', e);
         }

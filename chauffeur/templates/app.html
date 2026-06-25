@@ -722,6 +722,10 @@
             if (!scheduleData || !dId) return;
 
             const { events, assignments, ghost_assignments, route_edges, initial_edges, final_edges } = scheduleData;
+            
+            let localRouteEdges = JSON.parse(JSON.stringify(route_edges || {}));
+            let localInitialEdges = JSON.parse(JSON.stringify(initial_edges || {}));
+            let localFinalEdges = JSON.parse(JSON.stringify(final_edges || {}));
 
             const myEvents = events.filter(ev => {
                 const assigned = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
@@ -732,14 +736,43 @@
 
             const byDate = {};
             const myErrands = (scheduleData.scheduled_errands || []).filter(e => e.driver && e.driver.id === dId);
-            myErrands.forEach(ev => {
-                let currDate = new Date(ev.start);
+            myErrands.forEach(errand => {
+                errand.start = errand.start_time;
+                errand.end = errand.end_time;
+                errand.event_type = 'errand';
+                
+                const e1_id = errand.inserted_after_event_id;
+                const e2_id = errand.inserted_before_event_id;
+                const e_id = errand.id;
+                
+                if (!localRouteEdges[dId]) localRouteEdges[dId] = {};
+                if (!localInitialEdges[dId]) localInitialEdges[dId] = {};
+                if (!localFinalEdges[dId]) localFinalEdges[dId] = {};
+                
+                if (e1_id === null && e2_id === null) {
+                    localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
+                    localFinalEdges[dId][e_id] = { from_event: e_id, travel_mins: errand.travel_from_mins, delay_mins: 0, dropoff_waypoint: null };
+                } else if (e1_id !== null && e2_id !== null) {
+                    if (localRouteEdges[dId][e1_id]) delete localRouteEdges[dId][e1_id];
+                    localRouteEdges[dId][e1_id] = { from_event: e1_id, to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0 };
+                    localRouteEdges[dId][e_id] = { from_event: e_id, to_event: e2_id, travel_mins: errand.travel_from_mins, delay_mins: 0 };
+                } else if (e1_id !== null) {
+                    if (localFinalEdges[dId][e1_id]) delete localFinalEdges[dId][e1_id];
+                    localRouteEdges[dId][e1_id] = { from_event: e1_id, to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0 };
+                    localFinalEdges[dId][e_id] = { from_event: e_id, travel_mins: errand.travel_from_mins, delay_mins: 0, dropoff_waypoint: null };
+                } else if (e2_id !== null) {
+                    if (localInitialEdges[dId][e2_id]) delete localInitialEdges[dId][e2_id];
+                    localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
+                    localRouteEdges[dId][e_id] = { from_event: e_id, to_event: e2_id, travel_mins: errand.travel_from_mins, delay_mins: 0 };
+                }
+                
+                let currDate = new Date(errand.start);
                 const year = currDate.getFullYear();
                 const month = String(currDate.getMonth() + 1).padStart(2, '0');
                 const day = String(currDate.getDate()).padStart(2, '0');
                 const dStr = `${year}-${month}-${day}`;
                 if (!byDate[dStr]) byDate[dStr] = [];
-                byDate[dStr].push(ev);
+                byDate[dStr].push(errand);
             });
 
             myEvents.forEach(ev => {
@@ -878,8 +911,8 @@
                     const badges = getPassengerBadges(ev);
 
                     let lateMins = 0;
-                    if (route_edges[dId]) {
-                        const incomingEdge = Object.values(route_edges[dId]).find(edge => edge.to_event === ev.id);
+                    if (localRouteEdges[dId]) {
+                        const incomingEdge = Object.values(localRouteEdges[dId]).find(edge => edge.to_event === ev.id);
                         if (incomingEdge && incomingEdge.late_mins) {
                             lateMins = incomingEdge.late_mins;
                         }
@@ -914,8 +947,8 @@
                     `;
 
                     // --- Routing Edge ---
-                    if (route_edges[dId] && route_edges[dId][ev.id]) {
-                        const edge = route_edges[dId] ? route_edges[dId][ev.id] : null;
+                    if (localRouteEdges[dId] && localRouteEdges[dId][ev.id]) {
+                        const edge = localRouteEdges[dId] ? localRouteEdges[dId][ev.id] : null;
                         const nextEv = evs.find(e => e.id === edge.to_event);
                         if (nextEv) {
 
@@ -982,8 +1015,8 @@
                     }
 
                     // --- Final Edge ---
-                    if (final_edges[dId] && final_edges[dId][ev.id]) {
-                        const edge = final_edges[dId] ? final_edges[dId][ev.id] : null;
+                    if (localFinalEdges[dId] && localFinalEdges[dId][ev.id]) {
+                        const edge = localFinalEdges[dId] ? localFinalEdges[dId][ev.id] : null;
                         if (edge && edge.travel_mins > 0) {
                             const arriveDate = new Date(new Date(ev.end).getTime() + edge.travel_mins * 60000);
                             const originLocation = ev.location;

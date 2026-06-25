@@ -485,7 +485,7 @@ def solve_schedule(
                 for d in drivers:
                     if d.id == 'unassigned_ghost': continue
                     model.AddImplication(assign_vars[(e1.id, d.id)], assign_vars[(e2.id, d.id)].Not())
-            elif gap_seconds < min_needed_seconds:
+            elif gap_seconds < min_needed_seconds and not shares_passenger:
                 # Driver relies on tolerance! This is a physical overlap saved by tolerance.
                 # We heavily penalize this so the solver prefers a clean secondary driver over a primary driver using tolerance.
                 for d in drivers:
@@ -673,9 +673,20 @@ def solve_schedule(
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds >= 0:
                             if shares_passenger:
-                                # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at 75 mins gap).
-                                # This aligns with the threshold where a driver typically has enough time to go home for a layover.
-                                decay = max(0.0, 1.0 - (gap_seconds / 4500.0))
+                                # Estimate if a layover home trip would occur. If it does, we zero out the continuity bonus.
+                                # For estimating, we use the global home_location as a proxy for the driver's home.
+                                global_home = theme.get('home_location') if theme else None
+                                threshold_seconds = 7200 # default to 2 hours if we can't estimate
+                                if global_home and e1.location and e2.location:
+                                    t_home = get_travel_time_minutes(e1.location, global_home)
+                                    t_back = get_travel_time_minutes(global_home, e2.location)
+                                    # Drive home kicks in if layover >= 20 mins. Layover = gap_mins - t_home - t_back - 5.
+                                    # gap_mins = 20 + 5 + t_home + t_back = 25 + t_home + t_back
+                                    threshold_seconds = (25 + t_home + t_back) * 60
+                                    
+                                # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at threshold_seconds gap).
+                                # This aligns perfectly with the threshold where a driver typically has enough time to go home for a layover.
+                                decay = max(0.0, 1.0 - (gap_seconds / max(1.0, threshold_seconds)))
                                 if decay > 0:
                                     objective_terms.append(both_assigned * int(50000 * decay * stickiness_bonus_mult))
                                     
