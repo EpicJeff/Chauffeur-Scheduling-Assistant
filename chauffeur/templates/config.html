@@ -1816,68 +1816,116 @@
                         <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4 mb-8">
                             <h3 class="text-xl font-bold text-white mb-2" x-text="editErrandRuleId ? 'Edit Errand Rule' : 'Create Errand Rule'"></h3>
                             
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                                    <input type="text" x-model="newErrandRule.title" placeholder="e.g. Grocery Runs" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 mb-1 text-sm">Group ID (Optional)</label>
-                                    <input type="text" x-model="newErrandRule.group_id" placeholder="e.g. weekly_shopping" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
+                                <input type="text" x-model="newErrandRule.title" placeholder="e.g. Grocery Runs" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            
+                            <div class="border-t border-gray-600 pt-4">
+                                <label class="block text-gray-400 mb-1 text-sm font-bold">Matching Criteria</label>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                                    <div>
+                                        <div class="flex gap-2">
+                                            <input type="text" x-model="newErrandRuleKeywordInput" @keydown.enter="addErrandRuleKeyword()" placeholder="Add keyword (e.g. grocery)" class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm">
+                                            <button @click="addErrandRuleKeyword()" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-sm font-bold shadow-md">Add</button>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2 mt-2">
+                                            <template x-for="(kw, idx) in newErrandRule.keywords" :key="idx">
+                                                <div class="flex items-center bg-gray-800 text-blue-300 px-2 py-1 rounded text-xs border border-gray-600">
+                                                    <span x-text="kw" class="mr-2"></span>
+                                                    <button @click="newErrandRule.keywords.splice(idx, 1)" class="text-gray-400 hover:text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div class="mt-2 flex items-center gap-2">
+                                            <input type="checkbox" x-model="newErrandRule.keywords_match_all" class="rounded bg-gray-900 border-gray-600">
+                                            <span class="text-xs text-gray-400">Match ALL keywords</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <input type="text" x-model="newErrandRule.location" placeholder="Location substring (optional)" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                    </div>
                                 </div>
                             </div>
                             
                             <div class="border-t border-gray-600 pt-4">
-                                <label class="block text-gray-400 mb-1 text-sm font-bold">Matching Keywords</label>
-                                <div class="flex gap-2 mb-2">
-                                    <input type="text" x-model="newErrandRuleKeywordInput" @keydown.enter="addErrandRuleKeyword()" placeholder="e.g. grocery" class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
-                                    <button @click="addErrandRuleKeyword()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold shadow-md">Add</button>
+                                <label class="block text-gray-400 mb-2 text-sm font-bold">Constraint Configuration</label>
+                                <select x-model="newErrandRule.constraint_type" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-4">
+                                    <option value="driver_assignment">Driver Assignment</option>
+                                    <option value="passenger_assignment">Passenger Constraints</option>
+                                    <option value="time_of_day">Time of Day</option>
+                                    <option value="buffer_tolerance">Buffer & Tolerance</option>
+                                    <option value="grouping">Group Errands</option>
+                                </select>
+
+                                <!-- Driver Assignment -->
+                                <div x-show="newErrandRule.constraint_type === 'driver_assignment'" class="space-y-2">
+                                    <div class="text-xs text-gray-400 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <template x-for="d in drivers" :key="d.id">
+                                            <button @click="toggleErrandRuleDriver(d.id)"
+                                                    :class="{
+                                                        'bg-gray-800 border-gray-600 text-gray-400': !newErrandRule.required_drivers.includes(d.id) && !newErrandRule.prohibited_drivers.includes(d.id),
+                                                        'bg-blue-900/50 border-blue-500 text-blue-300': newErrandRule.required_drivers.includes(d.id),
+                                                        'bg-red-900/50 border-red-500 text-red-300 line-through': newErrandRule.prohibited_drivers.includes(d.id)
+                                                    }"
+                                                    class="border px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                                                <div class="w-2 h-2 rounded-full" :style="'background-color: ' + d.color_code"></div>
+                                                <span x-text="d.name"></span>
+                                            </button>
+                                        </template>
+                                    </div>
                                 </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <template x-for="(kw, idx) in newErrandRule.keywords" :key="idx">
-                                        <div class="flex items-center bg-gray-800 text-blue-300 px-2 py-1 rounded text-xs border border-gray-600">
-                                            <span x-text="kw" class="mr-2"></span>
-                                            <button @click="newErrandRule.keywords.splice(idx, 1)" class="text-gray-400 hover:text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
-                                        </div>
-                                    </template>
+
+                                <!-- Passenger Constraints -->
+                                <div x-show="newErrandRule.constraint_type === 'passenger_assignment'" class="space-y-2" style="display: none;">
+                                    <div class="text-xs text-gray-400 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <template x-for="p in passengers" :key="p.id">
+                                            <button @click="toggleErrandRulePassenger(p.id)"
+                                                    :class="{
+                                                        'bg-gray-800 border-gray-600 text-gray-400': !newErrandRule.required_passengers.includes(p.id) && !newErrandRule.prohibited_passengers.includes(p.id),
+                                                        'bg-blue-900/50 border-blue-500 text-blue-300': newErrandRule.required_passengers.includes(p.id),
+                                                        'bg-red-900/50 border-red-500 text-red-300 line-through': newErrandRule.prohibited_passengers.includes(p.id)
+                                                    }"
+                                                    class="border px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                                                <span x-text="p.name"></span>
+                                            </button>
+                                        </template>
+                                    </div>
                                 </div>
-                                <div class="mt-2 flex items-center gap-2">
-                                    <input type="checkbox" x-model="newErrandRule.keywords_match_all" class="rounded bg-gray-900 border-gray-600">
-                                    <span class="text-sm text-gray-400">Match ALL keywords (AND) instead of ANY (OR)</span>
+
+                                <!-- Time of Day -->
+                                <div x-show="newErrandRule.constraint_type === 'time_of_day'" class="grid grid-cols-2 gap-4" style="display: none;">
+                                    <div>
+                                        <label class="block text-gray-400 text-xs mb-1">Time Window Start</label>
+                                        <input type="time" x-model="newErrandRule.time_window_start" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-400 text-xs mb-1">Time Window End</label>
+                                        <input type="time" x-model="newErrandRule.time_window_end" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    </div>
+                                </div>
+
+                                <!-- Buffer & Tolerance -->
+                                <div x-show="newErrandRule.constraint_type === 'buffer_tolerance'" class="grid grid-cols-2 gap-4" style="display: none;">
+                                    <div>
+                                        <label class="block text-gray-400 text-xs mb-1">Buffer Time (mins)</label>
+                                        <input type="number" x-model.number="newErrandRule.buffer_mins" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-400 text-xs mb-1">Tolerance (mins)</label>
+                                        <input type="number" x-model.number="newErrandRule.tolerance_mins" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    </div>
+                                </div>
+
+                                <!-- Grouping -->
+                                <div x-show="newErrandRule.constraint_type === 'grouping'" style="display: none;">
+                                    <label class="block text-gray-400 text-xs mb-1">Group ID / Category</label>
+                                    <input type="text" x-model="newErrandRule.group_keyword" placeholder="e.g. weekly_shopping" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    <p class="text-xs text-gray-500 mt-1">Errands sharing the same Group ID will be highly incentivized to schedule together.</p>
                                 </div>
                             </div>
-                            
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-600 pt-4">
-                                <div>
-                                    <label class="block text-gray-400 mb-2 text-sm font-bold">Driver Constraints</label>
-                                    <div class="space-y-3">
-                                        <div>
-                                            <label class="text-xs text-gray-500">Allowed (comma separated IDs)</label>
-                                            <input type="text" x-model="newErrandRule.allowed_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" placeholder="driver_a,driver_b">
-                                        </div>
-                                        <div>
-                                            <label class="text-xs text-gray-500">Required (comma separated IDs)</label>
-                                            <input type="text" x-model="newErrandRule.required_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                        </div>
-                                        <div>
-                                            <label class="text-xs text-gray-500">Prohibited (comma separated IDs)</label>
-                                            <input type="text" x-model="newErrandRule.prohibited_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 mb-2 text-sm font-bold">Passenger Constraints</label>
-                                    <div class="space-y-3">
-                                        <div>
-                                            <label class="text-xs text-gray-500">Required (comma separated IDs)</label>
-                                            <input type="text" x-model="newErrandRule.required_passengers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                        </div>
-                                        <div>
-                                            <label class="text-xs text-gray-500">Prohibited (comma separated IDs)</label>
-                                            <input type="text" x-model="newErrandRule.prohibited_passengers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                             
                             <div class="flex gap-4 mt-4">
@@ -2080,7 +2128,7 @@
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
-                newErrandRule: { title: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], required_passengers: [], prohibited_passengers: [], group_id: '' },
+                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, group_keyword: '' },
                 newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
@@ -2881,23 +2929,50 @@
                     this.newErrandRuleKeywordInput = '';
                 },
                 cancelEditErrandRule() {
-                    this.newErrandRule = { title: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], required_passengers: [], prohibited_passengers: [], group_id: '' };
+                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, group_keyword: '' };
                     this.editErrandRuleId = null;
                 },
                 editErrandRule(rule) {
                     this.editErrandRuleId = rule.doc_id;
                     this.newErrandRule = {
                         title: rule.title,
+                        constraint_type: rule.constraint_type || 'driver_assignment',
+                        location: rule.location || '',
                         keywords: [...rule.keywords],
                         keywords_match_all: rule.keywords_match_all,
-                        allowed_drivers: rule.allowed_drivers.join(','),
-                        required_drivers: rule.required_drivers.join(','),
-                        prohibited_drivers: rule.prohibited_drivers.join(','),
-                        required_passengers: rule.required_passengers.join(','),
-                        prohibited_passengers: rule.prohibited_passengers.join(','),
-                        group_id: rule.group_id || ''
+                        allowed_drivers: [...(rule.allowed_drivers || [])],
+                        required_drivers: [...(rule.required_drivers || [])],
+                        prohibited_drivers: [...(rule.prohibited_drivers || [])],
+                        allowed_passengers: [...(rule.allowed_passengers || [])],
+                        required_passengers: [...(rule.required_passengers || [])],
+                        prohibited_passengers: [...(rule.prohibited_passengers || [])],
+                        time_window_start: rule.time_window_start || '',
+                        time_window_end: rule.time_window_end || '',
+                        buffer_mins: rule.buffer_mins || 0,
+                        tolerance_mins: rule.tolerance_mins || 0,
+                        group_keyword: rule.group_keyword || ''
                     };
                     window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+                toggleErrandRuleDriver(driverId) {
+                    if (this.newErrandRule.required_drivers.includes(driverId)) {
+                        this.newErrandRule.required_drivers = this.newErrandRule.required_drivers.filter(id => id !== driverId);
+                        this.newErrandRule.prohibited_drivers.push(driverId);
+                    } else if (this.newErrandRule.prohibited_drivers.includes(driverId)) {
+                        this.newErrandRule.prohibited_drivers = this.newErrandRule.prohibited_drivers.filter(id => id !== driverId);
+                    } else {
+                        this.newErrandRule.required_drivers.push(driverId);
+                    }
+                },
+                toggleErrandRulePassenger(passengerId) {
+                    if (this.newErrandRule.required_passengers.includes(passengerId)) {
+                        this.newErrandRule.required_passengers = this.newErrandRule.required_passengers.filter(id => id !== passengerId);
+                        this.newErrandRule.prohibited_passengers.push(passengerId);
+                    } else if (this.newErrandRule.prohibited_passengers.includes(passengerId)) {
+                        this.newErrandRule.prohibited_passengers = this.newErrandRule.prohibited_passengers.filter(id => id !== passengerId);
+                    } else {
+                        this.newErrandRule.required_passengers.push(passengerId);
+                    }
                 },
                 async toggleErrandRuleState(rule) {
                     try {
@@ -2921,14 +2996,21 @@
                     if (!this.newErrandRule.title) return alert('Title is required');
                     const payload = {
                         title: this.newErrandRule.title,
+                        constraint_type: this.newErrandRule.constraint_type,
+                        location: this.newErrandRule.location,
                         keywords: this.newErrandRule.keywords,
                         keywords_match_all: this.newErrandRule.keywords_match_all,
-                        allowed_drivers: typeof this.newErrandRule.allowed_drivers === 'string' ? this.newErrandRule.allowed_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.allowed_drivers,
-                        required_drivers: typeof this.newErrandRule.required_drivers === 'string' ? this.newErrandRule.required_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.required_drivers,
-                        prohibited_drivers: typeof this.newErrandRule.prohibited_drivers === 'string' ? this.newErrandRule.prohibited_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.prohibited_drivers,
-                        required_passengers: typeof this.newErrandRule.required_passengers === 'string' ? this.newErrandRule.required_passengers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.required_passengers,
-                        prohibited_passengers: typeof this.newErrandRule.prohibited_passengers === 'string' ? this.newErrandRule.prohibited_passengers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.prohibited_passengers,
-                        group_id: this.newErrandRule.group_id || null,
+                        allowed_drivers: this.newErrandRule.allowed_drivers,
+                        required_drivers: this.newErrandRule.required_drivers,
+                        prohibited_drivers: this.newErrandRule.prohibited_drivers,
+                        allowed_passengers: this.newErrandRule.allowed_passengers,
+                        required_passengers: this.newErrandRule.required_passengers,
+                        prohibited_passengers: this.newErrandRule.prohibited_passengers,
+                        time_window_start: this.newErrandRule.time_window_start,
+                        time_window_end: this.newErrandRule.time_window_end,
+                        buffer_mins: this.newErrandRule.buffer_mins,
+                        tolerance_mins: this.newErrandRule.tolerance_mins,
+                        group_keyword: this.newErrandRule.group_keyword,
                         is_enabled: true
                     };
                     

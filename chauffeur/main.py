@@ -352,28 +352,42 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
     
     for r in rules:
         if not r.get('is_enabled', True): continue
-        kws = r.get('keywords', [])
-        if not kws: continue
+        match = True
         
-        match_all = r.get('keywords_match_all', False)
-        if match_all:
-            match_kw = all(kw.lower() in errand_text for kw in kws)
-        else:
-            match_kw = any(kw.lower() in errand_text for kw in kws)
+        # Check Keywords
+        kws = r.get('keywords', [])
+        if kws:
+            match_all = r.get('keywords_match_all', False)
+            if match_all:
+                if not all(kw.lower() in errand_text for kw in kws): match = False
+            else:
+                if not any(kw.lower() in errand_text for kw in kws): match = False
+                
+        # Check Location
+        rule_loc = r.get('location')
+        if rule_loc and match:
+            if rule_loc.lower() not in errand.location.lower():
+                match = False
+                
+        if match and (kws or rule_loc):  # Must match at least one filter
+            ctype = r.get('constraint_type', 'driver_assignment')
             
-        if match_kw:
-            # Apply constraints if not already set manually
-            if r.get('allowed_drivers') and not errand_dict.get('allowed_drivers'): errand_dict['allowed_drivers'] = r['allowed_drivers']
-            if r.get('required_drivers') and not errand_dict.get('required_drivers'): errand_dict['required_drivers'] = r['required_drivers']
-            if r.get('prohibited_drivers') and not errand_dict.get('prohibited_drivers'): errand_dict['prohibited_drivers'] = r['prohibited_drivers']
-            if r.get('allowed_passengers') and not errand_dict.get('allowed_passengers'): errand_dict['allowed_passengers'] = r['allowed_passengers']
-            if r.get('required_passengers') and not errand_dict.get('required_passengers'): errand_dict['required_passengers'] = r['required_passengers']
-            if r.get('prohibited_passengers') and not errand_dict.get('prohibited_passengers'): errand_dict['prohibited_passengers'] = r['prohibited_passengers']
-            if r.get('tolerance_mins') and not errand_dict.get('tolerance_mins'): errand_dict['tolerance_mins'] = r['tolerance_mins']
-            if r.get('buffer_mins') and not errand_dict.get('buffer_mins'): errand_dict['buffer_mins'] = r['buffer_mins']
-            if r.get('time_window_start') and not errand_dict.get('time_window_start'): errand_dict['time_window_start'] = r['time_window_start']
-            if r.get('time_window_end') and not errand_dict.get('time_window_end'): errand_dict['time_window_end'] = r['time_window_end']
-            if r.get('group_keyword') and not errand_dict.get('group_id'): errand_dict['group_id'] = r['group_keyword']
+            if ctype == 'driver_assignment':
+                if r.get('allowed_drivers') and not errand_dict.get('allowed_drivers'): errand_dict['allowed_drivers'] = r['allowed_drivers']
+                if r.get('required_drivers') and not errand_dict.get('required_drivers'): errand_dict['required_drivers'] = r['required_drivers']
+                if r.get('prohibited_drivers') and not errand_dict.get('prohibited_drivers'): errand_dict['prohibited_drivers'] = r['prohibited_drivers']
+            elif ctype == 'passenger_assignment':
+                if r.get('allowed_passengers') and not errand_dict.get('allowed_passengers'): errand_dict['allowed_passengers'] = r['allowed_passengers']
+                if r.get('required_passengers') and not errand_dict.get('required_passengers'): errand_dict['required_passengers'] = r['required_passengers']
+                if r.get('prohibited_passengers') and not errand_dict.get('prohibited_passengers'): errand_dict['prohibited_passengers'] = r['prohibited_passengers']
+            elif ctype == 'buffer_tolerance':
+                if r.get('tolerance_mins') and not errand_dict.get('tolerance_mins'): errand_dict['tolerance_mins'] = r['tolerance_mins']
+                if r.get('buffer_mins') and not errand_dict.get('buffer_mins'): errand_dict['buffer_mins'] = r['buffer_mins']
+            elif ctype == 'time_of_day':
+                if r.get('time_window_start') and not errand_dict.get('time_window_start'): errand_dict['time_window_start'] = r['time_window_start']
+                if r.get('time_window_end') and not errand_dict.get('time_window_end'): errand_dict['time_window_end'] = r['time_window_end']
+            elif ctype == 'grouping':
+                if r.get('group_keyword') and not errand_dict.get('group_id'): errand_dict['group_id'] = r['group_keyword']
 
     doc_id = storage.add_errand(errand_dict)
     background_tasks.add_task(trigger_background_refresh)
