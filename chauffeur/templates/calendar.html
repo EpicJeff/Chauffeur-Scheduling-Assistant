@@ -163,14 +163,14 @@
                         if (data.scheduled_errands && data.scheduled_errands.length > 0) {
                             data.scheduled_errands.forEach(ev => {
                                 fcEvents.push({
-                                    id: ev.id,
-                                    title: 'Errand: ' + ev.title,
-                                    start: ev.start_time,
-                                    end: ev.end_time,
+                                    id: ev.event_id,
+                                    title: ev.title,
+                                    start: ev.start_time_iso,
+                                    end: ev.end_time_iso,
                                     backgroundColor: '#F59E0B',
                                     extendedProps: { 
-                                        location: ev.location,
-                                        description: ev.description || ev.notes
+                                        location: ev.errand ? ev.errand.location : '',
+                                        description: 'Duration: ' + (ev.end_mins - ev.start_mins) + ' mins'
                                     }
                                 });
                             });
