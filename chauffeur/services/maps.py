@@ -9,6 +9,10 @@ geocode_lock = threading.Lock()
 api_rate_lock = threading.Lock()
 
 def get_map_option(key: str, default: any) -> any:
+    settings = storage.get_settings()
+    if key in settings and settings[key] is not None:
+        return settings[key]
+        
     import json
     options_file = '/data/options.json'
     if os.path.exists(options_file):
@@ -21,8 +25,7 @@ def get_map_option(key: str, default: any) -> any:
                     return val
         except Exception:
             pass
-    settings = storage.get_settings()
-    return settings.get(key, default)
+    return default
 
 def fire_home_assistant_alert(endpoint: str, reason: str, current_usage: int):
     import os
@@ -82,6 +85,10 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1) -> bool:
     return True
 
 def get_cache_duration() -> int:
+    settings = storage.get_settings()
+    if 'route_cache_duration_mins' in settings and settings['route_cache_duration_mins'] is not None:
+        return int(settings['route_cache_duration_mins'])
+        
     import json
     options_file = '/data/options.json'
     if os.path.exists(options_file):
@@ -93,9 +100,7 @@ def get_cache_duration() -> int:
         except Exception:
             pass
             
-    # Fallback to local settings
-    settings = storage.get_settings()
-    return int(settings.get('route_cache_duration_mins', 1440))
+    return 1440
 
 
 def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], departure_time: Optional[int] = None, return_traffic: bool = False):
