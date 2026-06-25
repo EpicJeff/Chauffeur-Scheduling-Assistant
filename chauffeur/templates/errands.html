@@ -223,6 +223,41 @@
                             <input type="date" id="edit-starts-on" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
                         </div>
                     </div>
+                    
+                    <div class="mt-4 border-t border-gray-700 pt-4">
+                        <h4 class="text-sm font-semibold text-gray-300 mb-3">Advanced Constraints</h4>
+                        <div class="space-y-3">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Time Window Start</label>
+                                    <input type="time" id="edit-tw-start" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Time Window End</label>
+                                    <input type="time" id="edit-tw-end" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Tolerance (mins)</label>
+                                    <input type="number" id="edit-tolerance" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Buffer (mins)</label>
+                                    <input type="number" id="edit-buffer" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-3">
+                                <div class="col-span-1">
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Group ID</label>
+                                    <input type="text" id="edit-group" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                                <div class="col-span-2 text-xs text-gray-500 pt-5">
+                                    *Driver & Pax constraints are evaluated via Errand Rules, but can be manually overridden via JSON if needed.*
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             
@@ -650,6 +685,12 @@
                 document.getElementById('edit-starts-on').value = '';
             }
             
+            document.getElementById('edit-tw-start').value = errand.time_window_start || '';
+            document.getElementById('edit-tw-end').value = errand.time_window_end || '';
+            document.getElementById('edit-tolerance').value = errand.tolerance_mins || '';
+            document.getElementById('edit-buffer').value = errand.buffer_mins || '';
+            document.getElementById('edit-group').value = errand.group_id || '';
+            
             document.getElementById('edit-modal').classList.remove('hidden');
         }
 
@@ -675,6 +716,12 @@
             } else {
                 errand.starts_on = Math.floor(Date.now() / 1000);
             }
+            
+            errand.time_window_start = document.getElementById('edit-tw-start').value || null;
+            errand.time_window_end = document.getElementById('edit-tw-end').value || null;
+            errand.tolerance_mins = parseInt(document.getElementById('edit-tolerance').value) || null;
+            errand.buffer_mins = parseInt(document.getElementById('edit-buffer').value) || null;
+            errand.group_id = document.getElementById('edit-group').value || null;
 
             closeEditModal();
             renderErrands();

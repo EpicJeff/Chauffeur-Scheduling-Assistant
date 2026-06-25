@@ -240,12 +240,119 @@
                                 <div class="text-xs text-gray-500 mb-2">Converts text addresses into coordinates.</div>
                                 <label class="block text-xs text-gray-400 mb-1 font-semibold uppercase">Ceiling
                                     Limit</label>
-                                <input type="number" x-model="mapboxGeocodeLimit" @change="saveSettings()"
+<input type="number" x-model="mapboxGeocodeLimit" @change="saveSettings()"
                                     class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono text-sm focus:outline-none focus:border-blue-500">
                             </div>
                         </div>
                     </div>
+                    
+                    <div x-show="rulesSubTab === 'errand'" x-transition.opacity x-cloak>
+                        <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed space-y-4 mb-8">
+                            <h3 class="text-xl font-bold text-white mb-2" x-text="editErrandRuleId ? 'Edit Errand Rule' : 'Create Errand Rule'"></h3>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Title</label>
+                                    <input type="text" x-model="newErrandRule.title" placeholder="e.g. Grocery Runs" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Group ID (Optional)</label>
+                                    <input type="text" x-model="newErrandRule.group_id" placeholder="e.g. weekly_shopping" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                            </div>
+                            
+                            <div class="border-t border-gray-600 pt-4">
+                                <label class="block text-gray-400 mb-1 text-sm font-bold">Matching Keywords</label>
+                                <div class="flex gap-2 mb-2">
+                                    <input type="text" x-model="newErrandRuleKeywordInput" @keydown.enter="addErrandRuleKeyword()" placeholder="e.g. grocery" class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
+                                    <button @click="addErrandRuleKeyword()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold shadow-md">Add</button>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="(kw, idx) in newErrandRule.keywords" :key="idx">
+                                        <div class="flex items-center bg-gray-800 text-blue-300 px-2 py-1 rounded text-xs border border-gray-600">
+                                            <span x-text="kw" class="mr-2"></span>
+                                            <button @click="newErrandRule.keywords.splice(idx, 1)" class="text-gray-400 hover:text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                                        </div>
+                                    </template>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input type="checkbox" x-model="newErrandRule.keywords_match_all" class="rounded bg-gray-900 border-gray-600">
+                                    <span class="text-sm text-gray-400">Match ALL keywords (AND) instead of ANY (OR)</span>
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-600 pt-4">
+                                <div>
+                                    <label class="block text-gray-400 mb-2 text-sm font-bold">Driver Constraints</label>
+                                    <div class="space-y-3">
+                                        <div>
+                                            <label class="text-xs text-gray-500">Allowed (comma separated IDs)</label>
+                                            <input type="text" x-model="newErrandRule.allowed_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" placeholder="driver_a,driver_b">
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Required (comma separated IDs)</label>
+                                            <input type="text" x-model="newErrandRule.required_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Prohibited (comma separated IDs)</label>
+                                            <input type="text" x-model="newErrandRule.prohibited_drivers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-2 text-sm font-bold">Passenger Constraints</label>
+                                    <div class="space-y-3">
+                                        <div>
+                                            <label class="text-xs text-gray-500">Required (comma separated IDs)</label>
+                                            <input type="text" x-model="newErrandRule.required_passengers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Prohibited (comma separated IDs)</label>
+                                            <input type="text" x-model="newErrandRule.prohibited_passengers" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex gap-4 mt-4">
+                                <button @click="submitErrandRule()" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold text-white shadow-md">Save Rule</button>
+                                <button x-show="editErrandRuleId" @click="cancelEditErrandRule()" class="bg-gray-600 hover:bg-gray-500 px-6 py-2 rounded-lg font-bold text-white">Cancel</button>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <h3 class="text-xl font-bold text-gray-300 border-b border-gray-700 pb-2">Active Errand Rules</h3>
+                            <template x-for="rule in errandRules" :key="rule.doc_id">
+                                <div class="bg-gray-900 border border-gray-700 p-4 rounded-xl shadow-sm flex justify-between items-center" :class="!rule.is_enabled ? 'opacity-50 grayscale' : ''">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <h4 class="font-bold text-lg text-white" x-text="rule.title"></h4>
+                                            <span x-show="!rule.is_enabled" class="text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded">Disabled</span>
+                                        </div>
+                                        <div class="text-xs text-gray-400 mt-1">
+                                            Keywords: <span x-text="rule.keywords.join(', ')"></span>
+                                        </div>
+                                    </div>
+                                    <div class="flex space-x-2">
+                                        <button @click="toggleErrandRuleState(rule)" class="text-gray-400 hover:text-white p-2">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                        </button>
+                                        <button @click="editErrandRule(rule)" class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                        </button>
+                                        <button @click="deleteErrandRule(rule.doc_id)" class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                            <template x-if="errandRules.length === 0">
+                                <p class="text-sm text-gray-500 italic text-center p-4">No errand rules configured.</p>
+                            </template>
+                        </div>
+                    </div>
 
+                </div>
                     <!-- Time Format -->
                     <div class="mb-6">
                         <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Time
@@ -914,6 +1021,7 @@
                     <div class="flex space-x-4 mb-6 border-b border-gray-700 pb-2">
                         <button @click="rulesSubTab = 'routing'" :class="rulesSubTab === 'routing' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Routing Rules</button>
                         <button @click="rulesSubTab = 'priority'" :class="rulesSubTab === 'priority' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Priority Rules</button>
+                        <button @click="rulesSubTab = 'errand'" :class="rulesSubTab === 'errand' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'" class="pb-2 font-bold px-4 text-xl">Errand Rules</button>
                     </div>
 
                     <div x-show="rulesSubTab === 'routing'" x-transition.opacity>
@@ -1938,6 +2046,7 @@
                 passengers: [],
                 rules: [],
                 priorityRules: [],
+                errandRules: [],
                 themes: [],
 
                 // AI assistant LLM settings
@@ -1974,8 +2083,11 @@
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
+                newErrandRule: { title: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], required_passengers: [], prohibited_passengers: [], group_id: '' },
+                newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
+                editErrandRuleId: null,
                 editRuleId: null,
                 editPriorityRuleId: null,
                 autocompleteTimeout: null,
@@ -1988,6 +2100,7 @@
                     await this.loadPassengers();
                     await this.loadRules();
                     await this.loadPriorityRules();
+                    await this.loadErrandRules();
                     await this.loadThemes();
                     this.loadMatchedEvents();
                     console.log("configApp init complete");
@@ -2569,6 +2682,16 @@
                         this.rules = [];
                     }
                 },
+                async loadErrandRules() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/errand_rules`);
+                        const data = await res.json();
+                        this.errandRules = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load errand rules", e);
+                        this.errandRules = [];
+                    }
+                },
                 async loadMatchedEvents() {
                     try {
                         const res = await fetch(`${this.apiBase}api/schedule`);
@@ -2750,6 +2873,87 @@
                 async deletePriorityRule(doc_id) {
                     await fetch(`${this.apiBase}api/priority_rules/${doc_id}`, { method: 'DELETE' });
                     await this.loadPriorityRules();
+                },
+                
+                // --- Errand Rules ---
+                addErrandRuleKeyword() {
+                    const kw = this.newErrandRuleKeywordInput.trim().toLowerCase();
+                    if (kw && !this.newErrandRule.keywords.includes(kw)) {
+                        this.newErrandRule.keywords.push(kw);
+                    }
+                    this.newErrandRuleKeywordInput = '';
+                },
+                cancelEditErrandRule() {
+                    this.newErrandRule = { title: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], required_passengers: [], prohibited_passengers: [], group_id: '' };
+                    this.editErrandRuleId = null;
+                },
+                editErrandRule(rule) {
+                    this.editErrandRuleId = rule.doc_id;
+                    this.newErrandRule = {
+                        title: rule.title,
+                        keywords: [...rule.keywords],
+                        keywords_match_all: rule.keywords_match_all,
+                        allowed_drivers: rule.allowed_drivers.join(','),
+                        required_drivers: rule.required_drivers.join(','),
+                        prohibited_drivers: rule.prohibited_drivers.join(','),
+                        required_passengers: rule.required_passengers.join(','),
+                        prohibited_passengers: rule.prohibited_passengers.join(','),
+                        group_id: rule.group_id || ''
+                    };
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+                async toggleErrandRuleState(rule) {
+                    try {
+                        rule.is_enabled = !rule.is_enabled;
+                        await fetch(`${this.apiBase}api/errand_rules/${rule.doc_id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(rule)
+                        });
+                        await this.loadErrandRules();
+                    } catch (e) {
+                        console.error("Failed to toggle errand rule state", e);
+                    }
+                },
+                async deleteErrandRule(docId) {
+                    if (!confirm('Delete this errand rule?')) return;
+                    await fetch(`${this.apiBase}api/errand_rules/${docId}`, { method: 'DELETE' });
+                    await this.loadErrandRules();
+                },
+                async submitErrandRule() {
+                    if (!this.newErrandRule.title) return alert('Title is required');
+                    const payload = {
+                        title: this.newErrandRule.title,
+                        keywords: this.newErrandRule.keywords,
+                        keywords_match_all: this.newErrandRule.keywords_match_all,
+                        allowed_drivers: typeof this.newErrandRule.allowed_drivers === 'string' ? this.newErrandRule.allowed_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.allowed_drivers,
+                        required_drivers: typeof this.newErrandRule.required_drivers === 'string' ? this.newErrandRule.required_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.required_drivers,
+                        prohibited_drivers: typeof this.newErrandRule.prohibited_drivers === 'string' ? this.newErrandRule.prohibited_drivers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.prohibited_drivers,
+                        required_passengers: typeof this.newErrandRule.required_passengers === 'string' ? this.newErrandRule.required_passengers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.required_passengers,
+                        prohibited_passengers: typeof this.newErrandRule.prohibited_passengers === 'string' ? this.newErrandRule.prohibited_passengers.split(',').map(s=>s.trim()).filter(Boolean) : this.newErrandRule.prohibited_passengers,
+                        group_id: this.newErrandRule.group_id || null,
+                        is_enabled: true
+                    };
+                    
+                    try {
+                        if (this.editErrandRuleId) {
+                            await fetch(`${this.apiBase}api/errand_rules/${this.editErrandRuleId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        } else {
+                            await fetch(`${this.apiBase}api/errand_rules`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        }
+                        this.cancelEditErrandRule();
+                        await this.loadErrandRules();
+                    } catch (e) {
+                        console.error("Failed to save errand rule", e);
+                    }
                 },
 
                 async loadThemes() {
