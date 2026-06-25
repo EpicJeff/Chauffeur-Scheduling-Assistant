@@ -673,10 +673,9 @@ def solve_schedule(
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds >= 0:
                             if shares_passenger:
-                                # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at 2 hours gap).
-                                # This ensures continuity is massive for back-to-back events, but 
-                                # has ZERO penalty for switching if the events are far apart with a long layover.
-                                decay = max(0.0, 1.0 - (gap_seconds / 7200.0))
+                                # Linearly decay passenger stickiness bonus from 50,000 (at 0 gap) down to 0 (at 75 mins gap).
+                                # This aligns with the threshold where a driver typically has enough time to go home for a layover.
+                                decay = max(0.0, 1.0 - (gap_seconds / 4500.0))
                                 if decay > 0:
                                     objective_terms.append(both_assigned * int(50000 * decay * stickiness_bonus_mult))
                                     

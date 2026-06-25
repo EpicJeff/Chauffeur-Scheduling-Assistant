@@ -14,7 +14,7 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 - **Driver in Event (Attendee):** `+5000` (Massive bonus if the driver is also attending the event).
 - **Primary Driver Bonus:** `+2000` (modified by `primary_driver_bonus_multiplier`).
 - **Stickiness Bonus:** `+5` points if they drove the same event in the previous run.
-- **Passenger Continuity:** Up to `+50,000` points if a driver handles consecutive events back-to-back with the same passenger, decaying linearly to `0` at a 2-hour gap.
+- **Passenger Continuity:** Up to `+50,000` points if a driver handles consecutive events back-to-back with the same passenger, decaying linearly to `0` at a 75-minute gap.
 - **Location Continuity:** Up to `+5,000` points if a driver handles consecutive events at the exact same location, decaying linearly to `0` at a 3-hour gap.
 
 **Penalties:**
