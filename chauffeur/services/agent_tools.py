@@ -119,6 +119,33 @@ class GetErrandsTool(BaseModel):
     """
     pass
 
+class AddErrandRuleTool(BaseModel):
+    """
+    Creates a new errand rule constraint.
+    """
+    title: str = Field(..., description="A descriptive title for the rule.")
+    constraint_type: str = Field(..., description="Type: 'driver_assignment', 'passenger_assignment', 'time_of_day', 'buffer_tolerance', 'grouping'.")
+    location: str = Field(default="", description="Location substring to match.")
+    keywords: List[str] = Field(default=[], description="Keywords to match in errand title.")
+    keywords_match_all: bool = Field(default=False, description="If True, all keywords must match.")
+    allowed_drivers: List[str] = Field(default=[], description="List of driver IDs allowed (optional).")
+    required_drivers: List[str] = Field(default=[], description="List of driver IDs required (optional).")
+    prohibited_drivers: List[str] = Field(default=[], description="List of driver IDs prohibited (optional).")
+    allowed_passengers: List[str] = Field(default=[], description="List of passenger IDs allowed (optional).")
+    required_passengers: List[str] = Field(default=[], description="List of passenger IDs required (optional).")
+    prohibited_passengers: List[str] = Field(default=[], description="List of passenger IDs prohibited (optional).")
+    time_window_start: str = Field(default="", description="Start time constraint (HH:MM).")
+    time_window_end: str = Field(default="", description="End time constraint (HH:MM).")
+    buffer_mins: int = Field(default=0, description="Minutes before/after errand.")
+    tolerance_mins: int = Field(default=0, description="Tolerance for scheduling outside preferred windows.")
+    filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'grouping' rules, list of filter objects (each with keywords, keywords_match_all, location) to group errands.")
+
+class DeleteErrandRuleTool(BaseModel):
+    """
+    Deletes an existing errand rule by its doc_id.
+    """
+    rule_id: str = Field(..., description="The doc_id of the errand rule to delete.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -134,6 +161,8 @@ TOOL_SCHEMAS = {
     "update_errand": UpdateErrandTool.model_json_schema(),
     "delete_errand": DeleteErrandTool.model_json_schema(),
     "get_errands": GetErrandsTool.model_json_schema(),
+    "add_errand_rule": AddErrandRuleTool.model_json_schema(),
+    "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -318,6 +347,20 @@ def handle_get_errands(args: dict) -> dict:
     errands = storage.get_all_errands()
     return {"status": "success", "errands": errands}
 
+def handle_add_errand_rule(args: dict) -> dict:
+    from services import storage
+    rule_id = storage.add_errand_rule(args)
+    return {"status": "success", "rule_id": rule_id}
+
+def handle_delete_errand_rule(args: dict) -> dict:
+    from services import storage
+    try:
+        rule_id = int(args.get("rule_id", 0))
+        storage.delete_errand_rule(rule_id)
+        return {"status": "success"}
+    except ValueError:
+        return {"status": "error", "message": "rule_id must be an integer"}
+
 TOOL_HANDLERS = {
     "get_current_state": handle_get_current_state,
     "add_routing_rule": handle_add_routing_rule,
@@ -332,6 +375,8 @@ TOOL_HANDLERS = {
     "update_errand": handle_update_errand,
     "delete_errand": handle_delete_errand,
     "get_errands": handle_get_errands,
+    "add_errand_rule": handle_add_errand_rule,
+    "delete_errand_rule": handle_delete_errand_rule,
 }
 
 def execute_tool(name: str, args: dict) -> dict:
