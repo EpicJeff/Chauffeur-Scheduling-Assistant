@@ -2716,6 +2716,13 @@
                                 computedOrigin = initEdge.driver_home_location;
                             }
                         }
+                        
+                        if (latenessWarningsMap[ev.id]) {
+                            const match = latenessWarningsMap[ev.id].match(/(\d+)m late/);
+                            if (match) {
+                                lateMins = Math.max(lateMins, parseInt(match[1]));
+                            }
+                        }
                         const originLocationEnc = computedOrigin ? encodeURIComponent(computedOrigin).replace(/'/g, "\\'") : '';
                         const clickAttr = `onclick="openEventModal('${ev.id}', '${originLocationEnc}')"`;
 
