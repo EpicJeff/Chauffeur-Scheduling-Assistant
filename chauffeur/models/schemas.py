@@ -368,4 +368,5 @@ class ErrandRule(BaseModel):
     time_window_start: Optional[str] = None
     time_window_end: Optional[str] = None
     group_keyword: Optional[str] = None
+    filter_sets: List[EventFilter] = Field(default_factory=list)
     is_enabled: bool = True

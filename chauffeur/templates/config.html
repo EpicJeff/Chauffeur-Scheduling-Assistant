@@ -1821,7 +1821,7 @@
                                 <input type="text" x-model="newErrandRule.title" placeholder="e.g. Grocery Runs" class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                             </div>
                             
-                            <div class="border-t border-gray-600 pt-4">
+                            <div class="border-t border-gray-600 pt-4" x-show="newErrandRule.constraint_type !== 'grouping'">
                                 <label class="block text-gray-400 mb-1 text-sm font-bold">Matching Criteria</label>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
                                     <div>
@@ -1920,10 +1920,66 @@
                                 </div>
 
                                 <!-- Grouping -->
-                                <div x-show="newErrandRule.constraint_type === 'grouping'" style="display: none;">
-                                    <label class="block text-gray-400 text-xs mb-1">Group ID / Category</label>
-                                    <input type="text" x-model="newErrandRule.group_keyword" placeholder="e.g. weekly_shopping" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
-                                    <p class="text-xs text-gray-500 mt-1">Errands sharing the same Group ID will be highly incentivized to schedule together.</p>
+                                <div x-show="newErrandRule.constraint_type === 'grouping'" class="space-y-6" style="display: none;">
+                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Group Filter Sets</label>
+                                    <div class="space-y-4">
+                                        <template x-for="(fs, fidx) in newErrandRule.filter_sets" :key="fidx">
+                                            <div class="bg-gray-800 p-4 rounded border border-gray-600">
+                                                <div class="flex justify-between items-center mb-4">
+                                                    <span class="font-bold text-white"
+                                                        x-text="'Errand Filter ' + (fidx + 1)"></span>
+                                                    <button @click.prevent="newErrandRule.filter_sets.splice(fidx, 1)"
+                                                        class="text-red-400 hover:text-red-300">Remove</button>
+                                                </div>
+                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div>
+                                                        <div class="flex items-center justify-between mb-1">
+                                                            <label class="block text-gray-400 text-xs font-bold">Keywords</label>
+                                                            <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="fs.keywords.length > 1">
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                                <div class="relative">
+                                                                    <input type="checkbox" x-model="fs.keywords_match_all" class="sr-only">
+                                                                    <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="fs.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                                    <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="fs.keywords_match_all ? 'translate-x-2' : ''"></div>
+                                                                </div>
+                                                                <span class="text-gray-500" :class="fs.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="flex gap-2 mb-2">
+                                                            <input type="text" :id="'errandKwInput_' + fidx"
+                                                                @keydown.enter.prevent="let val = document.getElementById('errandKwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('errandKwInput_' + fidx).value = '';"
+                                                                placeholder="e.g. Grocery"
+                                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                            <button
+                                                                @click.prevent="let val = document.getElementById('errandKwInput_' + fidx).value.trim(); if(val && !fs.keywords.includes(val)) { fs.keywords.push(val); } document.getElementById('errandKwInput_' + fidx).value = '';"
+                                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
+                                                        </div>
+                                                        <div class="flex flex-wrap gap-2">
+                                                            <template x-for="(kw, index) in fs.keywords" :key="index">
+                                                                <span
+                                                                    class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
+                                                                    <span x-text="kw"></span>
+                                                                    <button
+                                                                        @click.prevent="fs.keywords.splice(index, 1)"
+                                                                        class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                                </span>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label class="block text-gray-400 mb-1 text-xs font-bold">Location</label>
+                                                        <input type="text" x-model="fs.location"
+                                                            placeholder="Location substring..."
+                                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <button
+                                        @click.prevent="newErrandRule.filter_sets.push({keywords: [], keywords_match_all: false, location: ''})"
+                                        class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold">+
+                                        Add Errand to Group</button>
                                 </div>
                             </div>
                             </div>
@@ -2128,7 +2184,7 @@
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
-                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, group_keyword: '' },
+                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, filter_sets: [] },
                 newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
@@ -2929,7 +2985,7 @@
                     this.newErrandRuleKeywordInput = '';
                 },
                 cancelEditErrandRule() {
-                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, group_keyword: '' };
+                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, filter_sets: [] };
                     this.editErrandRuleId = null;
                 },
                 editErrandRule(rule) {
@@ -2950,7 +3006,7 @@
                         time_window_end: rule.time_window_end || '',
                         buffer_mins: rule.buffer_mins || 0,
                         tolerance_mins: rule.tolerance_mins || 0,
-                        group_keyword: rule.group_keyword || ''
+                        filter_sets: rule.filter_sets ? JSON.parse(JSON.stringify(rule.filter_sets)) : []
                     };
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 },
@@ -2994,6 +3050,7 @@
                 },
                 async submitErrandRule() {
                     if (!this.newErrandRule.title) return alert('Title is required');
+                    if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return alert('You must specify at least two filter sets to group errands');
                     const payload = {
                         title: this.newErrandRule.title,
                         constraint_type: this.newErrandRule.constraint_type,
@@ -3010,7 +3067,7 @@
                         time_window_end: this.newErrandRule.time_window_end,
                         buffer_mins: this.newErrandRule.buffer_mins,
                         tolerance_mins: this.newErrandRule.tolerance_mins,
-                        group_keyword: this.newErrandRule.group_keyword,
+                        filter_sets: this.newErrandRule.filter_sets,
                         is_enabled: true
                     };
                     

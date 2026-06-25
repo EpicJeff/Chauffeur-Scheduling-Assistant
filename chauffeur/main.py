@@ -352,26 +352,54 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
     
     for r in rules:
         if not r.get('is_enabled', True): continue
-        match = True
+        ctype = r.get('constraint_type', 'driver_assignment')
+        match = False
         
-        # Check Keywords
-        kws = r.get('keywords', [])
-        if kws:
-            match_all = r.get('keywords_match_all', False)
-            if match_all:
-                if not all(kw.lower() in errand_text for kw in kws): match = False
-            else:
-                if not any(kw.lower() in errand_text for kw in kws): match = False
-                
-        # Check Location
-        rule_loc = r.get('location')
-        if rule_loc and match:
-            if rule_loc.lower() not in errand.location.lower():
-                match = False
-                
-        if match and (kws or rule_loc):  # Must match at least one filter
-            ctype = r.get('constraint_type', 'driver_assignment')
+        if ctype == 'grouping':
+            filter_sets = r.get('filter_sets', [])
+            if not filter_sets: continue
             
+            for fs in filter_sets:
+                fs_match = True
+                
+                # Check keywords in filter set
+                kws = fs.get('keywords', [])
+                if kws:
+                    match_all = fs.get('keywords_match_all', False)
+                    if match_all:
+                        if not all(kw.lower() in errand_text for kw in kws): fs_match = False
+                    else:
+                        if not any(kw.lower() in errand_text for kw in kws): fs_match = False
+                
+                # Check location in filter set
+                fs_loc = fs.get('location')
+                if fs_loc and fs_match:
+                    if fs_loc.lower() not in errand.location.lower():
+                        fs_match = False
+                
+                if fs_match and (kws or fs_loc):
+                    match = True
+                    break
+        else:
+            match = True
+            # Check Keywords
+            kws = r.get('keywords', [])
+            if kws:
+                match_all = r.get('keywords_match_all', False)
+                if match_all:
+                    if not all(kw.lower() in errand_text for kw in kws): match = False
+                else:
+                    if not any(kw.lower() in errand_text for kw in kws): match = False
+                    
+            # Check Location
+            rule_loc = r.get('location')
+            if rule_loc and match:
+                if rule_loc.lower() not in errand.location.lower():
+                    match = False
+                    
+            if not (kws or rule_loc): match = False
+                
+        if match:
             if ctype == 'driver_assignment':
                 if r.get('allowed_drivers') and not errand_dict.get('allowed_drivers'): errand_dict['allowed_drivers'] = r['allowed_drivers']
                 if r.get('required_drivers') and not errand_dict.get('required_drivers'): errand_dict['required_drivers'] = r['required_drivers']
@@ -387,7 +415,7 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
                 if r.get('time_window_start') and not errand_dict.get('time_window_start'): errand_dict['time_window_start'] = r['time_window_start']
                 if r.get('time_window_end') and not errand_dict.get('time_window_end'): errand_dict['time_window_end'] = r['time_window_end']
             elif ctype == 'grouping':
-                if r.get('group_keyword') and not errand_dict.get('group_id'): errand_dict['group_id'] = r['group_keyword']
+                if not errand_dict.get('group_id'): errand_dict['group_id'] = r.get('id')
 
     doc_id = storage.add_errand(errand_dict)
     background_tasks.add_task(trigger_background_refresh)
