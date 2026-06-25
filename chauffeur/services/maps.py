@@ -55,12 +55,15 @@ def fire_home_assistant_alert(endpoint: str, reason: str, current_usage: int):
     except Exception as e:
         print(f"Exception firing HA event: {e}")
 
-def check_usage_limits_and_spikes(endpoint: str, increment: int = 1) -> bool:
+def check_usage_limits_and_spikes(endpoint: str, increment: int = 1, check_only: bool = False) -> bool:
     import datetime
     current_month = datetime.datetime.now().strftime("%Y-%m")
     
+    # Handle searchbox endpoint mapping
+    usage_key = 'searchbox_sessions' if endpoint == 'searchbox' else endpoint
+    
     # 1. Fetch current monthly usage count
-    monthly_usage = storage.get_mapbox_usage(current_month, endpoint)
+    monthly_usage = storage.get_mapbox_usage(current_month, usage_key)
     
     # 2. Get limit setting
     limit = get_map_option(f'mapbox_{endpoint}_limit', 90000)
@@ -69,10 +72,18 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1) -> bool:
     if monthly_usage >= limit:
         return False
         
+    if check_only:
+        return True
+        
     # Check if a spike has occurred (rapid increase in the last 1 hour)
-    # Spike thresholds: 5000 elements for matrix, 500 requests for directions/geocode
-    spike_threshold = 5000 if endpoint == 'matrix' else 500
-    hourly_usage = storage.get_rolling_usage(endpoint, 3600)
+    if endpoint == 'matrix':
+        spike_threshold = 5000
+    elif endpoint == 'searchbox':
+        spike_threshold = 100
+    else:
+        spike_threshold = 500
+        
+    hourly_usage = storage.get_rolling_usage(usage_key, 3600)
     
     # If adding this would trigger a spike alert
     if hourly_usage + increment >= spike_threshold and hourly_usage < spike_threshold:
@@ -80,8 +91,8 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1) -> bool:
         fire_home_assistant_alert(endpoint, reason, monthly_usage + increment)
         
     # Also log request and increment usage
-    storage.increment_mapbox_usage(current_month, endpoint, increment)
-    storage.log_api_request(endpoint, increment)
+    storage.increment_mapbox_usage(current_month, usage_key, increment)
+    storage.log_api_request(usage_key, increment)
     return True
 
 def get_cache_duration() -> int:
@@ -634,9 +645,7 @@ def autocomplete_location(input_text: str, session_token: str = None) -> list[di
         current_month = datetime.datetime.now().strftime("%Y-%m")
         # Check if we can use Search Box API
         if session_token:
-            session_usage = storage.get_mapbox_usage(current_month, 'searchbox_sessions')
-            limit = get_map_option('mapbox_searchbox_limit', 500)
-            if session_usage < limit:
+            if check_usage_limits_and_spikes('searchbox', check_only=True):
                 # Use Search Box API
                 url = "https://api.mapbox.com/search/searchbox/v1/suggest"
                 params = {
@@ -755,8 +764,7 @@ def retrieve_location(mapbox_id: str, session_token: str) -> Optional[dict]:
                     storage.set_cached_geocode(desc, float(lat), float(lon), desc)
                     
                     # Increment session usage since a retrieve was successfully made
-                    current_month = datetime.datetime.now().strftime("%Y-%m")
-                    storage.increment_mapbox_usage(current_month, 'searchbox_sessions', 1)
+                    check_usage_limits_and_spikes('searchbox', 1)
                     
                     return {
                         "name": desc,
