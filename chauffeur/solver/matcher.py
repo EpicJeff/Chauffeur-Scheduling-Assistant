@@ -695,7 +695,7 @@ def solve_schedule(
                                     objective_terms.append(both_assigned * int(50000 * decay * stickiness_bonus_mult))
                                     
                             if gap_seconds < 10800: # 3 hours
-                                if travel_mins == 0 or ((travel_mins <= 5) and shares_passenger):
+                                if (travel_mins == 0 and e1.location and e2.location) or ((travel_mins <= 5) and shares_passenger):
                                     # Higher bonus for doing things at the exact same location (reduces travel)
                                     decay_loc = max(0.0, 1.0 - (gap_seconds / 10800.0))
                                     objective_terms.append(both_assigned * int(5000 * decay_loc * same_loc_bonus_mult))
