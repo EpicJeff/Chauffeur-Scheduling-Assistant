@@ -309,7 +309,19 @@ def check_past_due_errands():
 def get_errands():
     check_past_due_errands()
     raw = storage.get_all_errands()
-    return [Errand(**e).model_dump() if hasattr(Errand(**e), 'model_dump') else Errand(**e).dict() for e in raw]
+    cached = storage.get_cached_schedule()
+    errand_schedules = {}
+    if cached and 'scheduled_errands' in cached:
+        for se in cached['scheduled_errands']:
+            errand_schedules[se['id']] = se['start']
+            
+    res = []
+    for e in raw:
+        obj = Errand(**e).model_dump() if hasattr(Errand(**e), 'model_dump') else Errand(**e).dict()
+        if obj['id'] in errand_schedules:
+            obj['scheduled_start'] = errand_schedules[obj['id']]
+        res.append(obj)
+    return res
 
 @app.post("/api/errands")
 def create_errand(errand: Errand, background_tasks: BackgroundTasks):

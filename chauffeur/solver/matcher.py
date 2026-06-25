@@ -1730,6 +1730,8 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 "event_type": "errand",
                 "start": start_time.isoformat(),
                 "end": end_time.isoformat(),
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
                 "title": errand.get('title'),
                 "location": loc,
                 "priority": errand.get('priority'),
