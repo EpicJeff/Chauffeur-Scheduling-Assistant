@@ -298,7 +298,7 @@
             const dropdown = document.getElementById('new-errand-autocomplete-dropdown');
             const text = inputEl.value;
 
-            const locMatch = text.match(/(?:@| at )([^!]+)$/i);
+            const locMatch = text.match(/(?:@| at )([^!#\(\)]+)$/i);
             
             if (!locMatch || locMatch[1].trim().length < 3) {
                 dropdown.classList.add('hidden');
@@ -338,7 +338,7 @@
             document.getElementById('new-errand-autocomplete-dropdown').classList.add('hidden');
             
             const text = inputEl.value;
-            const locMatch = text.match(/(?:@| at )([^!]+)$/i);
+            const locMatch = text.match(/(?:@| at )([^!#\(\)]+)$/i);
             
             if (locMatch) {
                 inputEl.value = text.replace(locMatch[0], locMatch[0].replace(locMatch[1], loc + ' '));
@@ -352,7 +352,7 @@
                         const data = await res.json();
                         if (data && data.name) {
                             const currentText = inputEl.value;
-                            const currentLocMatch = currentText.match(/(?:@| at )([^!]+)$/i);
+                            const currentLocMatch = currentText.match(/(?:@| at )([^!#\(\)]+)$/i);
                             if (currentLocMatch) {
                                 inputEl.value = currentText.replace(currentLocMatch[0], currentLocMatch[0].replace(currentLocMatch[1].trim(), data.name + ' '));
                             }
