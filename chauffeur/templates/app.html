@@ -1419,7 +1419,7 @@
             if (!chatMessages) return;
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(${apiBase}api/chat/history);
+                const res = await fetch(`${apiBase}api/chat/history`);
                 const data = await res.json();
                 chatMessages.innerHTML = '';
                 if (data.history && data.history.length > 0) {
@@ -1467,7 +1467,7 @@
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(${apiBase}api/chat, {
+                const res = await fetch(`${apiBase}api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text, source: 'pwa' })
