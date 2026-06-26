@@ -386,8 +386,15 @@
                             data.events.forEach(ev => {
                                 if (ev.event_type !== 'background_trip') {
                                     let baseId = ev.id;
+                                    let rawTitle = ev.title;
                                     if (ev.id.includes('_unrolled_')) {
                                         baseId = ev.id.split('_unrolled_')[0];
+                                    } else if (ev.id.includes('_dropoff')) {
+                                        baseId = ev.id.split('_dropoff')[0];
+                                        rawTitle = rawTitle.replace('Dropoff: ', '');
+                                    } else if (ev.id.includes('_pickup')) {
+                                        baseId = ev.id.split('_pickup')[0];
+                                        rawTitle = rawTitle.replace('Pickup: ', '');
                                     }
 
                                     let color = '#3B82F6'; 
@@ -466,7 +473,7 @@
                                     } else {
                                         eventsMap.set(baseId, {
                                             id: baseId,
-                                            title: ev.title,
+                                            title: rawTitle,
                                             start: ev.start,
                                             end: ev.end,
                                             backgroundColor: color,
