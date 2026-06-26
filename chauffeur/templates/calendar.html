@@ -88,15 +88,21 @@
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         
-        /* Popover (+ more) */
+        /* Popover (+ more) as a Centered Modal */
         .fc-popover {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 90% !important;
+            max-width: 360px !important;
             background: rgba(15, 23, 42, 0.85) !important;
             backdrop-filter: blur(16px) !important;
             -webkit-backdrop-filter: blur(16px) !important;
             border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 12px !important;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
-            z-index: 50 !important;
+            z-index: 100 !important;
             overflow: hidden !important;
         }
         .fc-popover-header {
