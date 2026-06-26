@@ -2519,7 +2519,7 @@
 
                                         eventsHtml += `
                                             <div class="px-2 py-1.5 border-l-4 rounded bg-gray-900/60 shadow-sm flex items-center justify-between"
-                                                 style="border-color: ${evColor}">
+                                                 style="border-color: ${evColor} !important;">
                                                 <div class="flex items-center gap-2 overflow-hidden flex-1">
                                                     <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 whitespace-nowrap" style="color: ${evColor}">${summaries}</div>
                                                     <div class="font-bold text-[11px] text-white leading-tight truncate flex items-center gap-1">
@@ -2771,7 +2771,7 @@
                             colEventsHtml += `
                                 <div ${dragAttr} ${clickAttr} title="${ev.title}"
                                      class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex ${zIndex} ${cursorClass} ${opacityClass} border ${borderClass}"
-                                     style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; border-left-color: ${evColor}; min-height: 24px;">
+                                     style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; border-left-color: ${evColor} !important; min-height: 24px;">
                                     ${badgeHtml}
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
                                         <div class="flex items-center pointer-events-none shrink-0">
@@ -3124,7 +3124,7 @@
                             colEventsHtml += `
                                 <div draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
                                      class="px-2 py-1.5 border-l-4 rounded bg-gray-900 hover:bg-gray-800 transition-colors cursor-pointer group shadow-sm flex items-center justify-between"
-                                     style="border-color: ${evColor}">
+                                     style="border-color: ${evColor} !important;">
                                     <div class="flex items-center gap-2 overflow-hidden flex-1">
                                         <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 whitespace-nowrap" style="color: ${evColor}">${summaries}</div>
                                         <div class="font-bold text-[11px] text-white leading-tight group-hover:text-blue-300 transition-colors truncate flex items-center gap-1">
