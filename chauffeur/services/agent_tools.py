@@ -156,8 +156,22 @@ class SearchPlacesTool(BaseModel):
     query: str = Field(..., description="The name, category, or address to search for (e.g., 'gas station', 'Starbucks').")
     proximity_location: str = Field(default="", description="A known location (address or name) to search near. Usually one of the driver's scheduled stops.")
 
+class StartDriveTool(BaseModel):
+    """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
+    driver_id: str = Field(..., description="The ID of the driver.")
+    event_id: str = Field(..., description="The ID of the event/errand the driver is heading to.")
+    destination: str = Field(..., description="The location the driver is heading to.")
+
+class UpdateDriveStatusTool(BaseModel):
+    """Updates the completion status of a drive leg or event."""
+    event_id: str = Field(..., description="The exact event ID to mark completed.")
+    status: str = Field(default="completed", description="The status, usually 'completed'.")
+    leg_id: str = Field(default="", description="The exact leg ID if known (e.g. 'route_evt1_evt2').")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
+    "start_drive": StartDriveTool.model_json_schema(),
+    "update_drive_status": UpdateDriveStatusTool.model_json_schema(),
     "get_current_state": GetCurrentStateTool.model_json_schema(),
     "add_routing_rule": AddRoutingRuleTool.model_json_schema(),
     "delete_routing_rule": DeleteRoutingRuleTool.model_json_schema(),
@@ -382,7 +396,43 @@ def handle_search_places(args: dict) -> dict:
         return {"status": "success", "message": "No places found matching the query."}
     return {"status": "success", "results": results}
 
+
+def handle_start_drive(args: dict) -> dict:
+    from services import storage
+    import urllib.parse
+    event = {
+        "driver_id": args.get("driver_id"),
+        "event_id": args.get("event_id"),
+        "action": "started driving",
+        "location": args.get("destination")
+    }
+    storage.add_telemetry_event(event)
+    dest = urllib.parse.quote(args.get("destination", ""))
+    return {
+        "status": "success",
+        "message": f"Navigation link: https://www.google.com/maps/dir/?api=1&destination={dest}"
+    }
+
+def handle_update_drive_status(args: dict) -> dict:
+    from services import storage
+    leg_id = args.get("leg_id")
+    event_id = args.get("event_id")
+    status = args.get("status", "completed")
+    
+    if leg_id:
+        storage.mark_drive_status(leg_id, status)
+    if event_id:
+        storage.mark_drive_status(f"route_{event_id}", status)
+        storage.mark_drive_status(f"final_{event_id}", status)
+        storage.mark_drive_status(f"route_{event_id}_1", status)
+        storage.mark_drive_status(f"route_{event_id}_2", status)
+        # We don't know the full route_{prev}_{event} but this covers single legs.
+
+    return {"status": "success", "message": f"Marked drive status as {status}."}
+
 TOOL_HANDLERS = {
+    "start_drive": handle_start_drive,
+    "update_drive_status": handle_update_drive_status,
     "get_current_state": handle_get_current_state,
     "add_routing_rule": handle_add_routing_rule,
     "delete_routing_rule": handle_delete_routing_rule,

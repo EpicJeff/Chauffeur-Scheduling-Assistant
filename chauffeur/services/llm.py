@@ -732,7 +732,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
 
-def agentic_chat_loop(user_msg: str) -> str:
+def agentic_chat_loop(user_msg: str, source: str = "admin") -> str:
     import json
     import urllib.request
     from services import storage
@@ -743,13 +743,10 @@ def agentic_chat_loop(user_msg: str) -> str:
     
     import os
     if os.path.exists('/data/options.json'):
-        try:
-            with open('/data/options.json', 'r') as f:
-                opts = json.load(f)
-                settings.update(opts)
-        except:
-            pass
-            
+        DATA_DIR = '/data'
+    else:
+        DATA_DIR = '.'
+        
     provider = settings.get('llm_provider', 'gemini')
     
     storage.add_chat_message('user', user_msg)
@@ -757,16 +754,16 @@ def agentic_chat_loop(user_msg: str) -> str:
     
     ai_memory = settings.get('ai_memory', '')
     memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
-
+    
     import datetime
-    import os
-    today_str = datetime.datetime.now().strftime('%A, %B %d, %Y')
+    today_str = datetime.datetime.now().strftime('%Y-%m-%d')
     
     capabilities_str = ""
-    capabilities_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "system_capabilities.md")
     try:
-        with open(capabilities_path, "r", encoding="utf-8") as f:
-            capabilities_str = f"\n\nSYSTEM CAPABILITIES AND CONSTRAINTS:\n{f.read()}\n"
+        capabilities_path = os.path.join(DATA_DIR, 'system_capabilities.md')
+        if os.path.exists(capabilities_path):
+            with open(capabilities_path, "r", encoding="utf-8") as f:
+                capabilities_str = f"\n\nSYSTEM CAPABILITIES AND CONSTRAINTS:\n{f.read()}\n"
     except Exception:
         pass
 
@@ -783,6 +780,9 @@ If the solver returns an error, explain the conflict to the user and ask how the
 Once you have run the solver successfully or finished your task, you MUST reply to the user with a final text summary.
 Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to see the IDs first if you don't know them.
 You can use update_memory to save persistent rules, preferences, or global instructions for yourself across sessions."""
+
+    if source == "pwa":
+        SYSTEM_PROMPT += "\n\nCRITICAL PWA DRIVER INSTRUCTIONS:\nYou are speaking directly to a driver via the mobile app on the go. Be extremely polite, concise, and friendly. Focus purely on the driver's immediate needs (routing, overrides, active errands, and live state tracking). DO NOT use technical jargon (e.g. 'heuristic solver', 'JSON payloads'). If the driver asks to change something, ALWAYS prefer using one-off overrides (`AddOverrideTool`) rather than global routing rules. Do NOT create global rules (`AddRoutingRuleTool`) unless the driver explicitly uses the word 'permanently'."
 
     if provider == 'ollama':
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
