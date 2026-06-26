@@ -146,6 +146,14 @@ class DeleteErrandRuleTool(BaseModel):
     """
     rule_id: str = Field(..., description="The doc_id of the errand rule to delete.")
 
+class SearchPlacesTool(BaseModel):
+    """
+    Searches for Points of Interest (POIs) or addresses (e.g. 'gas station', 'Target', '123 Main St') near an optional proximity location.
+    Use this to find a location before creating an errand if you don't know the exact address.
+    """
+    query: str = Field(..., description="The name, category, or address to search for (e.g., 'gas station', 'Starbucks').")
+    proximity_location: str = Field(default="", description="A known location (address or name) to search near. Usually one of the driver's scheduled stops.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "get_current_state": GetCurrentStateTool.model_json_schema(),
@@ -163,6 +171,7 @@ TOOL_SCHEMAS = {
     "get_errands": GetErrandsTool.model_json_schema(),
     "add_errand_rule": AddErrandRuleTool.model_json_schema(),
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
+    "search_places": SearchPlacesTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -362,6 +371,15 @@ def handle_delete_errand_rule(args: dict) -> dict:
     except ValueError:
         return {"status": "error", "message": "rule_id must be an integer"}
 
+def handle_search_places(args: dict) -> dict:
+    from services import maps
+    query = args.get("query")
+    proximity = args.get("proximity_location") or None
+    results = maps.search_places(query, proximity)
+    if not results:
+        return {"status": "success", "message": "No places found matching the query."}
+    return {"status": "success", "results": results}
+
 TOOL_HANDLERS = {
     "get_current_state": handle_get_current_state,
     "add_routing_rule": handle_add_routing_rule,
@@ -378,6 +396,7 @@ TOOL_HANDLERS = {
     "get_errands": handle_get_errands,
     "add_errand_rule": handle_add_errand_rule,
     "delete_errand_rule": handle_delete_errand_rule,
+    "search_places": handle_search_places,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

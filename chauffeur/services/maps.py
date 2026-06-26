@@ -817,3 +817,112 @@ def get_apple_maps_url(locations: list[str]) -> str:
     origin = urllib.parse.quote(cleaned_locs[0])
     destination = urllib.parse.quote(cleaned_locs[-1])
     return f"http://maps.apple.com/?saddr={origin}&daddr={destination}"
+
+def search_places(query: str, proximity_location: str = None) -> list[dict]:
+    import datetime
+    import urllib.parse
+    import time
+    
+    mapbox_key = get_mapbox_api_key()
+    disable_mapbox = get_map_option('disable_mapbox', False)
+    
+    # Geocode proximity location if provided
+    center_lon, center_lat = None, None
+    if proximity_location:
+        cached = storage.get_cached_geocode(proximity_location)
+        if cached and float(cached.get('lat', 0)) != 0.0:
+            center_lat, center_lon = float(cached.get('lat')), float(cached.get('lon'))
+        else:
+            coords = geocode_address(proximity_location)
+            if coords:
+                center_lat, center_lon = coords
+
+    if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('searchbox', 1):
+        # Hit Mapbox Search Box API Forward Search
+        url = "https://api.mapbox.com/search/searchbox/v1/forward"
+        params = {
+            "access_token": mapbox_key,
+            "q": query,
+            "limit": 5,
+        }
+        if center_lon is not None and center_lat is not None:
+            params['proximity'] = f"{center_lon},{center_lat}"
+            
+        try:
+            resp = requests.get(url, params=params, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                features = data.get("features", [])
+                results = []
+                for f in features:
+                    props = f.get("properties", {})
+                    name = props.get("name", "")
+                    place = props.get("place_formatted", "")
+                    full_address = f"{name}, {place}".strip(", ")
+                    coords = f.get("geometry", {}).get("coordinates", [])
+                    distance = props.get("distance", 0) # in meters
+                    
+                    if name and coords and len(coords) == 2:
+                        lon, lat = coords[0], coords[1]
+                        # Cache the geocode for future routing
+                        storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
+                        results.append({
+                            "name": name,
+                            "address": full_address,
+                            "distance_meters": distance,
+                            "lat": lat,
+                            "lon": lon
+                        })
+                return results
+            else:
+                print(f"Mapbox Search Box Forward API failed: {resp.status_code} {resp.text}")
+        except Exception as ex:
+            print(f"Mapbox Search Box Forward API exception: {ex}")
+            
+    # Fallback to Nominatim OpenStreetMap search
+    with api_rate_lock:
+        if not hasattr(geocode_address, "last_nominatim_time"):
+            geocode_address.last_nominatim_time = 0
+        now = time.time()
+        elapsed = now - geocode_address.last_nominatim_time
+        if elapsed < 1.1:
+            time.sleep(1.1 - elapsed)
+            
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": query,
+            "format": "json",
+            "limit": 5
+        }
+        if center_lon is not None and center_lat is not None:
+            # Create a ~20km viewbox around center for Nominatim
+            params["viewbox"] = f"{center_lon-0.2},{center_lat-0.2},{center_lon+0.2},{center_lat+0.2}"
+            params["bounded"] = 1
+            
+        headers = {
+            "User-Agent": "ChauffeurScheduleAssistant/1.0"
+        }
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            geocode_address.last_nominatim_time = time.time()
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                for item in data:
+                    lat = float(item["lat"])
+                    lon = float(item["lon"])
+                    display_name = item.get("display_name", "")
+                    # Cache it
+                    storage.set_cached_geocode(display_name, lat, lon, display_name)
+                    results.append({
+                        "name": item.get("name") or display_name.split(',')[0],
+                        "address": display_name,
+                        "distance_meters": 0, # Nominatim doesn't directly give distance in this API
+                        "lat": lat,
+                        "lon": lon
+                    })
+                return results
+        except Exception as e:
+            print(f"Nominatim error: {e}")
+            
+    return []
