@@ -732,7 +732,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
 
-def agentic_chat_loop(user_msg: str, source: str = "admin") -> str:
+def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = None) -> str:
     import json
     import urllib.request
     from services import storage

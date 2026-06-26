@@ -787,12 +787,13 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
 class ChatMessagePayload(BaseModel):
     message: str
     source: Optional[str] = "admin"
+    driver_id: Optional[str] = None
 
 @app.post("/api/chat")
 def handle_chat(payload: ChatMessagePayload):
     from services.llm import agentic_chat_loop
     try:
-        reply = agentic_chat_loop(payload.message, source=payload.source)
+        reply = agentic_chat_loop(payload.message, source=payload.source, driver_id=payload.driver_id)
         return {"reply": reply}
     except Exception as e:
         import traceback

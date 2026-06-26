@@ -1471,7 +1471,7 @@
                 const res = await fetch(`${apiBase}api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, source: 'pwa' })
+                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId })
                 });
 
                 const data = await res.json();
