@@ -777,6 +777,7 @@ Always call run_solver after adding or deleting rules to ensure the schedule res
 If the user asks for a one-off change to a specific event, DO NOT create a rule. Instead, use get_current_state with the specific date to get the schedule, find the event_id, and then use add_override to directly assign the driver.
 If the user wants a persistent pattern, use add_routing_rule.
 If the user asks to add an errand near a person's route, FIRST use get_current_state to identify a location on their route, SECOND use search_places with that proximity to find a real address, and THIRD use add_errand with the specific found location.
+If the user specifies WHO should run the errand (e.g., "Lorena needs to get gas"), you MUST also use add_errand_rule with constraint_type "driver_assignment" to set them as the required_drivers for that errand's keywords.
 If the solver returns an error, explain the conflict to the user and ask how they want to resolve it.
 Once you have run the solver successfully or finished your task, you MUST reply to the user with a final text summary.
 Do NOT guess driver IDs, rule IDs, or event IDs. Always use get_current_state to see the IDs first if you don't know them.
