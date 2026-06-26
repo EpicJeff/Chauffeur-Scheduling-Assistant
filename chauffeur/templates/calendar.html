@@ -597,8 +597,13 @@
             // Observer for FullCalendar Popover to show backdrop
             const popoverBackdrop = document.getElementById('fc-popover-backdrop');
             const observer = new MutationObserver(() => {
-                if (document.querySelector('.fc-popover')) {
+                const popover = document.querySelector('.fc-popover');
+                if (popover) {
                     popoverBackdrop.classList.remove('hidden');
+                    // Move backdrop to be a sibling of popover so they share stacking context
+                    if (popover.parentNode && popoverBackdrop.parentNode !== popover.parentNode) {
+                        popover.parentNode.insertBefore(popoverBackdrop, popover);
+                    }
                 } else {
                     popoverBackdrop.classList.add('hidden');
                 }
