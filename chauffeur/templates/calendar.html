@@ -174,6 +174,8 @@
             <div class="ambient-glow absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
             <div class="ambient-glow absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
             
+            <div id="filter-legend" class="flex flex-wrap gap-2 mb-4 z-20 relative empty:hidden"></div>
+
             <div id="calendar" class="flex-1 relative z-10 w-full"></div>
         </div>
     </main>
@@ -263,9 +265,39 @@
             }, 300);
         }
 
+        window.hiddenMembers = new Set();
+        let allLegendMembers = new Map(); // Store {id, name, color, type}
+
+        function renderLegend() {
+            const container = document.getElementById('filter-legend');
+            container.innerHTML = '';
+            Array.from(allLegendMembers.values()).forEach(member => {
+                const btn = document.createElement('button');
+                const isHidden = window.hiddenMembers.has(member.id);
+                btn.className = `px-3 py-1.5 rounded-full text-xs font-bold text-white shadow-sm transition-all border ${isHidden ? 'opacity-40 grayscale border-transparent' : 'border-white/20 hover:scale-[1.03]'}`;
+                btn.style.backgroundColor = member.color;
+                
+                let icon = '';
+                if (member.type === 'driver') {
+                    icon = '<svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>';
+                } else {
+                    icon = '<svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>';
+                }
+                
+                btn.innerHTML = `${icon}${member.name}`;
+                btn.onclick = () => {
+                    if (isHidden) window.hiddenMembers.delete(member.id);
+                    else window.hiddenMembers.add(member.id);
+                    renderLegend();
+                    if (window.calendar) window.calendar.refetchEvents();
+                };
+                container.appendChild(btn);
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', async function() {
             var calendarEl = document.getElementById('calendar');
-            var calendar = new FullCalendar.Calendar(calendarEl, {
+            window.calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: 'dayGridMonth',
                 headerToolbar: {
                     left: 'prev,next today',
@@ -334,7 +366,8 @@
                     if (props.passengers && props.passengers.length > 0) {
                         props.passengers.forEach(p => {
                             let dot = document.createElement('div');
-                            dot.className = `${isMonth ? 'w-2.5 h-2.5' : 'w-4 h-4'} rounded-full border border-white/20 shadow-sm flex items-center justify-center text-[8px] font-bold text-white uppercase`;
+                            const isPaxHidden = window.hiddenMembers && window.hiddenMembers.has(p.name);
+                            dot.className = `${isMonth ? 'w-2.5 h-2.5' : 'w-4 h-4'} rounded-full border border-white/20 shadow-sm flex items-center justify-center text-[8px] font-bold text-white uppercase transition-all ${isPaxHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
                             dot.style.backgroundColor = p.color;
                             dot.title = p.name;
                             if(!isMonth && p.name) dot.innerText = p.name.charAt(0);
@@ -349,7 +382,8 @@
                         rightBadge.className = 'text-[9px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded flex items-center gap-0.5 shadow-sm';
                         rightBadge.innerHTML = '⚠️ Unassigned';
                     } else if (props.driverName) {
-                        rightBadge.className = `text-[9px] font-bold bg-black/40 text-white px-1.5 py-0.5 rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm ${isMonth ? '' : 'text-[10px] px-2'}`;
+                        const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
+                        rightBadge.className = `text-[9px] font-bold bg-black/40 text-white px-1.5 py-0.5 rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm transition-all ${isMonth ? '' : 'text-[10px] px-2'} ${isDrHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
                         rightBadge.innerText = props.driverName;
                     } else if (isErrand) {
                         rightBadge.className = 'text-[9px] font-bold bg-amber-500/80 text-white px-1.5 py-0.5 rounded shadow-sm';
@@ -492,7 +526,49 @@
                             });
                         }
                         
+                        // Populate legend data
+                        if (data.passengers) {
+                            data.passengers.forEach(p => {
+                                let cColor = '#3B82F6';
+                                if (p.calendar_ids && p.calendar_ids.length > 0) {
+                                    const meta = data.calendar_metadata && data.calendar_metadata[p.calendar_ids[0]];
+                                    if (meta) cColor = meta.backgroundColor;
+                                }
+                                allLegendMembers.set(p.name, { id: p.name, name: p.name, color: cColor, type: 'passenger' });
+                            });
+                        }
+                        if (data.drivers) {
+                            data.drivers.forEach(d => {
+                                allLegendMembers.set(d.name, { id: d.name, name: d.name, color: '#1F2937', type: 'driver' });
+                            });
+                        }
+                        renderLegend();
+
                         let fcEvents = Array.from(eventsMap.values());
+
+                        // Apply filtering
+                        fcEvents = fcEvents.filter(ev => {
+                            let participants = new Set();
+                            if (ev.extendedProps.passengers) {
+                                ev.extendedProps.passengers.forEach(p => participants.add(p.name));
+                            }
+                            if (ev.extendedProps.driverName && ev.extendedProps.driverName !== 'Multiple Drivers') {
+                                participants.add(ev.extendedProps.driverName);
+                            }
+                            
+                            // If event has no mapped participants, show it
+                            if (participants.size === 0) return true;
+                            
+                            // If ALL participants are in hiddenMembers, hide event
+                            let allHidden = true;
+                            for (let p of participants) {
+                                if (!window.hiddenMembers.has(p)) {
+                                    allHidden = false;
+                                    break;
+                                }
+                            }
+                            return !allHidden;
+                        });
 
                         // Add errands
                         if (data.scheduled_errands && data.scheduled_errands.length > 0) {
@@ -622,7 +698,7 @@
                 if (closeBtn) closeBtn.click();
             });
 
-            calendar.render();
+            window.calendar.render();
         });
     </script>
 </body>
