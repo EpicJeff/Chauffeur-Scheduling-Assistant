@@ -18,67 +18,180 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
     <style>
-        body { background-color: #111827; color: white; }
-        .fc-theme-standard td, .fc-theme-standard th, .fc-theme-standard .fc-scrollgrid { border-color: #374151 !important; }
-        .fc-daygrid-day-number, .fc-col-header-cell-cushion { color: #D1D5DB !important; text-decoration: none !important; }
-        .fc-event { border: none !important; margin: 1px 2px !important; padding: 2px 4px !important; border-radius: 4px !important; font-size: 0.75rem !important; }
-        .fc .fc-toolbar-title { font-size: 1.25rem !important; font-weight: bold; color: #E5E7EB; }
-        .fc .fc-button-primary { background-color: #2563EB !important; border-color: #1D4ED8 !important; }
-        .fc .fc-button-primary:not(:disabled):active, .fc .fc-button-primary:not(:disabled).fc-button-active { background-color: #1D4ED8 !important; border-color: #1E40AF !important; }
-        .fc-day-today { background-color: #1F2937 !important; }
+        body { 
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); /* slate-900 to slate-800 */
+            color: white; 
+            min-height: 100vh;
+        }
+        
+        /* Premium Glassmorphic Calendar Base */
+        .fc-theme-standard td, .fc-theme-standard th, .fc-theme-standard .fc-scrollgrid { 
+            border-color: rgba(255, 255, 255, 0.08) !important; 
+        }
+        .fc-daygrid-day-number, .fc-col-header-cell-cushion { 
+            color: #cbd5e1 !important; /* slate-300 */
+            text-decoration: none !important; 
+            font-weight: 600; 
+            font-size: 0.95rem;
+            padding: 8px !important;
+        }
+        .fc-day-other .fc-daygrid-day-number {
+            color: #475569 !important; /* slate-600 */
+        }
+        
+        /* Cell Backgrounds */
+        .fc-day { background-color: rgba(30, 41, 59, 0.3) !important; } /* transparent slate-800 */
+        .fc-day-today { background-color: rgba(51, 65, 85, 0.6) !important; } /* slate-700 */
+        
+        /* Event Resets */
+        .fc-event { 
+            border: none !important; 
+            margin: 2px !important; 
+            background: transparent !important; 
+            box-shadow: none !important;
+        }
+        
+        .fc-timegrid-slot { height: 2.5em !important; border-bottom: 1px solid rgba(255,255,255,0.03) !important; }
+        
+        /* Toolbar */
+        .fc .fc-toolbar-title { 
+            font-size: 1.75rem !important; 
+            font-weight: 800; 
+            color: #f8fafc; 
+            letter-spacing: -0.025em; 
+        }
+        .fc .fc-button-primary { 
+            background-color: rgba(51, 65, 85, 0.8) !important; 
+            border-color: rgba(255, 255, 255, 0.1) !important; 
+            backdrop-filter: blur(8px); 
+            -webkit-backdrop-filter: blur(8px);
+            transition: all 0.2s; 
+            color: #cbd5e1 !important;
+            font-weight: 600 !important;
+            text-transform: capitalize !important;
+        }
+        .fc .fc-button-primary:hover { 
+            background-color: rgba(71, 85, 105, 0.9) !important; 
+            color: white !important;
+        }
+        .fc .fc-button-primary:not(:disabled):active, .fc .fc-button-primary:not(:disabled).fc-button-active { 
+            background-color: #3b82f6 !important; /* Blue-500 */
+            color: white !important; 
+            border-color: #2563eb !important;
+        }
+        
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        /* Custom scrollbar for events */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+
+        .fc-scroller::-webkit-scrollbar { width: 8px; }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+<body class="flex flex-col">
     {% include 'nav.html' %}
 
-    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col h-[calc(100vh-64px)]">
-        <div class="bg-gray-800 rounded-2xl shadow-2xl border border-gray-700/50 p-6 flex-1 flex flex-col">
-            <div id="calendar" class="flex-1"></div>
+    <main class="flex-1 w-full p-2 sm:p-4 lg:p-6 flex flex-col h-[calc(100vh-64px)]">
+        <div class="glass-panel rounded-3xl p-4 sm:p-6 flex-1 flex flex-col overflow-hidden relative">
+            <!-- Decorative ambient glow -->
+            <div class="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
+            <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
+            
+            <div id="calendar" class="flex-1 relative z-10 w-full"></div>
         </div>
     </main>
 
-    <!-- Simple Event Modal -->
-    <div id="simple-event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl">
-            <div class="flex justify-between items-start mb-6">
-                <h3 id="modal-title" class="text-3xl font-bold text-blue-200"></h3>
-                <button onclick="document.getElementById('simple-event-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
+    <!-- Glassmorphic Event Modal -->
+    <div id="simple-event-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity duration-300">
+        <div class="glass-panel p-0 rounded-2xl w-full max-w-lg border border-white/10 overflow-hidden transform transition-transform duration-300 scale-95 opacity-0" id="modal-content-container">
+            
+            <!-- Modal Header (Dynamic Color) -->
+            <div id="modal-header" class="px-6 py-5 border-b border-white/10 relative overflow-hidden">
+                <div class="absolute inset-0 opacity-20" id="modal-header-bg"></div>
+                <div class="relative z-10 flex justify-between items-start">
+                    <div>
+                        <h3 id="modal-title" class="text-2xl font-extrabold text-white tracking-tight"></h3>
+                        <div class="flex items-center text-white/80 text-sm mt-1 font-medium">
+                            <span id="modal-time"></span>
+                        </div>
+                    </div>
+                    <button onclick="closeModal()" class="text-white/60 hover:text-white bg-black/20 hover:bg-black/40 rounded-full p-1.5 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
-            <div class="space-y-4 text-lg">
-                <div class="flex items-center text-gray-300">
-                    <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <span id="modal-time"></span>
+
+            <!-- Modal Body -->
+            <div class="p-6 space-y-6">
+                <!-- Status Banner -->
+                <div id="modal-status-banner" class="hidden rounded-lg p-3 text-sm font-semibold flex items-center gap-2"></div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- Passengers -->
+                    <div class="bg-white/5 rounded-xl p-4 border border-white/5">
+                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Passengers</div>
+                        <div id="modal-passengers" class="flex flex-wrap gap-1.5"></div>
+                    </div>
+                    
+                    <!-- Driver -->
+                    <div class="bg-white/5 rounded-xl p-4 border border-white/5">
+                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2">Driver</div>
+                        <div id="modal-driver" class="flex items-center gap-2"></div>
+                    </div>
                 </div>
-                <div class="flex items-start text-gray-300">
-                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                    </svg>
-                    <span id="modal-location" class="break-words flex-1"></span>
+
+                <!-- Location -->
+                <div class="flex items-start text-gray-300 bg-white/5 rounded-xl p-4 border border-white/5">
+                    <div class="bg-white/10 p-2 rounded-lg mr-3">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-0.5">Location</div>
+                        <span id="modal-location" class="break-words font-medium text-white text-sm"></span>
+                    </div>
                 </div>
-                <div class="flex items-start text-gray-300">
-                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
-                    </svg>
-                    <div id="modal-passengers" class="flex-1 flex flex-wrap gap-1"></div>
-                </div>
-                <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
-                    <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path>
-                    </svg>
-                    <div id="modal-description" class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base"></div>
+
+                <!-- Description -->
+                <div id="modal-description-container" class="flex items-start text-gray-300 bg-white/5 rounded-xl p-4 border border-white/5">
+                    <div class="bg-white/10 p-2 rounded-lg mr-3">
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path>
+                        </svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-0.5">Description</div>
+                        <div id="modal-description" class="whitespace-pre-wrap break-words italic text-gray-300 text-sm"></div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        function closeModal() {
+            const modal = document.getElementById('simple-event-modal');
+            const content = document.getElementById('modal-content-container');
+            content.classList.remove('scale-100', 'opacity-100');
+            content.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
         document.addEventListener('DOMContentLoaded', async function() {
             var calendarEl = document.getElementById('calendar');
             var calendar = new FullCalendar.Calendar(calendarEl, {
@@ -89,21 +202,120 @@
                     right: 'dayGridMonth,timeGridWeek,timeGridDay'
                 },
                 height: '100%',
+                slotMinTime: '06:00:00', // Start view slightly later for focus
+                slotMaxTime: '23:00:00',
+                nowIndicator: true,
+                dayMaxEvents: true, // Allow "more" link when too many events
+                
+                // Custom Event Rendering for modern look
+                eventContent: function(arg) {
+                    const props = arg.event.extendedProps;
+                    const isMonth = arg.view.type === 'dayGridMonth';
+                    const isUnassigned = props.isUnassigned;
+                    const isErrand = props.isErrand;
+                    
+                    let outerWrap = document.createElement('div');
+                    outerWrap.className = `flex flex-col w-full h-full overflow-hidden rounded-md border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer ${isMonth ? 'p-1 gap-0.5' : 'p-2 gap-1'}`;
+                    
+                    // Base Colors & Borders
+                    let baseColor = arg.event.backgroundColor || '#3b82f6';
+                    if (isUnassigned) {
+                        outerWrap.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(220, 38, 38, 0.4))';
+                        outerWrap.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+                        outerWrap.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.4)';
+                    } else if (isErrand) {
+                        outerWrap.style.background = 'linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.25))';
+                        outerWrap.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+                        outerWrap.style.borderStyle = 'dashed';
+                    } else {
+                        outerWrap.style.background = `linear-gradient(135deg, ${baseColor}aa, ${baseColor}dd)`;
+                        outerWrap.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                    }
+
+                    // Header Row (Title & Time)
+                    let headerRow = document.createElement('div');
+                    headerRow.className = 'flex items-start justify-between w-full leading-tight';
+                    
+                    let titleEl = document.createElement('div');
+                    titleEl.className = `font-bold text-white drop-shadow-md truncate ${isMonth ? 'text-xs' : 'text-sm mb-1'}`;
+                    titleEl.innerText = arg.event.title;
+                    
+                    let timeEl = document.createElement('div');
+                    timeEl.className = `font-semibold text-white/90 drop-shadow flex-shrink-0 ${isMonth ? 'text-[9px] ml-1' : 'text-xs'}`;
+                    timeEl.innerText = arg.timeText || '';
+                    
+                    headerRow.appendChild(titleEl);
+                    if (!isMonth || timeEl.innerText) {
+                        if(isMonth) headerRow.appendChild(timeEl);
+                        else outerWrap.appendChild(timeEl); // Put time on own line for timeGrid
+                    }
+                    if(!isMonth) outerWrap.appendChild(headerRow);
+                    else outerWrap.appendChild(headerRow);
+                    
+
+                    // Meta Row (Pax & Driver)
+                    let metaRow = document.createElement('div');
+                    metaRow.className = 'flex items-center justify-between mt-auto w-full gap-1 pt-0.5';
+                    
+                    // Passengers
+                    let paxContainer = document.createElement('div');
+                    paxContainer.className = 'flex -space-x-1.5 overflow-hidden';
+                    if (props.passengers && props.passengers.length > 0) {
+                        props.passengers.forEach(p => {
+                            let dot = document.createElement('div');
+                            dot.className = `${isMonth ? 'w-2.5 h-2.5' : 'w-4 h-4'} rounded-full border border-white/20 shadow-sm flex items-center justify-center text-[8px] font-bold text-white uppercase`;
+                            dot.style.backgroundColor = p.color;
+                            dot.title = p.name;
+                            if(!isMonth && p.name) dot.innerText = p.name.charAt(0);
+                            paxContainer.appendChild(dot);
+                        });
+                    }
+                    metaRow.appendChild(paxContainer);
+                    
+                    // Driver Badge
+                    let rightBadge = document.createElement('div');
+                    if (isUnassigned) {
+                        rightBadge.className = 'text-[9px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded flex items-center gap-0.5 shadow-sm';
+                        rightBadge.innerHTML = '⚠️ Unassigned';
+                    } else if (props.driverName) {
+                        rightBadge.className = `text-[9px] font-bold bg-black/40 text-white px-1.5 py-0.5 rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm ${isMonth ? '' : 'text-[10px] px-2'}`;
+                        rightBadge.innerText = props.driverName;
+                    } else if (isErrand) {
+                        rightBadge.className = 'text-[9px] font-bold bg-amber-500/80 text-white px-1.5 py-0.5 rounded shadow-sm';
+                        rightBadge.innerText = 'Errand';
+                    }
+                    metaRow.appendChild(rightBadge);
+                    outerWrap.appendChild(metaRow);
+
+                    // Location (TimeGrid only)
+                    if (!isMonth && props.location) {
+                        let locRow = document.createElement('div');
+                        locRow.className = 'text-[10px] text-white/80 truncate flex items-center mt-1 font-medium bg-black/10 rounded px-1 py-0.5';
+                        locRow.innerHTML = `<svg class="w-3 h-3 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg><span class="truncate">${props.location.split(',')[0]}</span>`;
+                        outerWrap.appendChild(locRow);
+                    }
+
+                    return { domNodes: [outerWrap] };
+                },
+
                 events: async function(info, successCallback, failureCallback) {
                     try {
                         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                        // Fetch schedule for the visible date range
                         const res = await fetch(`${apiBase}api/schedule?start_date=${encodeURIComponent(info.startStr)}&end_date=${encodeURIComponent(info.endStr)}&force_refresh=false`);
                         if (!res.ok) throw new Error('Network response was not ok');
                         const data = await res.json();
                         
                         let fcEvents = [];
                         
+                        const assignments = data.assignments || {};
+                        const true_unassigned = data.true_unassigned || [];
+                        const drivers = data.drivers || [];
+                        
                         // Parse standard events
                         if (data.events && data.events.length > 0) {
                             data.events.forEach(ev => {
                                 if (ev.event_type !== 'background_trip') {
-                                    let color = '#3B82F6'; // Default blue
+                                    let color = '#3B82F6'; 
                                     if (ev.calendar_ids && ev.calendar_ids.length > 0 && data.calendar_metadata && data.calendar_metadata[ev.calendar_ids[0]]) {
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
                                     }
@@ -143,6 +355,13 @@
                                         color: paxMap[name]
                                     }));
                                     
+                                    const isUnassigned = true_unassigned.includes(ev.id);
+                                    let driverName = null;
+                                    if (!isUnassigned && assignments[ev.id]) {
+                                        const d = drivers.find(d => d.id === assignments[ev.id]);
+                                        if (d) driverName = d.name;
+                                    }
+                                    
                                     fcEvents.push({
                                         id: ev.id,
                                         title: ev.title,
@@ -152,7 +371,11 @@
                                         extendedProps: { 
                                             location: ev.location,
                                             description: ev.description,
-                                            passengers: passengerPills
+                                            passengers: passengerPills,
+                                            isUnassigned: isUnassigned,
+                                            driverName: driverName,
+                                            isErrand: false,
+                                            rawColor: color
                                         }
                                     });
                                 }
@@ -162,15 +385,24 @@
                         // Add errands
                         if (data.scheduled_errands && data.scheduled_errands.length > 0) {
                             data.scheduled_errands.forEach(ev => {
+                                let driverName = null;
+                                if (assignments[ev.id]) {
+                                    const d = drivers.find(d => d.id === assignments[ev.id]);
+                                    if (d) driverName = d.name;
+                                }
+                            
                                 fcEvents.push({
-                                    id: ev.event_id,
+                                    id: ev.event_id || ev.id,
                                     title: ev.title,
-                                    start: ev.start_time_iso,
-                                    end: ev.end_time_iso,
+                                    start: ev.start_time_iso || ev.start,
+                                    end: ev.end_time_iso || ev.end,
                                     backgroundColor: '#F59E0B',
                                     extendedProps: { 
-                                        location: ev.errand ? ev.errand.location : '',
-                                        description: 'Duration: ' + (ev.end_mins - ev.start_mins) + ' mins'
+                                        location: ev.errand ? ev.errand.location : ev.location,
+                                        description: ev.description || ('Duration: ' + (ev.end_mins - ev.start_mins) + ' mins'),
+                                        isErrand: true,
+                                        driverName: driverName,
+                                        rawColor: '#F59E0B'
                                     }
                                 });
                             });
@@ -182,30 +414,78 @@
                         failureCallback(error);
                     }
                 },
+                
                 eventClick: function(info) {
+                    const props = info.event.extendedProps;
+                    
                     document.getElementById('modal-title').textContent = info.event.title;
+                    document.getElementById('modal-header-bg').style.backgroundColor = props.rawColor || info.event.backgroundColor;
                     
                     const formatTime = (date) => {
-                        return date.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        return date.toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                     };
                     
                     const startStr = info.event.start ? formatTime(info.event.start) : '';
-                    const endStr = info.event.end ? ' - ' + formatTime(info.event.end) : '';
+                    const endStr = info.event.end ? ' - ' + info.event.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                     document.getElementById('modal-time').textContent = startStr + endStr;
                     
-                    document.getElementById('modal-location').textContent = info.event.extendedProps.location || 'No location provided.';
+                    document.getElementById('modal-location').textContent = props.location || 'No location provided.';
                     
-                    if (info.event.extendedProps.passengers && info.event.extendedProps.passengers.length > 0) {
-                        document.getElementById('modal-passengers').innerHTML = info.event.extendedProps.passengers.map(p => {
-                            return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold text-white mr-1" style="background-color: ${p.color}">${p.name}</span>`;
+                    // Passengers
+                    const paxContainer = document.getElementById('modal-passengers');
+                    if (props.passengers && props.passengers.length > 0) {
+                        paxContainer.innerHTML = props.passengers.map(p => {
+                            return `<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm" style="background-color: ${p.color}">${p.name}</span>`;
                         }).join('');
                     } else {
-                        document.getElementById('modal-passengers').innerHTML = '<span class="italic text-gray-500">No passengers</span>';
+                        paxContainer.innerHTML = '<span class="italic text-white/40 text-sm">No passengers</span>';
                     }
                     
-                    document.getElementById('modal-description').textContent = info.event.extendedProps.description || 'No description provided.';
+                    // Driver
+                    const driverContainer = document.getElementById('modal-driver');
+                    if (props.driverName) {
+                        driverContainer.innerHTML = `
+                            <div class="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-lg border border-blue-500/30">
+                                ${props.driverName.charAt(0)}
+                            </div>
+                            <span class="font-bold text-white">${props.driverName}</span>
+                        `;
+                    } else if (props.isUnassigned) {
+                        driverContainer.innerHTML = `<span class="text-red-400 font-bold italic">⚠️ Needs Driver</span>`;
+                    } else {
+                        driverContainer.innerHTML = '<span class="italic text-white/40 text-sm">Not assigned</span>';
+                    }
                     
-                    document.getElementById('simple-event-modal').classList.remove('hidden');
+                    // Status Banner
+                    const banner = document.getElementById('modal-status-banner');
+                    if (props.isUnassigned) {
+                        banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-red-500/20 text-red-400 border border-red-500/30 mb-4';
+                        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> This event has a scheduling conflict and needs a driver assigned.';
+                    } else if (props.isErrand) {
+                        banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-4';
+                        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg> Automatically scheduled errand.';
+                    } else {
+                        banner.className = 'hidden';
+                    }
+                    
+                    // Description
+                    const descContainer = document.getElementById('modal-description-container');
+                    if (props.description) {
+                        descContainer.classList.remove('hidden');
+                        document.getElementById('modal-description').textContent = props.description;
+                    } else {
+                        descContainer.classList.add('hidden');
+                    }
+                    
+                    // Show Modal
+                    const modal = document.getElementById('simple-event-modal');
+                    const content = document.getElementById('modal-content-container');
+                    modal.classList.remove('hidden');
+                    // Slight delay for transition
+                    setTimeout(() => {
+                        content.classList.remove('scale-95', 'opacity-0');
+                        content.classList.add('scale-100', 'opacity-100');
+                    }, 10);
                 }
             });
             calendar.render();
