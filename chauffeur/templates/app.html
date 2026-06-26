@@ -943,7 +943,7 @@
                 const calendar_metadata = scheduleData.calendar_metadata || {};
 
                 function getPassengerBadges(eventObj) {
-                    const calMetas = eventObj.calendar_ids.map(c => calendar_metadata[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' });
+                    const calMetas = (eventObj.calendar_ids || []).map(c => calendar_metadata[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' });
                     return calMetas.map(meta => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border border-gray-600 truncate max-w-[80px]" style="background-color: ${meta.backgroundColor}20; color: ${meta.backgroundColor}; border-color: ${meta.backgroundColor}50;" title="${meta.summary}">${meta.summary}</span>`).join('');
                 }
 
