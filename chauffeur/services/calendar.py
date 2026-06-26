@@ -139,6 +139,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "end": end_dt,
                         "location": location,
                         "description": description,
+                        "all_day": is_all_day,
                         "calendar_ids": [],
                         "source_event_ids": [],
                         "recurring_event_id": e.get('recurringEventId') or (e['id'].split('_')[0] if '_' in e.get('id', '') else None)
@@ -161,7 +162,8 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
             description=g["description"],
             calendar_ids=g["calendar_ids"],
             source_event_ids=g["source_event_ids"],
-            recurring_event_id=g.get("recurring_event_id")
+            recurring_event_id=g.get("recurring_event_id"),
+            all_day=g.get("all_day", False)
         )
         all_events.append(event_obj)
         
