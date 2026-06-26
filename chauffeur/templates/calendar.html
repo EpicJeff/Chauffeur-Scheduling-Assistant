@@ -318,7 +318,7 @@
                     const isErrand = props.isErrand;
                     
                     let outerWrap = document.createElement('div');
-                    outerWrap.className = `flex flex-col w-full h-full overflow-hidden rounded-md border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer ${isMonth ? 'p-1 gap-0.5' : 'p-2 gap-1'}`;
+                    outerWrap.className = `flex flex-col w-full overflow-hidden rounded border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer ${isMonth ? 'px-1 py-0.5 gap-0' : 'h-full p-2 gap-1'}`;
                     
                     // Base Colors & Borders
                     let baseColor = arg.event.backgroundColor || '#3b82f6';
@@ -340,11 +340,11 @@
                     headerRow.className = 'flex items-start justify-between w-full leading-tight';
                     
                     let titleEl = document.createElement('div');
-                    titleEl.className = `font-bold text-white drop-shadow-md truncate ${isMonth ? 'text-xs' : 'text-sm mb-1'}`;
+                    titleEl.className = `font-bold text-white drop-shadow-md truncate ${isMonth ? 'text-[9.5px] leading-tight' : 'text-sm mb-1'}`;
                     titleEl.innerText = arg.event.title;
                     
                     let timeEl = document.createElement('div');
-                    timeEl.className = `font-semibold text-white/90 drop-shadow flex-shrink-0 ${isMonth ? 'text-[9px] ml-1' : 'text-xs'}`;
+                    timeEl.className = `font-semibold text-white/90 drop-shadow flex-shrink-0 ${isMonth ? 'text-[8.5px] ml-1 leading-tight' : 'text-xs'}`;
                     timeEl.innerText = arg.timeText || '';
                     
                     headerRow.appendChild(titleEl);
@@ -367,7 +367,7 @@
                         props.passengers.forEach(p => {
                             let dot = document.createElement('div');
                             const isPaxHidden = window.hiddenMembers && window.hiddenMembers.has(p.name);
-                            dot.className = `${isMonth ? 'w-2.5 h-2.5' : 'w-4 h-4'} rounded-full border border-white/20 shadow-sm flex items-center justify-center text-[8px] font-bold text-white uppercase transition-all ${isPaxHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
+                            dot.className = `${isMonth ? 'w-2 h-2 text-[6px]' : 'w-4 h-4 text-[8px]'} rounded-full border border-white/20 shadow-sm flex items-center justify-center font-bold text-white uppercase transition-all ${isPaxHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
                             dot.style.backgroundColor = p.color;
                             dot.title = p.name;
                             if(!isMonth && p.name) dot.innerText = p.name.charAt(0);
@@ -379,14 +379,14 @@
                     // Driver Badge
                     let rightBadge = document.createElement('div');
                     if (isUnassigned) {
-                        rightBadge.className = 'text-[9px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded flex items-center gap-0.5 shadow-sm';
+                        rightBadge.className = `font-bold bg-red-500 text-white rounded flex items-center shadow-sm ${isMonth ? 'text-[7.5px] px-1 py-0 gap-0' : 'text-[9px] px-1.5 py-0.5 gap-0.5'}`;
                         rightBadge.innerHTML = '⚠️ Unassigned';
                     } else if (props.driverName) {
                         const isDrHidden = window.hiddenMembers && window.hiddenMembers.has(props.driverName);
-                        rightBadge.className = `text-[9px] font-bold bg-black/40 text-white px-1.5 py-0.5 rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm transition-all ${isMonth ? '' : 'text-[10px] px-2'} ${isDrHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
+                        rightBadge.className = `font-bold bg-black/40 text-white rounded backdrop-blur-sm truncate max-w-[60px] shadow-sm transition-all ${isMonth ? 'text-[7.5px] px-1 py-0' : 'text-[10px] px-2 py-0.5'} ${isDrHidden ? 'opacity-30 grayscale border-transparent' : ''}`;
                         rightBadge.innerText = props.driverName;
                     } else if (isErrand) {
-                        rightBadge.className = 'text-[9px] font-bold bg-amber-500/80 text-white px-1.5 py-0.5 rounded shadow-sm';
+                        rightBadge.className = `font-bold bg-amber-500/80 text-white rounded shadow-sm ${isMonth ? 'text-[7.5px] px-1 py-0' : 'text-[9px] px-1.5 py-0.5'}`;
                         rightBadge.innerText = 'Errand';
                     }
                     metaRow.appendChild(rightBadge);
