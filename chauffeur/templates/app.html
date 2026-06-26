@@ -1398,7 +1398,7 @@
         </svg>
     </button>
 
-    <script>
+        <script>
         const chatMessages = document.getElementById('chat-messages');
         const chatInput = document.getElementById('chat-input');
         const chatSubmitBtn = document.getElementById('chat-submit-btn');
@@ -1436,8 +1436,9 @@
         function appendMessage(role, content) {
             if (!chatMessages) return;
             const div = document.createElement('div');
-            div.className = max-w-[85%] rounded-lg p-3 text-sm ;
-            let formatted = content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b></b>');
+            div.className = `max-w-[85%] rounded-lg p-3 text-sm ${role === 'user' ? 'bg-blue-600 text-white self-end rounded-tr-none' : 'bg-gray-700 text-gray-100 self-start rounded-tl-none border border-gray-600'}`;
+            let formatted = content.replace(/
+/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
             div.innerHTML = formatted;
             chatMessages.appendChild(div);
             scrollToBottom();
@@ -1477,7 +1478,7 @@
                 typingDiv.remove();
 
                 if (data.error) {
-                    appendMessage('assistant', Error: );
+                    appendMessage('assistant', `Error: ${data.error}`);
                 } else {
                     appendMessage('assistant', data.reply);
                     // Refresh PWA UI silently to reflect LLM changes (errands or status)
@@ -1485,7 +1486,7 @@
                 }
             } catch (err) {
                 typingDiv.remove();
-                appendMessage('assistant', Connection error: );
+                appendMessage('assistant', `Connection error: ${err.message}`);
             } finally {
                 chatInput.disabled = false;
                 chatSubmitBtn.disabled = false;
