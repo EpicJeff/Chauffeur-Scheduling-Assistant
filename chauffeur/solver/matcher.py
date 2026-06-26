@@ -1731,6 +1731,45 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         
         group_id = errand.get('group_id')
         
+        # --- Apply global rules to this errand ---
+        from models.schemas import Event, Rule
+        try:
+            errand_dt = datetime.fromtimestamp(errand.get('starts_on') or errand.get('created_at', 0))
+        except:
+            errand_dt = datetime.now()
+            
+        dummy_event = Event(
+            id=errand.get('id', 'temp'),
+            title=errand.get('title', ''),
+            start=errand_dt,
+            end=errand_dt + timedelta(minutes=duration),
+            location=loc,
+            calendar_ids=[],
+            source_event_ids=[],
+            event_type="errand"
+        )
+        
+        for r_data in all_rules:
+            r = Rule(**r_data)
+            if does_event_match_rule(dummy_event, r):
+                r_type = getattr(r, 'constraint_type', '')
+                a_type = getattr(r, 'assignment_type', '')
+                if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
+                    a_type = r_type
+                    r_type = 'assignment'
+                    
+                if r_type == 'assignment':
+                    if a_type == 'required' or a_type == 'preferred':
+                        if r.driver_id not in required_drivers:
+                            required_drivers.append(r.driver_id)
+                    elif a_type == 'unavailable' or a_type == 'avoid':
+                        if r.driver_id not in prohibited_drivers:
+                            prohibited_drivers.append(r.driver_id)
+                elif r_type == 'group':
+                    if not group_id:
+                        group_id = r.id
+        # -----------------------------------------
+        
         for date_str, day_schedules in driver_schedules_by_date.items():
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             
