@@ -251,12 +251,14 @@
             }
         }
 
-        async function markErrandCompleted(id) {
-            if (!confirm('Mark this errand as completed?')) return;
+        async function markErrandCompleted(id, btnElement = null) {
+            if (!btnElement && !confirm('Mark this errand as completed?')) return;
             try {
                 // We need to fetch the existing errand first
                 const res = await fetch(`${apiBase}api/errands`);
-                if (!res.ok) return;
+                if (!res.ok) {
+                    throw new Error("Failed to fetch errands");
+                }
                 const errands = await res.json();
                 const errand = errands.find(e => e.id === id);
                 if (!errand) return;
@@ -272,6 +274,10 @@
             } catch (err) {
                 console.error(err);
                 alert("Failed to complete errand");
+                if (btnElement) {
+                    btnElement.disabled = false;
+                    btnElement.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg> Mark Errand Completed`;
+                }
             }
         }
 
@@ -714,6 +720,22 @@
                 mapBtn.style.display = 'none';
             }
 
+            const completeBtn = document.getElementById('em-complete-btn');
+            if (completeBtn) {
+                if (ev.isErrand) {
+                    completeBtn.style.display = 'flex';
+                    completeBtn.onclick = () => {
+                        completeBtn.disabled = true;
+                        completeBtn.innerHTML = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Completing...';
+                        markErrandCompleted(ev.id, completeBtn).then(() => {
+                            closeEventModal();
+                        });
+                    };
+                } else {
+                    completeBtn.style.display = 'none';
+                }
+            }
+
             const modal = document.getElementById('event-modal');
             const content = document.getElementById('event-modal-content');
             modal.classList.remove('hidden');
@@ -938,27 +960,13 @@
                 }
 
                 evs.forEach((ev, evIdx) => {
-                    const isDriverOnly = !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]);
+                    const isDriverOnly = ev.event_type !== 'errand' && !(assignments && assignments[ev.id]) && !(ghost_assignments && ghost_assignments[ev.id]);
 
-                    if (ev.event_type === 'errand') {
-                        const isPast = new Date(ev.end) < new Date();
-                        html += `
-                        <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isPast ? 'opacity-60' : ''}" onclick="markErrandCompleted('${ev.id}')">
-                            <div class="w-10 h-10 rounded-full bg-gray-800 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-gray-400">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                            </div>
-                            <div class="ml-4 flex-1 bg-gray-800 border border-gray-700 rounded-xl p-4 shadow-sm active:bg-gray-700 transition-colors">
-                                <div class="text-sm font-bold text-yellow-500 mb-1 uppercase tracking-wider">Errand • ${formatTime(ev.start)}</div>
-                                <div class="text-white font-bold text-lg leading-tight mb-2">${ev.title}</div>
-                                <div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg><span class="break-words line-clamp-2">${ev.location}</span></div>
-                            </div>
-                        </div>`;
-                        return;
-                    }
+
 
                     // --- Initial Edge ---
-                    if (initial_edges[dId] && initial_edges[dId][ev.id]) {
-                        const edge = initial_edges[dId] ? initial_edges[dId][ev.id] : null;
+                    if (localInitialEdges[dId] && localInitialEdges[dId][ev.id]) {
+                        const edge = localInitialEdges[dId] ? localInitialEdges[dId][ev.id] : null;
                         if (edge && edge.travel_mins > 0) {
                             const originLocation = edge.driver_home_location || driverConfig.home_location || globalHome;
                             const destinationLocation = ev.location;
@@ -999,10 +1007,12 @@
                     }
 
                     const eventData = {
+                        id: ev.id,
                         title: ev.event_type === 'dropoff' ? 'Dropoff: ' + ev.title : (ev.event_type === 'pickup' ? 'Pickup: ' + ev.title : ev.title),
                         timeStr: (ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
                         location: ev.location,
-                        passengerHtml: badges
+                        passengerHtml: badges,
+                        isErrand: ev.event_type === 'errand'
                     };
                     const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
@@ -1017,6 +1027,7 @@
                                 <div class="${titleClass} font-bold text-xl leading-tight mb-2">
                                     ${ev.event_type === 'dropoff' ? '<span class="text-[10px] tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-1 rounded mr-2 align-middle border border-orange-500/50">Dropoff</span>' : ''}
                                     ${ev.event_type === 'pickup' ? '<span class="text-[10px] tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-1 rounded mr-2 align-middle border border-green-500/50">Pickup</span>' : ''}
+                                    ${ev.event_type === 'errand' ? '<span class="text-[10px] tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
                                     ${ev.title}
                                 </div>
                                 ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
@@ -1360,12 +1371,16 @@
                 <p id="em-location" class="text-gray-300 text-sm break-words"></p>
             </div>
             <button id="em-map-btn"
-                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md">
+                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-600 active:bg-blue-700 text-white font-bold shadow-md mb-3">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path
                         d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z" />
                 </svg>
                 Open in Maps
+            </button>
+            <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold shadow-md hidden">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg>
+                Mark Errand Completed
             </button>
         </div>
     </div>
