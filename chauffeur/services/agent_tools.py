@@ -171,7 +171,8 @@ def get_openai_tools() -> List[Dict[str, Any]]:
     
     def scrub_schema(obj):
         if isinstance(obj, dict):
-            obj.pop("title", None)
+            if isinstance(obj.get("title"), str):
+                obj.pop("title", None)
             obj.pop("additionalProperties", None)
             for k, v in list(obj.items()):
                 scrub_schema(v)
