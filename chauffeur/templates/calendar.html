@@ -88,7 +88,33 @@
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         
-        /* Custom scrollbar for events */
+        /* Popover (+ more) */
+        .fc-popover {
+            background: rgba(15, 23, 42, 0.85) !important;
+            backdrop-filter: blur(16px) !important;
+            -webkit-backdrop-filter: blur(16px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            border-radius: 12px !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+            z-index: 50 !important;
+            overflow: hidden !important;
+        }
+        .fc-popover-header {
+            background: rgba(255, 255, 255, 0.05) !important;
+            padding: 12px !important;
+        }
+        .fc-popover-title {
+            color: #f8fafc !important;
+            font-weight: 700 !important;
+            font-size: 1.1rem !important;
+        }
+        .fc-popover-body {
+            max-height: 60vh !important;
+            overflow-y: auto !important;
+            padding: 8px !important;
+        }
+
+        /* Custom scrollbar for events and popovers */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
@@ -305,8 +331,7 @@
                         if (!res.ok) throw new Error('Network response was not ok');
                         const data = await res.json();
                         
-                        let fcEvents = [];
-                        
+                        let eventsMap = new Map();
                         const assignments = data.assignments || {};
                         const true_unassigned = data.true_unassigned || [];
                         const drivers = data.drivers || [];
@@ -315,6 +340,11 @@
                         if (data.events && data.events.length > 0) {
                             data.events.forEach(ev => {
                                 if (ev.event_type !== 'background_trip') {
+                                    let baseId = ev.id;
+                                    if (ev.id.includes('_unrolled_')) {
+                                        baseId = ev.id.split('_unrolled_')[0];
+                                    }
+
                                     let color = '#3B82F6'; 
                                     if (ev.calendar_ids && ev.calendar_ids.length > 0 && data.calendar_metadata && data.calendar_metadata[ev.calendar_ids[0]]) {
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
@@ -362,25 +392,55 @@
                                         if (d) driverName = d.name;
                                     }
                                     
-                                    fcEvents.push({
-                                        id: ev.id,
-                                        title: ev.title,
-                                        start: ev.start,
-                                        end: ev.end,
-                                        backgroundColor: color,
-                                        extendedProps: { 
-                                            location: ev.location,
-                                            description: ev.description,
-                                            passengers: passengerPills,
-                                            isUnassigned: isUnassigned,
-                                            driverName: driverName,
-                                            isErrand: false,
-                                            rawColor: color
+                                    if (eventsMap.has(baseId)) {
+                                        let existing = eventsMap.get(baseId);
+                                        // Merge times
+                                        if (new Date(ev.start) < new Date(existing.start)) existing.start = ev.start;
+                                        if (new Date(ev.end) > new Date(existing.end)) existing.end = ev.end;
+                                        
+                                        // Merge passengers
+                                        passengerPills.forEach(p => {
+                                            if (!existing.extendedProps.passengers.find(x => x.name === p.name)) {
+                                                existing.extendedProps.passengers.push(p);
+                                            }
+                                        });
+                                        
+                                        // Merge drivers
+                                        if (isUnassigned) {
+                                            existing.extendedProps.isUnassigned = true;
+                                            existing.extendedProps.driverName = null;
+                                        } else if (driverName) {
+                                            if (!existing.extendedProps.isUnassigned) {
+                                                if (!existing.extendedProps.driverName) {
+                                                    existing.extendedProps.driverName = driverName;
+                                                } else if (existing.extendedProps.driverName !== driverName) {
+                                                    existing.extendedProps.driverName = 'Multiple Drivers';
+                                                }
+                                            }
                                         }
-                                    });
+                                    } else {
+                                        eventsMap.set(baseId, {
+                                            id: baseId,
+                                            title: ev.title,
+                                            start: ev.start,
+                                            end: ev.end,
+                                            backgroundColor: color,
+                                            extendedProps: { 
+                                                location: ev.location,
+                                                description: ev.description,
+                                                passengers: [...passengerPills],
+                                                isUnassigned: isUnassigned,
+                                                driverName: driverName,
+                                                isErrand: false,
+                                                rawColor: color
+                                            }
+                                        });
+                                    }
                                 }
                             });
                         }
+                        
+                        let fcEvents = Array.from(eventsMap.values());
 
                         // Add errands
                         if (data.scheduled_errands && data.scheduled_errands.length > 0) {
