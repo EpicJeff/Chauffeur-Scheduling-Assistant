@@ -120,7 +120,43 @@
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
 
-        .fc-scroller::-webkit-scrollbar { width: 8px; }
+        /* HA Theme Overrides */
+        body.ha-theme {
+            background: var(--ha-bg) !important;
+        }
+        body.ha-theme .glass-panel {
+            background: color-mix(in srgb, var(--ha-card-bg) 80%, transparent) !important;
+            border-color: var(--ha-divider) !important;
+            box-shadow: none !important;
+        }
+        body.ha-theme .fc-popover {
+            background: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+        }
+        body.ha-theme .fc-theme-standard td, 
+        body.ha-theme .fc-theme-standard th, 
+        body.ha-theme .fc-theme-standard .fc-scrollgrid { 
+            border-color: var(--ha-divider) !important; 
+        }
+        body.ha-theme .fc-day { background-color: transparent !important; }
+        body.ha-theme .fc-day-today { background-color: color-mix(in srgb, var(--ha-primary-color) 20%, transparent) !important; }
+        body.ha-theme .fc .fc-toolbar-title,
+        body.ha-theme .fc-daygrid-day-number, 
+        body.ha-theme .fc-col-header-cell-cushion {
+            color: var(--ha-primary-text) !important;
+        }
+        body.ha-theme .fc .fc-button-primary { 
+            background-color: var(--ha-card-bg) !important; 
+            border-color: var(--ha-divider) !important; 
+            color: var(--ha-primary-text) !important;
+        }
+        body.ha-theme .fc .fc-button-primary:not(:disabled):active, 
+        body.ha-theme .fc .fc-button-primary:not(:disabled).fc-button-active { 
+            background-color: var(--ha-primary-color) !important; 
+            color: var(--ha-primary-text) !important; 
+            border-color: var(--ha-primary-color) !important;
+        }
+        body.ha-theme .ambient-glow { display: none !important; }
     </style>
 </head>
 <body class="flex flex-col">
@@ -129,8 +165,8 @@
     <main class="flex-1 w-full p-2 sm:p-4 lg:p-6 flex flex-col h-[calc(100vh-64px)]">
         <div class="glass-panel rounded-3xl p-4 sm:p-6 flex-1 flex flex-col overflow-hidden relative">
             <!-- Decorative ambient glow -->
-            <div class="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
-            <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
+            <div class="ambient-glow absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
+            <div class="ambient-glow absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full mix-blend-screen filter blur-[100px] pointer-events-none"></div>
             
             <div id="calendar" class="flex-1 relative z-10 w-full"></div>
         </div>
