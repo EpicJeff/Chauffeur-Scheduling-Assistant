@@ -50,6 +50,7 @@
     
     /* Map Tailwind grays to HA Theme variables */
     body.ha-theme,
+    body.ha-theme .bg-gray-950,
     body.ha-theme .bg-gray-900 {
         background-color: var(--ha-bg, #111111) !important;
     }
@@ -57,19 +58,36 @@
     body.ha-theme .bg-gray-800 {
         background-color: var(--ha-card-bg, #1c1c1c) !important;
     }
+
+    body.ha-theme .bg-gray-700,
+    body.ha-theme .bg-gray-600 {
+        background-color: var(--ha-divider, #333333) !important;
+    }
     
-    body.ha-theme .border-gray-700 {
+    body.ha-theme .border-gray-800,
+    body.ha-theme .border-gray-700,
+    body.ha-theme .border-gray-600 {
         border-color: var(--ha-divider, #333333) !important;
     }
     
     body.ha-theme,
+    body.ha-theme .text-gray-50,
     body.ha-theme .text-gray-100,
+    body.ha-theme .text-gray-200,
     body.ha-theme .text-white {
         color: var(--ha-primary-text, #e1e1e1) !important;
     }
     
+    body.ha-theme .text-gray-300,
     body.ha-theme .text-gray-400,
-    body.ha-theme .text-gray-300 {
+    body.ha-theme .text-gray-500,
+    body.ha-theme .text-gray-600 {
         color: var(--ha-secondary-text, #9b9b9b) !important;
+    }
+
+    body.ha-theme .text-blue-100,
+    body.ha-theme .text-blue-200,
+    body.ha-theme .text-blue-300 {
+        color: var(--ha-primary-color, var(--ha-primary-text, #3b82f6)) !important;
     }
 </style>
