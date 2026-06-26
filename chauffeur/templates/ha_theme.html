@@ -32,7 +32,7 @@
     if (isHaTheme) {
         syncHaTheme();
         setInterval(syncHaTheme, 5000); // Check for day/night schedule changes
-        
+
         document.addEventListener('DOMContentLoaded', () => {
             document.body.classList.add('ha-theme');
         });
@@ -43,33 +43,34 @@
         background-color: var(--ha-bg, #111111) !important;
         color: var(--ha-primary-text, #e1e1e1) !important;
     }
+
     /* Hide scrollbar for a clean kiosk look */
     body.ha-theme ::-webkit-scrollbar {
         display: none;
     }
-    
+
     /* Map Tailwind grays to HA Theme variables */
     body.ha-theme,
     body.ha-theme .bg-gray-950,
     body.ha-theme .bg-gray-900 {
         background-color: var(--ha-bg, #111111) !important;
     }
-    
+
     body.ha-theme .bg-gray-800 {
         background-color: var(--ha-card-bg, #1c1c1c) !important;
     }
 
     body.ha-theme .bg-gray-700,
     body.ha-theme .bg-gray-600 {
-        background-color: var(--ha-divider, #333333) !important;
+        background-color: var(--ha-header-bg, #333333) !important;
     }
-    
+
     body.ha-theme .border-gray-800,
     body.ha-theme .border-gray-700,
     body.ha-theme .border-gray-600 {
         border-color: var(--ha-divider, #333333) !important;
     }
-    
+
     body.ha-theme,
     body.ha-theme .text-gray-50,
     body.ha-theme .text-gray-100,
@@ -77,7 +78,7 @@
     body.ha-theme .text-white {
         color: var(--ha-primary-text, #e1e1e1) !important;
     }
-    
+
     body.ha-theme .text-gray-300,
     body.ha-theme .text-gray-400,
     body.ha-theme .text-gray-500,
@@ -90,7 +91,7 @@
     body.ha-theme .text-blue-200\/70,
     body.ha-theme .text-blue-200\/50,
     body.ha-theme .text-blue-300 {
-        color: var(--ha-primary-color, var(--ha-primary-text, #3b82f6)) !important;
+        color: color-mix(in srgb, var(--ha-primary-text) 60%, #3b82f6) !important;
     }
 
     body.ha-theme .text-amber-100,
@@ -98,13 +99,16 @@
     body.ha-theme .text-amber-200\/70,
     body.ha-theme .text-amber-300,
     body.ha-theme .text-amber-400 {
-        color: var(--ha-secondary-text, #f59e0b) !important;
+        color: color-mix(in srgb, var(--ha-primary-text) 60%, #f59e0b) !important;
     }
 
     body.ha-theme .bg-amber-900\/40,
-    body.ha-theme .bg-amber-950\/40,
+    body.ha-theme .bg-amber-950\/40 {
+        background-color: rgba(245, 158, 11, 0.15) !important;
+    }
+
     body.ha-theme .bg-blue-900\/20,
     body.ha-theme .bg-blue-900\/50 {
-        background-color: var(--ha-divider, transparent) !important;
+        background-color: rgba(59, 130, 246, 0.15) !important;
     }
 </style>
