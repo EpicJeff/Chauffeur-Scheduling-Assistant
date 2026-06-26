@@ -178,12 +178,15 @@
         </div>
     </main>
 
+    <!-- FullCalendar Popover Backdrop -->
+    <div id="fc-popover-backdrop" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300"></div>
+
     <!-- Glassmorphic Event Modal -->
     <div id="simple-event-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity duration-300">
-        <div class="glass-panel p-0 rounded-2xl w-full max-w-lg border border-white/10 overflow-hidden transform transition-transform duration-300 scale-95 opacity-0" id="modal-content-container">
+        <div class="glass-panel p-0 rounded-2xl w-full max-w-lg border border-white/10 overflow-hidden transform transition-transform duration-300 scale-95 opacity-0 flex flex-col max-h-[90vh]" id="modal-content-container">
             
             <!-- Modal Header (Dynamic Color) -->
-            <div id="modal-header" class="px-6 py-5 border-b border-white/10 relative overflow-hidden">
+            <div id="modal-header" class="px-6 py-5 border-b border-white/10 relative overflow-hidden flex-shrink-0">
                 <div class="absolute inset-0 opacity-20" id="modal-header-bg"></div>
                 <div class="relative z-10 flex justify-between items-start">
                     <div>
@@ -201,7 +204,7 @@
             </div>
 
             <!-- Modal Body -->
-            <div class="p-6 space-y-6">
+            <div class="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                 <!-- Status Banner -->
                 <div id="modal-status-banner" class="hidden rounded-lg p-3 text-sm font-semibold flex items-center gap-2"></div>
                 
@@ -248,7 +251,7 @@
             </div>
         </div>
     </div>
-
+    
     <script>
         function closeModal() {
             const modal = document.getElementById('simple-event-modal');
@@ -590,6 +593,23 @@
                     }, 10);
                 }
             });
+
+            // Observer for FullCalendar Popover to show backdrop
+            const popoverBackdrop = document.getElementById('fc-popover-backdrop');
+            const observer = new MutationObserver(() => {
+                if (document.querySelector('.fc-popover')) {
+                    popoverBackdrop.classList.remove('hidden');
+                } else {
+                    popoverBackdrop.classList.add('hidden');
+                }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+            
+            popoverBackdrop.addEventListener('click', () => {
+                const closeBtn = document.querySelector('.fc-popover-close');
+                if (closeBtn) closeBtn.click();
+            });
+
             calendar.render();
         });
     </script>
