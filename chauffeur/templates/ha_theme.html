@@ -35,6 +35,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             document.body.classList.add('ha-theme');
+            document.documentElement.classList.add('ha-theme');
         });
     }
 </script>
@@ -45,25 +46,29 @@
     }
 
     /* Style scrollbar to match HA theme natively */
-    body.ha-theme * {
+    html.ha-theme, html.ha-theme *, body.ha-theme * {
         scrollbar-color: var(--ha-divider, #333333) var(--ha-bg, #111111);
     }
     
+    html.ha-theme::-webkit-scrollbar,
     body.ha-theme ::-webkit-scrollbar {
         width: 14px;
         height: 14px;
     }
     
+    html.ha-theme::-webkit-scrollbar-track,
     body.ha-theme ::-webkit-scrollbar-track {
         background: var(--ha-bg, #111111);
     }
     
+    html.ha-theme::-webkit-scrollbar-thumb,
     body.ha-theme ::-webkit-scrollbar-thumb {
         background-color: var(--ha-divider, #333333);
         border-radius: 8px;
         border: 4px solid var(--ha-bg, #111111);
     }
     
+    html.ha-theme::-webkit-scrollbar-thumb:hover,
     body.ha-theme ::-webkit-scrollbar-thumb:hover {
         background-color: var(--ha-secondary-text, #9b9b9b);
     }
