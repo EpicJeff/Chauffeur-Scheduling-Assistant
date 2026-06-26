@@ -767,9 +767,9 @@ def get_settings():
         try:
             with open(options_file, 'r') as f:
                 options = json.load(f)
-            for k in ['disable_mapbox_matrix', 'disable_mapbox_directions', 'disable_mapbox',
+            for k in ['disable_mapbox_matrix', 'disable_mapbox_directions', 'disable_mapbox', 'disable_mapbox_category',
                       'mapbox_matrix_limit', 'mapbox_directions_limit', 
-                      'mapbox_geocode_limit', 'mapbox_searchbox_limit']:
+                      'mapbox_geocode_limit', 'mapbox_searchbox_limit', 'mapbox_category_limit']:
                 if k not in settings and k in options:
                     settings[k] = options[k]
         except Exception:
@@ -954,9 +954,8 @@ def clear_caches():
 def get_maps_stats():
     import datetime
     current_month = datetime.datetime.now().strftime("%Y-%m")
-    has_key = bool(maps.get_mapbox_api_key())
-    return {
-        "has_key": has_key,
+    
+    stats = {
         "matrix": {
             "monthly": storage.get_mapbox_usage(current_month, 'matrix'),
             "rolling_24h": storage.get_rolling_usage('matrix', 86400),
@@ -984,8 +983,17 @@ def get_maps_stats():
             "rpm": storage.get_rolling_usage('searchbox_sessions', 60),
             "limit": maps.get_map_option('mapbox_searchbox_limit', 500),
             "disabled": maps.get_map_option('disable_mapbox', False)
+        },
+        "category": {
+            "monthly": storage.get_mapbox_usage(current_month, 'category'),
+            "rolling_24h": storage.get_rolling_usage('category', 86400),
+            "rpm": storage.get_rolling_usage('category', 60),
+            "limit": maps.get_map_option('mapbox_category_limit', 45000),
+            "disabled": maps.get_map_option('disable_mapbox_category', False) or maps.get_map_option('disable_mapbox', False)
         }
     }
+    
+    return {"status": "success", "month": current_month, "stats": stats}
 
 # --- Telemetry API ---
 @app.post("/api/telemetry")

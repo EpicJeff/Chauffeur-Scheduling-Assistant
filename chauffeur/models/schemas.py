@@ -121,10 +121,12 @@ class Settings(BaseModel):
     disable_mapbox: bool = False
     disable_mapbox_matrix: bool = False
     disable_mapbox_directions: bool = False
+    disable_mapbox_category: bool = False
     mapbox_matrix_limit: int = 90000
     mapbox_directions_limit: int = 90000
     mapbox_geocode_limit: int = 90000
     mapbox_searchbox_limit: int = 500
+    mapbox_category_limit: int = 45000
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
     llm_gemini_model: str = "gemini-3.5-flash"

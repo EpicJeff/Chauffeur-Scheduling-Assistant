@@ -66,7 +66,12 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1, check_only:
     monthly_usage = storage.get_mapbox_usage(current_month, usage_key)
     
     # 2. Get limit setting
-    default_limit = 500 if endpoint == 'searchbox' else 90000
+    if endpoint == 'searchbox':
+        default_limit = 500
+    elif endpoint == 'category':
+        default_limit = 45000
+    else:
+        default_limit = 90000
     limit = get_map_option(f'mapbox_{endpoint}_limit', default_limit)
     
     # Check if monthly limit is already reached
@@ -79,7 +84,7 @@ def check_usage_limits_and_spikes(endpoint: str, increment: int = 1, check_only:
     # Check if a spike has occurred (rapid increase in the last 1 hour)
     if endpoint == 'matrix':
         spike_threshold = 5000
-    elif endpoint == 'searchbox':
+    elif endpoint in ('searchbox', 'category'):
         spike_threshold = 100
     else:
         spike_threshold = 500
@@ -837,47 +842,93 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
             if coords:
                 center_lat, center_lon = coords
 
-    if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('searchbox', 1):
-        # Hit Mapbox Search Box API Forward Search
-        url = "https://api.mapbox.com/search/searchbox/v1/forward"
-        params = {
-            "access_token": mapbox_key,
-            "q": query,
-            "limit": 5,
-        }
-        if center_lon is not None and center_lat is not None:
-            params['proximity'] = f"{center_lon},{center_lat}"
+    disable_mapbox_category = get_map_option('disable_mapbox_category', False)
+
+    if mapbox_key and not disable_mapbox:
+        success = False
+        
+        # 1. Try Mapbox Category Search API first (optimized for POIs)
+        if not disable_mapbox_category and check_usage_limits_and_spikes('category', 1):
+            category_slug = query.strip().replace(" ", "_").lower()
+            url_cat = f"https://api.mapbox.com/search/searchbox/v1/category/{urllib.parse.quote(category_slug)}"
+            params_cat = {
+                "access_token": mapbox_key,
+                "limit": 5,
+            }
+            if center_lon is not None and center_lat is not None:
+                params_cat['proximity'] = f"{center_lon},{center_lat}"
+                
+            try:
+                resp_cat = requests.get(url_cat, params=params_cat, timeout=5)
+                if resp_cat.status_code == 200:
+                    data = resp_cat.json()
+                    features = data.get("features", [])
+                    if features:
+                        success = True
+                        results = []
+                        for f in features:
+                            props = f.get("properties", {})
+                            name = props.get("name", "")
+                            place = props.get("place_formatted", "")
+                            full_address = f"{name}, {place}".strip(", ")
+                            coords = f.get("geometry", {}).get("coordinates", [])
+                            distance = props.get("distance", 0)
+                            
+                            if name and coords and len(coords) == 2:
+                                lon, lat = coords[0], coords[1]
+                                storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
+                                results.append({
+                                    "name": name,
+                                    "address": full_address,
+                                    "distance_meters": distance,
+                                    "lat": lat,
+                                    "lon": lon,
+                                    "source": "mapbox_category"
+                                })
+                        return results
+            except Exception as ex:
+                print(f"Mapbox Category API exception: {ex}")
             
-        try:
-            resp = requests.get(url, params=params, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                features = data.get("features", [])
-                results = []
-                for f in features:
-                    props = f.get("properties", {})
-                    name = props.get("name", "")
-                    place = props.get("place_formatted", "")
-                    full_address = f"{name}, {place}".strip(", ")
-                    coords = f.get("geometry", {}).get("coordinates", [])
-                    distance = props.get("distance", 0) # in meters
-                    
-                    if name and coords and len(coords) == 2:
-                        lon, lat = coords[0], coords[1]
-                        # Cache the geocode for future routing
-                        storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
-                        results.append({
-                            "name": name,
-                            "address": full_address,
-                            "distance_meters": distance,
-                            "lat": lat,
-                            "lon": lon
-                        })
-                return results
-            else:
-                print(f"Mapbox Search Box Forward API failed: {resp.status_code} {resp.text}")
-        except Exception as ex:
-            print(f"Mapbox Search Box Forward API exception: {ex}")
+        # 2. Fallback to Mapbox Forward Search if Category Search fails (e.g. for specific brands like "Target")
+        if not success and check_usage_limits_and_spikes('searchbox', 1, check_only=True):
+            check_usage_limits_and_spikes('searchbox', 1)
+            url_fwd = "https://api.mapbox.com/search/searchbox/v1/forward"
+            params_fwd = {
+                "access_token": mapbox_key,
+                "q": query,
+                "limit": 5,
+            }
+            if center_lon is not None and center_lat is not None:
+                params_fwd['proximity'] = f"{center_lon},{center_lat}"
+                
+            try:
+                resp = requests.get(url_fwd, params=params_fwd, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    features = data.get("features", [])
+                    results = []
+                    for f in features:
+                        props = f.get("properties", {})
+                        name = props.get("name", "")
+                        place = props.get("place_formatted", "")
+                        full_address = f"{name}, {place}".strip(", ")
+                        coords = f.get("geometry", {}).get("coordinates", [])
+                        distance = props.get("distance", 0)
+                        
+                        if name and coords and len(coords) == 2:
+                            lon, lat = coords[0], coords[1]
+                            storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
+                            results.append({
+                                "name": name,
+                                "address": full_address,
+                                "distance_meters": distance,
+                                "lat": lat,
+                                "lon": lon,
+                                "source": "mapbox_forward"
+                            })
+                    return results
+            except Exception as ex:
+                print(f"Mapbox Forward API exception: {ex}")
             
     # Fallback to Nominatim OpenStreetMap search
     with api_rate_lock:
