@@ -318,7 +318,8 @@
                     const isErrand = props.isErrand;
                     
                     let outerWrap = document.createElement('div');
-                    outerWrap.className = `flex flex-col w-full overflow-hidden rounded border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer ${isMonth ? 'h-[34px] px-1 py-0 gap-0' : 'h-full p-2 gap-1'}`;
+                    outerWrap.className = `flex flex-col w-full overflow-hidden rounded border backdrop-blur-md transition-transform hover:scale-[1.02] cursor-pointer ${isMonth ? 'px-1 py-0 gap-0' : 'h-full p-2 gap-1'}`;
+                    if (isMonth) outerWrap.style.height = '34px';
                     
                     // Base Colors & Borders
                     let baseColor = arg.event.backgroundColor || '#3b82f6';
