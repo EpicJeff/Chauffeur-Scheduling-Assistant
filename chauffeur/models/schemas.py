@@ -173,6 +173,7 @@ class Errand(BaseModel):
     recurrence_rule: Optional[str] = None # e.g. 'daily', 'weekly', 'monthly'
     created_at: float = Field(default_factory=time.time)
     starts_on: Optional[float] = None # Optional Unix timestamp overriding created_at for cycle anchors
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
     allowed_drivers: List[str] = Field(default_factory=list)
     required_drivers: List[str] = Field(default_factory=list)
     prohibited_drivers: List[str] = Field(default_factory=list)
@@ -190,6 +191,7 @@ class ErrandRule(BaseModel):
     doc_id: Optional[int] = None
     title: str = "New Errand Rule"
     constraint_type: str = "driver_assignment"
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
     location: Optional[str] = None
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False

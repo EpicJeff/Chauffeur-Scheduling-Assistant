@@ -95,6 +95,7 @@ class AddErrandTool(BaseModel):
     tags: List[str] = Field(default=[], description="List of tags.")
     recurrence_rule: str = Field(default="", description="Recurrence: 'daily', 'weekly', 'monthly', or empty for one-off.")
     starts_on: float = Field(default=0.0, description="Unix timestamp for the anchor/starts-on date. If 0, uses current time.")
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
 
 class UpdateErrandTool(BaseModel):
     """
@@ -136,6 +137,7 @@ class AddErrandRuleTool(BaseModel):
     prohibited_passengers: List[str] = Field(default=[], description="List of passenger IDs prohibited (optional).")
     time_window_start: str = Field(default="", description="Start time constraint (HH:MM).")
     time_window_end: str = Field(default="", description="End time constraint (HH:MM).")
+    window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
     buffer_mins: int = Field(default=0, description="Minutes before/after errand.")
     tolerance_mins: int = Field(default=0, description="Tolerance for scheduling outside preferred windows.")
     filter_sets: List[Dict[str, Any]] = Field(default=[], description="For 'grouping' rules, list of filter objects (each with keywords, keywords_match_all, location) to group errands.")

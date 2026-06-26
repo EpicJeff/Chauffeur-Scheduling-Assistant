@@ -1683,7 +1683,10 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         else: # One-off
             target_date = anchor_date
             window_start = target_date.date()
-            window_end = datetime.max.date()
+            if errand.get('window_days'):
+                window_end = window_start + timedelta(days=errand.get('window_days') - 1)
+            else:
+                window_end = datetime.max.date()
             
         # If today is past the window end, it's overdue, so it becomes ASAP
         today_date = datetime.now().date()
@@ -1768,7 +1771,11 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 elif r_type == 'group':
                     if not group_id:
                         group_id = r.id
+            if getattr(r, 'window_days', None) and r.window_days < window_days:
+                window_days = r.window_days
         # -----------------------------------------
+        
+        now = datetime.now()
         
         for date_str, day_schedules in driver_schedules_by_date.items():
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -1802,7 +1809,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                     start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
                     end_time = start_time + timedelta(minutes=duration)
                     
-                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
                         if detour < best_detour:
                             best_detour = detour
                             best_gap = (date_str, d_id, start_time, -1)
@@ -1819,7 +1826,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 end_time = start_time + timedelta(minutes=duration)
                 
                 if start_time.hour >= 9:
-                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
                         if detour < best_detour:
                             best_detour = detour
                             best_gap = (date_str, d_id, start_time, -1)
@@ -1837,7 +1844,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                             end_time = start_time + timedelta(minutes=duration)
                             
                             # Passengers are NOT in the car during an event (they are at the event)
-                            if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                            if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
                                 detour = t_event_to_errand + t_errand_to_event - group_bonus
                                 if detour < best_detour:
                                     best_detour = detour
@@ -1862,7 +1869,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                         if req_pax and not req_pax.issubset(in_car): pax_valid = False
                         if proh_pax and not proh_pax.isdisjoint(in_car): pax_valid = False
                         
-                        if pax_valid and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                        if pax_valid and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
                             if detour < best_detour:
                                 best_detour = detour
                                 best_gap = (date_str, d_id, start_time, i)
@@ -1877,7 +1884,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 start_time = last_event.end + timedelta(minutes=t_last_to_loc)
                 end_time = start_time + timedelta(minutes=duration)
                 
-                if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end):
+                if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
                     if detour < best_detour:
                         best_detour = detour
                         best_gap = (date_str, d_id, start_time, len(schedule)-1)
