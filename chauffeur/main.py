@@ -2021,7 +2021,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for e_dict in scheduled_errands:
             try:
                 errand_ev = Event(
-                    id=f"errand_{e_dict['id']}",
+                    id=e_dict['id'],
                     title=e_dict['title'],
                     start=datetime.datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
                     end=datetime.datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
@@ -2035,7 +2035,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 logger.error(f"Failed to create errand Event for edges: {ex}")
 
         all_assignments = {**base['assignments'], **base['ghost_assignments']}
-        all_events = daily_events_to_solve
+        for e_dict in scheduled_errands:
+            all_assignments[e_dict['id']] = e_dict['driver']['id']
+        all_events = daily_events_to_solve + errand_events
         
         if draft:
             route_edges, initial_edges, final_edges = {}, {}, {}

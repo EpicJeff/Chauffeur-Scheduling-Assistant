@@ -843,30 +843,6 @@
                 errand.end = errand.end_time;
                 errand.event_type = 'errand';
 
-                const e1_id = errand.inserted_after_event_id;
-                const e2_id = errand.inserted_before_event_id;
-                const e_id = errand.id;
-
-                if (!localRouteEdges[dId]) localRouteEdges[dId] = {};
-                if (!localInitialEdges[dId]) localInitialEdges[dId] = {};
-                if (!localFinalEdges[dId]) localFinalEdges[dId] = {};
-
-                if (e1_id === null && e2_id === null) {
-                    localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
-                    localFinalEdges[dId][e_id] = { from_event: e_id, travel_mins: errand.travel_from_mins, delay_mins: 0, dropoff_waypoint: null };
-                } else if (e1_id !== null && e2_id !== null) {
-                    if (localRouteEdges[dId][e1_id]) delete localRouteEdges[dId][e1_id];
-                    localRouteEdges[dId][e1_id] = { from_event: e1_id, to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0 };
-                    localRouteEdges[dId][e_id] = { from_event: e_id, to_event: e2_id, travel_mins: errand.travel_from_mins, delay_mins: 0 };
-                } else if (e1_id !== null) {
-                    if (localFinalEdges[dId][e1_id]) delete localFinalEdges[dId][e1_id];
-                    localRouteEdges[dId][e1_id] = { from_event: e1_id, to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0 };
-                    localFinalEdges[dId][e_id] = { from_event: e_id, travel_mins: errand.travel_from_mins, delay_mins: 0, dropoff_waypoint: null };
-                } else if (e2_id !== null) {
-                    if (localInitialEdges[dId][e2_id]) delete localInitialEdges[dId][e2_id];
-                    localInitialEdges[dId][e_id] = { to_event: e_id, travel_mins: errand.travel_to_mins, delay_mins: 0, driver_home_location: "" };
-                    localRouteEdges[dId][e_id] = { from_event: e_id, to_event: e2_id, travel_mins: errand.travel_from_mins, delay_mins: 0 };
-                }
 
                 let currDate = new Date(errand.start);
                 const year = currDate.getFullYear();
