@@ -2023,8 +2023,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 errand_ev = Event(
                     id=f"errand_{e_dict['id']}",
                     title=e_dict['title'],
-                    start=datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
-                    end=datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
+                    start=datetime.datetime.fromisoformat(e_dict['start'].replace('Z', '+00:00')),
+                    end=datetime.datetime.fromisoformat(e_dict['end'].replace('Z', '+00:00')),
                     location=e_dict['location'],
                     calendar_ids=[],
                     source_event_ids=[],
