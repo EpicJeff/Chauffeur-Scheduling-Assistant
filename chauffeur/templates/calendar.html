@@ -613,10 +613,21 @@
                     const formatTime = (date) => {
                         return date.toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                     };
+                    const formatDateUTC = (date) => {
+                        return date.toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+                    };
                     
-                    const startStr = info.event.start ? formatTime(info.event.start) : '';
-                    const endStr = info.event.end ? ' - ' + info.event.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-                    document.getElementById('modal-time').textContent = startStr + endStr;
+                    let timeText = '';
+                    if (info.event.allDay) {
+                        // All-day events are typically parsed as midnight UTC. We format in UTC to avoid local timezone shifting it to the day before.
+                        timeText = info.event.start ? formatDateUTC(info.event.start) + ' (All Day)' : 'All Day';
+                    } else {
+                        const startStr = info.event.start ? formatTime(info.event.start) : '';
+                        const endStr = info.event.end ? ' - ' + info.event.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                        timeText = startStr + endStr;
+                    }
+                    
+                    document.getElementById('modal-time').textContent = timeText;
                     
                     document.getElementById('modal-location').textContent = props.location || 'No location provided.';
                     
