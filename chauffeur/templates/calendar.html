@@ -126,6 +126,43 @@
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
 
+        /* Force FullCalendar Event Wrappers to add absolutely no extra size */
+        .fc-event, 
+        .fc-event-main {
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+        .fc-daygrid-event {
+            margin: 2px 0 0 0 !important; /* exactly 2px gap between events */
+            border: none !important;
+            padding: 0 !important;
+            background: transparent !important;
+        }
+
+        /* Nicer styling for the "+X more" buttons */
+        .fc-daygrid-more-link {
+            display: block;
+            margin: 2px 4px !important;
+            padding: 4px 6px !important;
+            background: rgba(59, 130, 246, 0.15) !important;
+            border: 1px solid rgba(59, 130, 246, 0.3) !important;
+            border-radius: 6px !important;
+            color: #60a5fa !important;
+            font-size: 0.75rem !important;
+            font-weight: 700 !important;
+            text-align: center !important;
+            backdrop-filter: blur(4px) !important;
+            -webkit-backdrop-filter: blur(4px) !important;
+            transition: all 0.2s !important;
+        }
+        .fc-daygrid-more-link:hover {
+            background: rgba(59, 130, 246, 0.25) !important;
+            color: #93c5fd !important;
+        }
+
         /* HA Theme Overrides */
         body.ha-theme {
             background: var(--ha-bg) !important;
