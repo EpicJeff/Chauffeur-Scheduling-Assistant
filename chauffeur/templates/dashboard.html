@@ -31,8 +31,6 @@
             font-family: 'Inter', sans-serif;
             transition: padding-right 0.3s ease-in-out;
         }
-
-
     </style>
 </head>
 
@@ -40,306 +38,376 @@
     {% include 'nav.html' %}
     <div class="p-2 md:p-4">
 
-        <div id="page-header" class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 sticky top-[4rem] z-40 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 backdrop-blur-sm bg-opacity-95">
-        <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
-        <div id="header-buttons" class="grid grid-cols-2 md:flex md:flex-row justify-center gap-2 md:gap-4 mt-2 md:mt-0 w-full md:w-auto">
-            <div class="col-span-2 md:col-span-1 flex gap-2 justify-center order-first md:order-none">
-                <label class="flex items-center gap-2 cursor-pointer bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-700 transition-colors shadow-md mr-2">
-                    <input type="checkbox" id="toggle-errands" class="hidden" onchange="toggleErrands()">
-                    <div class="w-8 h-4 bg-gray-600 rounded-full relative transition-colors duration-200" id="errands-toggle-track">
-                        <div class="w-4 h-4 bg-white rounded-full absolute left-0 top-0 shadow transform transition-transform duration-200" id="errands-toggle-knob"></div>
-                    </div>
-                    <span class="text-sm font-bold text-gray-300 select-none flex items-center gap-1.5">
-                        <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
-                        Errands
-                    </span>
-                </label>
+        <div id="page-header"
+            class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4 sticky top-[4rem] z-40 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 backdrop-blur-sm bg-opacity-95">
+            <h1 class="text-2xl font-bold text-blue-100 drop-shadow-md">Family Driver Schedule</h1>
+            <div id="header-buttons"
+                class="grid grid-cols-2 md:flex md:flex-row justify-center gap-2 md:gap-4 mt-2 md:mt-0 w-full md:w-auto">
+                <div class="col-span-2 md:col-span-1 flex gap-2 justify-center order-first md:order-none">
+                    <label
+                        class="flex items-center gap-2 cursor-pointer bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg border border-gray-700 transition-colors shadow-md mr-2">
+                        <input type="checkbox" id="toggle-errands" class="hidden" onchange="toggleErrands()">
+                        <div class="w-8 h-4 bg-gray-600 rounded-full relative transition-colors duration-200"
+                            id="errands-toggle-track">
+                            <div class="w-4 h-4 bg-white rounded-full absolute left-0 top-0 shadow transform transition-transform duration-200"
+                                id="errands-toggle-knob"></div>
+                        </div>
+                        <span class="text-sm font-bold text-gray-300 select-none flex items-center gap-1.5">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
+                                </path>
+                            </svg>
+                            Errands
+                        </span>
+                    </label>
+                </div>
+                <div class="col-span-2 md:col-span-1 flex gap-2 w-full justify-center order-first md:order-none">
+                    <button id="btn-prev-day" onclick="fetchPrevDay()"
+                        class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">&larr;
+                        Prev</button>
+                    <button id="btn-next-day" onclick="fetchNextDay()"
+                        class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">Next
+                        &rarr;</button>
+                </div>
+                <button onclick="forceSync()" id="sync-btn"
+                    class="bg-blue-600 hover:bg-blue-500 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
+                    <svg id="sync-icon" class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        </path>
+                    </svg>
+                    <span id="sync-text">Sync</span>
+                </button>
+
+                <button onclick="toggleOperationsSidebar()" id="operations-sidebar-btn"
+                    class="bg-indigo-600 hover:bg-indigo-500 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center relative text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
+                    <svg class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6h16M4 12h16M4 18h16"></path>
+                    </svg>
+                    Controls
+                    <span id="notif-badge"
+                        class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
+                    <span id="maps-stats-warning-dot"
+                        class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 h-2.5 w-2.5 rounded-full hidden animate-ping"></span>
+                </button>
             </div>
-            <div class="col-span-2 md:col-span-1 flex gap-2 w-full justify-center order-first md:order-none">
-                <button id="btn-prev-day" onclick="fetchPrevDay()"
-                    class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">&larr; Prev</button>
-                <button id="btn-next-day" onclick="fetchNextDay()"
-                    class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">Next &rarr;</button>
-            </div>
-            <button onclick="forceSync()" id="sync-btn"
-                class="bg-blue-600 hover:bg-blue-500 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
-                <svg id="sync-icon" class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        </div>
+
+
+
+        <div id="error-container"
+            class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center">
+        </div>
+
+        <div id="ai-suggestion-banner"
+            class="hidden bg-indigo-900 border border-indigo-500 text-indigo-200 p-4 rounded-xl shadow-lg mb-6 flex justify-between items-center cursor-pointer hover:bg-indigo-800 transition-colors"
+            onclick="openAIOptionsModal()">
+            <div class="flex items-center">
+                <svg class="w-6 h-6 mr-3 text-indigo-400 animate-pulse" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                        d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <div>
+                    <span class="font-bold block">AI suggested an alternative schedule.</span>
+                    <span class="text-sm opacity-80" id="ai-suggestion-text">Click to review the reasoning and
+                        options.</span>
+                </div>
+            </div>
+            <button
+                class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-colors text-white">Review
+                Options</button>
+        </div>
+
+        <div id="inbox-container" class="hidden mb-6">
+            <h2 class="text-2xl font-bold text-yellow-500 mb-4 flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4">
                     </path>
                 </svg>
-                <span id="sync-text">Sync</span>
-            </button>
-
-            <button onclick="toggleOperationsSidebar()" id="operations-sidebar-btn"
-                class="bg-indigo-600 hover:bg-indigo-500 h-10 rounded-lg font-bold text-white shadow-md transition-colors flex items-center justify-center relative text-sm md:text-base w-full md:w-auto md:px-6 whitespace-nowrap">
-                <svg class="w-5 h-5 mr-1 md:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-                </svg>
-                Controls
-                <span id="notif-badge"
-                    class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
-                <span id="maps-stats-warning-dot" class="absolute top-0 right-0 transform translate-x-1/2 -translate-y-1/2 bg-red-500 h-2.5 w-2.5 rounded-full hidden animate-ping"></span>
-            </button>
-        </div>
-    </div>
-
-    
-
-    <div id="error-container"
-        class="hidden bg-red-900 border border-red-500 text-red-200 p-4 rounded-xl shadow-lg mb-6 text-xl text-center">
-    </div>
-
-    <div id="ai-suggestion-banner" class="hidden bg-indigo-900 border border-indigo-500 text-indigo-200 p-4 rounded-xl shadow-lg mb-6 flex justify-between items-center cursor-pointer hover:bg-indigo-800 transition-colors" onclick="openAIOptionsModal()">
-        <div class="flex items-center">
-            <svg class="w-6 h-6 mr-3 text-indigo-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-            <div>
-                <span class="font-bold block">AI suggested an alternative schedule.</span>
-                <span class="text-sm opacity-80" id="ai-suggestion-text">Click to review the reasoning and options.</span>
+                Inbox <span id="inbox-count"
+                    class="ml-3 bg-red-600 text-white text-sm font-bold px-2 py-1 rounded-full">0</span>
+            </h2>
+            <div id="inbox-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <!-- Populated dynamically -->
             </div>
         </div>
-        <button class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-colors text-white">Review Options</button>
-    </div>
 
-    <div id="inbox-container" class="hidden mb-6">
-        <h2 class="text-2xl font-bold text-yellow-500 mb-4 flex items-center">
-            <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
-            Inbox <span id="inbox-count" class="ml-3 bg-red-600 text-white text-sm font-bold px-2 py-1 rounded-full">0</span>
-        </h2>
-        <div id="inbox-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            <!-- Populated dynamically -->
+
+
+        <!-- Mapbox API Stats Rollout Panel (Slide-out Drawer, Non-Modal) -->
+
+
+        <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div
+                class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
+
+                <!-- VIEW MODE -->
+                <div id="modal-view-mode">
+                    <div class="flex justify-between items-start mb-6">
+                        <h3 id="view-title" class="text-3xl font-bold text-blue-200">Event Title</h3>
+                        <button onclick="closeEventModal()" class="text-gray-400 hover:text-white">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="space-y-4 text-lg">
+                        <div class="flex items-center text-gray-300">
+                            <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span id="view-time">Time</span>
+                        </div>
+                        <div class="flex items-start text-gray-300">
+                            <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z">
+                                </path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            <span id="view-location" class="break-words flex-1">Location</span>
+                        </div>
+                        <div id="view-attendees-section" class="hidden flex items-start text-gray-300">
+                            <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+                                </path>
+                            </svg>
+                            <div id="view-attendees" class="flex-1 flex flex-wrap gap-2"></div>
+                        </div>
+                        <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
+                            <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 6h16M4 12h16M4 18h7"></path>
+                            </svg>
+                            <div id="view-description"
+                                class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base">No
+                                description
+                                provided.</div>
+                        </div>
+                        <div id="view-map-section" class="hidden pt-2 border-t border-gray-700 mt-4 relative">
+                            <img id="view-map-img" class="w-full rounded-lg shadow-lg" alt="Event location map" />
+                            <div id="view-map-balloon"
+                                class="hidden absolute top-6 left-1/2 transform -translate-x-1/2 bg-white text-gray-900 px-3 py-1.5 rounded-md shadow-lg border border-gray-200 text-sm flex flex-col items-center pointer-events-none">
+                                <div class="font-bold flex items-center text-gray-800">
+                                    <svg class="w-4 h-4 mr-1 text-gray-700" fill="currentColor" viewBox="0 0 24 24">
+                                        <path
+                                            d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" />
+                                    </svg>
+                                    <span id="view-map-duration"></span>
+                                </div>
+                                <div id="view-map-distance" class="text-xs text-gray-500"></div>
+                                <!-- Small triangle arrow at the bottom pointing down -->
+                                <div
+                                    class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-white drop-shadow-md">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tabs -->
+                    <div id="modal-tabs" class="mt-6 flex space-x-2 border-b border-gray-700 hidden">
+                        <button id="tab-btn-rules" onclick="switchModalTab('rules')"
+                            class="px-4 py-2 text-sm font-bold text-blue-400 hover:text-blue-300 border-b-2 border-blue-500 transition-colors focus:outline-none">Matched
+                            Rules</button>
+                        <button id="tab-btn-diagnostics" onclick="switchModalTab('diagnostics')"
+                            class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-white border-b-2 border-transparent transition-colors focus:outline-none">Diagnostics</button>
+                    </div>
+
+                    <!-- Tab: Rules -->
+                    <div id="tab-content-rules" class="hidden mt-4">
+                        <div id="matched-rules-list" class="space-y-3"></div>
+                    </div>
+
+                    <!-- Tab: Diagnostics -->
+                    <div id="tab-content-diagnostics" class="hidden mt-4 space-y-6">
+                        <div id="conflicts-section" class="hidden">
+                            <h4 class="text-xl font-bold text-red-400 mb-3 flex items-center">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                                    </path>
+                                </svg>
+                                Conflicting Events
+                            </h4>
+                            <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because
+                                they
+                                conflict with this event. Click Swap to override the schedule.</p>
+                            <div id="conflicts-list" class="space-y-3"></div>
+                        </div>
+
+                        <div id="diagnostics-section" class="hidden">
+                            <h4 class="text-xl font-bold text-yellow-400 mb-3 flex items-center">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                    </path>
+                                </svg>
+                                Solver Diagnostics
+                            </h4>
+                            <p class="text-gray-400 text-sm mb-4">Why couldn't this event be assigned to a driver?</p>
+                            <div id="diagnostics-list" class="space-y-3"></div>
+                        </div>
+
+                        <div id="view-unassigned-reason"></div>
+                    </div>
+
+                    <div class="mt-8 flex justify-end space-x-4">
+                        <button id="remove-override-btn" onclick="removeOverride(activeEventId)"
+                            class="hidden px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                </path>
+                            </svg>
+                            Remove Override
+                        </button>
+                        <button id="edit-details-btn" onclick="switchToEditMode()"
+                            class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
+                                </path>
+                            </svg>
+                            Edit Details
+                        </button>
+                    </div>
+                </div>
+
+                <!-- EDIT MODE (Configuration) -->
+                <div id="modal-edit-mode" class="hidden">
+                    <h3 class="text-2xl font-bold text-blue-200 mb-6">Configure Event</h3>
+                    <input type="hidden" id="edit-event-id">
+
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-sm">Start Time Override</label>
+                                <input type="datetime-local" id="edit-start"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-sm">End Time Override</label>
+                                <input type="datetime-local" id="edit-end"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            </div>
+                        </div>
+
+                        <div class="relative">
+                            <label class="block text-gray-400 mb-1 text-sm">Location Override</label>
+                            <input type="text" id="edit-location" oninput="handleLocationInput()"
+                                placeholder="Type to search Mapbox..."
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            <div id="autocomplete-dropdown"
+                                class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto">
+                            </div>
+                        </div>
+
+                        <div class="mt-4 pt-4 border-t border-gray-700">
+                            <div class="mb-4">
+                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Attendance
+                                    Mode</label>
+                                <select id="edit-attendance-mode"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                                    <option value="scheduler">Let scheduler decide</option>
+                                    <option value="dropoff_pickup">Drop off and Pick up</option>
+                                    <option value="stay">Stay for entire event</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-4">
+                                <label
+                                    class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Passengers</label>
+                                <div id="edit-passengers-container"
+                                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Drivers</label>
+                                <div id="edit-drivers-container"
+                                    class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                                </div>
+                            </div>
+
+                            <div class="flex items-center mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                                <input type="checkbox" id="edit-is-trip"
+                                    class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
+                                <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as
+                                    pure Background Trip (No destination)</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 flex justify-between items-center">
+                        <button onclick="ignoreEvent()"
+                            class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636">
+                                </path>
+                            </svg>
+                            Ignore Event
+                        </button>
+                        <div class="space-x-4">
+                            <button onclick="switchToViewMode()"
+                                class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                            <button onclick="saveEventConfig()"
+                                class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save
+                                Configuration</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
-    
-
-    <!-- Mapbox API Stats Rollout Panel (Slide-out Drawer, Non-Modal) -->
-    
-
-    <div id="event-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div
-            class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl max-h-[90vh] overflow-y-auto">
-
-            <!-- VIEW MODE -->
-            <div id="modal-view-mode">
-                <div class="flex justify-between items-start mb-6">
-                    <h3 id="view-title" class="text-3xl font-bold text-blue-200">Event Title</h3>
-                    <button onclick="closeEventModal()" class="text-gray-400 hover:text-white">
+            class="bg-gray-800 p-6 md:p-8 rounded-2xl w-[95vw] max-w-[1600px] border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
+            <div class="flex justify-between items-center mb-6 shrink-0 gap-4">
+                <h3 class="text-2xl md:text-3xl font-bold text-indigo-300 flex items-center">
+                    <svg class="w-8 h-8 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    Review AI Suggestions
+                </h3>
+                <div class="flex items-center gap-4">
+                    <div id="ai-modal-nav" class="flex items-center gap-2 hidden">
+                        <button onclick="navigateAIOptions(-1)"
+                            class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">&larr;
+                            Prev Day</button>
+                        <span id="ai-modal-nav-text" class="text-gray-400 text-sm font-bold px-2"></span>
+                        <button onclick="navigateAIOptions(1)"
+                            class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">Next
+                            Day &rarr;</button>
+                    </div>
+                    <button onclick="closeAIModal()" class="text-gray-400 hover:text-white ml-2">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
-
-                <div class="space-y-4 text-lg">
-                    <div class="flex items-center text-gray-300">
-                        <svg class="w-5 h-5 mr-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                        <span id="view-time">Time</span>
-                    </div>
-                    <div class="flex items-start text-gray-300">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z">
-                            </path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                        </svg>
-                        <span id="view-location" class="break-words flex-1">Location</span>
-                    </div>
-                    <div id="view-attendees-section" class="hidden flex items-start text-gray-300">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
-                            </path>
-                        </svg>
-                        <div id="view-attendees" class="flex-1 flex flex-wrap gap-2"></div>
-                    </div>
-                    <div class="flex items-start text-gray-300 pt-2 border-t border-gray-700 mt-4">
-                        <svg class="w-5 h-5 mr-3 mt-1 text-gray-500" fill="none" stroke="currentColor"
-                            viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 6h16M4 12h16M4 18h7"></path>
-                        </svg>
-                        <div id="view-description"
-                            class="whitespace-pre-wrap break-words flex-1 italic text-gray-400 text-base">No description
-                            provided.</div>
-                    </div>
-                    <div id="view-map-section" class="hidden pt-2 border-t border-gray-700 mt-4 relative">
-                        <img id="view-map-img" class="w-full rounded-lg shadow-lg" alt="Event location map" />
-                        <div id="view-map-balloon"
-                            class="hidden absolute top-6 left-1/2 transform -translate-x-1/2 bg-white text-gray-900 px-3 py-1.5 rounded-md shadow-lg border border-gray-200 text-sm flex flex-col items-center pointer-events-none">
-                            <div class="font-bold flex items-center text-gray-800">
-                                <svg class="w-4 h-4 mr-1 text-gray-700" fill="currentColor" viewBox="0 0 24 24">
-                                    <path
-                                        d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" />
-                                </svg>
-                                <span id="view-map-duration"></span>
-                            </div>
-                            <div id="view-map-distance" class="text-xs text-gray-500"></div>
-                            <!-- Small triangle arrow at the bottom pointing down -->
-                            <div
-                                class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-white drop-shadow-md">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tabs -->
-                <div id="modal-tabs" class="mt-6 flex space-x-2 border-b border-gray-700 hidden">
-                    <button id="tab-btn-rules" onclick="switchModalTab('rules')" class="px-4 py-2 text-sm font-bold text-blue-400 hover:text-blue-300 border-b-2 border-blue-500 transition-colors focus:outline-none">Matched Rules</button>
-                    <button id="tab-btn-diagnostics" onclick="switchModalTab('diagnostics')" class="px-4 py-2 text-sm font-bold text-gray-400 hover:text-white border-b-2 border-transparent transition-colors focus:outline-none">Diagnostics</button>
-                </div>
-
-                <!-- Tab: Rules -->
-                <div id="tab-content-rules" class="hidden mt-4">
-                    <div id="matched-rules-list" class="space-y-3"></div>
-                </div>
-
-                <!-- Tab: Diagnostics -->
-                <div id="tab-content-diagnostics" class="hidden mt-4 space-y-6">
-                    <div id="conflicts-section" class="hidden">
-                        <h4 class="text-xl font-bold text-red-400 mb-3 flex items-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
-                                </path>
-                            </svg>
-                            Conflicting Events
-                        </h4>
-                        <p class="text-gray-400 text-sm mb-4">The following events could not be scheduled because they
-                            conflict with this event. Click Swap to override the schedule.</p>
-                        <div id="conflicts-list" class="space-y-3"></div>
-                    </div>
-
-                    <div id="diagnostics-section" class="hidden">
-                        <h4 class="text-xl font-bold text-yellow-400 mb-3 flex items-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
-                                </path>
-                            </svg>
-                            Solver Diagnostics
-                        </h4>
-                        <p class="text-gray-400 text-sm mb-4">Why couldn't this event be assigned to a driver?</p>
-                        <div id="diagnostics-list" class="space-y-3"></div>
-                    </div>
-
-                    <div id="view-unassigned-reason"></div>
-                </div>
-
-                <div class="mt-8 flex justify-end space-x-4">
-                    <button id="remove-override-btn" onclick="removeOverride(activeEventId)"
-                        class="hidden px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
-                            </path>
-                        </svg>
-                        Remove Override
-                    </button>
-                    <button id="edit-details-btn" onclick="switchToEditMode()"
-                        class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
-                            </path>
-                        </svg>
-                        Edit Details
-                    </button>
-                </div>
-            </div>
-
-            <!-- EDIT MODE (Configuration) -->
-            <div id="modal-edit-mode" class="hidden">
-                <h3 class="text-2xl font-bold text-blue-200 mb-6">Configure Event</h3>
-                <input type="hidden" id="edit-event-id">
-
-                <div class="space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-gray-400 mb-1 text-sm">Start Time Override</label>
-                            <input type="datetime-local" id="edit-start" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                        </div>
-                        <div>
-                            <label class="block text-gray-400 mb-1 text-sm">End Time Override</label>
-                            <input type="datetime-local" id="edit-end" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                        </div>
-                    </div>
-
-                    <div class="relative">
-                        <label class="block text-gray-400 mb-1 text-sm">Location Override</label>
-                        <input type="text" id="edit-location" oninput="handleLocationInput()" placeholder="Type to search Mapbox..." class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                        <div id="autocomplete-dropdown" class="hidden absolute w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto"></div>
-                    </div>
-
-                    <div class="mt-4 pt-4 border-t border-gray-700">
-                        <div class="mb-4">
-                            <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Attendance Mode</label>
-                            <select id="edit-attendance-mode" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
-                                <option value="scheduler">Let scheduler decide</option>
-                                <option value="dropoff_pickup">Drop off and Pick up</option>
-                                <option value="stay">Stay for entire event</option>
-                            </select>
-                        </div>
-                        
-                        <div class="mb-4">
-                            <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Passengers</label>
-                            <div id="edit-passengers-container" class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3"></div>
-                        </div>
-
-                        <div class="mb-4">
-                            <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Drivers</label>
-                            <div id="edit-drivers-container" class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3"></div>
-                        </div>
-
-                        <div class="flex items-center mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
-                            <input type="checkbox" id="edit-is-trip" class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
-                            <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mt-8 flex justify-between items-center">
-                    <button onclick="ignoreEvent()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
-                        Ignore Event
-                    </button>
-                    <div class="space-x-4">
-                        <button onclick="switchToViewMode()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                        <button onclick="saveEventConfig()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save Configuration</button>
-                    </div>
-                </div>
-            </div></div>
-
-        </div>
-    </div>
-
-    <div id="ai-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-800 p-6 md:p-8 rounded-2xl w-[95vw] max-w-[1600px] border border-gray-600 shadow-2xl flex flex-col h-[90vh]">
-            <div class="flex justify-between items-center mb-6 shrink-0 gap-4">
-                <h3 class="text-2xl md:text-3xl font-bold text-indigo-300 flex items-center">
-                    <svg class="w-8 h-8 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                    Review AI Suggestions
-                </h3>
-                <div class="flex items-center gap-4">
-                    <div id="ai-modal-nav" class="flex items-center gap-2 hidden">
-                        <button onclick="navigateAIOptions(-1)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">&larr; Prev Day</button>
-                        <span id="ai-modal-nav-text" class="text-gray-400 text-sm font-bold px-2"></span>
-                        <button onclick="navigateAIOptions(1)" class="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-colors">Next Day &rarr;</button>
-                    </div>
-                    <button onclick="closeAIModal()" class="text-gray-400 hover:text-white ml-2">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                    </button>
-                </div>
             </div>
             <div class="flex-1 flex flex-col md:flex-row gap-6 min-h-0">
-                <div class="w-full md:w-1/3 bg-gray-900 border border-gray-700 rounded-xl overflow-y-auto flex flex-col p-4 space-y-4" id="ai-options-list">
+                <div class="w-full md:w-1/3 bg-gray-900 border border-gray-700 rounded-xl overflow-y-auto flex flex-col p-4 space-y-4"
+                    id="ai-options-list">
                     <!-- Populated dynamically -->
                 </div>
                 <div class="w-full md:w-2/3 flex flex-col overflow-y-auto pr-2" id="ai-option-details">
@@ -349,33 +417,47 @@
         </div>
     </div>
 
-    
+
     <!-- OPERATIONS SIDEBAR -->
-    <div id="operations-sidebar" class="fixed top-0 right-0 h-full w-[450px] bg-gray-900 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col border-l border-gray-700">
-        
+    <div id="operations-sidebar"
+        class="fixed top-0 right-0 h-full w-[450px] bg-gray-900 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col border-l border-gray-700">
+
         <!-- Header -->
         <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 shrink-0">
             <h3 class="text-xl font-bold text-gray-200 flex items-center gap-2">
-                <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16">
+                    </path>
+                </svg>
                 Control Center
             </h3>
-            <button onclick="toggleOperationsSidebar()" class="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded-lg transition-colors focus:outline-none">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            <button onclick="toggleOperationsSidebar()"
+                class="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded-lg transition-colors focus:outline-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                    </path>
+                </svg>
             </button>
         </div>
 
         <div class="flex-1 flex flex-col overflow-y-auto">
-            
+
             <!-- Notifications Accordion -->
             <div class="border-b border-gray-700 shrink-0 flex flex-col max-h-[300px]">
-                <button onclick="toggleAccordion('notif-content', 'notif-chevron')" class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
+                <button onclick="toggleAccordion('notif-content', 'notif-chevron')"
+                    class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
                     <span class="font-bold text-gray-300 flex items-center">
                         <svg class="w-4 h-4 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+                            </path>
                         </svg>
                         Notifications
                     </span>
-                    <svg id="notif-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    <svg id="notif-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
                 </button>
                 <div id="notif-content" class="hidden p-3 bg-gray-900 overflow-y-auto flex-1">
                     <div id="notif-list" class="space-y-3">
@@ -386,21 +468,28 @@
 
             <!-- API Stats Accordion -->
             <div class="border-b border-gray-700 shrink-0 flex flex-col max-h-[400px]">
-                <button onclick="toggleAccordion('stats-accordion-content', 'stats-chevron')" class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
+                <button onclick="toggleAccordion('stats-accordion-content', 'stats-chevron')"
+                    class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
                     <span class="font-bold text-gray-300 flex items-center">
                         <svg class="w-4 h-4 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                            </path>
                         </svg>
                         API Stats
                     </span>
-                    <svg id="stats-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    <svg id="stats-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
                 </button>
                 <div id="stats-accordion-content" class="hidden bg-gray-900 overflow-y-auto flex-1">
                     <div class="p-4 space-y-6">
-                        <div id="stats-loader" class="text-center text-gray-500 py-6 animate-pulse text-sm">Loading statistics...</div>
+                        <div id="stats-loader" class="text-center text-gray-500 py-6 animate-pulse text-sm">Loading
+                            statistics...</div>
                         <div id="stats-content" class="hidden space-y-4">
                             <div id="stats-warnings" class="space-y-2"></div>
-                            
+
                             <!-- Matrix Card -->
                             <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
                                 <div class="flex items-center justify-between text-[10px] mb-2">
@@ -408,26 +497,33 @@
                                     <span id="matrix-monthly-text" class="text-blue-400 font-mono font-bold"></span>
                                 </div>
                                 <div class="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden mb-2">
-                                    <div id="matrix-progress" class="h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                    <div id="matrix-progress" class="h-1.5 rounded-full transition-all duration-500"
+                                        style="width: 0%"></div>
                                 </div>
-                                <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
+                                <div
+                                    class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
                                     <span>24h: <strong id="matrix-24h-text" class="text-gray-300"></strong></span>
-                                    <span>RPM: <span id="matrix-rpm-text" class="px-1 bg-gray-900 text-blue-400 rounded"></span></span>
+                                    <span>RPM: <span id="matrix-rpm-text"
+                                            class="px-1 bg-gray-900 text-blue-400 rounded"></span></span>
                                 </div>
                             </div>
-                            
+
                             <!-- Directions Card -->
                             <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
                                 <div class="flex items-center justify-between text-[10px] mb-2">
                                     <span class="font-bold text-gray-400 uppercase">Directions (Tier 2)</span>
-                                    <span id="directions-monthly-text" class="text-purple-400 font-mono font-bold"></span>
+                                    <span id="directions-monthly-text"
+                                        class="text-purple-400 font-mono font-bold"></span>
                                 </div>
                                 <div class="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden mb-2">
-                                    <div id="directions-progress" class="h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                    <div id="directions-progress" class="h-1.5 rounded-full transition-all duration-500"
+                                        style="width: 0%"></div>
                                 </div>
-                                <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
+                                <div
+                                    class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
                                     <span>24h: <strong id="directions-24h-text" class="text-gray-300"></strong></span>
-                                    <span>RPM: <span id="directions-rpm-text" class="px-1 bg-gray-900 text-purple-400 rounded"></span></span>
+                                    <span>RPM: <span id="directions-rpm-text"
+                                            class="px-1 bg-gray-900 text-purple-400 rounded"></span></span>
                                 </div>
                             </div>
 
@@ -438,11 +534,14 @@
                                     <span id="geocode-monthly-text" class="text-green-400 font-mono font-bold"></span>
                                 </div>
                                 <div class="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden mb-2">
-                                    <div id="geocode-progress" class="h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                    <div id="geocode-progress" class="h-1.5 rounded-full transition-all duration-500"
+                                        style="width: 0%"></div>
                                 </div>
-                                <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
+                                <div
+                                    class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
                                     <span>24h: <strong id="geocode-24h-text" class="text-gray-300"></strong></span>
-                                    <span>RPM: <span id="geocode-rpm-text" class="px-1 bg-gray-900 text-green-400 rounded"></span></span>
+                                    <span>RPM: <span id="geocode-rpm-text"
+                                            class="px-1 bg-gray-900 text-green-400 rounded"></span></span>
                                 </div>
                             </div>
 
@@ -450,14 +549,18 @@
                             <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
                                 <div class="flex items-center justify-between text-[10px] mb-2">
                                     <span class="font-bold text-gray-400 uppercase">Search Box</span>
-                                    <span id="searchbox-monthly-text" class="text-yellow-400 font-mono font-bold"></span>
+                                    <span id="searchbox-monthly-text"
+                                        class="text-yellow-400 font-mono font-bold"></span>
                                 </div>
                                 <div class="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden mb-2">
-                                    <div id="searchbox-progress" class="h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                                    <div id="searchbox-progress" class="h-1.5 rounded-full transition-all duration-500"
+                                        style="width: 0%"></div>
                                 </div>
-                                <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
+                                <div
+                                    class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
                                     <span>24h: <strong id="searchbox-24h-text" class="text-gray-300"></strong></span>
-                                    <span>RPM: <span id="searchbox-rpm-text" class="px-1 bg-gray-900 text-yellow-400 rounded"></span></span>
+                                    <span>RPM: <span id="searchbox-rpm-text"
+                                            class="px-1 bg-gray-900 text-yellow-400 rounded"></span></span>
                                 </div>
                             </div>
 
@@ -468,30 +571,44 @@
 
             <!-- Debug Logs Accordion -->
             <div class="border-b border-gray-700 shrink-0 flex flex-col max-h-[300px]">
-                <button onclick="toggleAccordion('debug-content', 'debug-chevron')" class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
+                <button onclick="toggleAccordion('debug-content', 'debug-chevron')"
+                    class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none">
                     <span class="font-bold text-gray-300 flex items-center">
                         <svg class="w-4 h-4 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 9l3 3-3 3m5 0h3M4 18h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z">
+                            </path>
                         </svg>
                         Analysis Logs
                     </span>
-                    <svg id="debug-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    <svg id="debug-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
                 </button>
-                <div id="debug-content" class="hidden p-3 bg-gray-900 overflow-y-auto font-mono text-[11px] text-green-400 flex-1">
+                <div id="debug-content"
+                    class="hidden p-3 bg-gray-900 overflow-y-auto font-mono text-[11px] text-green-400 flex-1">
                     <div id="debug-output"></div>
                 </div>
             </div>
 
             <!-- Chat Container (Flex-1 so it takes remaining space, Default Expanded) -->
             <div class="flex-1 flex flex-col min-h-[300px]">
-                <button onclick="toggleAccordion('chat-content', 'chat-chevron')" class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none shrink-0 border-b border-gray-700">
+                <button onclick="toggleAccordion('chat-content', 'chat-chevron')"
+                    class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none shrink-0 border-b border-gray-700">
                     <span class="font-bold text-blue-300 flex items-center">
                         <svg class="w-4 h-4 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
+                            </path>
                         </svg>
-                        Argyle Agent
+                        Argyle
                     </span>
-                    <svg id="chat-chevron" class="w-4 h-4 text-gray-400 transform transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    <svg id="chat-chevron"
+                        class="w-4 h-4 text-gray-400 transform transition-transform duration-200 rotate-180" fill="none"
+                        stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
                 </button>
                 <div id="chat-content" class="flex-1 flex flex-col bg-gray-900 overflow-hidden">
                     <div id="chat-messages" class="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
@@ -499,15 +616,17 @@
                     </div>
                     <div class="p-3 bg-gray-800 border-t border-gray-700 shrink-0">
                         <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
-                            <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                            <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">
+                            <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..."
+                                class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            <button type="submit" id="chat-submit-btn"
+                                class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">
                                 Send
                             </button>
                         </form>
                     </div>
                 </div>
             </div>
-            
+
         </div>
     </div>
 
@@ -519,7 +638,7 @@
         } catch (e) {
             console.warn('localStorage not accessible', e);
         }
-        
+
         document.addEventListener('DOMContentLoaded', () => {
             const track = document.getElementById('errands-toggle-track');
             const knob = document.getElementById('errands-toggle-knob');
@@ -558,13 +677,13 @@
     </div>
 
     <!-- Agentic Chat UI -->
-    
+
 
     <script>
         const urlParams = new URLSearchParams(window.location.search);
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
-        
+
         // Kiosk Chat functionality
         function toggleKioskChat() {
             const popup = document.getElementById('kiosk-chat-popup');
@@ -595,7 +714,7 @@
                     fab.classList.remove('hidden');
                     fab.classList.add('flex');
                 }
-                
+
                 // Move chat UI to floating popup
                 const chatContent = document.getElementById('chat-content');
                 const popupBody = document.getElementById('kiosk-chat-popup-body');
@@ -687,7 +806,7 @@
                 driversList.filter(d => !d.is_disabled).forEach(d => { driversMap[d.id] = d; });
 
                 let url = `${apiBase}api/schedule?force_refresh=false`;
-                
+
                 if (!currentStartDate || !currentEndDate) {
                     currentStartDate = new Date();
                     currentStartDate.setHours(0, 0, 0, 0);
@@ -704,9 +823,9 @@
                 const e = toLocalIsoString(endOfDay);
 
                 url = `${apiBase}api/schedule?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force_refresh=false`;
-                
+
                 url += (url.includes('?') ? '&' : '?') + '_cb=' + new Date().getTime();
-                
+
                 const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' } });
                 if (!res.ok) throw new Error(`Failed to load schedule: ${res.status}`);
                 const data = await res.json();
@@ -747,7 +866,7 @@
                     btnNext.disabled = false;
                     btnNext.innerHTML = 'Next Day &rarr;';
                 }
-                
+
                 const syncBtn = document.getElementById('sync-btn');
                 const syncIcon = document.getElementById('sync-icon');
                 const syncText = document.getElementById('sync-text');
@@ -820,8 +939,8 @@
             document.getElementById('error-container').classList.add('hidden');
         }
 
-        
-        
+
+
 
         async function fetchNotifications() {
             try {
@@ -888,7 +1007,7 @@
                 btn.classList.replace('hover:bg-yellow-500', 'hover:bg-gray-600');
                 btn.classList.replace('text-white', 'text-gray-300');
                 btn.classList.replace('border-yellow-500', 'border-gray-600');
-                
+
                 // When turning off draft mode, sync with backend to let solver run
                 forceSync(false, false).catch(console.error);
             }
@@ -901,12 +1020,12 @@
             const originalHtml = analyzeBtn.innerHTML;
             analyzeBtn.innerHTML = `<svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing...`;
             analyzeBtn.disabled = true;
-            
+
             const debugPanel = document.getElementById('debug-panel');
             const debugOutput = document.getElementById('debug-output');
             debugPanel.classList.remove('hidden');
             debugOutput.innerHTML = 'Starting background task...';
-            
+
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/rules/analyze-overrides/start`, { method: 'POST' });
@@ -918,12 +1037,12 @@
                     const statusRes = await fetch(`${apiBase}api/rules/analyze-overrides/status/${task_id}`);
                     if (!statusRes.ok) throw new Error("Failed to check analysis status");
                     const statusData = await statusRes.json();
-                    
+
                     if (statusData.logs) {
                         debugOutput.innerHTML = statusData.logs.map(l => `<div>${l}</div>`).join('');
                         debugOutput.scrollTop = debugOutput.scrollHeight;
                     }
-                    
+
                     if (statusData.status === 'completed') {
                         data = statusData.result;
                         break;
@@ -931,24 +1050,24 @@
                         throw new Error(statusData.error || "Analysis failed internally");
                     }
                 }
-                
+
                 if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
                     alert("No new rules were generated (either no consistent patterns found or rules already exist).");
                     return;
                 }
-                
+
                 // Show Modal
                 proposedRulesPayload = { rules: [], priority_rules: [] };
                 let modalContent = document.getElementById('ai-rules-modal-content');
                 let html = '';
-                
+
                 let ruleIndex = 0;
                 let prIndex = 0;
 
                 data.clusters.forEach(c => {
                     html += `<div class="mb-6 p-4 bg-gray-800 rounded-lg border border-purple-500">`;
                     html += `<h3 class="text-lg font-bold text-purple-400 mb-2">Pattern: ${c.description}</h3>`;
-                    
+
                     if (c.proposed_rules && c.proposed_rules.length > 0) {
                         html += `<div class="mb-4"><h4 class="font-bold text-gray-300 mb-2">Proposed Constraint Rules:</h4>`;
                         c.proposed_rules.forEach(r => {
@@ -973,7 +1092,7 @@
                         });
                         html += `</div>`;
                     }
-                    
+
                     if (c.proposed_priority_rules && c.proposed_priority_rules.length > 0) {
                         html += `<div><h4 class="font-bold text-gray-300 mb-2">Proposed Priority Rules:</h4>`;
                         c.proposed_priority_rules.forEach(pr => {
@@ -982,7 +1101,7 @@
                             <div class="flex items-start gap-3 p-3 bg-gray-700 rounded mb-2">
                                 <input type="checkbox" id="prop-pr-${prIndex}" class="mt-1 w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500" checked onchange="toggleProposedRule('priority', ${prIndex}, this.checked)">
                                 <div>
-                                    <div class="font-semibold text-white">Weight: ${pr.weight_modifier > 0 ? '+'+pr.weight_modifier : pr.weight_modifier}</div>
+                                    <div class="font-semibold text-white">Weight: ${pr.weight_modifier > 0 ? '+' + pr.weight_modifier : pr.weight_modifier}</div>
                                     <div class="text-sm text-gray-400">
                                         ${pr.keywords && pr.keywords.length ? `Keywords: ${pr.keywords.join(', ')}<br>` : ''}
                                         ${pr.passenger_names && pr.passenger_names.length ? `Passengers: ${pr.passenger_names.join(', ')}<br>` : (pr.passenger_ids && pr.passenger_ids.length ? `Passengers: ${pr.passenger_ids.join(', ')}<br>` : '')}
@@ -994,10 +1113,10 @@
                         });
                         html += `</div>`;
                     }
-                    
+
                     html += `</div>`;
                 });
-                
+
                 modalContent.innerHTML = html;
                 document.getElementById('ai-rules-modal').classList.remove('hidden');
 
@@ -1009,9 +1128,9 @@
                 analyzeBtn.disabled = false;
             }
         }
-        
+
         const skippedProposedRules = { rules: new Set(), priority_rules: new Set() };
-        
+
         function toggleProposedRule(type, index, isChecked) {
             if (type === 'rule') {
                 if (isChecked) skippedProposedRules.rules.delete(index);
@@ -1021,22 +1140,22 @@
                 else skippedProposedRules.priority_rules.add(index);
             }
         }
-        
+
         function closeAiRulesModal() {
             document.getElementById('ai-rules-modal').classList.add('hidden');
         }
-        
+
         async function saveAiRules() {
             const finalPayload = {
                 rules: proposedRulesPayload.rules.filter((_, i) => !skippedProposedRules.rules.has(i)),
                 priority_rules: proposedRulesPayload.priority_rules.filter((_, i) => !skippedProposedRules.priority_rules.has(i))
             };
-            
+
             if (finalPayload.rules.length === 0 && finalPayload.priority_rules.length === 0) {
                 closeAiRulesModal();
                 return;
             }
-            
+
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/rules/bulk-add`, {
@@ -1072,10 +1191,10 @@
             const diagBtn = document.getElementById('tab-btn-diagnostics');
             const rulesContent = document.getElementById('tab-content-rules');
             const diagContent = document.getElementById('tab-content-diagnostics');
-            
+
             const activeClass = ['text-blue-400', 'border-blue-500'];
             const inactiveClass = ['text-gray-400', 'border-transparent'];
-            
+
             if (tabId === 'rules') {
                 rulesBtn.classList.add(...activeClass);
                 rulesBtn.classList.remove(...inactiveClass);
@@ -1114,7 +1233,7 @@
             const attendeesSection = document.getElementById('view-attendees-section');
             const attendeesEl = document.getElementById('view-attendees');
             const calMeta = currentData.calendar_metadata || {};
-            
+
             let paxMap = {};
             if (ev.calendar_ids) {
                 ev.calendar_ids.forEach(cid => {
@@ -1124,7 +1243,7 @@
                     paxMap[name] = color;
                 });
             }
-            
+
             const mRulesForPax = currentData.matched_rules && currentData.matched_rules[eventId] ? currentData.matched_rules[eventId] : [];
             if (currentData.passengers && mRulesForPax.length > 0) {
                 mRulesForPax.forEach(r => {
@@ -1143,7 +1262,7 @@
                     }
                 });
             }
-            
+
             const paxNames = Object.keys(paxMap);
             if (paxNames.length > 0) {
                 attendeesEl.innerHTML = paxNames.map(name => {
@@ -1354,7 +1473,7 @@
             // Matched Rules
             const rulesSection = document.getElementById('matched-rules-list');
             const mRules = currentData.matched_rules && currentData.matched_rules[eventId] ? currentData.matched_rules[eventId] : [];
-            
+
             const passengersMap = {};
             if (currentData.passengers) {
                 currentData.passengers.forEach(p => passengersMap[p.id] = p);
@@ -1401,7 +1520,7 @@
                         filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-green-300">Passenger ${paxLabel}: ${passNames.join(', ')}</span>`;
                     }
                     if (r.days_of_week && r.days_of_week.length > 0) {
-                        const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+                        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
                         const dayNames = r.days_of_week.map(d => days[d]);
                         filtersHtml += `<span class="bg-gray-800 px-2 py-1 rounded text-pink-300">Days: ${dayNames.join(', ')}</span>`;
                     }
@@ -1441,10 +1560,10 @@
             }
 
             // Tab visibility logic
-            const hasDiagnostics = !document.getElementById('diagnostics-section').classList.contains('hidden') || 
-                                   !document.getElementById('conflicts-section').classList.contains('hidden') ||
-                                   document.getElementById('view-unassigned-reason').innerHTML.trim() !== '';
-            
+            const hasDiagnostics = !document.getElementById('diagnostics-section').classList.contains('hidden') ||
+                !document.getElementById('conflicts-section').classList.contains('hidden') ||
+                document.getElementById('view-unassigned-reason').innerHTML.trim() !== '';
+
             const tabsContainer = document.getElementById('modal-tabs');
             const tabBtnDiag = document.getElementById('tab-btn-diagnostics');
             const tabContentRules = document.getElementById('tab-content-rules');
@@ -1506,7 +1625,7 @@
                 }
             }
 
-            const hourOptions = Array.from({length: 12}, (_, i) => {
+            const hourOptions = Array.from({ length: 12 }, (_, i) => {
                 const val = (i + 1).toString().padStart(2, '0');
                 return `<option value="${val}" ${val === h ? 'selected' : ''}>${val}</option>`;
             }).join('');
@@ -1549,14 +1668,14 @@
             document.getElementById('edit-location').value = ev.location || '';
 
             const appConfig = ev.app_config || {};
-            
+
             document.getElementById('edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
             document.getElementById('edit-is-trip').checked = appConfig.is_trip || false;
 
             // Passengers
             const paxContainer = document.getElementById('edit-passengers-container');
             const passengers = currentData.passengers || [];
-                        paxContainer.innerHTML = passengers.map(p => {
+            paxContainer.innerHTML = passengers.map(p => {
                 let isChecked = false;
                 let isDisabled = false;
 
@@ -1597,7 +1716,7 @@
             // Drivers
             const drvContainer = document.getElementById('edit-drivers-container');
             const drivers = currentData.drivers || [];
-            
+
             drvContainer.innerHTML = drivers.map(d => {
                 let isChecked = false;
                 if (appConfig.driver_ids) {
@@ -1607,7 +1726,7 @@
                     const dEvents = currentData.driver_events[d.id] || [];
                     isChecked = dEvents.includes(ev.id);
                 }
-                
+
                 return `
                     <label class="flex items-center space-x-2 text-sm text-gray-300">
                         <input type="checkbox" value="${d.id}" class="drv-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer" ${isChecked ? 'checked' : ''}>
@@ -1627,13 +1746,13 @@
             // Parse Config
             const paxCheckboxes = document.querySelectorAll('.pax-checkbox:checked, .pax-checkbox:disabled');
             const drvCheckboxes = document.querySelectorAll('.drv-checkbox:checked');
-            
+
             const passengerTimes = {};
             paxCheckboxes.forEach(cb => {
                 const pId = cb.value;
                 const timesContainer = document.getElementById('pax-times-' + pId);
                 if (!timesContainer) return;
-                
+
                 const timeRows = timesContainer.querySelectorAll('.pax-times-container[data-edited="true"]');
                 if (timeRows.length > 0) {
                     passengerTimes[pId] = {};
@@ -1642,7 +1761,7 @@
                         const h = row.querySelector('.pax-time-h').value;
                         const m = row.querySelector('.pax-time-m').value;
                         const ampm = row.querySelector('.pax-time-ampm').value;
-                        
+
                         if (h && m) {
                             let hour24 = parseInt(h, 10);
                             if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
@@ -1650,7 +1769,7 @@
                             passengerTimes[pId][type] = hour24.toString().padStart(2, '0') + ':' + m;
                         }
                     });
-                    
+
                     // Cleanup if empty
                     if (Object.keys(passengerTimes[pId]).length === 0) {
                         delete passengerTimes[pId];
@@ -1681,13 +1800,13 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(configData)
                 });
-                
+
                 // Save overrides if time changed
                 const startInput = document.getElementById('edit-start').value;
                 const endInput = document.getElementById('edit-end').value;
                 const newStart = toIsoString(startInput);
                 const newEnd = toIsoString(endInput);
-                
+
                 if (newStart !== ev.start || newEnd !== ev.end) {
                     await fetch('api/events', {
                         method: 'PATCH',
@@ -1700,7 +1819,7 @@
                         })
                     });
                 }
-                
+
                 closeEventModal();
                 if (currentData && currentData.events) {
                     if (ev.recurring_event_id) {
@@ -1715,14 +1834,14 @@
                 showError("Failed to save configuration.");
             }
         }
-        
+
         async function ignoreEvent() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
-            
+
             const googleIdParts = ev.source_event_ids[0].split('::');
             const googleId = googleIdParts[googleIdParts.length - 1];
-            
+
             try {
                 if (ev.start) {
                     localSolvingDates.add(ev.start.split('T')[0]);
@@ -1755,14 +1874,14 @@
 
         let autocompleteTimeout = null;
         function generateUUID() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return generateUUID();
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                return generateUUID();
+            }
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
 
         let currentSessionToken = null;
         async function handleLocationInput() {
@@ -1803,7 +1922,7 @@
         async function selectLocation(loc, mapboxId = null) {
             document.getElementById('edit-location').value = loc;
             document.getElementById('autocomplete-dropdown').classList.add('hidden');
-            
+
             if (mapboxId && currentSessionToken) {
                 try {
                     const res = await fetch(`api/places/retrieve?mapbox_id=${mapboxId}&session_token=${currentSessionToken}`);
@@ -1861,7 +1980,7 @@
                     targetEventId = ev.recurring_event_id;
                 }
             }
-            
+
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
                 await fetch(`api/overrides?draft=${isDraftMode}`, {
@@ -1915,13 +2034,13 @@
                 await fetch(`api/overrides/event/${encodeURIComponent(targetEventId)}?draft=${isDraftMode}`, {
                     method: 'DELETE'
                 });
-                
+
                 // Optimistic UI update
                 if (currentData && currentData.overridden_events) {
                     currentData.overridden_events = currentData.overridden_events.filter(id => id !== eventId);
                     renderSchedule(currentData);
                 }
-                
+
                 // If not in draft mode, forceSync
                 if (!isDraftMode) {
                     forceSync(false, false).catch(console.error);
@@ -1969,27 +2088,27 @@
 
         function renderSchedule(data, options = {}) {
             if (!data) data = {};
-            const { 
+            const {
                 targetContainerId = 'schedule-container',
                 isModal = false,
                 dateFilter = null,
                 isPagination = false
             } = options;
 
-            const { 
-                events = [], 
-                assignments = {}, 
-                ghost_assignments = {}, 
-                unassigned = [], 
-                no_location = [], 
-                calendar_metadata = {}, 
-                overridden_events = [], 
+            const {
+                events = [],
+                assignments = {},
+                ghost_assignments = {},
+                unassigned = [],
+                no_location = [],
+                calendar_metadata = {},
+                overridden_events = [],
                 lateness_warnings = [],
                 scheduled_errands = []
             } = data;
-            
+
             let localEvents = [...events];
-            let localAssignments = {...assignments};
+            let localAssignments = { ...assignments };
             let localRouteEdges = JSON.parse(JSON.stringify(data.route_edges || {}));
             let localInitialEdges = JSON.parse(JSON.stringify(initialEdges || {}));
             let localFinalEdges = JSON.parse(JSON.stringify(finalEdges || {}));
@@ -2001,16 +2120,16 @@
                     errand.event_type = 'errand';
                     localEvents.push(errand);
                     localAssignments[errand.id] = errand.driver.id;
-                    
+
                     // Patch route edges for drive time pills
                     const d_id = errand.driver.id;
                     if (!localRouteEdges[d_id]) localRouteEdges[d_id] = {};
                     if (!localInitialEdges[d_id]) localInitialEdges[d_id] = {};
                     if (!localFinalEdges[d_id]) localFinalEdges[d_id] = {};
-                    
+
                     const e1_id = errand.inserted_after_event_id;
                     const e2_id = errand.inserted_before_event_id;
-                    
+
                     if (e1_id === null && e2_id === null) {
                         // Only event of the day
                         localInitialEdges[d_id][errand.id] = {
@@ -2031,7 +2150,7 @@
                             delay_mins: 0
                         };
                         delete localInitialEdges[d_id][e2_id];
-                        
+
                         localRouteEdges[d_id][errand.id] = {
                             from_event: errand.id,
                             to_event: e2_id,
@@ -2046,7 +2165,7 @@
                             delay_mins: 0
                         };
                         delete localFinalEdges[d_id][e1_id];
-                        
+
                         localRouteEdges[d_id][e1_id] = {
                             from_event: e1_id,
                             to_event: errand.id,
@@ -2063,7 +2182,7 @@
                                 delay_mins: 0
                             };
                         }
-                        
+
                         localRouteEdges[d_id][errand.id] = {
                             from_event: errand.id,
                             to_event: e2_id,
@@ -2077,43 +2196,43 @@
             if (!isModal) {
                 // --- Inbox Logic ---
                 let triageEvents = events.filter(e => e.needs_triage);
-            
-            // Group recurring events
-            const seriesGrouped = {};
-            const deduplicatedTriageEvents = [];
-            for (const ev of triageEvents) {
-                if (ev.recurring_event_id) {
-                    if (!seriesGrouped[ev.recurring_event_id]) {
-                        seriesGrouped[ev.recurring_event_id] = {
-                            ...ev,
-                            is_series_grouped: true,
-                            series_count: 1
-                        };
-                        deduplicatedTriageEvents.push(seriesGrouped[ev.recurring_event_id]);
+
+                // Group recurring events
+                const seriesGrouped = {};
+                const deduplicatedTriageEvents = [];
+                for (const ev of triageEvents) {
+                    if (ev.recurring_event_id) {
+                        if (!seriesGrouped[ev.recurring_event_id]) {
+                            seriesGrouped[ev.recurring_event_id] = {
+                                ...ev,
+                                is_series_grouped: true,
+                                series_count: 1
+                            };
+                            deduplicatedTriageEvents.push(seriesGrouped[ev.recurring_event_id]);
+                        } else {
+                            seriesGrouped[ev.recurring_event_id].series_count++;
+                        }
                     } else {
-                        seriesGrouped[ev.recurring_event_id].series_count++;
+                        deduplicatedTriageEvents.push(ev);
                     }
-                } else {
-                    deduplicatedTriageEvents.push(ev);
                 }
-            }
-            
-            triageEvents = deduplicatedTriageEvents;
-            
-            const inboxContainer = document.getElementById('inbox-container');
-            const inboxList = document.getElementById('inbox-list');
-            const inboxCount = document.getElementById('inbox-count');
 
-            if (triageEvents.length > 0 && !isKiosk) {
-                inboxCount.textContent = triageEvents.length;
-                inboxContainer.classList.remove('hidden');
-                inboxList.innerHTML = triageEvents.map(ev => {
-                    const calMetas = (ev.calendar_ids || []).map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
-                    const evColor = calMetas.length > 0 ? calMetas[0].backgroundColor : '#3B82F6';
-                    
-                    const seriesBadge = ev.is_series_grouped && ev.series_count > 1 ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded ml-2 border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
+                triageEvents = deduplicatedTriageEvents;
 
-                    return `
+                const inboxContainer = document.getElementById('inbox-container');
+                const inboxList = document.getElementById('inbox-list');
+                const inboxCount = document.getElementById('inbox-count');
+
+                if (triageEvents.length > 0 && !isKiosk) {
+                    inboxCount.textContent = triageEvents.length;
+                    inboxContainer.classList.remove('hidden');
+                    inboxList.innerHTML = triageEvents.map(ev => {
+                        const calMetas = (ev.calendar_ids || []).map(c => calendar_metadata && calendar_metadata[c] ? calendar_metadata[c] : { backgroundColor: '#3B82F6', summary: 'Calendar' });
+                        const evColor = calMetas.length > 0 ? calMetas[0].backgroundColor : '#3B82F6';
+
+                        const seriesBadge = ev.is_series_grouped && ev.series_count > 1 ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded ml-2 border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
+
+                        return `
                         <div onclick="openEventModal('${ev.id}')" class="bg-gray-800 border border-red-500/50 rounded-xl p-4 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group">
                             <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color: ${evColor}"></div>
                             <div class="pl-2">
@@ -2129,58 +2248,58 @@
                             </div>
                         </div>
                     `;
-                }).join('');
-            } else {
-                inboxContainer.classList.add('hidden');
-            }
-            // --- End Inbox Logic ---
-            
-            // --- AI Suggestion Logic ---
-            const aiBanner = document.getElementById('ai-suggestion-banner');
-            let hasAiSuggestion = false;
-            let firstSuggestionDate = null;
-            let allSuggestionDates = [];
-            if (data.ai_metadata) {
-                // Ensure dates are sorted chronologically
-                const sortedDates = Object.keys(data.ai_metadata).sort((a, b) => new Date(a) - new Date(b));
-                for (const dateStr of sortedDates) {
-                    const meta = data.ai_metadata[dateStr];
-                    if (meta.ai_status === 'suggests_alternative' && meta.options && meta.options.length > 0) {
-                        hasAiSuggestion = true;
-                        allSuggestionDates.push(dateStr);
-                        if (!firstSuggestionDate) firstSuggestionDate = dateStr;
-                    }
+                    }).join('');
+                } else {
+                    inboxContainer.classList.add('hidden');
                 }
-            }
-            if (hasAiSuggestion && !isReadOnly) {
-                aiBanner.classList.remove('hidden');
-                window.currentAiMetadata = data.ai_metadata;
-                window.firstSuggestionDate = firstSuggestionDate;
-                window.allSuggestionDates = allSuggestionDates;
-            } else {
-                aiBanner.classList.add('hidden');
-                window.currentAiMetadata = data.ai_metadata || null;
-                window.allSuggestionDates = [];
-            }
+                // --- End Inbox Logic ---
 
-            // Clear local solving dates if they are no longer in data.solving_dates
-            if (data.solving_dates) {
-                for (const date of localSolvingDates) {
-                    if (!data.solving_dates.includes(date)) {
-                        localSolvingDates.delete(date);
+                // --- AI Suggestion Logic ---
+                const aiBanner = document.getElementById('ai-suggestion-banner');
+                let hasAiSuggestion = false;
+                let firstSuggestionDate = null;
+                let allSuggestionDates = [];
+                if (data.ai_metadata) {
+                    // Ensure dates are sorted chronologically
+                    const sortedDates = Object.keys(data.ai_metadata).sort((a, b) => new Date(a) - new Date(b));
+                    for (const dateStr of sortedDates) {
+                        const meta = data.ai_metadata[dateStr];
+                        if (meta.ai_status === 'suggests_alternative' && meta.options && meta.options.length > 0) {
+                            hasAiSuggestion = true;
+                            allSuggestionDates.push(dateStr);
+                            if (!firstSuggestionDate) firstSuggestionDate = dateStr;
+                        }
                     }
                 }
-            } else {
-                localSolvingDates.clear();
-            }
+                if (hasAiSuggestion && !isReadOnly) {
+                    aiBanner.classList.remove('hidden');
+                    window.currentAiMetadata = data.ai_metadata;
+                    window.firstSuggestionDate = firstSuggestionDate;
+                    window.allSuggestionDates = allSuggestionDates;
+                } else {
+                    aiBanner.classList.add('hidden');
+                    window.currentAiMetadata = data.ai_metadata || null;
+                    window.allSuggestionDates = [];
+                }
+
+                // Clear local solving dates if they are no longer in data.solving_dates
+                if (data.solving_dates) {
+                    for (const date of localSolvingDates) {
+                        if (!data.solving_dates.includes(date)) {
+                            localSolvingDates.delete(date);
+                        }
+                    }
+                } else {
+                    localSolvingDates.clear();
+                }
             } // Close if (!isModal)
 
             const scheduleByDate = {};
             if (currentStartDate && currentEndDate) {
                 let currDate = new Date(currentStartDate);
-                currDate.setHours(0,0,0,0);
+                currDate.setHours(0, 0, 0, 0);
                 const endD = new Date(currentEndDate);
-                endD.setHours(23,59,59,999);
+                endD.setHours(23, 59, 59, 999);
                 while (currDate <= endD) {
                     const year = currDate.getFullYear();
                     const month = String(currDate.getMonth() + 1).padStart(2, '0');
@@ -2241,7 +2360,7 @@
 
                 let endDate = new Date(ev.end);
                 endDate.setHours(0, 0, 0, 0);
-                
+
                 // If the event ends at midnight, don't include the end date unless it's the same as the start date
                 if (new Date(ev.end).getHours() === 0 && new Date(ev.end).getMinutes() === 0 && currDate < endDate) {
                     endDate.setDate(endDate.getDate() - 1);
@@ -2259,7 +2378,7 @@
                         if (!scheduleByDate[dateKey][col_id]) scheduleByDate[dateKey][col_id] = [];
                         scheduleByDate[dateKey][col_id].push(ev);
                     });
-                    
+
                     currDate.setDate(currDate.getDate() + 1);
                 }
             });
@@ -2296,10 +2415,10 @@
                 const colsObj = scheduleByDate[date];
 
                 function isPassengerTask(ev) {
-                    return (localAssignments && localAssignments[ev.id]) || 
-                           (data.ghost_assignments && data.ghost_assignments[ev.id]) || 
-                           (data.unassigned && data.unassigned.includes(ev.id)) || 
-                           (data.no_location && data.no_location.includes(ev.id));
+                    return (localAssignments && localAssignments[ev.id]) ||
+                        (data.ghost_assignments && data.ghost_assignments[ev.id]) ||
+                        (data.unassigned && data.unassigned.includes(ev.id)) ||
+                        (data.no_location && data.no_location.includes(ev.id));
                 }
 
                 // Step 1: Removed min/max passenger time filtering so all driver events are shown as busy blocks
@@ -2331,11 +2450,11 @@
 
                 const dayContainer = document.createElement('div');
                 dayContainer.className = "relative border border-gray-700/30 rounded-xl p-4 mb-6 bg-gray-800/10 overflow-hidden flex flex-col";
-                
+
                 const formattedDateTitle = formatDateStr(date);
                 const dateHeader = document.createElement('div');
                 dateHeader.className = "bg-gray-800 border-t border-gray-700 py-2.5 px-4 mb-4 shadow-md rounded-lg flex items-center justify-between";
-                
+
                 let aiBadgeHTML = '';
                 if (data.ai_metadata && data.ai_metadata[date] && !isReadOnly) {
                     const meta = data.ai_metadata[date];
@@ -2349,7 +2468,7 @@
                         aiBadgeHTML = `<span class="bg-gray-800 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded ml-3 flex items-center border border-gray-700 cursor-help" title="AI is idle. Go to Settings -> General and click 'Synthesize AI Rules' to generate themes and activate AI evaluation."><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.618 5.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016zM12 9v2m0 4h.01"></path></svg> AI Idle</span>`;
                     }
                 }
-                
+
                 dateHeader.innerHTML = `<div class="flex items-center"><h2 class="text-base font-bold text-blue-200 uppercase tracking-widest leading-none">${formattedDateTitle}</h2>${aiBadgeHTML}</div>`;
                 dayContainer.appendChild(dateHeader);
 
@@ -2397,10 +2516,10 @@
                 colIds.forEach(c_id => {
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(e => {
-                            const isDriverOnlyEv = !(localAssignments && localAssignments[e.id]) && 
-                                                   !(data.ghost_assignments && data.ghost_assignments[e.id]) && 
-                                                   !(data.unassigned && data.unassigned.includes(e.id)) && 
-                                                   !(data.no_location && data.no_location.includes(e.id));
+                            const isDriverOnlyEv = !(localAssignments && localAssignments[e.id]) &&
+                                !(data.ghost_assignments && data.ghost_assignments[e.id]) &&
+                                !(data.unassigned && data.unassigned.includes(e.id)) &&
+                                !(data.no_location && data.no_location.includes(e.id));
                             const durationMins = (new Date(e.end) - new Date(e.start)) / 60000;
                             if (e.event_type !== 'background_trip' && !isDriverOnlyEv && !e.all_day && durationMins < 1430) {
                                 allEventsForDate.push(e);
@@ -2477,7 +2596,7 @@
                     const t = new Date(dateStr).getTime();
                     if (blocks.length === 0) return 0;
                     if (t <= blocks[0].start) return 0;
-                    
+
                     for (let i = 0; i < blocks.length; i++) {
                         const b = blocks[i];
                         if (t >= b.start && t <= b.end) {
@@ -2608,7 +2727,7 @@
                     const uniqueColEventsMap = {};
                     colEvents.forEach(e => uniqueColEventsMap[e.id] = e);
                     const uniqueColEvents = Object.values(uniqueColEventsMap);
-                    
+
                     const evColData = {};
                     const cols = [];
                     uniqueColEvents.forEach(ev => {
@@ -2631,17 +2750,17 @@
                             evColData[ev.id] = { colIndex: cols.length - 1 };
                         }
                     });
-                    
+
                     uniqueColEvents.forEach(ev => {
                         if (ev.event_type === 'background_trip' || !isPassengerTask(ev)) return;
-                        
+
                         const visited = new Set();
                         const queue = [ev];
                         visited.add(ev.id);
-                        
+
                         let maxColIndex = evColData[ev.id].colIndex;
-                        
-                        while(queue.length > 0) {
+
+                        while (queue.length > 0) {
                             const current = queue.shift();
                             uniqueColEvents.forEach(otherEv => {
                                 if (otherEv.event_type !== 'background_trip' && isPassengerTask(otherEv) && !visited.has(otherEv.id)) {
@@ -2674,7 +2793,7 @@
 
                         let leftStyle = '28px';
                         let widthStyle = 'calc(100% - 32px)';
-                        
+
                         if (ev.event_type !== 'background_trip' && isPassengerTask(ev) && evColData[ev.id] && evColData[ev.id].totalCols > 1) {
                             const cIndex = evColData[ev.id].colIndex;
                             const tCols = evColData[ev.id].totalCols;
@@ -2716,7 +2835,7 @@
                                 computedOrigin = initEdge.driver_home_location;
                             }
                         }
-                        
+
                         if (latenessWarningsMap[ev.id]) {
                             const match = latenessWarningsMap[ev.id].match(/(\d+)m late/);
                             if (match) {
@@ -2799,7 +2918,7 @@
                             if (completed.includes(legId)) return 'completed';
                             return 'pending';
                         }
-                        
+
                         function getPillStyle(state) {
                             if (state === 'in_progress') return 'bg-blue-900/50 border-blue-400 text-blue-100 shadow-[0_0_10px_rgba(59,130,246,0.5)]';
                             if (state === 'completed') return 'bg-gray-900/50 border-gray-700 text-gray-500 opacity-60 grayscale line-through';
@@ -2872,7 +2991,7 @@
                             let accumulatedDelay = 0;
                             let nextEv = null;
                             let firstEdge = edge;
-                            
+
                             while (edge) {
                                 accumulatedTravel += edge.travel_mins || 0;
                                 accumulatedDelay += edge.delay_mins || 0;
@@ -2884,13 +3003,13 @@
                                     edge = localRouteEdges[c_id][currentEvId];
                                 }
                             }
-                            
+
                             if (nextEv && edge) {
                                 let effectiveEdge = Object.assign({}, firstEdge);
                                 effectiveEdge.travel_mins = accumulatedTravel;
                                 effectiveEdge.delay_mins = accumulatedDelay;
                                 edge = effectiveEdge;
-                                
+
                                 const nextStartY = getTimeY(nextEv.start);
                                 const distance = nextStartY - endY;
                                 const trafficWarn = edge.delay_mins > 3 ? `<span class="ml-1 text-yellow-400 text-[9px] font-bold" title="${edge.delay_mins}min traffic delay">⚠</span>` : '';
@@ -3195,7 +3314,7 @@
                             currentEndDate.setHours(23, 59, 59, 999);
                         }
                     }
-                } catch(e) { console.error(e); }
+                } catch (e) { console.error(e); }
             }
             fetchSchedule();
             fetchMapsStatsDashboard();
@@ -3204,7 +3323,7 @@
 
         // Listen for real-time updates from the backend
         const evtSource = new EventSource("api/stream");
-        evtSource.onmessage = function(event) {
+        evtSource.onmessage = function (event) {
             if (event.data === "update") {
                 if (currentStartDate && currentEndDate) {
                     fetchSchedule(true);
@@ -3305,9 +3424,9 @@
             }
         }
 
-        
 
-        
+
+
 
         async function fetchMapsStatsDashboard() {
             try {
@@ -3315,14 +3434,14 @@
                 const res = await fetch(`${apiBase}api/maps/stats`);
                 if (!res.ok) return;
                 const stats = await res.json();
-                
+
                 document.getElementById('stats-loader').classList.add('hidden');
                 document.getElementById('stats-content').classList.remove('hidden');
 
                 // Update warnings
                 const warningsEl = document.getElementById('stats-warnings');
                 let warningsHtml = '';
-                
+
                 if (stats.has_key === false) {
                     warningsHtml += `
                         <div class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex flex-col gap-1">
@@ -3335,10 +3454,10 @@
                         </div>
                     `;
                 }
-                
+
                 const matrixOffline = stats.matrix.disabled || (stats.matrix.monthly >= stats.matrix.limit) || (stats.has_key === false);
                 const directionsOffline = stats.directions.disabled || (stats.directions.monthly >= stats.directions.limit) || (stats.has_key === false);
-                
+
                 if (matrixOffline && stats.has_key !== false) {
                     const reason = stats.matrix.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.matrix.monthly} / ${stats.matrix.limit}).`;
                     warningsHtml += `
@@ -3376,7 +3495,7 @@
                 matProgress.style.width = `${matPct}%`;
                 matProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.matrix.monthly >= stats.matrix.limit ? 'bg-red-500' : (stats.matrix.monthly >= stats.matrix.limit * 0.8 ? 'bg-amber-500' : 'bg-blue-500')}`;
                 document.getElementById('matrix-24h-text').textContent = stats.matrix.rolling_24h;
-                
+
                 const matRpm = document.getElementById('matrix-rpm-text');
                 if (stats.matrix.rpm > 0) {
                     matRpm.textContent = stats.matrix.rpm;
@@ -3393,7 +3512,7 @@
                 dirProgress.style.width = `${dirPct}%`;
                 dirProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.directions.monthly >= stats.directions.limit ? 'bg-red-500' : (stats.directions.monthly >= stats.directions.limit * 0.8 ? 'bg-amber-500' : 'bg-purple-500')}`;
                 document.getElementById('directions-24h-text').textContent = stats.directions.rolling_24h;
-                
+
                 const dirRpm = document.getElementById('directions-rpm-text');
                 if (stats.directions.rpm > 0) {
                     dirRpm.textContent = stats.directions.rpm;
@@ -3410,7 +3529,7 @@
                 geoProgress.style.width = `${geoPct}%`;
                 geoProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.geocode.monthly >= stats.geocode.limit ? 'bg-red-500' : (stats.geocode.monthly >= stats.geocode.limit * 0.8 ? 'bg-amber-500' : 'bg-green-500')}`;
                 document.getElementById('geocode-24h-text').textContent = stats.geocode.rolling_24h;
-                
+
                 const geoRpm = document.getElementById('geocode-rpm-text');
                 if (stats.geocode.rpm > 0) {
                     geoRpm.textContent = stats.geocode.rpm;
@@ -3427,7 +3546,7 @@
                 sbProgress.style.width = `${sbPct}%`;
                 sbProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.searchbox.monthly >= stats.searchbox.limit ? 'bg-red-500' : (stats.searchbox.monthly >= stats.searchbox.limit * 0.8 ? 'bg-amber-500' : 'bg-yellow-500')}`;
                 document.getElementById('searchbox-24h-text').textContent = stats.searchbox.rolling_24h;
-                
+
                 const sbRpm = document.getElementById('searchbox-rpm-text');
                 if (stats.searchbox.rpm > 0) {
                     sbRpm.textContent = stats.searchbox.rpm;
@@ -3455,17 +3574,17 @@
         function openAIOptionsModal(dateStr = null) {
             const targetDate = dateStr || window.firstSuggestionDate;
             if (!targetDate || !window.currentAiMetadata || !window.currentAiMetadata[targetDate]) return;
-            
+
             const meta = window.currentAiMetadata[targetDate];
             if (!meta.options || meta.options.length === 0) return;
-            
+
             document.getElementById('ai-modal').classList.remove('hidden');
-            
+
             window.activeAITargetDate = targetDate;
             window.activeAIOptions = meta.options;
             window.activeAISelectedIndex = meta.selected_index;
             window.activeAIReasoning = meta.llm_reasoning;
-            
+
             updateAIModalNav();
             renderAIOptionsList();
             renderAIOptionDetails(meta.selected_index);
@@ -3474,7 +3593,7 @@
         function updateAIModalNav() {
             const navEl = document.getElementById('ai-modal-nav');
             const navText = document.getElementById('ai-modal-nav-text');
-            
+
             if (window.allSuggestionDates && window.allSuggestionDates.length > 1) {
                 navEl.classList.remove('hidden');
                 const idx = window.allSuggestionDates.indexOf(window.activeAITargetDate);
@@ -3488,11 +3607,11 @@
             if (!window.allSuggestionDates || window.allSuggestionDates.length === 0) return;
             const idx = window.allSuggestionDates.indexOf(window.activeAITargetDate);
             if (idx === -1) return;
-            
+
             let newIdx = idx + dir;
             if (newIdx < 0) newIdx = window.allSuggestionDates.length - 1;
             if (newIdx >= window.allSuggestionDates.length) newIdx = 0;
-            
+
             openAIOptionsModal(window.allSuggestionDates[newIdx]);
         }
 
@@ -3503,18 +3622,18 @@
         function renderAIOptionsList() {
             const listEl = document.getElementById('ai-options-list');
             listEl.innerHTML = '';
-            
+
             window.activeAIOptions.forEach((opt, idx) => {
                 const isSelected = idx === window.activeAISelectedIndex;
                 const isBase = idx === 0;
-                
+
                 const badge = isSelected ? `<span class="bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded ml-2">AI Pick</span>` : '';
                 const baseBadge = isBase ? `<span class="bg-gray-700 text-gray-300 text-[10px] font-bold px-2 py-0.5 rounded ml-2">Base</span>` : '';
-                
+
                 const el = document.createElement('div');
                 el.className = `p-4 rounded-xl border cursor-pointer transition-colors ${idx === window.viewingAIOptionIdx ? 'bg-indigo-900/50 border-indigo-500' : 'bg-gray-800 border-gray-700 hover:bg-gray-700'}`;
                 el.onclick = () => renderAIOptionDetails(idx);
-                
+
                 el.innerHTML = `
                     <div class="flex items-center justify-between">
                         <h4 class="font-bold text-white text-lg flex items-center">${opt.theme_name} ${badge} ${baseBadge}</h4>
@@ -3528,11 +3647,11 @@
         function renderAIOptionDetails(idx) {
             window.viewingAIOptionIdx = idx;
             renderAIOptionsList(); // Update selected state in sidebar
-            
+
             const opt = window.activeAIOptions[idx];
             const isAIPick = idx === window.activeAISelectedIndex;
             const container = document.getElementById('ai-option-details');
-            
+
             let reasoningHTML = '';
             if (isAIPick && window.activeAIReasoning) {
                 reasoningHTML = `
@@ -3545,7 +3664,7 @@
                     </div>
                 `;
             }
-            
+
             let actionsHTML = `
                 <div class="mt-6 flex flex-col gap-4">
                     <h4 class="text-lg font-bold text-white">Provide Feedback</h4>
@@ -3558,7 +3677,7 @@
                     </div>
                 </div>
             `;
-            
+
             container.innerHTML = `
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-2xl font-bold text-white">${opt.theme_name}</h3>
@@ -3568,7 +3687,7 @@
                 <div id="ai-modal-schedule-container" class="w-full flex-1 overflow-y-auto bg-gray-900 rounded-xl border border-gray-700 p-4 min-h-[400px]"></div>
                 ${actionsHTML}
             `;
-            
+
             const sched = opt.schedule;
             const modalData = {
                 events: window.currentData ? window.currentData.events : [],
@@ -3580,12 +3699,12 @@
                 driver_events: window.currentData ? window.currentData.driver_events : {},
                 calendar_metadata: window.currentData ? window.currentData.calendar_metadata : {}
             };
-            
-            renderSchedule(modalData, { 
-                targetContainerId: 'ai-modal-schedule-container', 
-                isModal: true, 
+
+            renderSchedule(modalData, {
+                targetContainerId: 'ai-modal-schedule-container',
+                isModal: true,
                 isReadOnly: true,
-                dateFilter: window.activeAITargetDate 
+                dateFilter: window.activeAITargetDate
             });
         }
 
@@ -3596,26 +3715,26 @@
                 selected_index: selectedIdx,
                 user_reasoning: feedbackText
             };
-            
+
             try {
                 await fetch('api/settings/ai_feedback', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
+
                 // Remove the resolved date from window.allSuggestionDates
                 if (window.allSuggestionDates) {
                     window.allSuggestionDates = window.allSuggestionDates.filter(d => d !== window.activeAITargetDate);
                 }
-                
+
                 // If there are more dates to review, navigate to the next one
                 if (window.allSuggestionDates && window.allSuggestionDates.length > 0) {
                     openAIOptionsModal(window.allSuggestionDates[0]);
                 } else {
                     closeAIModal();
                 }
-                
+
                 // Optionally force sync to re-render the accepted schedule
                 forceSync(true);
             } catch (e) {
@@ -3628,16 +3747,16 @@
             const input = document.getElementById('feedback-input');
             const text = input.value.trim();
             if (!text) return;
-            
+
             btn.innerHTML = 'Submitting...';
             btn.disabled = true;
-            
+
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 await fetch(`${apiBase}api/feedback`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({text: text})
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
                 });
                 input.value = '';
                 btn.innerHTML = 'Send';
@@ -3702,7 +3821,7 @@
             chatInput.value = '';
             chatInput.disabled = true;
             chatSubmitBtn.disabled = true;
-            
+
             const typingDiv = document.createElement('div');
             typingDiv.className = 'text-gray-400 text-xs italic self-start mt-1 mb-2 animate-pulse';
             typingDiv.innerText = 'Assistant is thinking...';
@@ -3716,15 +3835,15 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 });
-                
+
                 if (!res.ok) {
                     throw new Error(`Server returned status ${res.status}`);
                 }
-                
+
                 const data = await res.json();
-                
+
                 typingDiv.remove();
-                
+
                 if (data.error) {
                     appendMessage('assistant', `⚠️ Error: ${data.error}`);
                 } else {
@@ -3746,22 +3865,22 @@
         document.addEventListener('DOMContentLoaded', () => {
             if (!isReadOnly || isKiosk) loadChatHistory();
         });
-    
+
         let isOperationsSidebarOpen = false;
         let mapsStatsInterval = null;
 
         function toggleOperationsSidebar() {
             const sidebar = document.getElementById('operations-sidebar');
             isOperationsSidebarOpen = !isOperationsSidebarOpen;
-            
+
             if (isOperationsSidebarOpen) {
                 sidebar.classList.remove('translate-x-full');
                 sidebar.classList.add('translate-x-0');
-                
+
                 if (window.innerWidth >= 768) {
                     document.body.style.paddingRight = '466px'; // 450px sidebar + 16px default padding
                 }
-                
+
                 // Fetch content for expanded accordions
                 if (!document.getElementById('notif-content').classList.contains('hidden')) {
                     fetchNotifications();
@@ -3795,11 +3914,11 @@
             const content = document.getElementById(contentId);
             const chevron = document.getElementById(chevronId);
             const isHidden = content.classList.contains('hidden');
-            
+
             if (isHidden) {
                 content.classList.remove('hidden');
                 chevron.classList.add('rotate-180');
-                
+
                 // Trigger fetching if expanding specific ones
                 if (contentId === 'notif-content' && isOperationsSidebarOpen) {
                     fetchNotifications();
@@ -3810,41 +3929,53 @@
             } else {
                 content.classList.add('hidden');
                 chevron.classList.remove('rotate-180');
-                
+
                 if (contentId === 'stats-accordion-content' && mapsStatsInterval) {
                     clearInterval(mapsStatsInterval);
                     mapsStatsInterval = null;
                 }
             }
         }
-        
+
     </script>
-    
+
     <!-- AI Rules Modal -->
-    <div id="ai-rules-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-        <div class="bg-gray-900 rounded-lg shadow-xl border border-gray-700 w-full max-w-4xl max-h-[90vh] flex flex-col">
+    <div id="ai-rules-modal"
+        class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div
+            class="bg-gray-900 rounded-lg shadow-xl border border-gray-700 w-full max-w-4xl max-h-[90vh] flex flex-col">
             <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-lg">
                 <h2 class="text-2xl font-bold text-white flex items-center gap-2">
-                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z">
+                        </path>
+                    </svg>
                     AI Proposed Rules
                 </h2>
                 <button onclick="closeAiRulesModal()" class="text-gray-400 hover:text-white">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                        </path>
+                    </svg>
                 </button>
             </div>
-            
+
             <div class="p-6 overflow-y-auto flex-1">
-                <p class="text-gray-300 mb-6">The AI has analyzed your manual drag-and-drop overrides and found the following patterns. Review the proposed rules below. Uncheck any rules you do not want to apply.</p>
+                <p class="text-gray-300 mb-6">The AI has analyzed your manual drag-and-drop overrides and found the
+                    following patterns. Review the proposed rules below. Uncheck any rules you do not want to apply.</p>
                 <div id="ai-rules-modal-content">
                     <!-- Dynamic content populated by JS -->
                 </div>
             </div>
-            
+
             <div class="p-6 border-t border-gray-700 bg-gray-800 rounded-b-lg flex justify-end gap-3">
-                <button onclick="closeAiRulesModal()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition-colors">
+                <button onclick="closeAiRulesModal()"
+                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition-colors">
                     Dismiss All
                 </button>
-                <button onclick="saveAiRules()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 rounded transition-colors shadow-lg">
+                <button onclick="saveAiRules()"
+                    class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 rounded transition-colors shadow-lg">
                     Save Selected Rules
                 </button>
             </div>
@@ -3852,16 +3983,24 @@
     </div>
 
     <!-- Kiosk Chat Popup -->
-    <div id="kiosk-chat-popup" class="hidden fixed bottom-24 right-6 w-80 h-[30rem] max-h-[70vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
-        <div class="bg-indigo-600 px-4 py-3 flex justify-between items-center text-white shrink-0 shadow-sm border-b border-indigo-700">
+    <div id="kiosk-chat-popup"
+        class="hidden fixed bottom-24 right-6 w-80 h-[30rem] max-h-[70vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
+        <div
+            class="bg-indigo-600 px-4 py-3 flex justify-between items-center text-white shrink-0 shadow-sm border-b border-indigo-700">
             <span class="font-bold flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
+                    </path>
                 </svg>
-                Argyle Agent
+                Argyle
             </span>
-            <button onclick="toggleKioskChat()" class="text-white hover:text-gray-200 focus:outline-none transition-colors">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            <button onclick="toggleKioskChat()"
+                class="text-white hover:text-gray-200 focus:outline-none transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                    </path>
+                </svg>
             </button>
         </div>
         <div id="kiosk-chat-popup-body" class="flex-1 flex flex-col min-h-0 bg-gray-900">
@@ -3870,12 +4009,15 @@
     </div>
 
     <!-- Kiosk Mode Floating Action Button for Argyle Chat -->
-    <button id="kiosk-chat-fab" onclick="toggleKioskChat()" class="hidden fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
+    <button id="kiosk-chat-fab" onclick="toggleKioskChat()"
+        class="hidden fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
         <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
+            </path>
         </svg>
     </button>
-    
+
 </body>
 
 </html>
