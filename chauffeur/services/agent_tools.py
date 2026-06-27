@@ -96,6 +96,17 @@ class AddErrandTool(BaseModel):
     recurrence_rule: str = Field(default="", description="Recurrence: 'daily', 'weekly', 'monthly', or empty for one-off.")
     starts_on: float = Field(default=0.0, description="Unix timestamp for the anchor/starts-on date. If 0, uses current time.")
     window_days: Optional[int] = Field(default=None, description="Number of valid days to schedule this errand.")
+    allowed_drivers: List[str] = Field(default=[], description="List of driver IDs allowed.")
+    required_drivers: List[str] = Field(default=[], description="List of driver IDs required (use this if the user says who MUST do the errand).")
+    prohibited_drivers: List[str] = Field(default=[], description="List of driver IDs prohibited.")
+    allowed_passengers: List[str] = Field(default=[], description="List of passenger IDs allowed.")
+    required_passengers: List[str] = Field(default=[], description="List of passenger IDs required.")
+    prohibited_passengers: List[str] = Field(default=[], description="List of passenger IDs prohibited.")
+    time_window_start: str = Field(default="", description="Start time constraint (HH:MM).")
+    time_window_end: str = Field(default="", description="End time constraint (HH:MM).")
+    buffer_mins: int = Field(default=0, description="Buffer time in minutes before/after.")
+    tolerance_mins: int = Field(default=0, description="Tolerance for late arrival in minutes.")
+    group_id: str = Field(default="", description="Group ID to schedule multiple errands together.")
 
 class UpdateErrandTool(BaseModel):
     """
@@ -107,6 +118,17 @@ class UpdateErrandTool(BaseModel):
     duration_mins: int = Field(default=0, description="Optional new duration.")
     location: str = Field(default="", description="Optional new location.")
     starts_on: float = Field(default=0.0, description="Optional new starts_on unix timestamp.")
+    allowed_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs allowed.")
+    required_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs required.")
+    prohibited_drivers: Optional[List[str]] = Field(default=None, description="Optional List of driver IDs prohibited.")
+    allowed_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs allowed.")
+    required_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs required.")
+    prohibited_passengers: Optional[List[str]] = Field(default=None, description="Optional List of passenger IDs prohibited.")
+    time_window_start: Optional[str] = Field(default=None, description="Optional Start time constraint (HH:MM).")
+    time_window_end: Optional[str] = Field(default=None, description="Optional End time constraint (HH:MM).")
+    buffer_mins: Optional[int] = Field(default=None, description="Optional Buffer time in minutes.")
+    tolerance_mins: Optional[int] = Field(default=None, description="Optional Tolerance for late arrival.")
+    group_id: Optional[str] = Field(default=None, description="Optional Group ID.")
 
 class DeleteErrandTool(BaseModel):
     """
@@ -337,7 +359,19 @@ def handle_add_errand(args: dict) -> dict:
         'starts_on': starts_on,
         'created_at': time.time(),
         'is_completed': False,
-        'status': 'pending'
+        'status': 'pending',
+        'allowed_drivers': args.get('allowed_drivers', []),
+        'required_drivers': args.get('required_drivers', []),
+        'prohibited_drivers': args.get('prohibited_drivers', []),
+        'allowed_passengers': args.get('allowed_passengers', []),
+        'required_passengers': args.get('required_passengers', []),
+        'prohibited_passengers': args.get('prohibited_passengers', []),
+        'time_window_start': args.get('time_window_start') or None,
+        'time_window_end': args.get('time_window_end') or None,
+        'buffer_mins': args.get('buffer_mins', 0),
+        'tolerance_mins': args.get('tolerance_mins', 0),
+        'group_id': args.get('group_id') or None,
+        'window_days': args.get('window_days')
     }
     storage.add_errand(errand)
     return {"status": "success", "message": "Errand added."}
@@ -357,6 +391,19 @@ def handle_update_errand(args: dict) -> dict:
     if args.get('duration_mins'): update_data['duration_mins'] = args.get('duration_mins')
     if args.get('location'): update_data['location'] = args.get('location')
     if args.get('starts_on'): update_data['starts_on'] = args.get('starts_on')
+    
+    for field in ['allowed_drivers', 'required_drivers', 'prohibited_drivers', 
+                  'allowed_passengers', 'required_passengers', 'prohibited_passengers']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field)
+            
+    for field in ['time_window_start', 'time_window_end', 'group_id']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field) or None
+            
+    for field in ['buffer_mins', 'tolerance_mins']:
+        if args.get(field) is not None:
+            update_data[field] = args.get(field)
     
     if update_data:
         storage.update_errand(errand_id, update_data)
