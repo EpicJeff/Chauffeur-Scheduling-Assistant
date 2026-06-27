@@ -1287,6 +1287,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     applicable_entities.add('global')
                     
                 trip_metadata.append({
+                    "id": e.id,
                     "start": e.start,
                     "end": e.end,
                     "location": e.location,
@@ -1369,6 +1370,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
         if config and config.get('is_trip'):
             e.event_type = 'background_trip'
+            
+        if config and config.get('trip_id'):
+            e.trip_id = config.get('trip_id')
             
         all_events_for_ui[e.id] = e
 

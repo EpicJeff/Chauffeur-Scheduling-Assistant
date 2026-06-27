@@ -343,11 +343,19 @@
                                 </div>
                             </div>
 
-                            <div class="flex items-center mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
-                                <input type="checkbox" id="edit-is-trip"
-                                    class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
-                                <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as
-                                    pure Background Trip (No destination)</label>
+                            <div class="flex flex-col mt-4 bg-gray-900 border border-gray-600 rounded-lg p-3">
+                                <div class="flex items-center mb-3">
+                                    <input type="checkbox" id="edit-is-trip"
+                                        class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
+                                    <label for="edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
+                                </div>
+                                <div class="flex flex-col">
+                                    <label for="edit-trip-id" class="text-gray-400 mb-1 text-sm font-bold tracking-wider">Associated Trip</label>
+                                    <select id="edit-trip-id" class="bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm focus:border-blue-500">
+                                        <option value="">None</option>
+                                    </select>
+                                    <p class="text-[10px] text-gray-500 mt-1">If this event is part of a background trip, link it here.</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1672,6 +1680,14 @@
             document.getElementById('edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
             document.getElementById('edit-is-trip').checked = appConfig.is_trip || false;
 
+            const tripDropdown = document.getElementById('edit-trip-id');
+            const trips = (currentData.events || []).filter(e => e.event_type === 'background_trip');
+            let optionsHtml = '<option value="">None</option>';
+            trips.forEach(t => {
+                optionsHtml += `<option value="${t.id}" ${appConfig.trip_id === t.id ? 'selected' : ''}>${t.title} (${t.start.split('T')[0]})</option>`;
+            });
+            tripDropdown.innerHTML = optionsHtml;
+
             // Passengers
             const paxContainer = document.getElementById('edit-passengers-container');
             const passengers = currentData.passengers || [];
@@ -1783,11 +1799,18 @@
                 driver_ids: Array.from(drvCheckboxes).map(cb => cb.value),
                 driver_attendance_mode: document.getElementById('edit-attendance-mode').value,
                 is_trip: document.getElementById('edit-is-trip').checked,
+                trip_id: document.getElementById('edit-trip-id').value,
                 location_override: document.getElementById('edit-location').value
             };
 
             const googleIdParts = ev.source_event_ids[0].split('::');
-            const googleId = ev.recurring_event_id ? ev.recurring_event_id : googleIdParts[googleIdParts.length - 1];
+            let googleId = googleIdParts[googleIdParts.length - 1];
+            if (ev.recurring_event_id) {
+                const applyToSeries = confirm("This is a recurring event. Do you want to apply this configuration to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                if (applyToSeries) {
+                    googleId = ev.recurring_event_id;
+                }
+            }
 
             try {
                 if (ev.start) {

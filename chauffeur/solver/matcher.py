@@ -340,31 +340,26 @@ def solve_schedule(
                     is_global = 'global' in trip_ents
                     
                     if e.start < trip['end'] and e.end > trip['start']:
-                        # If driver is on trip, but event is NOT for trip passengers, block driver from taking it
-                        if f"driver_{d.id}" in trip_ents or is_global:
-                            if not e_ents.intersection(trip_ents) and not is_global:
+                        driver_on_trip = (f"driver_{d.id}" in trip_ents) or is_global
+                        pax_on_trip = bool(e_ents.intersection(trip_ents)) or is_global
+                        
+                        if driver_on_trip:
+                            # Driver on trip can ONLY take events explicitly linked to this trip
+                            if event_trip_id != trip_id:
                                 if (e.id, d.id) not in overridden_pairs:
                                     model.Add(assign_vars[(e.id, d.id)] == 0)
                                 break
-                                
-                        # If event HAS trip passengers, block drivers who are NOT on the trip from taking it
-                        if e_ents.intersection(trip_ents) or is_global:
-                            if f"driver_{d.id}" not in trip_ents and not is_global:
+                        else:
+                            # Driver NOT on trip CANNOT take events linked to this trip
+                            if event_trip_id == trip_id:
                                 if (e.id, d.id) not in overridden_pairs:
                                     model.Add(assign_vars[(e.id, d.id)] == 0)
                                 break
-                                
-                            # If driver IS on trip, block them if the event is geographically far from the trip location
-                            if trip.get('location') and getattr(e, 'location', None):
-                                if trip['location'].strip().lower() != e.location.strip().lower():
-                                    try:
-                                        # Only block if > 60 mins away to allow local events around trip location
-                                        if get_travel_time_minutes(trip['location'], e.location) > 60:
-                                            if (e.id, d.id) not in overridden_pairs:
-                                                model.Add(assign_vars[(e.id, d.id)] == 0)
-                                            break
-                                    except:
-                                        pass
+                            # Driver NOT on trip CANNOT take non-trip events for passengers who are on this trip
+                            elif pax_on_trip:
+                                if (e.id, d.id) not in overridden_pairs:
+                                    model.Add(assign_vars[(e.id, d.id)] == 0)
+                                break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:
