@@ -98,3 +98,6 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 - **Past Due State**: Errands that exceed their estimated scheduled time without being completed are placed in a `past_due` state. The solver safely ignores them so they stop auto-scheduling and wait for manual intervention.
 - **Recurrence**: Errands can be set to recur Daily, Weekly, or Monthly upon completion. When marked complete, a new pending errand is generated automatically, which will reset the `created_at` anchor date, starting the cycle anew.
 - **AI Agent POI / Category Search**: The AI agent is capable of looking up Points of Interest (POIs) such as gas stations, coffee shops, and groceries, and routing them based on the proximity of a driver's existing route stops. It leverages Mapbox's Category Search and Forward API with independent rate limiting.
+
+## Background Trip Events
+- **Trip Passenger Constraint**: If an event overlaps with a background trip and involves passengers who are on that trip, the solver strictly enforces that non-trip drivers cannot be assigned to it. It also ensures that if a trip driver *is* assigned, the event must be geographically close (within 60 minutes) to the trip's location, preventing home-based events from being mistakenly scheduled while the family is on vacation.
