@@ -22,6 +22,8 @@ class Event(BaseModel):
     original_event_id: Optional[str] = None
     needs_triage: bool = False
     app_config: Optional[dict] = None
+    trip_id: Optional[str] = None
+    poi_id: Optional[str] = None
 
 class Driver(BaseModel):
     id: str
