@@ -3457,6 +3457,10 @@
                 const res = await fetch(`${apiBase}api/maps/stats`);
                 if (!res.ok) return;
                 const stats = await res.json();
+                
+                stats.matrix = stats.matrix || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
+                stats.directions = stats.directions || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
+                stats.geocode = stats.geocode || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
 
                 document.getElementById('stats-loader').classList.add('hidden');
                 document.getElementById('stats-content').classList.remove('hidden');
@@ -3478,11 +3482,11 @@
                     `;
                 }
 
-                const matrixOffline = stats.matrix.disabled || (stats.matrix.monthly >= stats.matrix.limit) || (stats.has_key === false);
-                const directionsOffline = stats.directions.disabled || (stats.directions.monthly >= stats.directions.limit) || (stats.has_key === false);
+                const matrixOffline = stats?.matrix?.disabled || ((stats?.matrix?.monthly || 0) >= (stats?.matrix?.limit || 1)) || (stats.has_key === false);
+                const directionsOffline = stats?.directions?.disabled || ((stats?.directions?.monthly || 0) >= (stats?.directions?.limit || 1)) || (stats.has_key === false);
 
                 if (matrixOffline && stats.has_key !== false) {
-                    const reason = stats.matrix.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.matrix.monthly} / ${stats.matrix.limit}).`;
+                    const reason = stats?.matrix?.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats?.matrix?.monthly || 0} / ${stats?.matrix?.limit || 1}).`;
                     warningsHtml += `
                         <div class="p-3 bg-amber-950/40 border border-amber-900/60 text-amber-300 rounded-lg text-xs flex flex-col gap-1">
                             <div class="flex items-center gap-2 font-bold">
@@ -3496,7 +3500,7 @@
                 }
 
                 if (matrixOffline && directionsOffline && stats.has_key !== false) {
-                    const reason = stats.directions.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats.directions.monthly} / ${stats.directions.limit}).`;
+                    const reason = stats?.directions?.disabled ? 'Disabled by user option.' : `Monthly limit reached (${stats?.directions?.monthly || 0} / ${stats?.directions?.limit || 1}).`;
                     warningsHtml += `
                         <div class="p-3 bg-red-950/40 border border-red-900/60 text-red-300 rounded-lg text-xs flex flex-col gap-1">
                             <div class="flex items-center gap-2 font-bold">
