@@ -1437,8 +1437,7 @@
             if (!chatMessages) return;
             const div = document.createElement('div');
             div.className = `max-w-[85%] rounded-lg p-3 text-sm ${role === 'user' ? 'bg-blue-600 text-white self-end rounded-tr-none' : 'bg-gray-700 text-gray-100 self-start rounded-tl-none border border-gray-600'}`;
-            let formatted = content.replace(/
-/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            let formatted = content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
             div.innerHTML = formatted;
             chatMessages.appendChild(div);
             scrollToBottom();
