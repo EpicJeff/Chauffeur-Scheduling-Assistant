@@ -224,13 +224,6 @@
                           </div>
                       </div>
                       
-                      <div class="grid grid-cols-1 gap-4">
-                          <div>
-                              <label class="block text-sm font-medium text-gray-400 mb-1">Expiration Window (Days)</label>
-                              <input type="number" id="edit-window-days" placeholder="Infinite" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all">
-                              <p class="text-xs text-gray-500 mt-1">If set, the errand will expire if it cannot be scheduled within this many days of the start date.</p>
-                          </div>
-                      </div>
                       
                       <div class="mt-2 border-t border-gray-700/50 pt-4">
                           <button onclick="document.getElementById('advanced-options-section').classList.toggle('hidden')" type="button" class="flex items-center text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors">
@@ -238,30 +231,23 @@
                               Advanced Options
                           </button>
                           <div id="advanced-options-section" class="hidden mt-4 space-y-4">
+                              <div class="col-span-2 mb-2">
+                                  <label class="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">Driver Constraints</label>
+                                  <div class="text-[10px] text-gray-500 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
+                                  <div id="edit-driver-toggles" class="flex flex-wrap gap-2"></div>
+                              </div>
+                              
+                              <div class="col-span-2 mb-4">
+                                  <label class="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">Passenger Constraints</label>
+                                  <div class="text-[10px] text-gray-500 mb-2">Click to toggle: Gray (Allowed/Neutral) &rarr; Blue (Required) &rarr; Red (Prohibited)</div>
+                                  <div id="edit-passenger-toggles" class="flex flex-wrap gap-2"></div>
+                              </div>
+                              
                               <div class="grid grid-cols-2 gap-4">
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Allowed Drivers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-allowed-drivers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
-                                  </div>
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Required Drivers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-required-drivers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
-                                  </div>
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Prohibited Drivers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-prohibited-drivers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
-                                  </div>
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Allowed Passengers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-allowed-passengers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
-                                  </div>
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Required Passengers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-required-passengers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
-                                  </div>
-                                  <div>
-                                      <label class="block text-xs font-medium text-gray-400 mb-1">Prohibited Passengers (IDs, comma-separated)</label>
-                                      <input type="text" id="edit-prohibited-passengers" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                  <div class="col-span-2">
+                                      <label class="block text-xs font-medium text-gray-400 mb-1">Expiration Window (Days)</label>
+                                      <input type="number" id="edit-window-days" placeholder="Infinite" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                      <p class="text-[10px] text-gray-500 mt-1">If set, the errand will expire if it cannot be scheduled within this many days of the start date.</p>
                                   </div>
                                   <div>
                                       <label class="block text-xs font-medium text-gray-400 mb-1">Time Window Start (HH:MM)</label>
@@ -486,14 +472,23 @@
         }
 
         let errands = [];
+        let globalDrivers = [];
+        let globalPassengers = [];
+        let currentEditErrand = null;
 
         async function fetchErrands() {
             try {
-                const response = await fetch('api/errands');
-                errands = await response.json();
+                const [errandsRes, driversRes, passRes] = await Promise.all([
+                    fetch('api/errands'),
+                    fetch('api/drivers'),
+                    fetch('api/passengers')
+                ]);
+                errands = await errandsRes.json();
+                globalDrivers = await driversRes.json();
+                globalPassengers = await passRes.json();
                 renderErrands();
             } catch (err) {
-                console.error("Failed to fetch errands", err);
+                console.error("Failed to fetch data", err);
             }
         }
 
@@ -700,32 +695,102 @@
         }
 
         // --- Modal Logic ---
+        function renderToggles() {
+            if (!currentEditErrand) return;
+            
+            const dContainer = document.getElementById('edit-driver-toggles');
+            dContainer.innerHTML = '';
+            globalDrivers.forEach(d => {
+                const btn = document.createElement('button');
+                const isReq = (currentEditErrand.required_drivers || []).includes(d.id);
+                const isProh = (currentEditErrand.prohibited_drivers || []).includes(d.id);
+                
+                if (isReq) {
+                    btn.className = "border bg-blue-900/50 border-blue-500 text-blue-300 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                } else if (isProh) {
+                    btn.className = "border bg-red-900/50 border-red-500 text-red-300 line-through px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                } else {
+                    btn.className = "border bg-gray-800 border-gray-600 text-gray-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                }
+                
+                btn.innerHTML = `<div class="w-2 h-2 rounded-full" style="background-color: ${d.color_code}"></div><span>${d.name}</span>`;
+                btn.type = 'button';
+                btn.onclick = () => {
+                    if (!currentEditErrand.required_drivers) currentEditErrand.required_drivers = [];
+                    if (!currentEditErrand.prohibited_drivers) currentEditErrand.prohibited_drivers = [];
+                    
+                    if (isReq) {
+                        currentEditErrand.required_drivers = currentEditErrand.required_drivers.filter(id => id !== d.id);
+                        currentEditErrand.prohibited_drivers.push(d.id);
+                    } else if (isProh) {
+                        currentEditErrand.prohibited_drivers = currentEditErrand.prohibited_drivers.filter(id => id !== d.id);
+                    } else {
+                        currentEditErrand.required_drivers.push(d.id);
+                    }
+                    renderToggles();
+                };
+                dContainer.appendChild(btn);
+            });
+            
+            const pContainer = document.getElementById('edit-passenger-toggles');
+            pContainer.innerHTML = '';
+            globalPassengers.forEach(p => {
+                const btn = document.createElement('button');
+                const isReq = (currentEditErrand.required_passengers || []).includes(p.id);
+                const isProh = (currentEditErrand.prohibited_passengers || []).includes(p.id);
+                
+                if (isReq) {
+                    btn.className = "border bg-blue-900/50 border-blue-500 text-blue-300 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                } else if (isProh) {
+                    btn.className = "border bg-red-900/50 border-red-500 text-red-300 line-through px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                } else {
+                    btn.className = "border bg-gray-800 border-gray-600 text-gray-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2";
+                }
+                
+                btn.innerHTML = `<span>${p.name}</span>`;
+                btn.type = 'button';
+                btn.onclick = () => {
+                    if (!currentEditErrand.required_passengers) currentEditErrand.required_passengers = [];
+                    if (!currentEditErrand.prohibited_passengers) currentEditErrand.prohibited_passengers = [];
+                    
+                    if (isReq) {
+                        currentEditErrand.required_passengers = currentEditErrand.required_passengers.filter(id => id !== p.id);
+                        currentEditErrand.prohibited_passengers.push(p.id);
+                    } else if (isProh) {
+                        currentEditErrand.prohibited_passengers = currentEditErrand.prohibited_passengers.filter(id => id !== p.id);
+                    } else {
+                        currentEditErrand.required_passengers.push(p.id);
+                    }
+                    renderToggles();
+                };
+                pContainer.appendChild(btn);
+            });
+        }
+
         function openEditModal(errand) {
-            document.getElementById('edit-id').value = errand.id;
-            document.getElementById('edit-doc-id').value = errand.doc_id;
-            document.getElementById('edit-title').value = errand.title;
-            document.getElementById('edit-location').value = errand.location || '';
-            document.getElementById('edit-priority').value = errand.priority || 2;
-            document.getElementById('edit-duration').value = errand.duration_mins || 30;
-            document.getElementById('edit-recurrence').value = errand.recurrence_rule || '';
-            document.getElementById('edit-window-days').value = errand.window_days || '';
-            if (errand.starts_on) {
-                document.getElementById('edit-starts-on').value = new Date(errand.starts_on * 1000).toISOString().split('T')[0];
+            currentEditErrand = JSON.parse(JSON.stringify(errand));
+            
+            document.getElementById('edit-id').value = currentEditErrand.id;
+            document.getElementById('edit-doc-id').value = currentEditErrand.doc_id;
+            document.getElementById('edit-title').value = currentEditErrand.title;
+            document.getElementById('edit-location').value = currentEditErrand.location || '';
+            document.getElementById('edit-priority').value = currentEditErrand.priority || 2;
+            document.getElementById('edit-duration').value = currentEditErrand.duration_mins || 30;
+            document.getElementById('edit-recurrence').value = currentEditErrand.recurrence_rule || '';
+            document.getElementById('edit-window-days').value = currentEditErrand.window_days || '';
+            if (currentEditErrand.starts_on) {
+                document.getElementById('edit-starts-on').value = new Date(currentEditErrand.starts_on * 1000).toISOString().split('T')[0];
             } else {
                 document.getElementById('edit-starts-on').value = '';
             }
             
-            document.getElementById('edit-allowed-drivers').value = (errand.allowed_drivers || []).join(', ');
-            document.getElementById('edit-required-drivers').value = (errand.required_drivers || []).join(', ');
-            document.getElementById('edit-prohibited-drivers').value = (errand.prohibited_drivers || []).join(', ');
-            document.getElementById('edit-allowed-passengers').value = (errand.allowed_passengers || []).join(', ');
-            document.getElementById('edit-required-passengers').value = (errand.required_passengers || []).join(', ');
-            document.getElementById('edit-prohibited-passengers').value = (errand.prohibited_passengers || []).join(', ');
-            document.getElementById('edit-time-window-start').value = errand.time_window_start || '';
-            document.getElementById('edit-time-window-end').value = errand.time_window_end || '';
-            document.getElementById('edit-buffer-mins').value = errand.buffer_mins || 0;
-            document.getElementById('edit-tolerance-mins').value = errand.tolerance_mins || 0;
-            document.getElementById('edit-group-id').value = errand.group_id || '';
+            document.getElementById('edit-time-window-start').value = currentEditErrand.time_window_start || '';
+            document.getElementById('edit-time-window-end').value = currentEditErrand.time_window_end || '';
+            document.getElementById('edit-buffer-mins').value = currentEditErrand.buffer_mins || 0;
+            document.getElementById('edit-tolerance-mins').value = currentEditErrand.tolerance_mins || 0;
+            document.getElementById('edit-group-id').value = currentEditErrand.group_id || '';
+            
+            renderToggles();
             
             document.getElementById('edit-modal').classList.remove('hidden');
         }
@@ -757,13 +822,12 @@
                 errand.starts_on = Math.floor(Date.now() / 1000);
             }
             
-            const parseCsv = str => str ? str.split(',').map(s => s.trim()).filter(s => s) : [];
-            errand.allowed_drivers = parseCsv(document.getElementById('edit-allowed-drivers').value);
-            errand.required_drivers = parseCsv(document.getElementById('edit-required-drivers').value);
-            errand.prohibited_drivers = parseCsv(document.getElementById('edit-prohibited-drivers').value);
-            errand.allowed_passengers = parseCsv(document.getElementById('edit-allowed-passengers').value);
-            errand.required_passengers = parseCsv(document.getElementById('edit-required-passengers').value);
-            errand.prohibited_passengers = parseCsv(document.getElementById('edit-prohibited-passengers').value);
+            errand.allowed_drivers = currentEditErrand.allowed_drivers || [];
+            errand.required_drivers = currentEditErrand.required_drivers || [];
+            errand.prohibited_drivers = currentEditErrand.prohibited_drivers || [];
+            errand.allowed_passengers = currentEditErrand.allowed_passengers || [];
+            errand.required_passengers = currentEditErrand.required_passengers || [];
+            errand.prohibited_passengers = currentEditErrand.prohibited_passengers || [];
             errand.time_window_start = document.getElementById('edit-time-window-start').value || null;
             errand.time_window_end = document.getElementById('edit-time-window-end').value || null;
             errand.buffer_mins = parseInt(document.getElementById('edit-buffer-mins').value) || 0;
