@@ -1610,7 +1610,10 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         if not hasattr(e, 'title'): return False
         for r_data in all_rules:
             if r_data.get('constraint_type') == 'attendance' and r_data.get('attendance_action') == 'stay':
-                r_obj = Rule(**r_data)
+                try:
+                    r_obj = Rule(**r_data)
+                except Exception:
+                    continue
                 if does_event_match_rule(e, r_obj):
                     return True
         return False
@@ -1771,7 +1774,10 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         )
         
         for r_data in all_rules:
-            r = Rule(**r_data)
+            try:
+                r = Rule(**r_data)
+            except Exception:
+                continue
             if does_event_match_rule(dummy_event, r):
                 r_type = getattr(r, 'constraint_type', '')
                 a_type = getattr(r, 'assignment_type', '')
@@ -1793,7 +1799,8 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 window_days = r.window_days
         # -----------------------------------------
         
-        now = datetime.now()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         
         for date_str, day_schedules in driver_schedules_by_date.items():
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
