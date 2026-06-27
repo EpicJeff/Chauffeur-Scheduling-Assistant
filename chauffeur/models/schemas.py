@@ -208,3 +208,23 @@ class ErrandRule(BaseModel):
     group_keyword: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
     is_enabled: bool = True
+
+class TripPOI(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    location: str
+    mapbox_id: Optional[str] = None
+    category: Optional[str] = None
+    notes: Optional[str] = None
+    duration_mins: int = 60
+    is_scheduled: bool = False
+    scheduled_start: Optional[float] = None
+    scheduled_end: Optional[float] = None
+
+class TripMetadata(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    event_id: str
+    background_url: Optional[str] = None
+    notes: Optional[str] = None
+    pois: List[TripPOI] = Field(default_factory=list)
+

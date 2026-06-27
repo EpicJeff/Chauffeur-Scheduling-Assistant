@@ -178,6 +178,18 @@ class SearchPlacesTool(BaseModel):
     query: str = Field(..., description="The name, category, or address to search for (e.g., 'gas station', 'Starbucks').")
     proximity_location: str = Field(default="", description="A known location (address or name) to search near. Usually one of the driver's scheduled stops.")
 
+class AddTripPoiTool(BaseModel):
+    """
+    Adds a Point of Interest (POI) to a specific Trip. Use this when a user says they want to visit a location during a trip.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    name: str = Field(..., description="The name of the POI (e.g. 'Eiffel Tower').")
+    location: str = Field(..., description="The address/location of the POI.")
+    mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
+    category: Optional[str] = Field(default="sightseeing", description="Category (sightseeing, food, activity, shopping, other).")
+    duration_mins: int = Field(default=60, description="Duration in minutes.")
+    notes: Optional[str] = Field(default="", description="Any notes.")
+
 class StartDriveTool(BaseModel):
     """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
     driver_id: str = Field(..., description="The ID of the driver.")
@@ -210,6 +222,7 @@ TOOL_SCHEMAS = {
     "add_errand_rule": AddErrandRuleTool.model_json_schema(),
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
     "search_places": SearchPlacesTool.model_json_schema(),
+    "add_trip_poi": AddTripPoiTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -443,6 +456,29 @@ def handle_search_places(args: dict) -> dict:
         return {"status": "success", "message": "No places found matching the query."}
     return {"status": "success", "results": results}
 
+def handle_add_trip_poi(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": []}
+    import uuid
+    poi = {
+        "id": uuid.uuid4().hex,
+        "name": args.get('name'),
+        "location": args.get('location'),
+        "mapbox_id": args.get('mapbox_id'),
+        "category": args.get('category', 'sightseeing'),
+        "duration_mins": args.get('duration_mins', 60),
+        "notes": args.get('notes', ''),
+        "is_scheduled": False,
+        "scheduled_start": None,
+        "scheduled_end": None
+    }
+    if 'pois' not in metadata:
+        metadata['pois'] = []
+    metadata['pois'].append(poi)
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success", "message": f"Added POI {poi['name']} to Trip {event_id}."}
+
 
 def handle_start_drive(args: dict) -> dict:
     from services import storage
@@ -496,6 +532,7 @@ TOOL_HANDLERS = {
     "add_errand_rule": handle_add_errand_rule,
     "delete_errand_rule": handle_delete_errand_rule,
     "search_places": handle_search_places,
+    "add_trip_poi": handle_add_trip_poi,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

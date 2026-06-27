@@ -204,9 +204,38 @@ def calendar_view(request: Request):
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
 
+@app.get("/trip/{event_id}")
+def trip_view(request: Request, event_id: str):
+    return templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/api/trip/{event_id}")
+def get_trip_api(event_id: str):
+    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": []}
+    
+    from services.storage import cache_table
+    event_details = None
+    for doc in cache_table.all():
+        for e in doc.get('schedule', []):
+            if e.get('id') == event_id:
+                event_details = e
+                break
+        if event_details:
+            break
+            
+    return {
+        "event": event_details,
+        "metadata": metadata
+    }
+
+@app.post("/api/trip/{event_id}")
+def save_trip_api(event_id: str, payload: dict):
+    storage.set_trip_metadata(event_id, payload)
+    return {"status": "ok"}
 
 # --- Drivers API ---
 @app.get("/api/drivers")
@@ -1076,6 +1105,23 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
     from fastapi import HTTPException
     raise HTTPException(status_code=400, detail="Failed to retrieve location")
 
+@app.get("/api/unsplash/background")
+def get_unsplash_background(query: str):
+    # Using Unsplash Source API fallback for Dakboard backgrounds
+    import urllib.parse
+    encoded_query = urllib.parse.quote(query)
+    # The source.unsplash.com API is deprecated, but we can return a placeholder or standard URL.
+    # We will use the generic image fallback for now.
+    url = f"https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
+    if 'paris' in query.lower():
+        url = "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1920&auto=format&fit=crop"
+    elif 'tokyo' in query.lower():
+        url = "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1920&auto=format&fit=crop"
+    elif 'london' in query.lower():
+        url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
+    return {"url": url}
+
+
 # --- Schedule API ---
 import hashlib
 
@@ -1294,6 +1340,48 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     "entities": applicable_entities,
                     "all_day": e.all_day
                 })
+                
+        for tm in trip_metadata:
+            meta = storage.get_trip_metadata(tm['id'])
+            if not meta or not meta.get('pois'):
+                continue
+            
+            # If computing live schedule, reset all POIs
+            if not draft and not start_date_str and not end_date_str:
+                changed = False
+                for poi in meta['pois']:
+                    if poi.get('is_scheduled'):
+                        poi['is_scheduled'] = False
+                        poi['scheduled_start'] = None
+                        poi['scheduled_end'] = None
+                        changed = True
+                if changed:
+                    storage.set_trip_metadata(tm['id'], meta)
+                    
+            for poi in meta['pois']:
+                if poi.get('is_scheduled') and (not draft and not start_date_str and not end_date_str):
+                    continue
+                    
+                starts_on_ts = tm['start'].timestamp()
+                window_days = (tm['end'].date() - tm['start'].date()).days + 1
+                
+                errands.append({
+                    'id': f"{tm['id']}_poi_{poi['id']}",
+                    'doc_id': -1,
+                    'title': poi['name'],
+                    'location': poi['location'],
+                    'duration_mins': poi.get('duration_mins', 60),
+                    'priority': 2,
+                    'is_completed': False,
+                    'status': 'pending',
+                    'window_days': window_days,
+                    'starts_on': starts_on_ts,
+                    'tags': ['#trip_poi', tm['id']],
+                    'group_id': tm['id'],
+                    'trip_id': tm['id'],
+                    'poi_id': poi['id']
+                })
+
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
         
@@ -2087,6 +2175,21 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": base['conflicts'],
             "scheduled_errands": scheduled_errands
         }
+        
+        # Save Trip POI scheduled state
+        if not draft and not start_date_str and not end_date_str:
+            for se in scheduled_errands:
+                if '_poi_' in se['id']:
+                    trip_id = se['id'].split('_poi_')[0]
+                    poi_id = se['id'].split('_poi_')[1]
+                    t_meta = storage.get_trip_metadata(trip_id)
+                    if t_meta and 'pois' in t_meta:
+                        for p in t_meta['pois']:
+                            if p['id'] == poi_id:
+                                p['is_scheduled'] = True
+                                p['scheduled_start'] = se['start']
+                                p['scheduled_end'] = se['end']
+                        storage.set_trip_metadata(trip_id, t_meta)
 
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')

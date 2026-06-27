@@ -58,6 +58,7 @@ with db_lock:
     chat_history_table = db.table('chat_history')
     errands_table = db.table('errands')
     errand_rules_table = db.table('errand_rules')
+    trip_metadata_table = db.table('trip_metadata')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -928,3 +929,17 @@ def delete_errand(doc_id: int):
         custom_schedules_table.truncate()
         errands_table.remove(doc_ids=[doc_id])
 
+# --- Trip Metadata ---
+def get_trip_metadata(event_id: str) -> Optional[dict]:
+    with db_lock:
+        from tinydb import Query
+        res = trip_metadata_table.search(Query().event_id == event_id)
+        if res:
+            return res[0]
+        return None
+
+def set_trip_metadata(event_id: str, metadata: dict):
+    with db_lock:
+        from tinydb import Query
+        metadata['event_id'] = event_id
+        trip_metadata_table.upsert(metadata, Query().event_id == event_id)
