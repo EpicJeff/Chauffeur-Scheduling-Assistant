@@ -190,7 +190,7 @@
         let tripData = { event: null, metadata: { pois: [] } };
         
         async function fetchTripData() {
-            const res = await fetch(`/api/trip/${EVENT_ID}`);
+            const res = await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`);
             if(res.ok) {
                 tripData = await res.json();
                 renderTrip();
@@ -332,7 +332,7 @@
             if(!tripData.metadata.pois) tripData.metadata.pois = [];
             tripData.metadata.pois.push(poi);
             
-            await fetch(`/api/trip/${EVENT_ID}`, {
+            await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(tripData.metadata)
@@ -344,7 +344,7 @@
         async function deletePoi(index) {
             if(confirm("Delete this POI?")) {
                 tripData.metadata.pois.splice(index, 1);
-                await fetch(`/api/trip/${EVENT_ID}`, {
+                await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(tripData.metadata)
@@ -357,7 +357,7 @@
             tripData.metadata.background_url = document.getElementById('settings-bg-query').value;
             tripData.metadata.notes = document.getElementById('settings-notes').value;
             
-            await fetch(`/api/trip/${EVENT_ID}`, {
+            await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(tripData.metadata)
