@@ -264,7 +264,7 @@ def get_all_trips_api():
     trips.sort(key=lambda x: x['start'] if x['start'] else '')
     return {"trips": trips}
 
-@app.get("/trip/{event_id}")
+@app.get("/trip")
 def trip_view(request: Request, event_id: str):
     return templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
 
