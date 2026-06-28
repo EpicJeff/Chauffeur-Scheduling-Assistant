@@ -190,7 +190,7 @@
         let tripData = { event: null, metadata: { pois: [] } };
         
         async function fetchTripData() {
-            const res = await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`);
+            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`);
             if(res.ok) {
                 tripData = await res.json();
                 renderTrip();
@@ -227,7 +227,7 @@
             document.getElementById('trip-notes-display').innerText = tripData.metadata.notes || "No general notes.";
 
             const searchQuery = tripData.metadata.background_url || loc.split(',')[0] || 'nature';
-            fetch(`/api/unsplash/background?query=${encodeURIComponent(searchQuery)}`)
+            fetch(`api/unsplash/background?query=${encodeURIComponent(searchQuery)}`)
                 .then(r => r.json())
                 .then(d => {
                     document.getElementById('bg-img').src = d.url;
@@ -332,7 +332,7 @@
             if(!tripData.metadata.pois) tripData.metadata.pois = [];
             tripData.metadata.pois.push(poi);
             
-            await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
+            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(tripData.metadata)
@@ -344,7 +344,7 @@
         async function deletePoi(index) {
             if(confirm("Delete this POI?")) {
                 tripData.metadata.pois.splice(index, 1);
-                await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(tripData.metadata)
@@ -357,7 +357,7 @@
             tripData.metadata.background_url = document.getElementById('settings-bg-query').value;
             tripData.metadata.notes = document.getElementById('settings-notes').value;
             
-            await fetch(`/api/trip/${encodeURIComponent(EVENT_ID)}`, {
+            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(tripData.metadata)
@@ -382,7 +382,7 @@
             autocompleteTimeout = setTimeout(async () => {
                 const sessionToken = "trip_" + Math.random().toString(36).substring(7);
                 try {
-                    const response = await fetch(`/api/places/autocomplete?query=${encodeURIComponent(query)}&session_token=${sessionToken}`);
+                    const response = await fetch(`api/places/autocomplete?query=${encodeURIComponent(query)}&session_token=${sessionToken}`);
                     if (!response.ok) throw new Error("Autocomplete failed");
                     const data = await response.json();
                     
