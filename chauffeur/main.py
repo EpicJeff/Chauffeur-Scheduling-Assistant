@@ -248,9 +248,18 @@ def get_all_trips_api():
         config = storage.get_event_config(e.id)
         if config and config.get('is_trip'):
             is_trip = True
+        elif getattr(e, 'recurring_event_id', None) and e.calendar_ids:
+            base_id = f"{e.calendar_ids[0]}::{e.recurring_event_id}"
+            config = storage.get_event_config(base_id)
+            if config and config.get('is_trip'):
+                is_trip = True
             
         if is_trip:
             meta = storage.get_trip_metadata(e.id) or {}
+            if not meta and getattr(e, 'recurring_event_id', None) and e.calendar_ids:
+                base_id = f"{e.calendar_ids[0]}::{e.recurring_event_id}"
+                meta = storage.get_trip_metadata(base_id) or {}
+                
             trips.append({
                 'id': e.id,
                 'title': title,
