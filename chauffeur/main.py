@@ -347,10 +347,14 @@ def get_trip_api(event_id: str):
     from services.storage import event_configs_table
     from tinydb import Query
     linked_configs = event_configs_table.search(Query().trip_id == event_id)
+    trip_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
+    
     for conf in linked_configs:
         gid = conf.get('google_id')
-        if gid and gid not in metadata["activities"]:
-            metadata["activities"].append(gid)
+        if gid:
+            full_gid = gid if "::" in gid else f"{trip_cal_id}::{gid}"
+            if full_gid not in metadata["activities"]:
+                metadata["activities"].append(full_gid)
             
     # Resolve activities
     activities_details = []
