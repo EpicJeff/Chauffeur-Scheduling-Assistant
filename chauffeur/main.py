@@ -204,6 +204,63 @@ def calendar_view(request: Request):
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
 
+@app.get("/trips")
+def trips_list_view(request: Request):
+    return templates.TemplateResponse(request=request, name="trips.html", context={})
+
+@app.get("/api/trips")
+def get_all_trips_api():
+    from services.calendar import fetch_upcoming_events
+    settings = storage.get_settings()
+    calendar_ids = settings.get('calendar_ids', [])
+    trip_hashtags = settings.get('trip_hashtags', [])
+    
+    # Fetch trips for -30 to +365 days
+    now = datetime.datetime.now()
+    start_date_str = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+    end_date_str = (now + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    
+    try:
+        raw_events = fetch_upcoming_events(calendar_ids, start_date_str=start_date_str, end_date_str=end_date_str)
+    except Exception as e:
+        return {"error": str(e), "trips": []}
+        
+    trips = []
+    
+    def fuzzy_has_hashtag(text, tag):
+        if not text or not tag: return False
+        import re
+        clean_text = re.sub(r'<[^>]+>', ' ', text)
+        words = [w.lower().strip('.,;?!()[]{}""\'\'') for w in clean_text.split()]
+        target = tag.lower().strip('.,;?!()[]{}""\'\'')
+        return target in words
+        
+    for e in raw_events:
+        is_trip = False
+        title = getattr(e, 'title', '')
+        desc = getattr(e, 'description', '')
+        if any(fuzzy_has_hashtag(title, t) or fuzzy_has_hashtag(desc, t) for t in trip_hashtags):
+            is_trip = True
+            
+        config = storage.get_event_config(e.id)
+        if config and config.get('is_trip'):
+            is_trip = True
+            
+        if is_trip:
+            meta = storage.get_trip_metadata(e.id) or {}
+            trips.append({
+                'id': e.id,
+                'title': title,
+                'start': e.start.isoformat() if e.start else None,
+                'end': e.end.isoformat() if e.end else None,
+                'location': getattr(e, 'location', ''),
+                'background_url': meta.get('background_url', ''),
+                'poi_count': len(meta.get('pois', []))
+            })
+            
+    trips.sort(key=lambda x: x['start'] if x['start'] else '')
+    return {"trips": trips}
+
 @app.get("/trip/{event_id}")
 def trip_view(request: Request, event_id: str):
     return templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})

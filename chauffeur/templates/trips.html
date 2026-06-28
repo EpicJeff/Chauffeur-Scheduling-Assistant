@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chauffeur - Trips</title>
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {}
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { 
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white; 
+            min-height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .trip-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .trip-card:hover {
+            transform: translateY(-4px) scale(1.02);
+            border-color: rgba(59, 130, 246, 0.5);
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.2);
+        }
+        
+        .trip-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.2) 60%, transparent 100%);
+            z-index: 1;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+
+        /* HA Theme Overrides */
+        body.ha-theme { background: var(--ha-bg) !important; }
+        body.ha-theme .glass-panel {
+            background: color-mix(in srgb, var(--ha-card-bg) 80%, transparent) !important;
+            border-color: var(--ha-divider) !important;
+            box-shadow: none !important;
+        }
+        body.ha-theme .trip-card {
+            background: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+        }
+        body.ha-theme .trip-card::before {
+            background: linear-gradient(to top, var(--ha-card-bg) 0%, transparent 100%) !important;
+        }
+        body.ha-theme h1, body.ha-theme h2, body.ha-theme h3, body.ha-theme span, body.ha-theme p {
+            color: var(--ha-primary-text) !important;
+        }
+    </style>
+</head>
+<body class="flex flex-col">
+    {% include 'nav.html' %}
+
+    <main class="flex-1 w-full p-4 sm:p-6 lg:p-8 flex flex-col max-w-7xl mx-auto">
+        
+        <div class="mb-8 flex items-end justify-between">
+            <div>
+                <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400 tracking-tight mb-2">My Trips</h1>
+                <p class="text-gray-400 font-medium">Your upcoming and past adventures.</p>
+            </div>
+            <div id="trip-count" class="text-sm font-bold text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 hidden"></div>
+        </div>
+
+        <div id="loading" class="flex flex-col items-center justify-center py-20 flex-1">
+            <svg class="w-12 h-12 text-blue-500 animate-spin mb-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-blue-300 font-medium animate-pulse">Scanning calendar for trips...</p>
+        </div>
+        
+        <div id="no-trips" class="hidden flex flex-col items-center justify-center py-20 flex-1 glass-panel rounded-3xl">
+            <div class="bg-white/5 p-4 rounded-full mb-4">
+                <svg class="w-12 h-12 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </div>
+            <h2 class="text-xl font-bold text-white mb-2">No Trips Found</h2>
+            <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags to an event in Google Calendar, or mark an event as a trip in Chauffeur's settings.</p>
+        </div>
+
+        <div id="trips-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 hidden">
+            <!-- Trip Cards Will Be Injected Here -->
+        </div>
+
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const loading = document.getElementById('loading');
+            const noTrips = document.getElementById('noTrips');
+            const grid = document.getElementById('trips-grid');
+            const countEl = document.getElementById('trip-count');
+            
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/trips`);
+                if (!res.ok) throw new Error("Failed to load trips");
+                
+                const data = await res.json();
+                
+                loading.classList.add('hidden');
+                
+                if (!data.trips || data.trips.length === 0) {
+                    document.getElementById('no-trips').classList.remove('hidden');
+                    return;
+                }
+                
+                countEl.textContent = `${data.trips.length} Trips`;
+                countEl.classList.remove('hidden');
+                
+                const now = new Date();
+                
+                let html = '';
+                data.trips.forEach(trip => {
+                    const startDate = new Date(trip.start);
+                    const endDate = trip.end ? new Date(trip.end) : startDate;
+                    
+                    let statusBadge = '';
+                    if (endDate < now) {
+                        statusBadge = '<span class="px-2 py-1 rounded bg-gray-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">Past</span>';
+                    } else if (startDate <= now && endDate >= now) {
+                        statusBadge = '<span class="px-2 py-1 rounded bg-blue-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md animate-pulse">Active</span>';
+                    } else {
+                        // calculate days until
+                        const diffTime = Math.abs(startDate - now);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        statusBadge = `<span class="px-2 py-1 rounded bg-emerald-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">In ${diffDays} Days</span>`;
+                    }
+                    
+                    const dateFmtOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+                    const dateStr = startDate.toLocaleDateString(undefined, dateFmtOptions);
+                    const endDateStr = endDate.toLocaleDateString(undefined, dateFmtOptions);
+                    const finalDateStr = (dateStr === endDateStr) ? dateStr : `${dateStr} - ${endDateStr}`;
+                    
+                    const bgUrl = trip.background_url || 'https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=1000&auto=format&fit=crop';
+                    const fallbackLocation = trip.location || 'Unknown Location';
+                    
+                    html += `
+                        <a href="trip?event_id=${encodeURIComponent(trip.id)}" class="trip-card rounded-2xl aspect-[4/3] block group cursor-pointer shadow-lg">
+                            <!-- Background Image -->
+                            <img src="${bgUrl}" class="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500" />
+                            
+                            <!-- Content -->
+                            <div class="absolute inset-0 z-10 p-5 flex flex-col justify-between">
+                                <div class="flex justify-between items-start">
+                                    ${statusBadge}
+                                    ${trip.poi_count > 0 ? `<span class="px-2 py-1 rounded bg-black/40 text-white text-[10px] font-bold tracking-wider backdrop-blur-md border border-white/10 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg> ${trip.poi_count} POIs</span>` : ''}
+                                </div>
+                                
+                                <div>
+                                    <h2 class="text-2xl font-black text-white leading-tight mb-1 drop-shadow-lg group-hover:text-blue-300 transition-colors">${trip.title}</h2>
+                                    
+                                    <div class="flex flex-col gap-1 mt-2">
+                                        <div class="flex items-center gap-1.5 text-gray-300 text-sm font-medium">
+                                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                            ${finalDateStr}
+                                        </div>
+                                        <div class="flex items-center gap-1.5 text-gray-300 text-sm font-medium">
+                                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+                                            <span class="truncate">${fallbackLocation}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </a>
+                    `;
+                });
+                
+                grid.innerHTML = html;
+                grid.classList.remove('hidden');
+                
+            } catch (err) {
+                console.error(err);
+                loading.innerHTML = `
+                    <div class="bg-red-500/20 text-red-400 p-4 rounded-xl border border-red-500/30 flex items-center gap-3">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <span class="font-bold">Failed to load trips. Please try again.</span>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
