@@ -216,13 +216,16 @@ def get_all_trips_api():
     trip_hashtags = settings.get('trip_hashtags', [])
     
     # Fetch trips for -30 to +365 days
-    now = datetime.datetime.now()
-    start_date_str = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
-    end_date_str = (now + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+    from datetime import datetime as dt, timedelta
+    now = dt.now()
+    start_date_str = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    end_date_str = (now + timedelta(days=365)).strftime("%Y-%m-%d")
     
     try:
         raw_events = fetch_upcoming_events(calendar_ids, start_date_str=start_date_str, end_date_str=end_date_str)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e), "trips": []}
         
     trips = []
