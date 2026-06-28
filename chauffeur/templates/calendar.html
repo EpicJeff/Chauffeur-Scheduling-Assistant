@@ -456,6 +456,23 @@
                         // Parse standard events
                         if (data.events && data.events.length > 0) {
                             data.events.forEach(ev => {
+                                if (ev.event_type === 'background_trip') {
+                                    eventsMap.set(ev.id, {
+                                        id: ev.id,
+                                        title: '✈️ ' + ev.title,
+                                        start: ev.start,
+                                        end: ev.end,
+                                        allDay: true,
+                                        backgroundColor: '#1e3a8a',
+                                        borderColor: '#3b82f6',
+                                        extendedProps: {
+                                            isTrip: true,
+                                            tripUrl: 'trip?event_id=' + ev.id,
+                                            rawColor: '#1e3a8a'
+                                        }
+                                    });
+                                    return;
+                                }
                                 if (ev.event_type !== 'background_trip') {
                                     let baseId = ev.id;
                                     let rawTitle = ev.title;
@@ -644,6 +661,11 @@
                 
                 eventClick: function(info) {
                     const props = info.event.extendedProps;
+                    
+                    if (props.isTrip) {
+                        window.location.href = props.tripUrl;
+                        return;
+                    }
                     
                     document.getElementById('modal-title').textContent = info.event.title;
                     document.getElementById('modal-header-bg').style.backgroundColor = props.rawColor || info.event.backgroundColor;
