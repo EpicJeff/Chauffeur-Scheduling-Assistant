@@ -343,6 +343,15 @@ def get_trip_api(event_id: str):
         except Exception as e:
             print(f"Error fetching trip details from Google Calendar: {e}")
             
+    # Merge activities from event configs that have this trip_id
+    from services.storage import event_configs_table
+    from tinydb import Query
+    linked_configs = event_configs_table.search(Query().trip_id == event_id)
+    for conf in linked_configs:
+        gid = conf.get('google_id')
+        if gid and gid not in metadata["activities"]:
+            metadata["activities"].append(gid)
+            
     # Resolve activities
     activities_details = []
     for act_id in metadata["activities"]:
