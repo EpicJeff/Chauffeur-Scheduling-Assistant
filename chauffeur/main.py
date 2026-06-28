@@ -284,17 +284,39 @@ def health_check():
 
 @app.get("/api/trip/{event_id}")
 def get_trip_api(event_id: str):
-    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": []}
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata and "::" in event_id:
+        cal_id, raw_event_id = event_id.split("::", 1)
+        base_id = f"{cal_id}::{raw_event_id.split('_')[0]}"
+        metadata = storage.get_trip_metadata(base_id)
+    metadata = metadata or {"event_id": event_id, "pois": []}
     
-    from services.storage import cache_table
     event_details = None
-    for doc in cache_table.all():
-        for e in doc.get('schedule', []):
-            if e.get('id') == event_id:
-                event_details = e
-                break
-        if event_details:
-            break
+    if "::" in event_id:
+        cal_id, raw_event_id = event_id.split("::", 1)
+        from services.calendar import get_calendar_service
+        try:
+            service = get_calendar_service()
+            g = service.events().get(calendarId=cal_id, eventId=raw_event_id).execute()
+            
+            start_str = g['start'].get('dateTime', g['start'].get('date'))
+            end_str = g['end'].get('dateTime', g['end'].get('date'))
+            
+            from datetime import datetime, timezone
+            def parse_dt(s):
+                if len(s) <= 10:
+                    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+                return datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp()
+                
+            event_details = {
+                "id": event_id,
+                "title": g.get("summary", ""),
+                "location": g.get("location", ""),
+                "start": parse_dt(start_str),
+                "end": parse_dt(end_str)
+            }
+        except Exception as e:
+            print(f"Error fetching trip details from Google Calendar: {e}")
             
     return {
         "event": event_details,
