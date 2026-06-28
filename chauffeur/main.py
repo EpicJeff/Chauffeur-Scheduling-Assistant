@@ -274,10 +274,16 @@ def get_all_trips_api():
     from services.storage import event_configs_table, trip_metadata_table
     trip_event_ids = set()
     with storage.db_lock:
+        all_activities = set()
         for doc in event_configs_table.all():
             if doc.get('is_trip'):
                 trip_event_ids.add(doc.get('google_id'))
-        all_activities = set()
+            if doc.get('trip_id'):
+                gid = doc.get('google_id')
+                trip_cal_id = doc.get('trip_id').split("::", 1)[0] if "::" in doc.get('trip_id') else "primary"
+                full_gid = gid if "::" in gid else f"{trip_cal_id}::{gid}"
+                all_activities.add(full_gid)
+                
         for doc in trip_metadata_table.all():
             all_activities.update(doc.get('activities', []))
             
