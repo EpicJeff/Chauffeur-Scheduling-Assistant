@@ -203,6 +203,59 @@
             </div>
         </div>
     </div>
+    
+    <!-- Add Activity Modal -->
+    <div id="activity-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-gray-700 bg-gray-850 shrink-0">
+                <h3 class="text-2xl font-bold text-white">Add Activity</h3>
+                <div class="flex space-x-4 mt-4 border-b border-gray-700 pb-2">
+                    <button id="tab-new-act" onclick="switchActTab('new')" class="text-indigo-400 font-bold border-b-2 border-indigo-400 px-2 pb-1">Create New</button>
+                    <button id="tab-link-act" onclick="switchActTab('link')" class="text-gray-400 font-bold hover:text-gray-200 px-2 pb-1">Link Existing Event</button>
+                </div>
+            </div>
+            
+            <div class="p-6 overflow-y-auto space-y-4">
+                <!-- Create New Tab -->
+                <div id="act-new-pane" class="space-y-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Title</label>
+                        <input type="text" id="act-title" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500" placeholder="e.g. Flight to Paris">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Location</label>
+                        <input type="text" id="act-location" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500" placeholder="Address or Place">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-gray-400 text-sm font-bold mb-2">Start</label>
+                            <input type="datetime-local" id="act-start" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-bold mb-2">End</label>
+                            <input type="datetime-local" id="act-end" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Link Existing Tab -->
+                <div id="act-link-pane" class="hidden space-y-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Select Upcoming Event</label>
+                        <select id="act-existing-select" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500">
+                            <option value="">Loading events...</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-2">Only shows events from the next 30 days.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-6 border-t border-gray-700 bg-gray-850 shrink-0 flex justify-end space-x-4">
+                <button onclick="closeAddActivityModal()" class="text-gray-400 hover:text-white font-bold px-4 py-2">Cancel</button>
+                <button onclick="saveActivity()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-colors">Save Activity</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         const EVENT_ID = '{{ event_id }}';
