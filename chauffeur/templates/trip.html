@@ -557,17 +557,26 @@
             const select = document.getElementById('act-existing-select');
             select.innerHTML = '<option value="">Loading events...</option>';
             try {
-                const res = await fetch('api/events');
+                const today = new Date();
+                const startStr = today.toISOString().split('T')[0];
+                const endDate = new Date();
+                endDate.setDate(endDate.getDate() + 30);
+                const endStr = endDate.toISOString().split('T')[0];
+                
+                const res = await fetch(`api/schedule?start=${startStr}&end=${endStr}`);
                 if(res.ok) {
-                    const events = await res.json();
+                    const data = await res.json();
+                    const events = data.events || [];
                     select.innerHTML = '<option value="">-- Select an Event --</option>';
-                    events.forEach(ev => {
-                        const s = new Date(ev.start).toLocaleDateString();
-                        select.innerHTML += `<option value="${ev.id}">${s} - ${ev.title}</option>`;
+                    events.forEach(e => {
+                        if (e.event_type !== 'background_trip') {
+                            select.innerHTML += `<option value="${e.source_event_ids[0]}">${e.title} (${e.start.split('T')[0]})</option>`;
+                        }
                     });
                 }
             } catch(e) {
-                select.innerHTML = '<option value="">Failed to load events</option>';
+                console.error(e);
+                select.innerHTML = '<option value="">Failed to load</option>';
             }
         }
         
