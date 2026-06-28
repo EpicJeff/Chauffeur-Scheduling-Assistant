@@ -210,65 +210,89 @@ def trips_list_view(request: Request):
 
 @app.get("/api/trips")
 def get_all_trips_api():
-    from services.storage import event_configs_table, trip_metadata_table
+    settings = storage.get_settings()
+    calendar_ids = settings.get('calendar_ids', [])
+    trip_hashtags = settings.get('trip_hashtags', [])
     
-    trip_event_ids = set()
-    with storage.db_lock:
-        for doc in event_configs_table.all():
-            if doc.get('is_trip'):
-                trip_event_ids.add(doc.get('google_id'))
-                
-        for doc in trip_metadata_table.all():
-            trip_event_ids.add(doc.get('event_id'))
-            
-    trips = []
-    if not trip_event_ids:
-        return {"trips": []}
-        
+    from datetime import datetime as dt, timedelta, timezone
+    now = dt.now()
+    time_min = (now - timedelta(days=30)).isoformat() + 'Z'
+    time_max = (now + timedelta(days=365)).isoformat() + 'Z'
+    
     from services.calendar import get_calendar_service
     try:
         service = get_calendar_service()
     except Exception as e:
         return {"error": str(e), "trips": []}
         
+    trips_map = {}
+    
+    def parse_dt_iso(s):
+        if len(s) <= 10:
+            return dt.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+        return dt.fromisoformat(s.replace('Z', '+00:00')).isoformat()
+        
+    def add_trip(cal_id, g):
+        if g.get('status') == 'cancelled': return
+        start_str = g.get('start', {}).get('dateTime', g.get('start', {}).get('date'))
+        end_str = g.get('end', {}).get('dateTime', g.get('end', {}).get('date'))
+        if not start_str or not end_str: return
+        
+        event_id = f"{cal_id}::{g['id']}"
+        if event_id in trips_map: return
+        
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            base_id = f"{cal_id}::{g['id'].split('_')[0]}"
+            meta = storage.get_trip_metadata(base_id)
+        meta = meta or {}
+            
+        trips_map[event_id] = {
+            'id': event_id,
+            'title': g.get('summary', ''),
+            'start': parse_dt_iso(start_str),
+            'end': parse_dt_iso(end_str),
+            'location': g.get('location', ''),
+            'background_url': meta.get('background_url', ''),
+            'poi_count': len(meta.get('pois', []))
+        }
+
+    # 1. Fetch by Hashtags using Google API Search
+    for cal_id in calendar_ids:
+        for tag in trip_hashtags:
+            try:
+                res = service.events().list(
+                    calendarId=cal_id, q=tag, singleEvents=True,
+                    timeMin=time_min, timeMax=time_max, maxResults=50
+                ).execute()
+                for g in res.get('items', []):
+                    add_trip(cal_id, g)
+            except Exception as e:
+                print(f"Error searching calendar {cal_id} for tag {tag}: {e}")
+
+    # 2. Fetch by explicit DB setting
+    from services.storage import event_configs_table, trip_metadata_table
+    trip_event_ids = set()
+    with storage.db_lock:
+        for doc in event_configs_table.all():
+            if doc.get('is_trip'):
+                trip_event_ids.add(doc.get('google_id'))
+        for doc in trip_metadata_table.all():
+            trip_event_ids.add(doc.get('event_id'))
+            
     for event_id in trip_event_ids:
-        if "::" not in event_id:
+        if "::" not in event_id or event_id in trips_map:
             continue
         cal_id, raw_event_id = event_id.split("::", 1)
-        
         try:
             g = service.events().get(calendarId=cal_id, eventId=raw_event_id).execute()
-            
-            if g.get('status') == 'cancelled':
-                continue
-                
-            start_str = g.get('start', {}).get('dateTime', g.get('start', {}).get('date'))
-            end_str = g.get('end', {}).get('dateTime', g.get('end', {}).get('date'))
-            if not start_str or not end_str:
-                continue
-                
-            from datetime import datetime, timezone
-            def parse_dt_iso(s):
-                if len(s) <= 10:
-                    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
-                return datetime.fromisoformat(s.replace('Z', '+00:00')).isoformat()
-                
-            meta = storage.get_trip_metadata(event_id) or {}
-            
-            trips.append({
-                'id': event_id,
-                'title': g.get('summary', ''),
-                'start': parse_dt_iso(start_str),
-                'end': parse_dt_iso(end_str),
-                'location': g.get('location', ''),
-                'background_url': meta.get('background_url', ''),
-                'poi_count': len(meta.get('pois', []))
-            })
+            add_trip(cal_id, g)
         except Exception as e:
             print(f"Error fetching trip {event_id}: {e}")
-            
-    trips.sort(key=lambda x: x['start'] if x['start'] else '')
-    return {"trips": trips}
+
+    trips_list = list(trips_map.values())
+    trips_list.sort(key=lambda x: x['start'] if x['start'] else '')
+    return {"trips": trips_list}
 
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
