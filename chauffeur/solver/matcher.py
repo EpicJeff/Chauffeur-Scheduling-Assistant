@@ -1685,7 +1685,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         try:
             anchor_date = datetime.fromtimestamp(anchor_ts)
         except:
-            anchor_date = datetime.now()
+            anchor_date = datetime.now().astimezone()
             
         rule = errand.get('recurrence_rule')
         
@@ -1758,9 +1758,9 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         # --- Apply global rules to this errand ---
         from models.schemas import Event, Rule
         try:
-            errand_dt = datetime.fromtimestamp(errand.get('starts_on') or errand.get('created_at', 0))
+            errand_dt = datetime.fromtimestamp(errand.get('starts_on') or errand.get('created_at', 0)).astimezone()
         except:
-            errand_dt = datetime.now()
+            errand_dt = datetime.now().astimezone()
             
         dummy_event = Event(
             id=errand.get('id', 'temp'),
@@ -1800,7 +1800,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         # -----------------------------------------
         
         from datetime import timezone
-        now = datetime.now(timezone.utc)
+        now = datetime.now().astimezone()
         
         for date_str, day_schedules in driver_schedules_by_date.items():
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -1831,7 +1831,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 if not schedule:
                     t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
                     detour = t1 * 2 - group_bonus
-                    start_time = datetime.combine(current_date, time(9, 0)) # default 9 AM
+                    start_time = datetime.combine(current_date, time(9, 0)).astimezone() # default 9 AM
                     end_time = start_time + timedelta(minutes=duration)
                     
                     if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
