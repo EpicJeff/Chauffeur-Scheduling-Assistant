@@ -277,8 +277,13 @@ def get_all_trips_api():
         for doc in event_configs_table.all():
             if doc.get('is_trip'):
                 trip_event_ids.add(doc.get('google_id'))
+        all_activities = set()
         for doc in trip_metadata_table.all():
-            trip_event_ids.add(doc.get('event_id'))
+            all_activities.update(doc.get('activities', []))
+            
+        for doc in trip_metadata_table.all():
+            if not doc.get('is_activity') and doc.get('event_id') not in all_activities:
+                trip_event_ids.add(doc.get('event_id'))
             
     for event_id in trip_event_ids:
         if "::" not in event_id or event_id in trips_map:
@@ -368,12 +373,13 @@ def get_trip_api(event_id: str):
                 act_end_str = g_act.get('end', {}).get('dateTime', g_act.get('end', {}).get('date'))
                 
                 # Cache Unsplash Background
-                act_meta = storage.get_trip_metadata(act_id) or {"event_id": act_id}
-                if "background_url" not in act_meta:
+                act_meta = storage.get_trip_metadata(act_id) or {"event_id": act_id, "is_activity": True}
+                if "background_url" not in act_meta or not act_meta.get("is_activity"):
+                    act_meta["is_activity"] = True
                     import urllib.parse
                     query = g_act.get("location") or g_act.get("summary", "travel")
                     encoded_query = urllib.parse.quote(query)
-                    act_meta["background_url"] = f"https://loremflickr.com/1280/720/{encoded_query},scenery"
+                    act_meta["background_url"] = act_meta.get("background_url", f"https://loremflickr.com/1280/720/{encoded_query},scenery")
                     storage.set_trip_metadata(act_id, act_meta)
                     
                 activities_details.append({
