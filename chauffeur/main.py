@@ -310,9 +310,12 @@ def get_trip_api(event_id: str):
         cal_id, raw_event_id = event_id.split("::", 1)
         base_id = f"{cal_id}::{raw_event_id.split('_')[0]}"
         metadata = storage.get_trip_metadata(base_id)
-    metadata = metadata or {"event_id": event_id, "pois": []}
+    metadata = metadata or {"event_id": event_id, "pois": [], "activities": []}
+    if "activities" not in metadata:
+        metadata["activities"] = []
     
     event_details = None
+    service = None
     if "::" in event_id:
         cal_id, raw_event_id = event_id.split("::", 1)
         from services.calendar import get_calendar_service
@@ -325,6 +328,7 @@ def get_trip_api(event_id: str):
             
             from datetime import datetime, timezone
             def parse_dt(s):
+                if not s: return 0
                 if len(s) <= 10:
                     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
                 return datetime.fromisoformat(s.replace('Z', '+00:00')).timestamp()
@@ -339,10 +343,92 @@ def get_trip_api(event_id: str):
         except Exception as e:
             print(f"Error fetching trip details from Google Calendar: {e}")
             
+    # Resolve activities
+    activities_details = []
+    for act_id in metadata["activities"]:
+        if "::" not in act_id: continue
+        act_cal_id, act_raw_id = act_id.split("::", 1)
+        try:
+            if service:
+                g_act = service.events().get(calendarId=act_cal_id, eventId=act_raw_id).execute()
+                act_start_str = g_act.get('start', {}).get('dateTime', g_act.get('start', {}).get('date'))
+                act_end_str = g_act.get('end', {}).get('dateTime', g_act.get('end', {}).get('date'))
+                
+                # Cache Unsplash Background
+                act_meta = storage.get_trip_metadata(act_id) or {"event_id": act_id}
+                if "background_url" not in act_meta:
+                    import urllib.parse
+                    query = g_act.get("location") or g_act.get("summary", "travel")
+                    encoded_query = urllib.parse.quote(query)
+                    act_meta["background_url"] = f"https://loremflickr.com/1280/720/{encoded_query},scenery"
+                    storage.set_trip_metadata(act_id, act_meta)
+                    
+                activities_details.append({
+                    "id": act_id,
+                    "title": g_act.get("summary", ""),
+                    "location": g_act.get("location", ""),
+                    "start": parse_dt(act_start_str),
+                    "end": parse_dt(act_end_str),
+                    "background_url": act_meta.get("background_url")
+                })
+        except Exception as e:
+            print(f"Error fetching activity {act_id}: {e}")
+            
+    # Sort activities by start time
+    activities_details.sort(key=lambda x: x["start"] if x["start"] else 0)
+            
     return {
         "event": event_details,
-        "metadata": metadata
+        "metadata": metadata,
+        "activities": activities_details
     }
+
+@app.post("/api/trip/{event_id}/activity")
+def add_activity_api(event_id: str, payload: dict):
+    # payload can contain {"activity_id": "cal::event"} to link existing
+    # or {"title": "...", "location": "...", "start": "...", "end": "...", "calendar_id": "..."} to create new
+    meta = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "activities": []}
+    if "activities" not in meta:
+        meta["activities"] = []
+        
+    act_id = payload.get("activity_id")
+    if not act_id and "title" in payload:
+        # Create new event
+        from services.calendar import get_calendar_service
+        service = get_calendar_service()
+        cal_id = payload.get("calendar_id", "primary")
+        event_body = {
+            "summary": payload["title"],
+            "location": payload.get("location", ""),
+            "start": {"dateTime": payload["start"]},
+            "end": {"dateTime": payload["end"]}
+        }
+        res = service.events().insert(calendarId=cal_id, body=event_body).execute()
+        act_id = f"{cal_id}::{res['id']}"
+        
+    if act_id and act_id not in meta["activities"]:
+        meta["activities"].append(act_id)
+        storage.set_trip_metadata(event_id, meta)
+        
+    return {"status": "ok", "activity_id": act_id}
+
+@app.delete("/api/trip/{event_id}/activity/{activity_id}")
+def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: bool = False):
+    meta = storage.get_trip_metadata(event_id)
+    if meta and "activities" in meta and activity_id in meta["activities"]:
+        meta["activities"].remove(activity_id)
+        storage.set_trip_metadata(event_id, meta)
+        
+    if delete_from_calendar and "::" in activity_id:
+        cal_id, raw_id = activity_id.split("::", 1)
+        try:
+            from services.calendar import get_calendar_service
+            service = get_calendar_service()
+            service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
+        except Exception as e:
+            print(f"Error deleting activity from calendar: {e}")
+            
+    return {"status": "ok"}
 
 @app.post("/api/trip/{event_id}")
 def save_trip_api(event_id: str, payload: dict):
