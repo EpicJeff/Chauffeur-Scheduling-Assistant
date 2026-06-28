@@ -210,65 +210,62 @@ def trips_list_view(request: Request):
 
 @app.get("/api/trips")
 def get_all_trips_api():
-    from services.calendar import fetch_upcoming_events
-    settings = storage.get_settings()
-    calendar_ids = settings.get('calendar_ids', [])
-    trip_hashtags = settings.get('trip_hashtags', [])
+    from services.storage import event_configs_table, trip_metadata_table
     
-    # Fetch trips for -30 to +365 days
-    from datetime import datetime as dt, timedelta
-    now = dt.now()
-    start_date_str = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-    end_date_str = (now + timedelta(days=365)).strftime("%Y-%m-%d")
-    
+    trip_event_ids = set()
+    with storage.db_lock:
+        for doc in event_configs_table.all():
+            if doc.get('is_trip'):
+                trip_event_ids.add(doc.get('google_id'))
+                
+        for doc in trip_metadata_table.all():
+            trip_event_ids.add(doc.get('event_id'))
+            
+    trips = []
+    if not trip_event_ids:
+        return {"trips": []}
+        
+    from services.calendar import get_calendar_service
     try:
-        raw_events = fetch_upcoming_events(calendar_ids, start_date_str=start_date_str, end_date_str=end_date_str)
+        service = get_calendar_service()
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return {"error": str(e), "trips": []}
         
-    trips = []
-    
-    def fuzzy_has_hashtag(text, tag):
-        if not text or not tag: return False
-        import re
-        clean_text = re.sub(r'<[^>]+>', ' ', text)
-        words = [w.lower().strip('.,;?!()[]{}""\'\'') for w in clean_text.split()]
-        target = tag.lower().strip('.,;?!()[]{}""\'\'')
-        return target in words
+    for event_id in trip_event_ids:
+        if "::" not in event_id:
+            continue
+        cal_id, raw_event_id = event_id.split("::", 1)
         
-    for e in raw_events:
-        is_trip = False
-        title = getattr(e, 'title', '')
-        desc = getattr(e, 'description', '')
-        if any(fuzzy_has_hashtag(title, t) or fuzzy_has_hashtag(desc, t) for t in trip_hashtags):
-            is_trip = True
+        try:
+            g = service.events().get(calendarId=cal_id, eventId=raw_event_id).execute()
             
-        config = storage.get_event_config(e.id)
-        if config and config.get('is_trip'):
-            is_trip = True
-        elif getattr(e, 'recurring_event_id', None) and e.calendar_ids:
-            base_id = f"{e.calendar_ids[0]}::{e.recurring_event_id}"
-            config = storage.get_event_config(base_id)
-            if config and config.get('is_trip'):
-                is_trip = True
-            
-        if is_trip:
-            meta = storage.get_trip_metadata(e.id) or {}
-            if not meta and getattr(e, 'recurring_event_id', None) and e.calendar_ids:
-                base_id = f"{e.calendar_ids[0]}::{e.recurring_event_id}"
-                meta = storage.get_trip_metadata(base_id) or {}
+            if g.get('status') == 'cancelled':
+                continue
                 
+            start_str = g.get('start', {}).get('dateTime', g.get('start', {}).get('date'))
+            end_str = g.get('end', {}).get('dateTime', g.get('end', {}).get('date'))
+            if not start_str or not end_str:
+                continue
+                
+            from datetime import datetime, timezone
+            def parse_dt_iso(s):
+                if len(s) <= 10:
+                    return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+                return datetime.fromisoformat(s.replace('Z', '+00:00')).isoformat()
+                
+            meta = storage.get_trip_metadata(event_id) or {}
+            
             trips.append({
-                'id': e.id,
-                'title': title,
-                'start': e.start.isoformat() if e.start else None,
-                'end': e.end.isoformat() if e.end else None,
-                'location': getattr(e, 'location', ''),
+                'id': event_id,
+                'title': g.get('summary', ''),
+                'start': parse_dt_iso(start_str),
+                'end': parse_dt_iso(end_str),
+                'location': g.get('location', ''),
                 'background_url': meta.get('background_url', ''),
                 'poi_count': len(meta.get('pois', []))
             })
+        except Exception as e:
+            print(f"Error fetching trip {event_id}: {e}")
             
     trips.sort(key=lambda x: x['start'] if x['start'] else '')
     return {"trips": trips}
