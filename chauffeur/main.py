@@ -1331,18 +1331,16 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
 
 @app.get("/api/unsplash/background")
 def get_unsplash_background(query: str):
-    # Using Unsplash Source API fallback for Dakboard backgrounds
-    import urllib.parse
-    encoded_query = urllib.parse.quote(query)
-    # The source.unsplash.com API is deprecated, but we can return a placeholder or standard URL.
-    # We will use the generic image fallback for now.
-    url = f"https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
-    if 'paris' in query.lower():
-        url = "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1920&auto=format&fit=crop"
-    elif 'tokyo' in query.lower():
-        url = "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1920&auto=format&fit=crop"
-    elif 'london' in query.lower():
-        url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
+    # The source.unsplash.com API was deprecated. We use loremflickr for dynamic keyword images.
+    if not query:
+        query = "scenery,nature"
+    
+    # Format query for loremflickr (comma separated words, no spaces)
+    formatted_query = ",".join(query.replace(",", " ").split())
+    if not formatted_query:
+        formatted_query = "scenery"
+        
+    url = f"https://loremflickr.com/1280/720/{formatted_query}"
     return {"url": url}
 
 
