@@ -1347,20 +1347,27 @@ def _fetch_unsplash_url(query: str, api_key: str) -> str:
     elif 'london' in query.lower():
         fallback_url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
 
-    if api_key:
+    if not api_key:
+        print("Unsplash API: No API key found in options")
+    else:
         encoded_query = urllib.parse.quote(query)
         try:
+            api_url = f"https://api.unsplash.com/search/photos?query={encoded_query}&orientation=landscape&per_page=1"
+            print(f"Unsplash API Request: {api_url}")
             res = requests.get(
-                f"https://api.unsplash.com/search/photos?query={encoded_query}&orientation=landscape&per_page=1",
+                api_url,
                 headers={"Authorization": f"Client-ID {api_key}"},
                 timeout=5
             )
+            print(f"Unsplash API Response: {res.status_code} - {res.text[:200]}")
             if res.ok:
                 data = res.json()
-                if data.get("results"):
+                if data.get("results") and len(data["results"]) > 0:
                     return data["results"][0]["urls"]["regular"]
-        except Exception:
-            pass
+                else:
+                    print(f"Unsplash API: No results found for query '{query}'")
+        except Exception as e:
+            print(f"Unsplash API Error: {e}")
 
     return fallback_url
 
