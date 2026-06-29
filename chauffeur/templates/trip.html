@@ -141,7 +141,51 @@
         </div>
 
 
-    <!-- Modals (Add POI, Settings, Add Activity) -->
+    <!-- Modals (Add POI, Settings, Add Activity, Activity Details) -->
+    <div id="activity-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- Header Image Area -->
+            <div id="act-detail-header" class="h-48 relative bg-cover bg-center shrink-0">
+                <div class="absolute inset-0 bg-gradient-to-t from-gray-800 via-gray-800/60 to-transparent"></div>
+                <button onclick="closeActivityDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+                <div class="absolute bottom-0 left-0 p-6 w-full">
+                    <h3 id="act-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">Activity Title</h3>
+                </div>
+            </div>
+            
+            <!-- Details Area -->
+            <div class="p-6 overflow-y-auto space-y-6">
+                <div class="flex items-center text-indigo-300 font-bold bg-indigo-900/30 p-4 rounded-xl border border-indigo-500/20">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span id="act-detail-time">Date and Time</span>
+                </div>
+                
+                <div id="act-detail-location-container" class="flex items-start text-gray-300 bg-white/5 p-4 rounded-xl border border-white/10">
+                    <svg class="w-5 h-5 mr-3 mt-0.5 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span id="act-detail-location" class="leading-relaxed">Location goes here</span>
+                </div>
+                
+                <div id="act-detail-notes-container">
+                    <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Notes & Description</h4>
+                    <div id="act-detail-notes" class="text-gray-300 prose prose-invert max-w-none text-sm leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 whitespace-pre-wrap">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer Actions -->
+            <div class="p-4 bg-gray-900 border-t border-gray-700 flex justify-between items-center shrink-0">
+                <button id="act-detail-remove-btn" class="text-red-400 hover:text-red-300 hover:bg-red-950/50 px-4 py-2 rounded-xl transition-colors font-bold text-sm flex items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    Remove Activity
+                </button>
+                <button onclick="closeActivityDetails()" class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-xl font-bold transition-colors">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
     <div id="poi-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
             <h3 class="text-2xl font-bold text-white mb-6">Add Point of Interest</h3>
@@ -336,11 +380,12 @@
                 
                 const card = document.createElement('div');
                 card.className = "group relative h-48 rounded-2xl overflow-hidden shadow-lg cursor-pointer transform transition-all hover:-translate-y-1 hover:shadow-2xl border border-white/10";
+                card.onclick = () => openActivityDetails(act.id);
                 card.innerHTML = `
                     <div class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-110" style="background-image: url('${bg}')"></div>
                     <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
                     
-                    <button onclick="deleteActivity('${act.id}')" class="absolute top-3 right-3 text-white/50 hover:text-red-400 bg-black/40 hover:bg-black/70 p-1.5 rounded-full backdrop-blur opacity-0 group-hover:opacity-100 transition-all z-10">
+                    <button onclick="event.stopPropagation(); deleteActivity('${act.id}')" class="absolute top-3 right-3 text-white/50 hover:text-red-400 bg-black/40 hover:bg-black/70 p-1.5 rounded-full backdrop-blur opacity-0 group-hover:opacity-100 transition-all z-10">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                     </button>
                     
@@ -637,6 +682,51 @@
             } catch(e) {
                 alert("Error removing activity");
             }
+        }
+
+        function openActivityDetails(actId) {
+            const act = tripData.activities.find(a => a.id === actId);
+            if(!act) return;
+            
+            const start = act.start ? new Date(act.start * 1000) : null;
+            const end = act.end ? new Date(act.end * 1000) : null;
+            let timeStr = "Time not specified";
+            if(start && end) {
+                timeStr = `${start.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+            }
+            
+            document.getElementById('act-detail-title').innerText = act.title;
+            document.getElementById('act-detail-time').innerText = timeStr;
+            
+            const bg = act.background_url || 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop';
+            document.getElementById('act-detail-header').style.backgroundImage = `url('${bg}')`;
+            
+            if(act.location) {
+                document.getElementById('act-detail-location-container').classList.remove('hidden');
+                document.getElementById('act-detail-location').innerText = act.location;
+            } else {
+                document.getElementById('act-detail-location-container').classList.add('hidden');
+            }
+            
+            if(act.description && act.description.trim() !== '') {
+                document.getElementById('act-detail-notes-container').classList.remove('hidden');
+                // Use innerHTML so HTML descriptions (like from GCal) render correctly
+                document.getElementById('act-detail-notes').innerHTML = act.description;
+            } else {
+                document.getElementById('act-detail-notes-container').classList.add('hidden');
+            }
+            
+            const removeBtn = document.getElementById('act-detail-remove-btn');
+            removeBtn.onclick = () => {
+                closeActivityDetails();
+                deleteActivity(act.id);
+            };
+            
+            document.getElementById('activity-details-modal').classList.remove('hidden');
+        }
+        
+        function closeActivityDetails() {
+            document.getElementById('activity-details-modal').classList.add('hidden');
         }
 
         fetchTripData();

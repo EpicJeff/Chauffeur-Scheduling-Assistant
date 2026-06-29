@@ -392,6 +392,7 @@ def get_trip_api(event_id: str):
                     "id": act_id,
                     "title": g_act.get("summary", ""),
                     "location": g_act.get("location", ""),
+                    "description": g_act.get("description", ""),
                     "start": parse_dt(act_start_str),
                     "end": parse_dt(act_end_str),
                     "background_url": act_meta.get("background_url")
