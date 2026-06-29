@@ -342,15 +342,12 @@
 
             document.getElementById('trip-notes-display').innerText = tripData.metadata.notes || "No general notes.";
 
-            const searchQuery = tripData.metadata.background_url || loc.split(',')[0] || 'nature';
-            fetch(`api/unsplash/background?query=${encodeURIComponent(searchQuery)}`)
-                .then(r => r.json())
-                .then(d => {
-                    if (d && d.url && d.url.startsWith('http')) {
-                        document.getElementById('bg-img').src = d.url;
-                    }
-                })
-                .catch(err => console.error("Background fetch error:", err));
+            const searchQuery = tripData.metadata.background_url || tripData.summary || loc.split(',')[0] || 'nature';
+            if (searchQuery.startsWith('http')) {
+                document.getElementById('bg-img').src = searchQuery;
+            } else {
+                document.getElementById('bg-img').src = `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
+            }
             
             renderPois();
             renderActivities();

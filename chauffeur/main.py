@@ -1329,17 +1329,24 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
     from fastapi import HTTPException
     raise HTTPException(status_code=400, detail="Failed to retrieve location")
 
-@app.get("/api/unsplash/background")
-def get_unsplash_background(query: str):
-    # Uses official Unsplash API if a key is provided in Addon Config
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def _fetch_unsplash_url(query: str, api_key: str) -> str:
     import urllib.parse
     import requests
     
+    fallback_url = "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
     if not query:
-        query = "beautiful scenery nature landscape"
+        return fallback_url
         
-    api_key = maps.get_map_option('unsplash_api_key', None)
-    
+    if 'paris' in query.lower():
+        fallback_url = "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1920&auto=format&fit=crop"
+    elif 'tokyo' in query.lower():
+        fallback_url = "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1920&auto=format&fit=crop"
+    elif 'london' in query.lower():
+        fallback_url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
+
     if api_key:
         encoded_query = urllib.parse.quote(query)
         try:
@@ -1351,21 +1358,20 @@ def get_unsplash_background(query: str):
             if res.ok:
                 data = res.json()
                 if data.get("results"):
-                    url = data["results"][0]["urls"]["regular"]
-                    return {"url": url}
+                    return data["results"][0]["urls"]["regular"]
         except Exception:
             pass
 
-    # Fallback to generic image if no API key or request fails
-    url = "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
-    if 'paris' in query.lower():
-        url = "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1920&auto=format&fit=crop"
-    elif 'tokyo' in query.lower():
-        url = "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1920&auto=format&fit=crop"
-    elif 'london' in query.lower():
-        url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
+    return fallback_url
+
+@app.get("/api/unsplash/background")
+def get_unsplash_background(query: str):
+    # Uses official Unsplash API if a key is provided in Addon Config
+    api_key = maps.get_map_option('unsplash_api_key', None)
     
-    return {"url": url}
+    url = _fetch_unsplash_url(query, api_key)
+    
+    return RedirectResponse(url=url, headers={"Cache-Control": "public, max-age=86400"})
 
 
 # --- Schedule API ---
