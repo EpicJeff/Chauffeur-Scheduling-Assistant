@@ -1331,15 +1331,39 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
 
 @app.get("/api/unsplash/background")
 def get_unsplash_background(query: str):
-    # Using Pollinations AI to generate beautiful, accurate images for any query
-    # since Unsplash Source API is deprecated and LoremFlickr has poor tagging accuracy.
+    # Uses official Unsplash API if a key is provided in Addon Config
     import urllib.parse
+    import requests
     
     if not query:
         query = "beautiful scenery nature landscape"
         
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://image.pollinations.ai/prompt/{encoded_query}?width=1280&height=720&nologo=true"
+    api_key = maps.get_map_option('unsplash_api_key', None)
+    
+    if api_key:
+        encoded_query = urllib.parse.quote(query)
+        try:
+            res = requests.get(
+                f"https://api.unsplash.com/search/photos?query={encoded_query}&orientation=landscape&per_page=1",
+                headers={"Authorization": f"Client-ID {api_key}"},
+                timeout=5
+            )
+            if res.ok:
+                data = res.json()
+                if data.get("results"):
+                    url = data["results"][0]["urls"]["regular"]
+                    return {"url": url}
+        except Exception:
+            pass
+
+    # Fallback to generic image if no API key or request fails
+    url = "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
+    if 'paris' in query.lower():
+        url = "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1920&auto=format&fit=crop"
+    elif 'tokyo' in query.lower():
+        url = "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1920&auto=format&fit=crop"
+    elif 'london' in query.lower():
+        url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
     
     return {"url": url}
 
