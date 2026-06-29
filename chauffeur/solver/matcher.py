@@ -47,6 +47,17 @@ def get_effective_overridden_event_ids(events, overrides) -> list:
             
     return list(overridden_ids)
 
+
+def get_active_home(entity_id: str, ts: float, default_home: str, trip_metadata: List[dict] = None) -> str:
+    if not trip_metadata: return default_home
+    for trip in trip_metadata:
+        if entity_id in trip['entities'] or 'global' in trip['entities']:
+            start_ts = trip['start'].timestamp()
+            end_ts = trip['end'].timestamp()
+            if start_ts <= ts <= end_ts:
+                return trip['location']
+    return default_home
+
 def does_event_match_rule(event, rule, passengers=None) -> bool:
     if getattr(rule, 'constraint_type', '') == 'group':
         if hasattr(rule, 'filter_sets') and rule.filter_sets:
@@ -690,7 +701,7 @@ def solve_schedule(
                             if (e2.start - e1.end).total_seconds() > 3600:
                                 travel_mins = 99
                             else:
-                                travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None)
+                                travel_mins = get_switch_travel_time(e1, e2, events, home_location=theme.get('home_location') if theme else None, trip_metadata=trip_metadata, passengers=passengers)
                         
                         gap_seconds = (e2.start - e1.end).total_seconds()
                         if gap_seconds >= 0:
@@ -698,10 +709,11 @@ def solve_schedule(
                                 # Estimate if a layover home trip would occur. If it does, we zero out the continuity bonus.
                                 # For estimating, we use the global home_location as a proxy for the driver's home.
                                 global_home = theme.get('home_location') if theme else None
+                                active_driver_home = get_active_home(f"driver_{d.id}", e2.start.timestamp(), global_home, trip_metadata) if trip_metadata and global_home else global_home
                                 threshold_seconds = 7200 # default to 2 hours if we can't estimate
-                                if global_home and e1.location and e2.location:
-                                    t_home = get_travel_time_minutes(e1.location, global_home)
-                                    t_back = get_travel_time_minutes(global_home, e2.location)
+                                if active_driver_home and e1.location and e2.location:
+                                    t_home = get_travel_time_minutes(e1.location, active_driver_home)
+                                    t_back = get_travel_time_minutes(active_driver_home, e2.location)
                                     # Drive home kicks in if layover >= 20 mins. Layover = gap_mins - t_home - t_back - 5.
                                     # gap_mins = 20 + 5 + t_home + t_back = 25 + t_home + t_back
                                     threshold_seconds = (25 + t_home + t_back) * 60
@@ -1052,7 +1064,7 @@ def get_passenger_pickup_event_for_subset(e2: Event, subset_cals: set, all_event
 def get_passenger_pickup_event(e2: Event, all_events: List[Event]) -> Optional[Event]:
     return get_passenger_pickup_event_for_subset(e2, set(e2.calendar_ids), all_events)
 
-def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_location: Optional[str] = None) -> int:
+def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_location: Optional[str] = None, trip_metadata: List[dict] = None, passengers: List[Passenger] = None) -> int:
     pickup = get_passenger_pickup_event(e2, all_events)
     if pickup:
         t1 = get_travel_time_minutes(e1.location, pickup.location)
@@ -1060,10 +1072,19 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_l
         return t1 + t2
     
     if home_location and e1.location and e2.location:
+        active_home = home_location
+        if passengers and trip_metadata:
+            e2_pax_ids = get_event_passenger_ids(e2, passengers)
+            if e2_pax_ids:
+                p_id = list(e2_pax_ids)[0]
+                active_home = get_active_home(f"passenger_{p_id}", e2.start.timestamp(), home_location, trip_metadata)
+            else:
+                active_home = get_active_home("global", e2.start.timestamp(), home_location, trip_metadata)
+                
         # If no pickup event is found, it means the passenger is at home.
         # The driver must travel from e1 to home, then home to e2.
-        t1 = get_travel_time_minutes(e1.location, home_location)
-        t2 = get_travel_time_minutes(home_location, e2.location)
+        t1 = get_travel_time_minutes(e1.location, active_home)
+        t2 = get_travel_time_minutes(active_home, e2.location)
         return t1 + t2
     
     # Fallback if no home location
@@ -1111,14 +1132,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
     
     if trip_metadata is None: trip_metadata = []
     
-    def get_active_home(entity_id: str, ts: float, default_home: str) -> str:
-        for trip in trip_metadata:
-            if entity_id in trip['entities'] or 'global' in trip['entities']:
-                start_ts = trip['start'].timestamp()
-                end_ts = trip['end'].timestamp()
-                if start_ts <= ts <= end_ts:
-                    return trip['location']
-        return default_home
+    def get_active_home_local(entity_id: str, ts: float, default_home: str) -> str:
+        return get_active_home(entity_id, ts, default_home, trip_metadata)
 
     def get_pax_id(cal_id: str) -> Optional[str]:
         if not passengers: return None
@@ -1148,8 +1163,8 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 is_passenger_ev = first_ev.id in assignments
                 
                 start_ts = first_ev.start.timestamp()
-                driver_home = get_active_home(f'driver_{d_id}', start_ts, driver_default_home)
-                global_home_at_start = get_active_home('global', start_ts, home_location)
+                driver_home = get_active_home_local(f'driver_{d_id}', start_ts, driver_default_home)
+                global_home_at_start = get_active_home_local('global', start_ts, home_location)
                 
                 pax_home = global_home_at_start
                 pickup_title = "Home"
@@ -1163,7 +1178,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         for cid in first_ev.calendar_ids:
                             pid = get_pax_id(cid)
                             if pid:
-                                pax_home = get_active_home(f'passenger_{pid}', start_ts, global_home_at_start)
+                                pax_home = get_active_home_local(f'passenger_{pid}', start_ts, global_home_at_start)
                                 break
                             
                 if is_passenger_ev and pax_home and driver_home != pax_home:
@@ -1196,15 +1211,15 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 is_last_passenger_ev = last_ev.id in assignments
                 
                 end_ts = last_ev.end.timestamp()
-                driver_home_at_end = get_active_home(f'driver_{d_id}', end_ts, driver_default_home)
-                global_home_at_end = get_active_home('global', end_ts, home_location)
+                driver_home_at_end = get_active_home_local(f'driver_{d_id}', end_ts, driver_default_home)
+                global_home_at_end = get_active_home_local('global', end_ts, home_location)
                 
                 pax_home = global_home_at_end
                 if is_last_passenger_ev:
                     for cid in last_ev.calendar_ids:
                         pid = get_pax_id(cid)
                         if pid:
-                            pax_home = get_active_home(f'passenger_{pid}', end_ts, global_home_at_end)
+                            pax_home = get_active_home_local(f'passenger_{pid}', end_ts, global_home_at_end)
                             break
                             
                 if is_last_passenger_ev and pax_home and driver_home_at_end != pax_home:
@@ -1270,16 +1285,16 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             pickup_location = pickup_event.location
                             pickup_title = pickup_event.title
                         else:
-                            global_home_at_dep = get_active_home('global', dep_time, home_location)
+                            global_home_at_dep = get_active_home_local('global', dep_time, home_location)
                             pax_home = global_home_at_dep
                             if new_passengers:
                                 for cid in new_passengers:
                                     pid = get_pax_id(cid)
                                     if pid:
-                                        pax_home = get_active_home(f'passenger_{pid}', dep_time, global_home_at_dep)
+                                        pax_home = get_active_home_local(f'passenger_{pid}', dep_time, global_home_at_dep)
                                         break
                                 
-                            driver_home_at_dep = get_active_home(f'driver_{d_id}', dep_time, driver_default_home)
+                            driver_home_at_dep = get_active_home_local(f'driver_{d_id}', dep_time, driver_default_home)
                             pickup_location = pax_home if pax_home else driver_home_at_dep
                             pickup_title = "Home"
                             
@@ -1315,7 +1330,7 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 else:
                     next_dest = e2.location
                     
-                driver_home_at_layover = get_active_home(f'driver_{d_id}', dep_time, driver_default_home)
+                driver_home_at_layover = get_active_home_local(f'driver_{d_id}', dep_time, driver_default_home)
                 if (travel_gap > 45 or wait > 15) and driver_home_at_layover and driver_home_at_layover.strip() != "":
                     travel_to_home, to_delay = get_travel_time_minutes(e1.location, driver_home_at_layover, departure_time=int(dep_time), return_traffic=True)
                     travel_from_home, from_delay = get_travel_time_minutes(driver_home_at_layover, next_dest, departure_time=int(dep_time + travel_to_home*60), return_traffic=True)
