@@ -342,7 +342,7 @@
 
             document.getElementById('trip-notes-display').innerText = tripData.metadata.notes || "No general notes.";
 
-            const searchQuery = tripData.metadata.background_url || tripData.summary || loc.split(',')[0] || 'nature';
+            const searchQuery = tripData.metadata.background_url || tripData.event.title || loc.split(',')[0] || 'nature';
             if (searchQuery.startsWith('http')) {
                 document.getElementById('bg-img').src = searchQuery;
             } else {

@@ -164,7 +164,7 @@
                     const endDateStr = endDate.toLocaleDateString(undefined, dateFmtOptions);
                     const finalDateStr = (dateStr === endDateStr) ? dateStr : `${dateStr} - ${endDateStr}`;
                     const fallbackLocation = trip.location || 'Unknown Location';
-                    const searchQuery = trip.background_url || trip.summary || fallbackLocation || 'nature';
+                    const searchQuery = trip.background_url || trip.title || fallbackLocation || 'nature';
                     const bgUrl = searchQuery.startsWith('http') ? searchQuery : `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
                     
                     html += `
