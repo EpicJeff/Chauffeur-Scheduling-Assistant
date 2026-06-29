@@ -3456,7 +3456,8 @@
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/maps/stats`);
                 if (!res.ok) return;
-                const stats = await res.json();
+                let stats = await res.json();
+                if (typeof stats !== 'object' || stats === null) stats = {};
                 
                 stats.matrix = stats.matrix || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
                 stats.directions = stats.directions || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
