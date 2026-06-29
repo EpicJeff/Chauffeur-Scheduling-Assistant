@@ -2579,10 +2579,17 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 break
                                 
                             sched = daily_cache['schedule']
-                            combined_assignments.update(sched.get('assignments', {}))
+                            for d_id, evs in sched.get('assignments', {}).items():
+                                if d_id not in combined_assignments:
+                                    combined_assignments[d_id] = []
+                                combined_assignments[d_id].extend(evs)
                             combined_unassigned.extend(sched.get('unassigned', []))
                             combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
-                            combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
+                            
+                            for d_id, evs in sched.get('ghost_assignments', {}).items():
+                                if d_id not in combined_ghost_assignments:
+                                    combined_ghost_assignments[d_id] = []
+                                combined_ghost_assignments[d_id].extend(evs)
                             
                             existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
                             for g in sched.get('ghost_drivers', []):
@@ -2648,6 +2655,17 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
 
         # Fetch fresh and block if no cache exists or forced
         try:
+            if start_date and end_date:
+                try:
+                    from datetime import datetime
+                    s = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                    e = datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
+                    if (e - s).days > 7 and not force_refresh:
+                        background_tasks.add_task(trigger_background_refresh, start_date, end_date, True)
+                        return {"error": "Long date range requested. Schedule is calculating in the background. Please wait a moment."}
+                except Exception:
+                    pass
+
             res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
             if "error" not in res:
                 res["completed_drives"] = completed
