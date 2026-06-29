@@ -608,7 +608,7 @@
                 endDate.setDate(endDate.getDate() + 30);
                 const endStr = endDate.toISOString().split('T')[0];
                 
-                const res = await fetch(`api/schedule?start_date=${startStr}&end_date=${endStr}`);
+                const res = await fetch(`../api/schedule?start_date=${startStr}&end_date=${endStr}`);
                 if(res.ok) {
                     const data = await res.json();
                     const events = data.events || [];
