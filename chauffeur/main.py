@@ -206,7 +206,9 @@ def errands(request: Request):
 
 @app.get("/trips")
 def trips_list_view(request: Request):
-    return templates.TemplateResponse(request=request, name="trips.html", context={})
+    response = templates.TemplateResponse(request=request, name="trips.html", context={})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 @app.get("/api/trips")
 def get_all_trips_api():
@@ -307,7 +309,9 @@ def get_all_trips_api():
 
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
-    return templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
+    response = templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/health")
