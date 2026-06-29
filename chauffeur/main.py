@@ -1331,16 +1331,16 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
 
 @app.get("/api/unsplash/background")
 def get_unsplash_background(query: str):
-    # The source.unsplash.com API was deprecated. We use loremflickr for dynamic keyword images.
-    if not query:
-        query = "scenery,nature"
+    # Using Pollinations AI to generate beautiful, accurate images for any query
+    # since Unsplash Source API is deprecated and LoremFlickr has poor tagging accuracy.
+    import urllib.parse
     
-    # Format query for loremflickr (comma separated words, no spaces)
-    formatted_query = ",".join(query.replace(",", " ").split())
-    if not formatted_query:
-        formatted_query = "scenery"
+    if not query:
+        query = "beautiful scenery nature landscape"
         
-    url = f"https://loremflickr.com/1280/720/{formatted_query}"
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://image.pollinations.ai/prompt/{encoded_query}?width=1280&height=720&nologo=true"
+    
     return {"url": url}
 
 
