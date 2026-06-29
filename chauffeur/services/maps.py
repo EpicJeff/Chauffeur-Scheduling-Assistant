@@ -129,8 +129,21 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     # Check if they geocode to the same coordinates (e.g. same building, different gym/room)
     coords_origin = geocode_address(origin)
     coords_dest = geocode_address(destination)
-    if coords_origin and coords_dest and coords_origin == coords_dest:
-        return (0, 0) if return_traffic else 0
+    min_time_mins = 0
+    if coords_origin and coords_dest:
+        if coords_origin == coords_dest:
+            return (0, 0) if return_traffic else 0
+        import math
+        lat1, lon1 = coords_origin
+        lat2, lon2 = coords_dest
+        R = 6371
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        dist_km = R * c
+        # Assume max speed of 120 km/h (2 km/min) -> min time = dist_km / 2
+        min_time_mins = int(dist_km / 2.0)
     
     MOCK_TIME = 15
     cache_duration = get_cache_duration()
@@ -138,7 +151,7 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     # 1. Check cache first
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
-        return (cached, 0) if return_traffic else cached
+        return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
         
     # 2. If not in cache, fallback to priming the cache for just this pair
     prime_matrix_cache([origin, destination])
@@ -146,10 +159,11 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     # 3. Check cache again
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
-        return (cached, 0) if return_traffic else cached
+        return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
         
     # 4. Return fallback if API fails (do not cache so it retries later)
-    return (MOCK_TIME, 0) if return_traffic else MOCK_TIME
+    fallback = max(MOCK_TIME, min_time_mins)
+    return (fallback, 0) if return_traffic else fallback
 
 def prime_matrix_cache(locations: list[str]):
     from services import storage
