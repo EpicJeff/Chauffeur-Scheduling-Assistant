@@ -2372,7 +2372,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         }
 
     # Pass 2: Global Errand Placement
-    scheduled_errands_by_date = matcher.insert_errands_globally(base_schedules, errands, drivers) if not draft else {}
+    scheduled_errands_by_date = matcher.insert_errands_globally(base_schedules, errands, drivers, trip_metadata=trip_metadata) if not draft else {}
 
     # Pass 3: Route Edges and Caching
     from models.schemas import Event

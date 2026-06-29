@@ -1614,7 +1614,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             
 
 
-def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict], drivers: List[dict]) -> Dict[str, List[dict]]:
+def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict], drivers: List[dict], trip_metadata: List[dict] = None) -> Dict[str, List[dict]]:
     from datetime import datetime, timedelta, time
     from services import storage
     from models.schemas import Rule
@@ -1839,9 +1839,13 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 if prohibited_drivers and d_id in prohibited_drivers: continue
                 if allowed_drivers and not required_drivers and d_id not in allowed_drivers: continue
                 
-                driver_home = getattr(driver, 'home_location', None)
-                if not driver_home and hasattr(driver, 'get'):
-                    driver_home = driver.get('home_location')
+                default_driver_home = getattr(driver, 'home_location', None)
+                if not default_driver_home and hasattr(driver, 'get'):
+                    default_driver_home = driver.get('home_location')
+                
+                from datetime import time
+                start_time_ts = datetime.combine(current_date, time(9, 0)).astimezone().timestamp()
+                driver_home = get_active_home(f'driver_{d_id}', start_time_ts, default_driver_home, trip_metadata) if trip_metadata else default_driver_home
                 
                 if not schedule:
                     t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
