@@ -1432,78 +1432,24 @@ def check_abort_refresh():
         raise AbortRefreshException()
 
 def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
-    with schedule_coordinator.lock:
-        if schedule_coordinator.is_running:
-            # Do not abort a running full cache build for a partial update
-            if schedule_coordinator.current_args and schedule_coordinator.current_args[0] is None and start_date_str is not None:
-                logger.info("ScheduleCoordinator: Full run is active. Ignoring partial refresh request.")
-                return
-                
-            # Do not overwrite a pending full cache build with a partial update
-            if schedule_coordinator.pending_refresh and schedule_coordinator.pending_args and schedule_coordinator.pending_args[0] is None and start_date_str is not None:
-                logger.info("ScheduleCoordinator: Full run is pending. Ignoring partial refresh request.")
-                return
-
-            schedule_coordinator.pending_refresh = True
-            if start_date_str is None:
-                schedule_coordinator.pending_args = (None, None, force_refresh, draft)
-            else:
-                schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh, draft)
-                
-            logger.info("ScheduleCoordinator: Active run detected. Enqueued pending refresh.")
-            return
-        else:
-            schedule_coordinator.is_running = True
-            schedule_coordinator.current_args = (start_date_str, end_date_str, force_refresh, draft)
-            schedule_coordinator.pending_refresh = False
-            schedule_coordinator.pending_args = None
-            
+    # Simply run the logic concurrently
     try:
-        while True:
-            try:
-                args = schedule_coordinator.pending_args if schedule_coordinator.pending_refresh else schedule_coordinator.current_args
-                if schedule_coordinator.pending_refresh:
-                    schedule_coordinator.current_args = args
-                refresh_schedule_logic(*args)
-            except AbortRefreshException:
-                logger.info("ScheduleCoordinator: Active run aborted by new pending request.")
-            except Exception as e:
-                logger.error(f"ScheduleCoordinator: Error in schedule run: {e}", exc_info=True)
-            
-            with schedule_coordinator.lock:
-                if schedule_coordinator.pending_refresh:
-                    schedule_coordinator.pending_refresh = False
-                    schedule_coordinator.current_args = schedule_coordinator.pending_args
-                    schedule_coordinator.pending_args = None
-                    schedule_coordinator.clear_solving_dates()
-                    logger.info("ScheduleCoordinator: Starting next queued/coalesced run.")
-                else:
-                    schedule_coordinator.is_running = False
-                    schedule_coordinator.clear_solving_dates()
-                    logger.info("ScheduleCoordinator: All queued runs complete.")
-                    break
+        refresh_schedule_logic(start_date_str, end_date_str, force_refresh, draft)
     except Exception as e:
-        logger.error(f"ScheduleCoordinator: Fatal loop error: {e}", exc_info=True)
-        with schedule_coordinator.lock:
-            schedule_coordinator.is_running = False
-            schedule_coordinator.clear_solving_dates()
+        logger.error(f"Error in background schedule run: {e}", exc_info=True)
 
 import threading
-global_sync_lock = threading.Lock()
 
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
-    with global_sync_lock:
-        try:
-            res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
-            global LAST_UPDATE_TIME
-            LAST_UPDATE_TIME = time.time()
-            return res
-        except AbortRefreshException as e:
-            raise e
-        except Exception as e:
-            logger.error("Fatal error during schedule generation", exc_info=True)
-            import traceback
-            return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
+    try:
+        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
+        global LAST_UPDATE_TIME
+        LAST_UPDATE_TIME = time.time()
+        return res
+    except Exception as e:
+        logger.error("Fatal error during schedule generation", exc_info=True)
+        import traceback
+        return {"error": "Fatal Error: " + str(e), "traceback": traceback.format_exc()}
 
 def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_refresh=False, draft=False, ignore_overrides=False):
     settings = storage.get_settings()
@@ -1991,14 +1937,41 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         curr = e.start.astimezone()
         end = e.end.astimezone()
         
-        while curr.date() <= end.date():
-            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                break
-            date_str = curr.strftime("%Y-%m-%d")
-            if date_str in fetched_by_date:
-                if e not in fetched_by_date[date_str]:
-                    fetched_by_date[date_str].append(e)
-            curr += datetime.timedelta(days=1)
+        # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
+        if getattr(e, 'event_type', '') == 'background_trip':
+            all_events_for_ui.pop(e.id, None)
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    # Create a daily slice of the trip
+                    daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                    daily_e.id = f"{e.id}_slice_{date_str}"
+                    tz = curr.tzinfo
+                    
+                    # Start is either the original start or midnight of this day
+                    day_start = datetime.datetime.combine(curr.date(), datetime.time.min).replace(tzinfo=tz)
+                    daily_e.start = max(e.start.astimezone(tz), day_start)
+                    
+                    # End is either the original end or midnight of the next day
+                    next_day = curr.date() + datetime.timedelta(days=1)
+                    day_end = datetime.datetime.combine(next_day, datetime.time.min).replace(tzinfo=tz)
+                    daily_e.end = min(e.end.astimezone(tz), day_end)
+                    
+                    if daily_e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(daily_e)
+                    all_events_for_ui[daily_e.id] = daily_e
+                curr += datetime.timedelta(days=1)
+        else:
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    if e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(e)
+                curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
