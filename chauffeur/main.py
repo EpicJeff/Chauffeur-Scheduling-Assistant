@@ -1699,18 +1699,24 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     driver_events_map[d.id].append(e)
                     driver_events_ids[d.id].append(e.id)
         else:
-            for d in drivers:
-                if any(c in d.calendar_ids for c in original_calendar_ids):
-                    driver_matched = True
+            if getattr(e, 'event_type', '') == 'background_trip':
+                driver_matched = True
+                for d in drivers:
                     driver_events_map[d.id].append(e)
                     driver_events_ids[d.id].append(e.id)
-                    continue
-                for tag in d.hashtags:
-                    if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
+            else:
+                for d in drivers:
+                    if any(c in d.calendar_ids for c in original_calendar_ids):
                         driver_matched = True
                         driver_events_map[d.id].append(e)
                         driver_events_ids[d.id].append(e.id)
-                        break
+                        continue
+                    for tag in d.hashtags:
+                        if fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag):
+                            driver_matched = True
+                            driver_events_map[d.id].append(e)
+                            driver_events_ids[d.id].append(e.id)
+                            break
 
         # 4. Triage Logic
         # Every event we haven't seen before (no config) goes to the inbox.
@@ -1774,16 +1780,20 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if getattr(e, 'event_type', '') == 'background_trip':
             applicable_entities = set()
             
-            # Use triaged passenger assignments
-            if hasattr(e, 'calendar_ids') and e.calendar_ids:
-                for cid in e.calendar_ids:
-                    applicable_entities.add(f"passenger_{cid}")
-                    
-            # Use triaged driver assignments
-            for d_id, d_evs in driver_events_map.items():
-                if any(de.id == e.id for de in d_evs):
-                    applicable_entities.add(f"driver_{d_id}")
-                    
+            # If no explicit config, default a background_trip to global
+            config = getattr(e, 'app_config', None)
+            if not config or (not config.get('driver_ids') and not config.get('passenger_ids')):
+                applicable_entities.add('global')
+            else:
+                # Use explicit config assignments
+                if hasattr(e, 'calendar_ids') and e.calendar_ids:
+                    for cid in e.calendar_ids:
+                        applicable_entities.add(f"passenger_{cid}")
+                        
+                for d_id, d_evs in driver_events_map.items():
+                    if any(de.id == e.id for de in d_evs):
+                        applicable_entities.add(f"driver_{d_id}")
+                        
             if not applicable_entities:
                 applicable_entities.add('global')
                 
