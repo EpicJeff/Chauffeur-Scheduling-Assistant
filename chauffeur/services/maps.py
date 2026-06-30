@@ -272,16 +272,15 @@ def prime_matrix_cache(locations: list[str]):
             }
             try:
                 with mapbox_routing_lock:
-                    import time
+                    import time as local_time
                     if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
                         fetch_matrix_chunk.last_matrix_time = 0
-                    now = time.time()
-                    elapsed = now - fetch_matrix_chunk.last_matrix_time
+                    elapsed = local_time.time() - fetch_matrix_chunk.last_matrix_time
                     if elapsed < 0.25:
-                        time.sleep(0.25 - elapsed)
+                        local_time.sleep(0.25 - elapsed)
                         
                     resp = requests.get(url, params=params, timeout=10)
-                    fetch_matrix_chunk.last_matrix_time = time.time()
+                    fetch_matrix_chunk.last_matrix_time = local_time.time()
                 if resp.status_code == 200:
                     data = resp.json()
                     durations = data.get("durations", [])
@@ -351,16 +350,15 @@ def prime_matrix_cache(locations: list[str]):
                         }
                         try:
                             with mapbox_routing_lock:
-                                import time
+                                import time as local_time
                                 if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
                                     fetch_matrix_chunk.last_matrix_time = 0
-                                now = time.time()
-                                elapsed = now - fetch_matrix_chunk.last_matrix_time
+                                elapsed = local_time.time() - fetch_matrix_chunk.last_matrix_time
                                 if elapsed < 0.25:
-                                    time.sleep(0.25 - elapsed)
+                                    local_time.sleep(0.25 - elapsed)
                                 
                                 resp = requests.get(url, params=params, timeout=5)
-                                fetch_matrix_chunk.last_matrix_time = time.time()
+                                fetch_matrix_chunk.last_matrix_time = local_time.time()
                                 
                             if resp.status_code == 200:
                                 data = resp.json()
@@ -396,16 +394,17 @@ def prime_matrix_cache(locations: list[str]):
                 with api_rate_lock:
                     if not hasattr(fetch_matrix_chunk, "last_osrm_time"):
                         fetch_matrix_chunk.last_osrm_time = 0
-                    elapsed = time.time() - fetch_matrix_chunk.last_osrm_time
+                    import time as local_time
+                    elapsed = local_time.time() - fetch_matrix_chunk.last_osrm_time
                     if elapsed < 1.1:
-                        time.sleep(1.1 - elapsed)
+                        local_time.sleep(1.1 - elapsed)
                     resp = requests.get(url, params=params, timeout=10)
                     
                     if resp.status_code == 429:
                         # Tell all other threads to back off for 2 extra seconds
-                        fetch_matrix_chunk.last_osrm_time = time.time() + 2.0
+                        fetch_matrix_chunk.last_osrm_time = local_time.time() + 2.0
                     else:
-                        fetch_matrix_chunk.last_osrm_time = time.time()
+                        fetch_matrix_chunk.last_osrm_time = local_time.time()
                     
                 if resp.status_code == 200:
                     break
