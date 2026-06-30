@@ -1406,6 +1406,7 @@ class ScheduleCoordinator:
         self.is_running = False
         self.pending_refresh = False
         self.pending_args = None
+        self.current_args = None
         self.solving_dates = set()
 
     def start_solving(self, dates):
@@ -1433,19 +1434,36 @@ def check_abort_refresh():
 def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     with schedule_coordinator.lock:
         if schedule_coordinator.is_running:
+            # Do not abort a running full cache build for a partial update
+            if schedule_coordinator.current_args and schedule_coordinator.current_args[0] is None and start_date_str is not None:
+                logger.info("ScheduleCoordinator: Full run is active. Ignoring partial refresh request.")
+                return
+                
+            # Do not overwrite a pending full cache build with a partial update
+            if schedule_coordinator.pending_refresh and schedule_coordinator.pending_args and schedule_coordinator.pending_args[0] is None and start_date_str is not None:
+                logger.info("ScheduleCoordinator: Full run is pending. Ignoring partial refresh request.")
+                return
+
             schedule_coordinator.pending_refresh = True
-            schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh, draft)
+            if start_date_str is None:
+                schedule_coordinator.pending_args = (None, None, force_refresh, draft)
+            else:
+                schedule_coordinator.pending_args = (start_date_str, end_date_str, force_refresh, draft)
+                
             logger.info("ScheduleCoordinator: Active run detected. Enqueued pending refresh.")
             return
         else:
             schedule_coordinator.is_running = True
+            schedule_coordinator.current_args = (start_date_str, end_date_str, force_refresh, draft)
             schedule_coordinator.pending_refresh = False
             schedule_coordinator.pending_args = None
             
     try:
         while True:
             try:
-                args = schedule_coordinator.pending_args if schedule_coordinator.pending_refresh else (start_date_str, end_date_str, force_refresh, draft)
+                args = schedule_coordinator.pending_args if schedule_coordinator.pending_refresh else schedule_coordinator.current_args
+                if schedule_coordinator.pending_refresh:
+                    schedule_coordinator.current_args = args
                 refresh_schedule_logic(*args)
             except AbortRefreshException:
                 logger.info("ScheduleCoordinator: Active run aborted by new pending request.")
@@ -1455,6 +1473,7 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
             with schedule_coordinator.lock:
                 if schedule_coordinator.pending_refresh:
                     schedule_coordinator.pending_refresh = False
+                    schedule_coordinator.current_args = schedule_coordinator.pending_args
                     schedule_coordinator.pending_args = None
                     schedule_coordinator.clear_solving_dates()
                     logger.info("ScheduleCoordinator: Starting next queued/coalesced run.")
@@ -1851,6 +1870,37 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Separate events with no location
     no_location_events = []
     events_to_solve = []
+    
+    # Filter out events where ALL passengers are on a background trip during the event time
+    events_filtered = []
+    for e in events:
+        if getattr(e, 'event_type', '') == 'background_trip':
+            events_filtered.append(e)
+            continue
+            
+        all_pax_on_trip = True
+        if not getattr(e, 'calendar_ids', []):
+            all_pax_on_trip = False
+        else:
+            for cid in getattr(e, 'calendar_ids', []):
+                pax_entity = f"passenger_{cid}"
+                on_trip = False
+                for tm in trip_metadata:
+                    if pax_entity in tm['entities'] or 'global' in tm['entities']:
+                        if tm['start'] <= e.start and tm['end'] >= e.end:
+                            on_trip = True
+                            break
+                if not on_trip:
+                    all_pax_on_trip = False
+                    break
+        
+        if not all_pax_on_trip:
+            events_filtered.append(e)
+        else:
+            all_events_for_ui.pop(e.id, None)
+
+    events = events_filtered
+
     for e in events:
         if not e.location or not e.location.strip():
             no_location_events.append(e.id)
@@ -1941,36 +1991,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         curr = e.start.astimezone()
         end = e.end.astimezone()
         
-        # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
-        if getattr(e, 'event_type', '') == 'background_trip':
-            all_events_for_ui.pop(e.id, None)
-            while curr.date() <= end.date():
-                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                    break
-                date_str = curr.strftime("%Y-%m-%d")
-                if date_str in fetched_by_date:
-                    # Create a daily slice of the trip
-                    daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
-                    daily_e.id = f"{e.id}_slice_{date_str}"
-                    # Start is either the original start or midnight of this day
-                    day_start = datetime.datetime.combine(curr.date(), datetime.time.min).astimezone(curr.tzinfo)
-                    daily_e.start = max(e.start.astimezone(), day_start)
-                    # End is either the original end or midnight of the next day
-                    day_end = datetime.datetime.combine(curr.date() + datetime.timedelta(days=1), datetime.time.min).astimezone(curr.tzinfo)
-                    daily_e.end = min(e.end.astimezone(), day_end)
-                    if daily_e not in fetched_by_date[date_str]:
-                        fetched_by_date[date_str].append(daily_e)
-                    all_events_for_ui[daily_e.id] = daily_e
-                curr += datetime.timedelta(days=1)
-        else:
-            while curr.date() <= end.date():
-                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                    break
-                date_str = curr.strftime("%Y-%m-%d")
-                if date_str in fetched_by_date:
-                    if e not in fetched_by_date[date_str]:
-                        fetched_by_date[date_str].append(e)
-                curr += datetime.timedelta(days=1)
+        while curr.date() <= end.date():
+            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                break
+            date_str = curr.strftime("%Y-%m-%d")
+            if date_str in fetched_by_date:
+                if e not in fetched_by_date[date_str]:
+                    fetched_by_date[date_str].append(e)
+            curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})

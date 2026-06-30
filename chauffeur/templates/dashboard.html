@@ -2564,6 +2564,9 @@
                     if (colsObj[c_id]) {
                         colsObj[c_id].forEach(ev => {
                             if (ev.event_type === 'background_trip') return;
+                            const isAssignedToThisColumn = (localAssignments && localAssignments[ev.id] === c_id) || (data.ghost_assignments && data.ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && data.unassigned && data.unassigned.includes(ev.id)) || (c_id === 'no_location' && data.no_location && data.no_location.includes(ev.id));
+                            if (!isAssignedToThisColumn) return;
+
                             const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.travel_mins > 0) {
                                 const targetEvent = allEventsForDate.find(e => e.id === initEdge.to_event);
@@ -2955,7 +2958,7 @@
                         }
 
                         // Initial travel pill from home (before first event)
-                        if (localInitialEdges[c_id] && localInitialEdges[c_id][ev.id]) {
+                        if (isAssignedToThisColumn && localInitialEdges[c_id] && localInitialEdges[c_id][ev.id]) {
                             const initEdge = localInitialEdges[c_id] ? localInitialEdges[c_id][ev.id] : null;
                             if (initEdge && initEdge.to_event === ev.id && initEdge.travel_mins > 0) {
                                 const bufferMins = 5 + (initEdge.buffer_before_mins || 0); // Add standard 5m buffer + rule buffer
@@ -3007,7 +3010,7 @@
                         }
 
                         // Routing pill between events
-                        if (localRouteEdges[c_id] && localRouteEdges[c_id][ev.id]) {
+                        if (isAssignedToThisColumn && localRouteEdges[c_id] && localRouteEdges[c_id][ev.id]) {
                             let currentEvId = ev.id;
                             let edge = localRouteEdges[c_id][currentEvId];
                             let accumulatedTravel = 0;
@@ -3165,7 +3168,7 @@
                         }
 
                         // Final travel pill after last event
-                        if (localFinalEdges[c_id] && localFinalEdges[c_id][ev.id]) {
+                        if (isAssignedToThisColumn && localFinalEdges[c_id] && localFinalEdges[c_id][ev.id]) {
                             const finalEdge = localFinalEdges[c_id] ? localFinalEdges[c_id][ev.id] : null;
                             if (finalEdge && finalEdge.from_event === ev.id && finalEdge.travel_mins > 0) {
                                 const arriveDate = new Date(new Date(ev.end).getTime() + (finalEdge.travel_mins + (finalEdge.buffer_after_mins || 0)) * 60000);
