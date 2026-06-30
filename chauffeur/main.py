@@ -2305,6 +2305,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh and not draft:
             sched = daily_cache.get('schedule', {})
+            
+            # Update previous_assignments so subsequent days know what was assigned!
+            previous_assignments.update(sched.get("assignments", {}))
+            
             base_schedules[date_str] = {
                 "assignments": sched.get("assignments", {}),
                 "unassigned": sched.get("unassigned", []),
@@ -2451,6 +2455,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "conflicts": base['conflicts'],
             "scheduled_errands": scheduled_errands
         }
+        
+        # Update previous_assignments for the next day's solve!
+        previous_assignments.update(assignments)
         
         # Save Trip POI scheduled state
         if not draft and not start_date_str and not end_date_str:
