@@ -1834,8 +1834,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 for tm in trip_metadata:
                     if pax_entity in tm['entities'] or 'global' in tm['entities']:
                         if tm['start'] <= e.start and tm['end'] >= e.end:
-                            on_trip = True
-                            break
+                            is_near_trip = False
+                            if tm.get('location') and getattr(e, 'location', None):
+                                try:
+                                    from services import maps
+                                    tt = maps.get_travel_time_minutes(e.location, tm['location'])
+                                    if tt <= 180:
+                                        is_near_trip = True
+                                except:
+                                    pass
+                            if not is_near_trip:
+                                on_trip = True
+                                break
                 if not on_trip:
                     all_pax_on_trip = False
                     break
@@ -1867,6 +1877,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 elif duration_seconds >= 7200:
                     should_split = True
 
+            if getattr(e, 'needs_triage', False):
+                continue
+                
             if should_split:
                 # Split into dropoff and pickup
                 e_drop = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
