@@ -1824,11 +1824,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             events_filtered.append(e)
             continue
             
-        all_pax_on_trip = True
-        if not getattr(e, 'calendar_ids', []):
-            all_pax_on_trip = False
-        else:
-            for cid in getattr(e, 'calendar_ids', []):
+        if getattr(e, 'calendar_ids', []):
+            kept_cids = []
+            for cid in e.calendar_ids:
                 pax_entity = f"passenger_{cid}"
                 on_trip = False
                 for tm in trip_metadata:
@@ -1847,13 +1845,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                                 on_trip = True
                                 break
                 if not on_trip:
-                    all_pax_on_trip = False
-                    break
-        
-        if not all_pax_on_trip:
-            events_filtered.append(e)
-        else:
-            all_events_for_ui.pop(e.id, None)
+                    kept_cids.append(cid)
+            
+            if not kept_cids:
+                all_events_for_ui.pop(e.id, None)
+                continue
+                
+            e.calendar_ids = kept_cids
+            
+        events_filtered.append(e)
 
     events = events_filtered
 
