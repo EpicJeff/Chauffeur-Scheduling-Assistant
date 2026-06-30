@@ -1917,8 +1917,22 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     from collections import defaultdict
     import datetime
 
-    # Group events to solve by local date
+    # Pre-populate empty lists for the entire requested date range so empty days still get cached
     events_to_solve_by_date = defaultdict(list)
+    fetched_by_date = defaultdict(list)
+    
+    now_tz = datetime.datetime.now().astimezone()
+    range_s = datetime.datetime.fromisoformat(start_date_str.replace('Z', '+00:00')) if start_date_str else now_tz
+    range_e = datetime.datetime.fromisoformat(end_date_str.replace('Z', '+00:00')) if end_date_str else now_tz + datetime.timedelta(days=days_to_fetch)
+    
+    curr_date = range_s
+    while curr_date.date() <= range_e.date():
+        d_str = curr_date.strftime("%Y-%m-%d")
+        events_to_solve_by_date[d_str] = []
+        fetched_by_date[d_str] = []
+        curr_date += datetime.timedelta(days=1)
+
+    # Group events to solve by local date
     for e in events_to_solve:
         curr = e.start.astimezone()
         end = e.end.astimezone()
@@ -1931,7 +1945,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             curr += datetime.timedelta(days=1)
 
     # Group all fetched events by local date (for hashing)
-    fetched_by_date = defaultdict(list)
     for e in all_fetched_events:
         curr = e.start.astimezone()
         end = e.end.astimezone()
