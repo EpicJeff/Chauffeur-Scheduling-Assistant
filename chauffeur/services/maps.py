@@ -501,7 +501,7 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
     # Try to get a local coordinate center from home_location to improve geocoding
     center_lon, center_lat = None, None
     settings = storage.get_settings()
-    home_loc = settings.get('home_location')
+    home_loc = get_home_location()
     if home_loc:
         cached_home = storage.get_cached_geocode(home_loc)
         if cached_home:

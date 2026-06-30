@@ -1865,7 +1865,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         trip_end = tm['end']
                         if tm.get('location'):
                             try:
-                                tt = maps.get_travel_time_minutes(settings.get('home_location', ''), tm['location'])
+                                tt = maps.get_travel_time_minutes(maps.get_home_location(), tm['location'])
                                 trip_start -= datetime.timedelta(minutes=tt)
                                 trip_end += datetime.timedelta(minutes=tt)
                             except:
