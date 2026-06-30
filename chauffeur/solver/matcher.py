@@ -355,19 +355,16 @@ def solve_schedule(
                         pax_on_trip = bool(e_ents.intersection(trip_ents)) or is_global
                         
                         if driver_on_trip:
-                            # Driver on trip can ONLY take events explicitly linked to this trip
-                            if event_trip_id != trip_id:
-                                if (e.id, d.id) not in overridden_pairs:
-                                    model.Add(assign_vars[(e.id, d.id)] == 0)
-                                break
+                            # Driver on trip CANNOT take events that are far away from the trip location
+                            if e.location and trip.get('location'):
+                                t_mins = get_travel_time_minutes(e.location, trip['location'])
+                                if t_mins > 60:
+                                    if (e.id, d.id) not in overridden_pairs:
+                                        model.Add(assign_vars[(e.id, d.id)] == 0)
+                                    break
                         else:
-                            # Driver NOT on trip CANNOT take events linked to this trip
-                            if event_trip_id == trip_id:
-                                if (e.id, d.id) not in overridden_pairs:
-                                    model.Add(assign_vars[(e.id, d.id)] == 0)
-                                break
                             # Driver NOT on trip CANNOT take non-trip events for passengers who are on this trip
-                            elif pax_on_trip:
+                            if pax_on_trip:
                                 if (e.id, d.id) not in overridden_pairs:
                                     model.Add(assign_vars[(e.id, d.id)] == 0)
                                 break
