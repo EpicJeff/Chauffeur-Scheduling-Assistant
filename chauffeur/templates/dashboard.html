@@ -2382,6 +2382,9 @@
                 currDate.setHours(0, 0, 0, 0);
 
                 let endDate = new Date(ev.end);
+                if (currentEndDate && endDate > currentEndDate) {
+                    endDate = new Date(currentEndDate);
+                }
                 endDate.setHours(0, 0, 0, 0);
 
                 // If the event ends at midnight, don't include the end date unless it's the same as the start date
