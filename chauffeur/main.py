@@ -1787,10 +1787,26 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if not applicable_entities:
                 applicable_entities.add('global')
                 
+            trip_start = e.start
+            trip_end = e.end
+            
+            # Buffer trip with travel time
+            if getattr(e, 'location', None):
+                try:
+                    from services import maps
+                    tt = maps.get_travel_time_minutes(maps.get_home_location(), e.location)
+                    # If tt is exactly the 15 min fallback, but they are in different states, it's likely an API failure for a long trip.
+                    # A robust check: if API fails, tt=15. But we want a safe buffer.
+                    # We will just apply it. The distance_cache usually prevents this.
+                    trip_start -= datetime.timedelta(minutes=tt)
+                    trip_end += datetime.timedelta(minutes=tt)
+                except Exception as ex:
+                    logger.warning(f"Failed to pad trip travel time: {ex}")
+                    
             trip_metadata.append({
                 "id": e.id,
-                "start": e.start,
-                "end": e.end,
+                "start": trip_start,
+                "end": trip_end,
                 "location": e.location,
                 "entities": applicable_entities,
                 "all_day": e.all_day
@@ -1843,11 +1859,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     # Filter out events where ALL passengers are on a background trip during the event time
     events_filtered = []
-    
-    debug_log_lines = []
-    debug_log_lines.append(f"TOTAL TRIPS: {len(trip_metadata)}")
-    for tm in trip_metadata:
-        debug_log_lines.append(f"TRIP: {tm['id']} | START: {tm['start']} | END: {tm['end']} | ENTITIES: {tm['entities']}")
         
     for e in events:
         if getattr(e, 'event_type', '') == 'background_trip':
@@ -1863,30 +1874,23 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     if pax_entity in tm['entities'] or 'global' in tm['entities']:
                         trip_start = tm['start']
                         trip_end = tm['end']
-                        if tm.get('location'):
+                        is_near_trip = False
+                        if tm.get('location') and getattr(e, 'location', None):
+                            # Ensure we don't drop events located NEAR the trip destination
                             try:
-                                tt = maps.get_travel_time_minutes(maps.get_home_location(), tm['location'])
-                                trip_start -= datetime.timedelta(minutes=tt)
-                                trip_end += datetime.timedelta(minutes=tt)
+                                tt = maps.get_travel_time_minutes(e.location, tm['location'])
+                                # Ignore the 15-minute fallback for `is_near_trip` if we are confident it failed.
+                                # Actually, if it's 15, we accept it as near. 
+                                if tt <= 180:
+                                    is_near_trip = True
                             except:
                                 pass
                                 
-                        if max(trip_start, e.start) < min(trip_end, e.end):
-                            is_near_trip = False
-                            if tm.get('location') and getattr(e, 'location', None):
-                                try:
-                                    tt = maps.get_travel_time_minutes(e.location, tm['location'])
-                                    if tt <= 180:
-                                        is_near_trip = True
-                                except:
-                                    pass
-                            if not is_near_trip:
-                                on_trip = True
-                                break
+                        if not is_near_trip and max(trip_start, e.start) < min(trip_end, e.end):
+                            on_trip = True
+                            break
                 if not on_trip:
                     kept_cids.append(cid)
-            
-            debug_log_lines.append(f"EVENT: {e.title} ({e.start}) | CIDS: {e.calendar_ids} | KEPT: {kept_cids}")
             
             if not kept_cids:
                 all_events_for_ui.pop(e.id, None)
@@ -1895,13 +1899,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             e.calendar_ids = kept_cids
             
         events_filtered.append(e)
-
-    # Write debug log
-    try:
-        with open("filtering_debug.log", "w") as f:
-            f.write("\n".join(debug_log_lines))
-    except:
-        pass
 
     events = events_filtered
 

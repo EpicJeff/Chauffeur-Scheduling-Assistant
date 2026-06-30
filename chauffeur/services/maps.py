@@ -7,6 +7,8 @@ from services import storage
 
 geocode_lock = threading.Lock()
 api_rate_lock = threading.Lock()
+mapbox_geocode_lock = threading.Lock()
+mapbox_routing_lock = threading.Lock()
 
 def get_map_option(key: str, default: any) -> any:
     settings = storage.get_settings()
@@ -268,8 +270,18 @@ def prime_matrix_cache(locations: list[str]):
                 "destinations": dest_str,
                 "annotations": "duration,distance"
             }
-            try:
-                resp = requests.get(url, params=params, timeout=10)
+            with mapbox_routing_lock:
+                import time
+                if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
+                    fetch_matrix_chunk.last_matrix_time = 0
+                now = time.time()
+                elapsed = now - fetch_matrix_chunk.last_matrix_time
+                if elapsed < 0.25:
+                    time.sleep(0.25 - elapsed)
+                    
+                try:
+                    resp = requests.get(url, params=params, timeout=10)
+                    fetch_matrix_chunk.last_matrix_time = time.time()
                 if resp.status_code == 200:
                     data = resp.json()
                     durations = data.get("durations", [])
@@ -338,8 +350,18 @@ def prime_matrix_cache(locations: list[str]):
                             "overview": "false"
                         }
                         try:
-                            time.sleep(0.15) # Rate limit delay
-                            resp = requests.get(url, params=params, timeout=5)
+                            with mapbox_routing_lock:
+                                import time
+                                if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
+                                    fetch_matrix_chunk.last_matrix_time = 0
+                                now = time.time()
+                                elapsed = now - fetch_matrix_chunk.last_matrix_time
+                                if elapsed < 0.25:
+                                    time.sleep(0.25 - elapsed)
+                                
+                                resp = requests.get(url, params=params, timeout=5)
+                                fetch_matrix_chunk.last_matrix_time = time.time()
+                                
                             if resp.status_code == 200:
                                 data = resp.json()
                                 routes = data.get("routes", [])
@@ -521,8 +543,18 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
         }
         if center_lon is not None and center_lat is not None:
             params['proximity'] = f"{center_lon},{center_lat}"
-        try:
-            resp = requests.get(url, params=params, timeout=5)
+        with mapbox_geocode_lock:
+            import time
+            if not hasattr(_geocode_address_api_lookup, "last_time"):
+                _geocode_address_api_lookup.last_time = 0
+            now = time.time()
+            elapsed = now - _geocode_address_api_lookup.last_time
+            if elapsed < 0.11:
+                time.sleep(0.11 - elapsed)
+            
+            try:
+                resp = requests.get(url, params=params, timeout=5)
+                _geocode_address_api_lookup.last_time = time.time()
             if resp.status_code == 200:
                 data = resp.json()
                 features = data.get("features", [])
@@ -552,9 +584,8 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
             "limit": 1
         }
         if center_lon is not None and center_lat is not None:
-            # Create a ~50km viewbox around home for Nominatim
+            # Create a ~50km viewbox around home for Nominatim (preference, not strict bound)
             params["viewbox"] = f"{center_lon-0.5},{center_lat-0.5},{center_lon+0.5},{center_lat+0.5}"
-            params["bounded"] = 1
             
         headers = {
             "User-Agent": "ChauffeurScheduleAssistant/1.0"
