@@ -667,6 +667,29 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
             storage.set_cached_geocode(address, lat, lon, display_name)
             return lat, lon
 
+    # If both failed, fallback to city/state (last 3 components of the address)
+    parts = address.split(',')
+    if len(parts) >= 3:
+        city_state = ", ".join([p.strip() for p in parts[-3:]])
+        print(f"Geocoding failed for full address. Retrying with city/state: '{city_state}'")
+        cached_city = storage.get_cached_geocode(city_state)
+        if cached_city:
+            try:
+                lat = float(cached_city.get('lat'))
+                lon = float(cached_city.get('lon'))
+                if lat == 0.0 and lon == 0.0:
+                    return None
+                return lat, lon
+            except (ValueError, TypeError):
+                pass
+
+        res = _geocode_address_api_lookup(city_state)
+        if res:
+            lat, lon, display_name = res
+            storage.set_cached_geocode(city_state, lat, lon, display_name)
+            storage.set_cached_geocode(address, lat, lon, display_name)
+            return lat, lon
+
     # Write failed status to cache for both
     storage.set_cached_geocode(cleaned_address, 0.0, 0.0, "FAILED_GEOCODE")
     if cleaned_address != address:
