@@ -1160,8 +1160,9 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 is_passenger_ev = first_ev.id in assignments
                 
                 start_ts = first_ev.start.timestamp()
-                driver_home = get_active_home_local(f'driver_{d_id}', start_ts, driver_default_home)
-                global_home_at_start = get_active_home_local('global', start_ts, home_location)
+                start_of_day_ts = first_ev.start.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+                driver_home = get_active_home_local(f'driver_{d_id}', start_of_day_ts, driver_default_home)
+                global_home_at_start = get_active_home_local('global', start_of_day_ts, home_location)
                 
                 pax_home = global_home_at_start
                 pickup_title = "Home"
@@ -1208,8 +1209,10 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                 is_last_passenger_ev = last_ev.id in assignments
                 
                 end_ts = last_ev.end.timestamp()
-                driver_home_at_end = get_active_home_local(f'driver_{d_id}', end_ts, driver_default_home)
-                global_home_at_end = get_active_home_local('global', end_ts, home_location)
+                
+                end_of_day_ts = last_ev.end.replace(hour=23, minute=59, second=59, microsecond=0).timestamp()
+                driver_home_at_end = get_active_home_local(f'driver_{d_id}', end_of_day_ts, driver_default_home)
+                global_home_at_end = get_active_home_local('global', end_of_day_ts, home_location)
                 
                 pax_home = global_home_at_end
                 if is_last_passenger_ev:
