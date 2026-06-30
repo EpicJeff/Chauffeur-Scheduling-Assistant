@@ -474,13 +474,18 @@
 
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
                         <div>
-                            <h4 class="font-bold text-white">System Cache</h4>
-                            <p class="text-sm text-gray-400">Clear all locally stored travel times, maps, and schedules
-                                to force a fresh fetch from Google APIs.</p>
+                            <h4 class="font-bold text-white">System Cache & Database</h4>
+                            <p class="text-sm text-gray-400">Manage local data. Download your database for debugging or clear locally stored caches to force a fresh fetch.</p>
                         </div>
-                        <button @click="clearCaches()"
-                            class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors whitespace-nowrap">Clear
-                            Caches</button>
+                        <div class="flex gap-4">
+                            <a href="/api/download_db" download="chauffeur_data.zip" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors whitespace-nowrap flex items-center">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                Download Database
+                            </a>
+                            <button @click="clearCaches()"
+                                class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors whitespace-nowrap">Clear
+                                Caches</button>
+                        </div>
                     </div>
                 </div>
 

@@ -585,6 +585,30 @@ def check_past_due_errands():
                 e['status'] = 'past_due'
                 storage.update_errand(e['doc_id'], e)
 
+@app.get("/api/download_db")
+def download_db():
+    import zipfile
+    import io
+    import os
+    from fastapi.responses import StreamingResponse
+    
+    data_dir = "/data" if os.path.exists("/data") else "data"
+    
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, dirs, files in os.walk(data_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, data_dir)
+                zip_file.write(file_path, arcname)
+    
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=chauffeur_data.zip"}
+    )
+
 @app.get("/api/errands")
 def get_errands():
     check_past_due_errands()
@@ -1819,6 +1843,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     
     # Filter out events where ALL passengers are on a background trip during the event time
     events_filtered = []
+    
+    debug_log_lines = []
+    debug_log_lines.append(f"TOTAL TRIPS: {len(trip_metadata)}")
+    for tm in trip_metadata:
+        debug_log_lines.append(f"TRIP: {tm['id']} | START: {tm['start']} | END: {tm['end']} | ENTITIES: {tm['entities']}")
+        
     for e in events:
         if getattr(e, 'event_type', '') == 'background_trip':
             events_filtered.append(e)
@@ -1835,7 +1865,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                             is_near_trip = False
                             if tm.get('location') and getattr(e, 'location', None):
                                 try:
-                                    from services import maps
                                     tt = maps.get_travel_time_minutes(e.location, tm['location'])
                                     if tt <= 180:
                                         is_near_trip = True
@@ -1847,6 +1876,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 if not on_trip:
                     kept_cids.append(cid)
             
+            debug_log_lines.append(f"EVENT: {e.title} ({e.start}) | CIDS: {e.calendar_ids} | KEPT: {kept_cids}")
+            
             if not kept_cids:
                 all_events_for_ui.pop(e.id, None)
                 continue
@@ -1854,6 +1885,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             e.calendar_ids = kept_cids
             
         events_filtered.append(e)
+
+    # Write debug log
+    try:
+        with open("/data/filtering_debug.log", "w") as f:
+            f.write("\\n".join(debug_log_lines))
+    except:
+        pass
 
     events = events_filtered
 
