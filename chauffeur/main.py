@@ -2402,6 +2402,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "true_unassigned": true_unassigned,
             "conflicts": conflicts
         }
+        
+        # Update previous_assignments for the next day's solve!
+        previous_assignments.update(assignments)
 
     # Pass 2: Global Errand Placement
     scheduled_errands_by_date = matcher.insert_errands_globally(base_schedules, errands, drivers, trip_metadata=trip_metadata) if not draft else {}
@@ -2471,9 +2474,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "scheduled_errands": scheduled_errands
         }
         
-        # Update previous_assignments for the next day's solve!
-        previous_assignments.update(assignments)
-        
+
         # Save Trip POI scheduled state
         if not draft and not start_date_str and not end_date_str:
             for se in scheduled_errands:
