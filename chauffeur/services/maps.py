@@ -632,65 +632,66 @@ def geocode_address(address: str) -> Optional[tuple[float, float]]:
         try:
             lat = float(cached.get('lat'))
             lon = float(cached.get('lon'))
-            if lat == 0.0 and lon == 0.0:
-                return None
-            return lat, lon
+            if lat != 0.0 or lon != 0.0:
+                return lat, lon
         except (ValueError, TypeError):
             pass
 
-    # Call API lookup for cleaned address
-    res = _geocode_address_api_lookup(cleaned_address)
-    if res:
-        lat, lon, display_name = res
-        storage.set_cached_geocode(cleaned_address, lat, lon, display_name)
-        if cleaned_address != address:
-            storage.set_cached_geocode(address, lat, lon, display_name)
-        return lat, lon
+    # Call API lookup for cleaned address (if not cached or cached as failed)
+    res = None
+    if not cached or (float(cached.get('lat', 0)) == 0.0 and float(cached.get('lon', 0)) == 0.0):
+        res = _geocode_address_api_lookup(cleaned_address)
+        if res:
+            lat, lon, display_name = res
+            storage.set_cached_geocode(cleaned_address, lat, lon, display_name)
+            if cleaned_address != address:
+                storage.set_cached_geocode(address, lat, lon, display_name)
+            return lat, lon
 
     # If the cleaned address lookup failed, fallback to the original detailed address
     if cleaned_address != address:
-        print(f"Geocoding failed for cleaned address '{cleaned_address}'. Retrying with original: '{address}'")
         cached_orig = storage.get_cached_geocode(address)
         if cached_orig:
             try:
                 lat = float(cached_orig.get('lat'))
                 lon = float(cached_orig.get('lon'))
-                if lat == 0.0 and lon == 0.0:
-                    return None
-                return lat, lon
+                if lat != 0.0 or lon != 0.0:
+                    return lat, lon
             except (ValueError, TypeError):
                 pass
 
-        res_orig = _geocode_address_api_lookup(address)
-        if res_orig:
-            lat, lon, display_name = res_orig
-            storage.set_cached_geocode(address, lat, lon, display_name)
-            return lat, lon
+        if not cached_orig or (float(cached_orig.get('lat', 0)) == 0.0 and float(cached_orig.get('lon', 0)) == 0.0):
+            print(f"Geocoding failed for cleaned address '{cleaned_address}'. Retrying with original: '{address}'")
+            res_orig = _geocode_address_api_lookup(address)
+            if res_orig:
+                lat, lon, display_name = res_orig
+                storage.set_cached_geocode(address, lat, lon, display_name)
+                return lat, lon
 
-    # If both failed, fallback to city/state (last 3 components of the address)
+    # If both failed (or were cached as failed), fallback to city/state (last 3 components of the address)
     parts = address.split(',')
     if len(parts) >= 3:
         city_state = ", ".join([p.strip() for p in parts[-3:]])
-        print(f"Geocoding failed for full address. Retrying with city/state: '{city_state}'")
         cached_city = storage.get_cached_geocode(city_state)
         if cached_city:
             try:
                 lat = float(cached_city.get('lat'))
                 lon = float(cached_city.get('lon'))
-                if lat == 0.0 and lon == 0.0:
-                    return None
-                return lat, lon
+                if lat != 0.0 or lon != 0.0:
+                    return lat, lon
             except (ValueError, TypeError):
                 pass
+                
+        if not cached_city or (float(cached_city.get('lat', 0)) == 0.0 and float(cached_city.get('lon', 0)) == 0.0):
+            print(f"Geocoding failed for full address. Retrying with city/state: '{city_state}'")
+            res = _geocode_address_api_lookup(city_state)
+            if res:
+                lat, lon, display_name = res
+                storage.set_cached_geocode(city_state, lat, lon, display_name)
+                storage.set_cached_geocode(address, lat, lon, display_name)
+                return lat, lon
 
-        res = _geocode_address_api_lookup(city_state)
-        if res:
-            lat, lon, display_name = res
-            storage.set_cached_geocode(city_state, lat, lon, display_name)
-            storage.set_cached_geocode(address, lat, lon, display_name)
-            return lat, lon
-
-    # Write failed status to cache for both
+    # Write failed status to cache for both so we don't spam the API on failure
     storage.set_cached_geocode(cleaned_address, 0.0, 0.0, "FAILED_GEOCODE")
     if cleaned_address != address:
         storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
