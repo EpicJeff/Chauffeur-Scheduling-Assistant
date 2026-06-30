@@ -2710,6 +2710,10 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                     last_bg_refresh[cache_key] = now
                     # Fire an async background refresh so Google Calendar latency (1-5s) doesn't block the UI
                     background_tasks.add_task(trigger_background_refresh, start_date, end_date, False)
+                    
+                if now - last_bg_refresh.get('full_30_days', 0) > 1800:
+                    last_bg_refresh['full_30_days'] = now
+                    background_tasks.add_task(trigger_background_refresh, None, None, False)
                 return cached
 
         # Fetch fresh and block if no cache exists or forced
@@ -2726,6 +2730,13 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                     pass
 
             res = refresh_schedule_logic(start_date, end_date, force_refresh=force_refresh)
+            
+            import time
+            now = time.time()
+            if now - last_bg_refresh.get('full_30_days', 0) > 1800:
+                last_bg_refresh['full_30_days'] = now
+                background_tasks.add_task(trigger_background_refresh, None, None, False)
+                
             if "error" not in res:
                 res["completed_drives"] = completed
                 res["in_progress_drives"] = in_progress

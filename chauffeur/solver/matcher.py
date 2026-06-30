@@ -1281,13 +1281,13 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                             pickup_location = pickup_event.location
                             pickup_title = pickup_event.title
                         else:
-                            global_home_at_dep = get_active_home_local('global', dep_time, home_location)
-                            pax_home = global_home_at_dep
+                            global_home_at_e2 = get_active_home_local('global', e2.start.timestamp(), home_location)
+                            pax_home = global_home_at_e2
                             if new_passengers:
                                 for cid in new_passengers:
                                     pid = get_pax_id(cid)
                                     if pid:
-                                        pax_home = get_active_home_local(f'passenger_{pid}', dep_time, global_home_at_dep)
+                                        pax_home = get_active_home_local(f'passenger_{pid}', e2.start.timestamp(), global_home_at_e2)
                                         break
                                 
                             driver_home_at_dep = get_active_home_local(f'driver_{d_id}', dep_time, driver_default_home)
