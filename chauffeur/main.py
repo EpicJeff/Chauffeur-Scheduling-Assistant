@@ -1793,7 +1793,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             # Buffer trip with travel time
             if getattr(e, 'location', None):
                 try:
-                    from services import maps
                     tt = maps.get_travel_time_minutes(maps.get_home_location(), e.location)
                     # If tt is exactly the 15 min fallback, but they are in different states, it's likely an API failure for a long trip.
                     # A robust check: if API fails, tt=15. But we want a safe buffer.
