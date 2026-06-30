@@ -1861,10 +1861,22 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 on_trip = False
                 for tm in trip_metadata:
                     if pax_entity in tm['entities'] or 'global' in tm['entities']:
-                        if tm['start'] <= e.start and tm['end'] >= e.end:
+                        trip_start = tm['start']
+                        trip_end = tm['end']
+                        if tm.get('location'):
+                            try:
+                                from services import maps
+                                tt = maps.get_travel_time_minutes(settings.get('home_location', ''), tm['location'])
+                                trip_start -= datetime.timedelta(minutes=tt)
+                                trip_end += datetime.timedelta(minutes=tt)
+                            except:
+                                pass
+                                
+                        if trip_start <= e.start and trip_end >= e.end:
                             is_near_trip = False
                             if tm.get('location') and getattr(e, 'location', None):
                                 try:
+                                    from services import maps
                                     tt = maps.get_travel_time_minutes(e.location, tm['location'])
                                     if tt <= 180:
                                         is_near_trip = True
@@ -1988,14 +2000,35 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         curr = e.start.astimezone()
         end = e.end.astimezone()
         
-        while curr.date() <= end.date():
-            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                break
-            date_str = curr.strftime("%Y-%m-%d")
-            if date_str in fetched_by_date:
-                if e not in fetched_by_date[date_str]:
-                    fetched_by_date[date_str].append(e)
-            curr += datetime.timedelta(days=1)
+        # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
+        if getattr(e, 'event_type', '') == 'background_trip':
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    # Create a daily slice of the trip
+                    daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                    daily_e.id = f"{e.id}_slice_{date_str}"
+                    # Start is either the original start or midnight of this day
+                    day_start = datetime.datetime.combine(curr.date(), datetime.time.min).astimezone(curr.tzinfo)
+                    daily_e.start = max(e.start.astimezone(), day_start)
+                    # End is either the original end or midnight of the next day
+                    day_end = datetime.datetime.combine(curr.date() + datetime.timedelta(days=1), datetime.time.min).astimezone(curr.tzinfo)
+                    daily_e.end = min(e.end.astimezone(), day_end)
+                    if daily_e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(daily_e)
+                    all_events_for_ui[daily_e.id] = daily_e
+                curr += datetime.timedelta(days=1)
+        else:
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    if e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(e)
+                curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
@@ -2960,7 +2993,7 @@ def get_ha_sensors(background_tasks: BackgroundTasks):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/schedule/refresh")
-async def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True, draft: bool = False):
+def force_refresh_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_date: str = None, force: bool = True, draft: bool = False):
     refresh_schedule_logic(start_date, end_date, force_refresh=force, draft=draft)
     return {"status": "sync_finished"}
 
