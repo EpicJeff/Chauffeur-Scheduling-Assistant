@@ -1653,7 +1653,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
         if config and config.get('passenger_ids'):
             is_passenger = True
-            matched_passengers = [p for p in passengers if str(p.id) in config.get('passenger_ids', [])]
+            config_pax_ids = [str(x) for x in config.get('passenger_ids', [])]
+            matched_passengers = [p for p in passengers if str(p.id) in config_pax_ids]
         else:
             # Check Rules FIRST
             rule_matched = False
@@ -1694,8 +1695,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         driver_matched = False
         if config and config.get('driver_ids') is not None:
             driver_matched = True
+            config_driver_ids = [str(x) for x in config.get('driver_ids', [])]
             for d in drivers:
-                if str(d.id) in config.get('driver_ids', []):
+                if str(d.id) in config_driver_ids:
                     driver_events_map[d.id].append(e)
                     driver_events_ids[d.id].append(e.id)
         else:
