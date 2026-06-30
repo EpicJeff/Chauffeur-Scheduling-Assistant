@@ -478,7 +478,7 @@
                             <p class="text-sm text-gray-400">Manage local data. Download your database for debugging or clear locally stored caches to force a fresh fetch.</p>
                         </div>
                         <div class="flex gap-4">
-                            <a href="/api/download_db" download="chauffeur_data.zip" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors whitespace-nowrap flex items-center">
+                            <a :href="apiBase + 'api/download_db'" download="chauffeur_data.zip" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg font-bold text-white shadow-md transition-colors whitespace-nowrap flex items-center">
                                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                                 Download Database
                             </a>
