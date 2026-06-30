@@ -290,6 +290,12 @@ def solve_schedule(
             effective_overrides_list.append(effective_copy)
             
     overrides = effective_overrides_list
+    
+    overridden_pairs = set(
+        (o.event_id if not isinstance(o, dict) else o.get('event_id'),
+         o.driver_id if not isinstance(o, dict) else o.get('driver_id'))
+        for o in overrides
+    )
         
     # Default missing event locations to home_location to prevent 0-minute teleportation
     for e in events:
@@ -539,12 +545,7 @@ def solve_schedule(
                     # Scaled to overcome Primary Driver Bonus
                     objective_terms.append(both * -2000)
 
-    # 3b. Overridden pairs
-    overridden_pairs = set(
-        (o.event_id if not isinstance(o, dict) else o.get('event_id'),
-         o.driver_id if not isinstance(o, dict) else o.get('driver_id'))
-        for o in overrides
-    )
+
 
     # 3c. Driver Personal Calendar Overlaps
     for d in drivers:

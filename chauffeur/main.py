@@ -1943,6 +1943,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         
         # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
         if getattr(e, 'event_type', '') == 'background_trip':
+            all_events_for_ui.pop(e.id, None)
             while curr.date() <= end.date():
                 if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
                     break
