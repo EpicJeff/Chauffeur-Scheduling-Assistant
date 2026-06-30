@@ -1937,41 +1937,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         curr = e.start.astimezone()
         end = e.end.astimezone()
         
-        # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
-        if getattr(e, 'event_type', '') == 'background_trip':
-            all_events_for_ui.pop(e.id, None)
-            while curr.date() <= end.date():
-                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                    break
-                date_str = curr.strftime("%Y-%m-%d")
-                if date_str in fetched_by_date:
-                    # Create a daily slice of the trip
-                    daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
-                    daily_e.id = f"{e.id}_slice_{date_str}"
-                    tz = curr.tzinfo
-                    
-                    # Start is either the original start or midnight of this day
-                    day_start = datetime.datetime.combine(curr.date(), datetime.time.min).replace(tzinfo=tz)
-                    daily_e.start = max(e.start.astimezone(tz), day_start)
-                    
-                    # End is either the original end or midnight of the next day
-                    next_day = curr.date() + datetime.timedelta(days=1)
-                    day_end = datetime.datetime.combine(next_day, datetime.time.min).replace(tzinfo=tz)
-                    daily_e.end = min(e.end.astimezone(tz), day_end)
-                    
-                    if daily_e not in fetched_by_date[date_str]:
-                        fetched_by_date[date_str].append(daily_e)
-                    all_events_for_ui[daily_e.id] = daily_e
-                curr += datetime.timedelta(days=1)
-        else:
-            while curr.date() <= end.date():
-                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                    break
-                date_str = curr.strftime("%Y-%m-%d")
-                if date_str in fetched_by_date:
-                    if e not in fetched_by_date[date_str]:
-                        fetched_by_date[date_str].append(e)
-                curr += datetime.timedelta(days=1)
+        while curr.date() <= end.date():
+            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                break
+            date_str = curr.strftime("%Y-%m-%d")
+            if date_str in fetched_by_date:
+                if e not in fetched_by_date[date_str]:
+                    fetched_by_date[date_str].append(e)
+            curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
