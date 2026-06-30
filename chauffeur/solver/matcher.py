@@ -1979,7 +1979,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             driver_schedules_by_date[date_str][d_id].insert(idx + 1, ve)
             
             scheduled_errands_by_date[date_str].append({
-                "id": errand.get('id'),
+                "id": errand.get('id') or f"errand_{errand.get('doc_id')}",
                 "doc_id": errand.get('doc_id'),
                 "group_id": errand.get('group_id'),
                 "driver": driver_map[d_id].model_dump() if hasattr(driver_map[d_id], 'model_dump') else driver_map[d_id].dict(),
