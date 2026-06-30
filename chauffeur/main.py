@@ -1865,7 +1865,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                         trip_end = tm['end']
                         if tm.get('location'):
                             try:
-                                from services import maps
                                 tt = maps.get_travel_time_minutes(settings.get('home_location', ''), tm['location'])
                                 trip_start -= datetime.timedelta(minutes=tt)
                                 trip_end += datetime.timedelta(minutes=tt)
@@ -1876,7 +1875,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                             is_near_trip = False
                             if tm.get('location') and getattr(e, 'location', None):
                                 try:
-                                    from services import maps
                                     tt = maps.get_travel_time_minutes(e.location, tm['location'])
                                     if tt <= 180:
                                         is_near_trip = True
