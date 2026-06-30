@@ -270,16 +270,16 @@ def prime_matrix_cache(locations: list[str]):
                 "destinations": dest_str,
                 "annotations": "duration,distance"
             }
-            with mapbox_routing_lock:
-                import time
-                if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
-                    fetch_matrix_chunk.last_matrix_time = 0
-                now = time.time()
-                elapsed = now - fetch_matrix_chunk.last_matrix_time
-                if elapsed < 0.25:
-                    time.sleep(0.25 - elapsed)
-                    
-                try:
+            try:
+                with mapbox_routing_lock:
+                    import time
+                    if not hasattr(fetch_matrix_chunk, "last_matrix_time"):
+                        fetch_matrix_chunk.last_matrix_time = 0
+                    now = time.time()
+                    elapsed = now - fetch_matrix_chunk.last_matrix_time
+                    if elapsed < 0.25:
+                        time.sleep(0.25 - elapsed)
+                        
                     resp = requests.get(url, params=params, timeout=10)
                     fetch_matrix_chunk.last_matrix_time = time.time()
                 if resp.status_code == 200:
@@ -543,16 +543,16 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
         }
         if center_lon is not None and center_lat is not None:
             params['proximity'] = f"{center_lon},{center_lat}"
-        with mapbox_geocode_lock:
-            import time
-            if not hasattr(_geocode_address_api_lookup, "last_time"):
-                _geocode_address_api_lookup.last_time = 0
-            now = time.time()
-            elapsed = now - _geocode_address_api_lookup.last_time
-            if elapsed < 0.11:
-                time.sleep(0.11 - elapsed)
-            
-            try:
+        try:
+            with mapbox_geocode_lock:
+                import time
+                if not hasattr(_geocode_address_api_lookup, "last_time"):
+                    _geocode_address_api_lookup.last_time = 0
+                now = time.time()
+                elapsed = now - _geocode_address_api_lookup.last_time
+                if elapsed < 0.11:
+                    time.sleep(0.11 - elapsed)
+                
                 resp = requests.get(url, params=params, timeout=5)
                 _geocode_address_api_lookup.last_time = time.time()
             if resp.status_code == 200:
