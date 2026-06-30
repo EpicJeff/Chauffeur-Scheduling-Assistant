@@ -1871,7 +1871,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                             except:
                                 pass
                                 
-                        if trip_start <= e.start and trip_end >= e.end:
+                        if max(trip_start, e.start) < min(trip_end, e.end):
                             is_near_trip = False
                             if tm.get('location') and getattr(e, 'location', None):
                                 try:
@@ -1898,8 +1898,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     # Write debug log
     try:
-        with open("/data/filtering_debug.log", "w") as f:
-            f.write("\\n".join(debug_log_lines))
+        with open("filtering_debug.log", "w") as f:
+            f.write("\n".join(debug_log_lines))
     except:
         pass
 
