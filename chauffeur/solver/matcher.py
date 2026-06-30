@@ -365,14 +365,12 @@ def solve_schedule(
                             if e.location and trip.get('location'):
                                 t_mins = get_travel_time_minutes(e.location, trip['location'])
                                 if t_mins > 60:
-                                    if (e.id, d.id) not in overridden_pairs:
-                                        model.Add(assign_vars[(e.id, d.id)] == 0)
+                                    model.Add(assign_vars[(e.id, d.id)] == 0)
                                     break
                         else:
                             # Driver NOT on trip CANNOT take non-trip events for passengers who are on this trip
                             if pax_on_trip:
-                                if (e.id, d.id) not in overridden_pairs:
-                                    model.Add(assign_vars[(e.id, d.id)] == 0)
+                                model.Add(assign_vars[(e.id, d.id)] == 0)
                                 break
 
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
