@@ -1072,20 +1072,19 @@ def get_switch_travel_time(e1: Event, e2: Event, all_events: List[Event], home_l
         return t1 + t2
     
     if home_location and e1.location and e2.location:
-        active_home = home_location
         if passengers and trip_metadata:
             e2_pax_ids = get_event_passenger_ids(e2, passengers)
             if e2_pax_ids:
                 p_id = list(e2_pax_ids)[0]
                 active_home = get_active_home(f"passenger_{p_id}", e2.start.timestamp(), home_location, trip_metadata)
-            else:
-                active_home = get_active_home("global", e2.start.timestamp(), home_location, trip_metadata)
                 
-        # If no pickup event is found, it means the passenger is at home.
-        # The driver must travel from e1 to home, then home to e2.
-        t1 = get_travel_time_minutes(e1.location, active_home)
-        t2 = get_travel_time_minutes(active_home, e2.location)
-        return t1 + t2
+                # If no pickup event is found, it means the passenger is at home.
+                # The driver must travel from e1 to home, then home to e2.
+                t1 = get_travel_time_minutes(e1.location, active_home)
+                t2 = get_travel_time_minutes(active_home, e2.location)
+                return t1 + t2
+    
+    # Fallback if no home location or no passenger involved
     
     # Fallback if no home location
     same_loc = bool(e1.location and e2.location and e1.location.strip().lower() == e2.location.strip().lower())
@@ -1817,7 +1816,11 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         from datetime import timezone
         now = datetime.now().astimezone()
         
-        for date_str, day_schedules in driver_schedules_by_date.items():
+        # Sort dates chronologically so we try to schedule the errand on the earliest valid date first
+        sorted_dates = sorted(driver_schedules_by_date.keys())
+        
+        for date_str in sorted_dates:
+            day_schedules = driver_schedules_by_date[date_str]
             current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             
             # Check if this date is within the acceptable window
@@ -1846,6 +1849,10 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 from datetime import time
                 start_time_ts = datetime.combine(current_date, time(9, 0)).astimezone().timestamp()
                 driver_home = get_active_home(f'driver_{d_id}', start_time_ts, default_driver_home, trip_metadata) if trip_metadata else default_driver_home
+                
+                # If driver is on a trip (home changed) and this errand is NOT tied to this trip (via group_bonus), skip this driver
+                if driver_home != default_driver_home and group_bonus == 0:
+                    continue
                 
                 if not schedule:
                     t1 = get_travel_time_minutes(driver_home, loc) if driver_home else 0
