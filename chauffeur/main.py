@@ -1567,83 +1567,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 
             all_fetched_events.append(e)
             
-        # We need a separate list of trip metadata to pass to matcher
-        trip_metadata = []
-        for e in all_fetched_events:
-            if getattr(e, 'event_type', '') == 'background_trip':
-                applicable_entities = set()
-                for p in passengers:
-                    p_tags = p.hashtags
-                    if not p_tags:
-                        p_tags = ['#' + ''.join(c.lower() for c in getattr(p, 'name', '') if c.isalnum())]
-                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(getattr(e, 'description', ''), tag) for tag in p_tags):
-                        applicable_entities.add(f"passenger_{p.id}")
-                for d in drivers:
-                    d_tags = d.hashtags
-                    if not d_tags:
-                        d_tags = ['#' + ''.join(c.lower() for c in d.name if c.isalnum())]
-                    if any(fuzzy_has_hashtag(e.title, tag) or fuzzy_has_hashtag(e.description, tag) for tag in d_tags):
-                        applicable_entities.add(f"driver_{d.id}")
-                        
-                if hasattr(e, 'calendar_ids') and e.calendar_ids:
-                    for cid in e.calendar_ids:
-                        if cid in passenger_calendar_map:
-                            applicable_entities.add(f"passenger_{passenger_calendar_map[cid].id}")
-                        if cid in driver_calendar_map:
-                            applicable_entities.add(f"driver_{driver_calendar_map[cid].id}")
-                            
-                if not applicable_entities:
-                    applicable_entities.add('global')
-                    
-                trip_metadata.append({
-                    "id": e.id,
-                    "start": e.start,
-                    "end": e.end,
-                    "location": e.location,
-                    "entities": applicable_entities,
-                    "all_day": e.all_day
-                })
-                
-        for tm in trip_metadata:
-            meta = storage.get_trip_metadata(tm['id'])
-            if not meta or not meta.get('pois'):
-                continue
-            
-            # If computing live schedule, reset all POIs
-            if not draft and not start_date_str and not end_date_str:
-                changed = False
-                for poi in meta['pois']:
-                    if poi.get('is_scheduled'):
-                        poi['is_scheduled'] = False
-                        poi['scheduled_start'] = None
-                        poi['scheduled_end'] = None
-                        changed = True
-                if changed:
-                    storage.set_trip_metadata(tm['id'], meta)
-                    
-            for poi in meta['pois']:
-                if poi.get('is_scheduled') and (not draft and not start_date_str and not end_date_str):
-                    continue
-                    
-                starts_on_ts = tm['start'].timestamp()
-                window_days = (tm['end'].date() - tm['start'].date()).days + 1
-                
-                errands.append({
-                    'id': f"{tm['id']}_poi_{poi['id']}",
-                    'doc_id': -1,
-                    'title': poi['name'],
-                    'location': poi['location'],
-                    'duration_mins': poi.get('duration_mins', 60),
-                    'priority': 2,
-                    'is_completed': False,
-                    'status': 'pending',
-                    'window_days': window_days,
-                    'starts_on': starts_on_ts,
-                    'tags': ['#trip_poi', tm['id']],
-                    'group_id': tm['id'],
-                    'trip_id': tm['id'],
-                    'poi_id': poi['id']
-                })
+        pass
 
     except Exception as e:
         return {"error": f"Failed to fetch events: {str(e)}"}
@@ -1855,6 +1779,74 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             unrolled_events.append(e)
             
     events = unrolled_events
+    
+    trip_metadata = []
+    for e in all_events_for_ui.values():
+        if getattr(e, 'event_type', '') == 'background_trip':
+            applicable_entities = set()
+            
+            # Use triaged passenger assignments
+            if hasattr(e, 'calendar_ids') and e.calendar_ids:
+                for cid in e.calendar_ids:
+                    applicable_entities.add(f"passenger_{cid}")
+                    
+            # Use triaged driver assignments
+            for d_id, d_evs in driver_events_map.items():
+                if any(de.id == e.id for de in d_evs):
+                    applicable_entities.add(f"driver_{d_id}")
+                    
+            if not applicable_entities:
+                applicable_entities.add('global')
+                
+            trip_metadata.append({
+                "id": e.id,
+                "start": e.start,
+                "end": e.end,
+                "location": e.location,
+                "entities": applicable_entities,
+                "all_day": e.all_day
+            })
+            
+    for tm in trip_metadata:
+        meta = storage.get_trip_metadata(tm['id'])
+        if not meta or not meta.get('pois'):
+            continue
+            
+        # If computing live schedule, reset all POIs
+        if not draft and not start_date_str and not end_date_str:
+            changed = False
+            for poi in meta['pois']:
+                if poi.get('is_scheduled'):
+                    poi['is_scheduled'] = False
+                    poi['scheduled_start'] = None
+                    poi['scheduled_end'] = None
+                    changed = True
+            if changed:
+                storage.set_trip_metadata(tm['id'], meta)
+                
+        for poi in meta['pois']:
+            if poi.get('is_scheduled') and (not draft and not start_date_str and not end_date_str):
+                continue
+                
+            starts_on_ts = tm['start'].timestamp()
+            window_days = (tm['end'].date() - tm['start'].date()).days + 1
+            
+            errands.append({
+                'id': f"{tm['id']}_poi_{poi['id']}",
+                'doc_id': -1,
+                'title': poi['name'],
+                'location': poi['location'],
+                'duration_mins': poi.get('duration_mins', 60),
+                'priority': 2,
+                'is_completed': False,
+                'status': 'pending',
+                'window_days': window_days,
+                'starts_on': starts_on_ts,
+                'tags': ['#trip_poi', tm['id']],
+                'group_id': tm['id'],
+                'trip_id': tm['id'],
+                'poi_id': poi['id']
+            })
 
     # Separate events with no location
     no_location_events = []
@@ -1948,13 +1940,36 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     for e in all_fetched_events:
         curr = e.start.astimezone()
         end = e.end.astimezone()
-        while curr.date() <= end.date():
-            if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
-                break
-            date_str = curr.strftime("%Y-%m-%d")
-            if e not in fetched_by_date[date_str]:
-                fetched_by_date[date_str].append(e)
-            curr += datetime.timedelta(days=1)
+        
+        # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
+        if getattr(e, 'event_type', '') == 'background_trip':
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    # Create a daily slice of the trip
+                    daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
+                    daily_e.id = f"{e.id}_slice_{date_str}"
+                    # Start is either the original start or midnight of this day
+                    day_start = datetime.datetime.combine(curr.date(), datetime.time.min).astimezone(curr.tzinfo)
+                    daily_e.start = max(e.start.astimezone(), day_start)
+                    # End is either the original end or midnight of the next day
+                    day_end = datetime.datetime.combine(curr.date() + datetime.timedelta(days=1), datetime.time.min).astimezone(curr.tzinfo)
+                    daily_e.end = min(e.end.astimezone(), day_end)
+                    if daily_e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(daily_e)
+                    all_events_for_ui[daily_e.id] = daily_e
+                curr += datetime.timedelta(days=1)
+        else:
+            while curr.date() <= end.date():
+                if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
+                    break
+                date_str = curr.strftime("%Y-%m-%d")
+                if date_str in fetched_by_date:
+                    if e not in fetched_by_date[date_str]:
+                        fetched_by_date[date_str].append(e)
+                curr += datetime.timedelta(days=1)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
@@ -2688,9 +2703,9 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "conflicts": combined_conflicts,
                                 "scheduled_errands": combined_scheduled_errands,
                                 "calendar_metadata": global_cache.get("calendar_metadata", {}),
-                                "drivers": global_cache.get("drivers", []),
-                                "passengers": global_cache.get("passengers", []),
-                                "no_location": global_cache.get("no_location", [])
+                                "drivers": [d.dict() if hasattr(d, 'dict') else d for d in storage.get_all_drivers() if not d.get('is_disabled')],
+                                "passengers": storage.get_all_passengers(),
+                                "no_location": combined_events_to_solve and [e.get('id') for e in combined_events_to_solve if not e.get('location')] or []
                             }
                             storage.save_custom_schedule(start_date, end_date, cached)
                     except Exception as ex:
