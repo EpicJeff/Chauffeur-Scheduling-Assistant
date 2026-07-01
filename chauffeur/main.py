@@ -290,6 +290,19 @@ def get_all_trips_api():
             all_activities.update(doc.get('activities', []))
             
         for doc in trip_metadata_table.all():
+            if doc.get('is_draft'):
+                from datetime import datetime, timezone
+                trips_map[doc['event_id']] = {
+                    'id': doc['event_id'],
+                    'title': doc.get('title', 'Draft Trip'),
+                    'start': datetime.fromtimestamp(doc['mock_start_date'], tz=timezone.utc).isoformat() if doc.get('mock_start_date') else '',
+                    'end': datetime.fromtimestamp(doc['mock_end_date'], tz=timezone.utc).isoformat() if doc.get('mock_end_date') else '',
+                    'location': doc.get('location', ''),
+                    'background_url': doc.get('background_url', ''),
+                    'poi_count': len(doc.get('pois', [])),
+                    'is_draft': True
+                }
+                continue
             if not doc.get('is_activity') and doc.get('event_id') not in all_activities:
                 trip_event_ids.add(doc.get('event_id'))
             
@@ -312,6 +325,39 @@ from models.schemas import CreateTripRequest
 @app.post("/api/trips")
 def create_trip_api(req: CreateTripRequest):
     settings = storage.get_settings()
+    
+    if not req.start_date or not req.end_date:
+        import uuid
+        from datetime import datetime, timedelta
+        
+        draft_id = f"draft_trip_{uuid.uuid4().hex}"
+        
+        # Calculate a mock date in 2030 aligning with req.start_day_of_week
+        # Jan 1, 2030 is a Tuesday (weekday 1)
+        base = datetime(2030, 1, 1)
+        day_of_week = req.start_day_of_week if req.start_day_of_week is not None else 0 # default Monday
+        offset = (day_of_week - base.weekday()) % 7
+        if offset < 0:
+            offset += 7
+        mock_start = base + timedelta(days=offset, hours=9) # Start at 9 AM
+        duration = req.duration_days or 1
+        mock_end = mock_start + timedelta(days=duration)
+        
+        metadata = {
+            "event_id": draft_id,
+            "is_draft": True,
+            "title": req.title,
+            "location": req.location,
+            "draft_start_day": req.start_day_of_week,
+            "draft_duration_days": req.duration_days,
+            "mock_start_date": mock_start.timestamp(),
+            "mock_end_date": mock_end.timestamp(),
+            "pois": [],
+            "activities": []
+        }
+        storage.save_trip_metadata(metadata)
+        return {"success": True, "event_id": draft_id}
+
     cal_id = req.calendar_id or (settings.calendar_ids[0] if settings.calendar_ids else "primary")
     
     event_body = {
@@ -352,6 +398,26 @@ def health_check():
 @app.get("/api/trip/{event_id}")
 def get_trip_api(event_id: str):
     metadata = storage.get_trip_metadata(event_id)
+    
+    if event_id.startswith("draft_trip_"):
+        if not metadata:
+            return {"error": "Draft trip not found"}
+        from datetime import datetime, timezone
+        mock_start = metadata.get("mock_start_date")
+        mock_end = metadata.get("mock_end_date")
+        start_dt = datetime.fromtimestamp(mock_start, tz=timezone.utc) if mock_start else datetime.now(timezone.utc)
+        end_dt = datetime.fromtimestamp(mock_end, tz=timezone.utc) if mock_end else datetime.now(timezone.utc)
+        return {
+            "metadata": metadata,
+            "event": {
+                "id": event_id,
+                "summary": metadata.get("title", "Draft Trip"),
+                "location": metadata.get("location", ""),
+                "start": {"dateTime": start_dt.isoformat()},
+                "end": {"dateTime": end_dt.isoformat()}
+            }
+        }
+        
     if not metadata and "::" in event_id:
         cal_id, raw_event_id = event_id.split("::", 1)
         base_id = f"{cal_id}::{raw_event_id.split('_')[0]}"

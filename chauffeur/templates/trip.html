@@ -367,19 +367,24 @@
                 ${loc}
             `;
             
-            const start = new Date(tripData.event.start * 1000);
-            const end = new Date(tripData.event.end * 1000);
-            document.getElementById('trip-dates').innerText = `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+            if (tripData.metadata.is_draft) {
+                document.getElementById('trip-dates').innerText = "Flexible Dates (Draft)";
+                document.getElementById('trip-countdown').innerHTML = `<button class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-md text-xs transition-colors shadow-md">Find Dates & Book</button>`;
+            } else {
+                const start = new Date(tripData.event.start * 1000);
+                const end = new Date(tripData.event.end * 1000);
+                document.getElementById('trip-dates').innerText = `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
 
-            // Countdown
-            const now = new Date();
-            const diffTime = start - now;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            let countdownText = "";
-            if(now > end) countdownText = "Trip Finished";
-            else if (now >= start && now <= end) countdownText = "Currently on Trip!";
-            else countdownText = `${diffDays} days away`;
-            document.getElementById('trip-countdown').innerText = countdownText;
+                // Countdown
+                const now = new Date();
+                const diffTime = start - now;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                let countdownText = "";
+                if(now > end) countdownText = "Trip Finished";
+                else if (now >= start && now <= end) countdownText = "Currently on Trip!";
+                else countdownText = `${diffDays} days away`;
+                document.getElementById('trip-countdown').innerText = countdownText;
+            }
 
             document.getElementById('trip-notes-display').innerText = tripData.metadata.notes || "No general notes.";
 
@@ -415,7 +420,15 @@
                 
                 let timeStr = "";
                 if(start && end) {
-                    timeStr = `${start.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})} &bull; ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                    if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
+                        const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+                        tripStart.setHours(0,0,0,0);
+                        const msDiff = start - tripStart;
+                        const dayNum = Math.floor(msDiff / (1000 * 60 * 60 * 24)) + 1;
+                        timeStr = `Day ${dayNum} &bull; ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                    } else {
+                        timeStr = `${start.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})} &bull; ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                    }
                 }
                 
                 const bg = (act.background_url && act.background_url.startsWith('http')) ? act.background_url : 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop';
@@ -820,7 +833,15 @@
             const end = act.end ? new Date(act.end * 1000) : null;
             let timeStr = "Time not specified";
             if(start && end) {
-                timeStr = `${start.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
+                    const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+                    tripStart.setHours(0,0,0,0);
+                    const msDiff = start - tripStart;
+                    const dayNum = Math.floor(msDiff / (1000 * 60 * 60 * 24)) + 1;
+                    timeStr = `Day ${dayNum} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                } else {
+                    timeStr = `${start.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                }
             }
             
             document.getElementById('act-detail-title').innerText = act.title;

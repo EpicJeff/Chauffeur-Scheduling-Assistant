@@ -128,6 +128,11 @@
             <h3 class="text-2xl font-bold text-white mb-2">Create New Trip</h3>
             <p class="text-gray-400 text-sm mb-6">Plan your next adventure.</p>
             
+            <div class="mb-4 flex gap-2 p-1 bg-gray-900 rounded-lg">
+                <button id="tab-scheduled" onclick="setTripType('scheduled')" class="flex-1 py-1.5 rounded-md bg-gray-700 text-white font-bold text-sm transition-colors">Scheduled</button>
+                <button id="tab-draft" onclick="setTripType('draft')" class="flex-1 py-1.5 rounded-md text-gray-400 font-bold text-sm transition-colors">Flexible (Draft)</button>
+            </div>
+            
             <div class="space-y-4">
                 <div>
                     <label class="block text-gray-300 text-sm font-bold mb-2">Trip Title</label>
@@ -137,7 +142,7 @@
                     <label class="block text-gray-300 text-sm font-bold mb-2">Destination / Location</label>
                     <input type="text" id="trip-location" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Paris, France">
                 </div>
-                <div class="grid grid-cols-2 gap-4">
+                <div id="dates-scheduled" class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-gray-300 text-sm font-bold mb-2">Start Date</label>
                         <input type="date" id="trip-start" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
@@ -145,6 +150,24 @@
                     <div>
                         <label class="block text-gray-300 text-sm font-bold mb-2">End Date</label>
                         <input type="date" id="trip-end" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div id="dates-draft" class="grid grid-cols-2 gap-4 hidden">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Start Day of Week</label>
+                        <select id="trip-start-day" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                            <option value="0">Monday</option>
+                            <option value="1">Tuesday</option>
+                            <option value="2">Wednesday</option>
+                            <option value="3">Thursday</option>
+                            <option value="4">Friday</option>
+                            <option value="5" selected>Saturday</option>
+                            <option value="6">Sunday</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Duration (Days)</label>
+                        <input type="number" id="trip-duration" value="3" min="1" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
             </div>
@@ -188,7 +211,9 @@
                     const endDate = trip.end ? new Date(trip.end) : startDate;
                     
                     let statusBadge = '';
-                    if (endDate < now) {
+                    if (trip.is_draft) {
+                        statusBadge = '<span class="px-2 py-1 rounded bg-purple-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-[0_0_8px_rgba(168,85,247,0.5)]">Draft</span>';
+                    } else if (endDate < now) {
                         statusBadge = '<span class="px-2 py-1 rounded bg-gray-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">Past</span>';
                     } else if (startDate <= now && endDate >= now) {
                         statusBadge = '<span class="px-2 py-1 rounded bg-blue-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md animate-pulse">Active</span>';
@@ -199,10 +224,15 @@
                         statusBadge = `<span class="px-2 py-1 rounded bg-emerald-500/80 text-white text-[10px] font-bold uppercase tracking-wider backdrop-blur-md">In ${diffDays} Days</span>`;
                     }
                     
-                    const dateFmtOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-                    const dateStr = startDate.toLocaleDateString(undefined, dateFmtOptions);
-                    const endDateStr = endDate.toLocaleDateString(undefined, dateFmtOptions);
-                    const finalDateStr = (dateStr === endDateStr) ? dateStr : `${dateStr} - ${endDateStr}`;
+                    let finalDateStr = '';
+                    if (trip.is_draft) {
+                        finalDateStr = "Flexible Dates";
+                    } else {
+                        const dateFmtOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+                        const dateStr = startDate.toLocaleDateString(undefined, dateFmtOptions);
+                        const endDateStr = endDate.toLocaleDateString(undefined, dateFmtOptions);
+                        finalDateStr = (dateStr === endDateStr) ? dateStr : `${dateStr} - ${endDateStr}`;
+                    }
                     const fallbackLocation = trip.location || 'Unknown Location';
                     const coreTitle = trip.title ? trip.title.split(/[:\-]/)[0].trim() : '';
                     const searchQuery = trip.background_url || coreTitle || fallbackLocation || 'nature';
@@ -253,12 +283,33 @@
             }
         });
 
+        let tripType = 'scheduled';
+        function setTripType(type) {
+            tripType = type;
+            if (type === 'scheduled') {
+                document.getElementById('tab-scheduled').classList.replace('text-gray-400', 'text-white');
+                document.getElementById('tab-scheduled').classList.add('bg-gray-700');
+                document.getElementById('tab-draft').classList.replace('text-white', 'text-gray-400');
+                document.getElementById('tab-draft').classList.remove('bg-gray-700');
+                document.getElementById('dates-scheduled').classList.remove('hidden');
+                document.getElementById('dates-draft').classList.add('hidden');
+            } else {
+                document.getElementById('tab-draft').classList.replace('text-gray-400', 'text-white');
+                document.getElementById('tab-draft').classList.add('bg-gray-700');
+                document.getElementById('tab-scheduled').classList.replace('text-white', 'text-gray-400');
+                document.getElementById('tab-scheduled').classList.remove('bg-gray-700');
+                document.getElementById('dates-draft').classList.remove('hidden');
+                document.getElementById('dates-scheduled').classList.add('hidden');
+            }
+        }
+
         function openCreateTripModal() {
             document.getElementById('trip-title').value = '';
             document.getElementById('trip-location').value = '';
             document.getElementById('trip-start').value = '';
             document.getElementById('trip-end').value = '';
             document.getElementById('create-trip-modal').classList.remove('hidden');
+            setTripType('scheduled');
         }
         function closeCreateTripModal() {
             document.getElementById('create-trip-modal').classList.add('hidden');
@@ -266,22 +317,27 @@
         async function saveNewTrip() {
             const title = document.getElementById('trip-title').value;
             const loc = document.getElementById('trip-location').value;
-            const start = document.getElementById('trip-start').value;
-            const end = document.getElementById('trip-end').value;
             
-            if (!title || !start || !end) return alert("Title and dates are required.");
+            if (!title) return alert("Title is required.");
+            
+            const payload = { title: title, location: loc };
+            if (tripType === 'scheduled') {
+                const start = document.getElementById('trip-start').value;
+                const end = document.getElementById('trip-end').value;
+                if (!start || !end) return alert("Dates are required for a scheduled trip.");
+                payload.start_date = start;
+                payload.end_date = end;
+            } else {
+                payload.start_day_of_week = parseInt(document.getElementById('trip-start-day').value);
+                payload.duration_days = parseInt(document.getElementById('trip-duration').value);
+            }
             
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/trips`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: title,
-                        location: loc,
-                        start_date: start,
-                        end_date: end
-                    })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
                 if (data.error) {

@@ -228,6 +228,13 @@ class TripPOI(BaseModel):
 class TripMetadata(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     event_id: str
+    is_draft: bool = False
+    title: Optional[str] = None
+    location: Optional[str] = None
+    draft_start_day: Optional[int] = None # 0 = Monday, 6 = Sunday
+    draft_duration_days: Optional[int] = None
+    mock_start_date: Optional[float] = None
+    mock_end_date: Optional[float] = None
     background_url: Optional[str] = None
     notes: Optional[str] = None
     pois: List[TripPOI] = Field(default_factory=list)
@@ -235,6 +242,8 @@ class TripMetadata(BaseModel):
 class CreateTripRequest(BaseModel):
     title: str
     location: Optional[str] = None
-    start_date: str
-    end_date: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    start_day_of_week: Optional[int] = None
+    duration_days: Optional[int] = None
     calendar_id: Optional[str] = None

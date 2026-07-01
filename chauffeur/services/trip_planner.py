@@ -81,7 +81,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
 def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
     """
-    Finds the best open time slot during the trip and schedules the POI in Google Calendar.
+    Finds the best open time slot during the trip and schedules the POI in Google Calendar (or isolated environment if draft).
     Returns the event_id if successful, or None if failed.
     """
     settings = storage.get_settings()
@@ -89,27 +89,49 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
     if not cals:
         return None
         
-    events = calendar.fetch_upcoming_events(cals, days=60)
-    trip_event = next((e for e in events if e.id == trip.event_id or trip.event_id in e.source_event_ids), None)
-    
-    if not trip_event:
-        print("Trip event not found, cannot schedule POI.")
-        return None
-        
-    trip_start = trip_event.start
-    trip_end = trip_event.end
-    
-    trip_cals = trip_event.calendar_ids
-    if not trip_cals:
+    if trip.is_draft:
+        # Isolated Scheduling Engine
+        if not trip.mock_start_date or not trip.mock_end_date:
+            return None
+        trip_start = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+        trip_end = datetime.datetime.fromtimestamp(trip.mock_end_date, tz=datetime.timezone.utc)
         trip_cals = cals
         
-    overlapping_events = []
-    for e in events:
-        if e.id == trip_event.id:
-            continue
-        if e.end > trip_start and e.start < trip_end:
-            if any(c in trip_cals for c in e.calendar_ids):
-                overlapping_events.append(e)
+        # Build overlapping events from already scheduled POIs
+        overlapping_events = []
+        for p in trip.pois:
+            if p.is_scheduled and p.id != poi.id and p.scheduled_start and p.scheduled_end:
+                class MockEvent:
+                    def __init__(self, start, end):
+                        self.start = start
+                        self.end = end
+                overlapping_events.append(MockEvent(
+                    datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc),
+                    datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc)
+                ))
+    else:
+        # Standard Scheduling Engine
+        events = calendar.fetch_upcoming_events(cals, days=60)
+        trip_event = next((e for e in events if e.id == trip.event_id or trip.event_id in e.source_event_ids), None)
+        
+        if not trip_event:
+            print("Trip event not found, cannot schedule POI.")
+            return None
+            
+        trip_start = trip_event.start
+        trip_end = trip_event.end
+        
+        trip_cals = trip_event.calendar_ids
+        if not trip_cals:
+            trip_cals = cals
+            
+        overlapping_events = []
+        for e in events:
+            if e.id == trip_event.id:
+                continue
+            if e.end > trip_start and e.start < trip_end:
+                if any(c in trip_cals for c in e.calendar_ids):
+                    overlapping_events.append(e)
                 
     overlapping_events.sort(key=lambda x: x.start)
     
@@ -138,6 +160,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         best_start = trip_start + (trip_end - trip_start) / 2
         
     best_end = best_start + datetime.timedelta(minutes=poi.duration_mins)
+    
+    if trip.is_draft:
+        # Save mock timestamps, bypass Google Calendar
+        event_id = f"draft_poi_{uuid.uuid4().hex}"
+        poi.is_scheduled = True
+        poi.scheduled_start = best_start.timestamp()
+        poi.scheduled_end = best_end.timestamp()
+        poi.event_id = event_id
+        return event_id
     
     target_cal = trip_cals[0] if trip_cals else cals[0]
     
