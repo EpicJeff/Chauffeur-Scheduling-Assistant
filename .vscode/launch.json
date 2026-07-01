@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Debug Chauffeur",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/chauffeur/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/chauffeur",
+            "justMyCode": true,
+            "env": {
+                "HOME_LOCATION": "265 Chestnut Walk Drive, Apex, NC, USA"
+            }
+        }
+    ]
+}
