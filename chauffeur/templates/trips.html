@@ -89,7 +89,13 @@
                 <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400 tracking-tight mb-2">My Trips</h1>
                 <p class="text-gray-400 font-medium">Your upcoming and past adventures.</p>
             </div>
-            <div id="trip-count" class="text-sm font-bold text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 hidden"></div>
+            <div class="flex items-center gap-4">
+                <div id="trip-count" class="text-sm font-bold text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 hidden"></div>
+                <button onclick="openCreateTripModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                    New Trip
+                </button>
+            </div>
         </div>
 
         <div id="loading" class="flex flex-col items-center justify-center py-20 flex-1">
@@ -115,6 +121,40 @@
         </div>
 
     </main>
+
+    <!-- Create Trip Modal -->
+    <div id="create-trip-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
+            <h3 class="text-2xl font-bold text-white mb-2">Create New Trip</h3>
+            <p class="text-gray-400 text-sm mb-6">Plan your next adventure.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-gray-300 text-sm font-bold mb-2">Trip Title</label>
+                    <input type="text" id="trip-title" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Summer in Paris">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-bold mb-2">Destination / Location</label>
+                    <input type="text" id="trip-location" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Paris, France">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Start Date</label>
+                        <input type="date" id="trip-start" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">End Date</label>
+                        <input type="date" id="trip-end" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-8 flex justify-end space-x-4">
+                <button onclick="closeCreateTripModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                <button onclick="saveNewTrip()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Create</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
@@ -212,6 +252,47 @@
                 `;
             }
         });
+
+        function openCreateTripModal() {
+            document.getElementById('trip-title').value = '';
+            document.getElementById('trip-location').value = '';
+            document.getElementById('trip-start').value = '';
+            document.getElementById('trip-end').value = '';
+            document.getElementById('create-trip-modal').classList.remove('hidden');
+        }
+        function closeCreateTripModal() {
+            document.getElementById('create-trip-modal').classList.add('hidden');
+        }
+        async function saveNewTrip() {
+            const title = document.getElementById('trip-title').value;
+            const loc = document.getElementById('trip-location').value;
+            const start = document.getElementById('trip-start').value;
+            const end = document.getElementById('trip-end').value;
+            
+            if (!title || !start || !end) return alert("Title and dates are required.");
+            
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/trips`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        location: loc,
+                        start_date: start,
+                        end_date: end
+                    })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    window.location.href = `trip?event_id=${encodeURIComponent(data.event_id)}`;
+                }
+            } catch (err) {
+                alert("Error creating trip");
+            }
+        }
     </script>
 </body>
 </html>

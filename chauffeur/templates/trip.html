@@ -549,7 +549,7 @@
             document.getElementById('ai-planner-loading').classList.remove('hidden');
             
             try {
-                const res = await fetch(\`api/trip/\${encodeURIComponent(EVENT_ID)}/generate_pois\`, {
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/generate_pois`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ prompt: prompt })
@@ -561,7 +561,7 @@
                 document.getElementById('ai-planner-actions').classList.remove('hidden');
                 
                 if (data.error) {
-                    document.getElementById('ai-planner-results').innerHTML = \`<div class="text-red-400 font-bold">\${data.error}</div>\`;
+                    document.getElementById('ai-planner-results').innerHTML = `<div class="text-red-400 font-bold">${data.error}</div>`;
                     return;
                 }
                 
@@ -576,7 +576,7 @@
                 // Since the endpoint already added them to the tripData.metadata, 
                 // let's just show the last N items in the modal.
                 // Wait, it is better if they are added directly and the user sees them.
-                html = \`<p class="text-green-400 font-bold mb-4">Successfully added \${pois.length} suggestions to your POI list!</p>\`;
+                html = `<p class="text-green-400 font-bold mb-4">Successfully added ${pois.length} suggestions to your POI list!</p>`;
                 document.getElementById('ai-planner-results').innerHTML = html;
                 
                 // Refresh main screen
@@ -592,7 +592,7 @@
         
         async function schedulePoi(poiId) {
             try {
-                const res = await fetch(\`api/trip/\${encodeURIComponent(EVENT_ID)}/schedule_poi\`, {
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ poi_id: poiId })

@@ -232,3 +232,9 @@ class TripMetadata(BaseModel):
     notes: Optional[str] = None
     pois: List[TripPOI] = Field(default_factory=list)
 
+class CreateTripRequest(BaseModel):
+    title: str
+    location: Optional[str] = None
+    start_date: str
+    end_date: str
+    calendar_id: Optional[str] = None

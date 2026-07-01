@@ -307,6 +307,37 @@ def get_all_trips_api():
     trips_list.sort(key=lambda x: x['start'] if x['start'] else '')
     return {"trips": trips_list}
 
+from models.schemas import CreateTripRequest
+
+@app.post("/api/trips")
+def create_trip_api(req: CreateTripRequest):
+    settings = storage.get_settings()
+    cal_id = req.calendar_id or (settings.calendar_ids[0] if settings.calendar_ids else "primary")
+    
+    event_body = {
+        "summary": req.title,
+        "description": "#trip",
+        "start": {"date": req.start_date} if len(req.start_date) == 10 else {"dateTime": req.start_date},
+        "end": {"date": req.end_date} if len(req.end_date) == 10 else {"dateTime": req.end_date},
+    }
+    if req.location:
+        event_body["location"] = req.location
+
+    try:
+        service = calendar.get_calendar_service()
+        created = service.events().insert(calendarId=cal_id, body=event_body).execute()
+        event_id = f"{cal_id}::{created['id']}"
+        
+        # Initialize empty metadata so it appears as a trip immediately
+        metadata = storage.get_trip_metadata(event_id)
+        if not metadata:
+            metadata = {"event_id": event_id, "pois": [], "activities": []}
+            storage.save_trip_metadata(metadata)
+            
+        return {"success": True, "event_id": event_id}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
     response = templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
