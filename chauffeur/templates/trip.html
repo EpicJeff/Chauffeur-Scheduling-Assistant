@@ -111,10 +111,16 @@
                     <h2 class="text-3xl font-bold text-white">Points of Interest</h2>
                     <p class="text-gray-400 text-sm mt-1">Places to go and things to do.</p>
                 </div>
-                <button onclick="openAddPoiModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                    Add POI
-                </button>
+                <div class="flex">
+                    <button onclick="openAiPlannerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center mr-3">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Smart Planner
+                    </button>
+                    <button onclick="openAddPoiModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Add POI
+                    </button>
+                </div>
             </div>
             
             <div id="pois-list" class="flex-1 overflow-y-auto space-y-4 pr-2">
@@ -222,6 +228,41 @@
             <div class="mt-8 flex justify-end space-x-4">
                 <button onclick="closeAddPoiModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
                 <button onclick="savePoi()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save POI</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Smart Planner Modal -->
+    <div id="ai-planner-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-3xl border border-gray-600 shadow-2xl flex flex-col max-h-[90vh]">
+            <h3 class="text-2xl font-bold text-white mb-2">Smart Planner</h3>
+            <p class="text-gray-400 text-sm mb-6">Tell us what you want to do on this trip.</p>
+            
+            <div id="ai-planner-input-area" class="shrink-0">
+                <textarea id="ai-planner-prompt" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-4 text-white focus:outline-none focus:border-indigo-500" rows="3" placeholder="e.g. I want to visit a vineyard, get some sun at the beach, and eat at a Michelin Star restaurant."></textarea>
+                
+                <div class="mt-4 flex justify-end space-x-4">
+                    <button onclick="closeAiPlannerModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                    <button id="ai-generate-btn" onclick="generatePois()" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Generate Ideas
+                    </button>
+                </div>
+            </div>
+            
+            <div id="ai-planner-loading" class="hidden py-12 flex flex-col items-center justify-center">
+                <svg class="animate-spin h-10 w-10 text-indigo-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p class="text-indigo-400 font-bold animate-pulse">Designing your perfect trip...</p>
+            </div>
+            
+            <div id="ai-planner-results" class="hidden flex-1 overflow-y-auto mt-6 space-y-4 pr-2">
+                <!-- Results will be injected here -->
+            </div>
+            <div id="ai-planner-actions" class="hidden mt-6 flex justify-end shrink-0 border-t border-gray-700 pt-4">
+                <button onclick="closeAiPlannerModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Done</button>
             </div>
         </div>
     </div>
@@ -441,16 +482,19 @@
                                     ${poi.location}
                                 </p>
                             </div>
-                            <button onclick="deletePoi(${index})" class="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2">
+                            <button onclick="deletePoi(${index})" class="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2 ml-2" title="Delete POI">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
                         </div>
-                        <div class="mt-4 flex flex-wrap gap-2 items-center">
-                            <span class="px-3 py-1 rounded-full text-xs font-bold border ${colorClass} capitalize">${poi.category}</span>
-                            <span class="px-3 py-1 rounded-full text-xs font-bold border bg-gray-700/30 text-gray-300 border-gray-600/50 flex items-center">
-                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                ${poi.duration_mins} mins
-                            </span>
+                        <div class="mt-4 flex justify-between items-center">
+                            <div class="flex flex-wrap gap-2 items-center">
+                                <span class="px-3 py-1 rounded-full text-xs font-bold border ${colorClass} capitalize">${poi.category}</span>
+                                <span class="px-3 py-1 rounded-full text-xs font-bold border bg-gray-700/30 text-gray-300 border-gray-600/50 flex items-center">
+                                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    ${poi.duration_mins} mins
+                                </span>
+                            </div>
+                            ${!poi.is_scheduled ? `<button onclick="schedulePoi('${poi.id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-colors">Add to Itinerary</button>` : ''}
                         </div>
                         ${poi.notes ? `<p class="mt-3 text-sm text-gray-400 italic bg-black/20 p-3 rounded-lg">${poi.notes}</p>` : ''}
                     `;
@@ -480,6 +524,89 @@
         }
         function closeSettingsModal() {
             document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        // Smart Planner logic
+        function openAiPlannerModal() {
+            document.getElementById('ai-planner-prompt').value = '';
+            document.getElementById('ai-planner-results').innerHTML = '';
+            document.getElementById('ai-planner-results').classList.add('hidden');
+            document.getElementById('ai-planner-actions').classList.add('hidden');
+            document.getElementById('ai-planner-input-area').classList.remove('hidden');
+            document.getElementById('ai-planner-modal').classList.remove('hidden');
+        }
+        
+        function closeAiPlannerModal() {
+            document.getElementById('ai-planner-modal').classList.add('hidden');
+            fetchTripData(); // refresh the background list
+        }
+
+        async function generatePois() {
+            const prompt = document.getElementById('ai-planner-prompt').value;
+            if (!prompt) return alert("Please enter a prompt!");
+            
+            document.getElementById('ai-planner-input-area').classList.add('hidden');
+            document.getElementById('ai-planner-loading').classList.remove('hidden');
+            
+            try {
+                const res = await fetch(\`api/trip/\${encodeURIComponent(EVENT_ID)}/generate_pois\`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ prompt: prompt })
+                });
+                const data = await res.json();
+                
+                document.getElementById('ai-planner-loading').classList.add('hidden');
+                document.getElementById('ai-planner-results').classList.remove('hidden');
+                document.getElementById('ai-planner-actions').classList.remove('hidden');
+                
+                if (data.error) {
+                    document.getElementById('ai-planner-results').innerHTML = \`<div class="text-red-400 font-bold">\${data.error}</div>\`;
+                    return;
+                }
+                
+                const pois = data.pois;
+                let html = '';
+                // Only show newly generated POIs by checking the end of the list, 
+                // but since the endpoint returns all POIs, we could just render all,
+                // or just the last few. Let's render all for simplicity in the modal,
+                // or ideally just update the main list. 
+                // Actually, wait, the prompt might just add them to the POIs list. 
+                // We want the user to click "Accept" or "Add to Itinerary".
+                // Since the endpoint already added them to the tripData.metadata, 
+                // let's just show the last N items in the modal.
+                // Wait, it is better if they are added directly and the user sees them.
+                html = \`<p class="text-green-400 font-bold mb-4">Successfully added \${pois.length} suggestions to your POI list!</p>\`;
+                document.getElementById('ai-planner-results').innerHTML = html;
+                
+                // Refresh main screen
+                tripData.metadata.pois = data.pois;
+                renderPois();
+                
+            } catch(e) {
+                document.getElementById('ai-planner-loading').classList.add('hidden');
+                document.getElementById('ai-planner-input-area').classList.remove('hidden');
+                alert("Error generating POIs");
+            }
+        }
+        
+        async function schedulePoi(poiId) {
+            try {
+                const res = await fetch(\`api/trip/\${encodeURIComponent(EVENT_ID)}/schedule_poi\`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ poi_id: poiId })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    // Refresh completely to show new scheduled activities
+                    fetchTripData();
+                }
+            } catch(e) {
+                alert("Error scheduling POI");
+            }
         }
 
         async function savePoi() {

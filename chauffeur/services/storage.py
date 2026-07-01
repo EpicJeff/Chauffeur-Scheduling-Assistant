@@ -781,6 +781,9 @@ def save_cached_daily_schedule(date_str: str, schedule_data: dict, events_hash: 
             'selected_index': selected_index,
             'llm_reasoning': llm_reasoning
         }, Query().date_str == date_str)
+        
+        # Invalidate any custom range caches that might have relied on old daily data
+        custom_schedules_table.truncate()
 
 
 # Settings CRUD

@@ -465,6 +465,63 @@ def save_trip_api(event_id: str, payload: dict):
     storage.set_trip_metadata(event_id, payload)
     return {"status": "ok"}
 
+@app.post("/api/trip/{event_id}/generate_pois")
+def generate_pois_api(event_id: str, payload: dict):
+    user_prompt = payload.get("prompt", "")
+    if not user_prompt:
+        return {"error": "Prompt is required"}
+        
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found"}
+        
+    from models.schemas import TripMetadata
+    trip_obj = TripMetadata(**meta)
+    
+    from services.trip_planner import generate_trip_pois
+    pois = generate_trip_pois(trip_obj, user_prompt)
+    
+    # Save back to trip metadata
+    if 'pois' not in meta:
+        meta['pois'] = []
+    
+    for poi in pois:
+        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+        meta['pois'].append(poi_dict)
+        
+    storage.set_trip_metadata(event_id, meta)
+    
+    return {"pois": meta['pois']}
+
+@app.post("/api/trip/{event_id}/schedule_poi")
+def schedule_poi_api(event_id: str, payload: dict):
+    poi_id = payload.get("poi_id")
+    if not poi_id:
+        return {"error": "poi_id is required"}
+        
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found"}
+        
+    from models.schemas import TripMetadata
+    trip_obj = TripMetadata(**meta)
+    
+    poi = next((p for p in trip_obj.pois if p.id == poi_id), None)
+    if not poi:
+        return {"error": "POI not found"}
+        
+    from services.trip_planner import schedule_poi
+    event_calendar_id = schedule_poi(trip_obj, poi)
+    if not event_calendar_id:
+        return {"error": "Failed to schedule POI (no available time slot or calendar missing)"}
+        
+    # Update POI in DB
+    meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+    storage.set_trip_metadata(event_id, meta)
+    
+    return {"status": "ok", "event_id": event_calendar_id}
+
+
 # --- Drivers API ---
 @app.get("/api/drivers")
 def get_drivers():
@@ -1799,8 +1856,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     # If tt is exactly the 15 min fallback, but they are in different states, it's likely an API failure for a long trip.
                     # A robust check: if API fails, tt=15. But we want a safe buffer.
                     # We will just apply it. The distance_cache usually prevents this.
-                    trip_start -= datetime.timedelta(minutes=tt)
-                    trip_end += datetime.timedelta(minutes=tt)
+                    trip_start -= timedelta(minutes=tt)
+                    trip_end += timedelta(minutes=tt)
                 except Exception as ex:
                     logger.warning(f"Failed to pad trip travel time: {ex}")
                     
@@ -2705,8 +2762,8 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             d_str = str(current)
                             daily_cache = storage.get_cached_daily_schedule(d_str)
                             if not daily_cache or 'schedule' not in daily_cache:
-                                all_cached = False
-                                break
+                                current += timedelta(days=1)
+                                continue
                                 
                             sched = daily_cache['schedule']
                             for d_id, evs in sched.get('assignments', {}).items():

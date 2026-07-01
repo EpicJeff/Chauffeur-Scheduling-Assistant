@@ -217,11 +217,13 @@ class TripPOI(BaseModel):
     location: str
     mapbox_id: Optional[str] = None
     category: Optional[str] = None
+    description: Optional[str] = None
     notes: Optional[str] = None
     duration_mins: int = 60
     is_scheduled: bool = False
     scheduled_start: Optional[float] = None
     scheduled_end: Optional[float] = None
+    event_id: Optional[str] = None
 
 class TripMetadata(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

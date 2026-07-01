@@ -143,7 +143,9 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "all_day": is_all_day,
                         "calendar_ids": [],
                         "source_event_ids": [],
-                        "recurring_event_id": e.get('recurringEventId') or (e['id'].split('_')[0] if '_' in e.get('id', '') else None)
+                        "recurring_event_id": e.get('recurringEventId') or (e['id'].split('_')[0] if '_' in e.get('id', '') else None),
+                        "trip_id": e.get('extendedProperties', {}).get('private', {}).get('trip_id'),
+                        "poi_id": e.get('extendedProperties', {}).get('private', {}).get('poi_id')
                     }
                 
                 grouped_events[group_key]["calendar_ids"].append(cal_id)
@@ -164,7 +166,9 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
             calendar_ids=g["calendar_ids"],
             source_event_ids=g["source_event_ids"],
             recurring_event_id=g.get("recurring_event_id"),
-            all_day=g.get("all_day", False)
+            all_day=g.get("all_day", False),
+            trip_id=g.get("trip_id"),
+            poi_id=g.get("poi_id")
         )
         all_events.append(event_obj)
         
@@ -336,3 +340,35 @@ def write_event_color(calendar_id: str, event_id: str, color_id: str):
         service.events().update(calendarId=calendar_id, eventId=original_id, body=event).execute()
     except Exception as ex:
         print(f"Error updating color for {event_id}: {ex}")
+
+def create_event(calendar_id: str, title: str, start: str, end: str, location: str = None, description: str = None, trip_id: str = None, poi_id: str = None) -> str:
+    """
+    Creates a new event in Google Calendar and returns the event ID.
+    start and end should be ISO formatted datetime strings.
+    """
+    service = get_calendar_service()
+    event_body = {
+        'summary': title,
+        'start': {'dateTime': start},
+        'end': {'dateTime': end}
+    }
+    if location:
+        event_body['location'] = location
+    if description:
+        event_body['description'] = description
+        
+    extended_props = {}
+    if trip_id:
+        extended_props['trip_id'] = trip_id
+    if poi_id:
+        extended_props['poi_id'] = poi_id
+        
+    if extended_props:
+        event_body['extendedProperties'] = {'private': extended_props}
+        
+    try:
+        created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        return created_event.get('id')
+    except Exception as ex:
+        print(f"Error creating event in {calendar_id}: {ex}")
+        return None
