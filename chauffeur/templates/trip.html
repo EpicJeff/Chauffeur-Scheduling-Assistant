@@ -62,12 +62,12 @@
     {% include 'nav.html' %}
 
     <!-- Main Content Grid -->
-    <div class="flex-1 flex flex-col p-6 md:p-12 gap-8 z-10 w-full max-w-[1400px] mx-auto overflow-y-auto">
+    <div class="flex-1 flex flex-col p-6 md:p-12 gap-8 z-10 w-full max-w-[1800px] mx-auto overflow-y-auto">
         
-        <div class="flex flex-col md:flex-row gap-8 shrink-0">
+        <div class="flex flex-col xl:flex-row gap-8 shrink-0">
         
         <!-- Left Column: Header & Weather/Stats -->
-        <div class="w-full md:w-1/3 flex flex-col gap-6 justify-center">
+        <div class="w-full xl:w-1/4 flex flex-col gap-6 shrink-0">
             <div class="glass-panel p-8 rounded-3xl shadow-2xl relative">
                 <button onclick="openSettingsModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white bg-black/40 p-2 rounded-full backdrop-blur transition-all border border-white/10" title="Trip Settings">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -104,47 +104,67 @@
             </div>
         </div>
 
-        <!-- Right Column: POIs -->
-        <div class="w-full md:w-2/3 glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col h-[75vh]">
-            <div class="flex justify-between items-end mb-6 shrink-0 border-b border-white/10 pb-4">
-                <div>
-                    <h2 class="text-3xl font-bold text-white">Points of Interest</h2>
-                    <p class="text-gray-400 text-sm mt-1">Places to go and things to do.</p>
-                </div>
-                <div class="flex">
-                    <button onclick="openAiPlannerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center mr-3">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        Smart Planner
+        <!-- Right Column: Itinerary and POIs -->
+        <div class="w-full xl:w-3/4 flex flex-col gap-8 shrink-0">
+            
+            <!-- Activities Section -->
+            <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col">
+                <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">Daily Itinerary</h2>
+                        <p class="text-gray-400 text-sm mt-1">Events, flights, and excursions planned for this trip.</p>
+                    </div>
+                    <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        Add Activity
                     </button>
-                    <button onclick="openAddPoiModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                        Add POI
+                </div>
+                <div id="activities-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-start pb-4">
+                    <!-- Activities populated via JS -->
+                </div>
+            </div>
+
+            <!-- POIs Section -->
+            <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col relative pb-24">
+                <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">Points of Interest</h2>
+                        <p class="text-gray-400 text-sm mt-1">Places to go and things to do.</p>
+                    </div>
+                    <div class="flex">
+                        <button onclick="openAiPlannerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center mr-3">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            Smart Planner
+                        </button>
+                        <button onclick="openAddPoiModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                            Add POI
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="pois-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <!-- POIs populated via JS -->
+                </div>
+
+                <!-- Floating Bulk Action Bar -->
+                <div id="poi-bulk-actions" class="hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 border border-gray-600 rounded-full px-6 py-3 shadow-2xl flex items-center space-x-6 z-40">
+                    <span id="poi-selected-count" class="text-white font-bold text-sm">0 selected</span>
+                    <div class="h-6 w-px bg-gray-700"></div>
+                    <button onclick="bulkSchedulePois()" class="text-indigo-400 hover:text-indigo-300 font-bold text-sm flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        Schedule
+                    </button>
+                    <button onclick="bulkDeletePois()" class="text-red-400 hover:text-red-300 font-bold text-sm flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        Delete
                     </button>
                 </div>
             </div>
             
-            <div id="pois-list" class="flex-1 overflow-y-auto space-y-4 pr-2">
-                <!-- POIs populated via JS -->
-            </div>
-        </div>
-        </div> <!-- CLOSE FLEX ROW -->
-        
-        <!-- Activities Section -->
-        <div class="w-full shrink-0 mt-8">
-            <div class="flex justify-between items-end mb-6">
-                <div>
-                    <h2 class="text-3xl font-bold text-white">Activities</h2>
-                    <p class="text-gray-400 text-sm mt-1">Events, flights, and excursions planned for this trip.</p>
-                </div>
-                <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                    Add Activity
-                </button>
-            </div>
-            <div id="activities-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-12">
-                <!-- Activities populated via JS -->
-            </div>
-        </div>
+        </div> <!-- Close Right Column -->
+        </div> <!-- Close Flex/Grid -->
+    </div> <!-- Close Main Container -->
 
 
     <!-- Modals (Add POI, Settings, Add Activity, Activity Details) -->
@@ -192,6 +212,74 @@
             </div>
         </div>
     </div>
+    </div>
+    
+    <!-- POI Details Modal -->
+    <div id="poi-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- Header Image Area -->
+            <div id="poi-detail-header" class="h-56 relative bg-cover bg-center shrink-0">
+                <div class="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent"></div>
+                <button onclick="closePoiDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+                <div class="absolute bottom-0 left-0 p-6 w-full">
+                    <span id="poi-detail-category" class="px-3 py-1 bg-white/20 backdrop-blur rounded-full text-xs font-bold text-white uppercase tracking-wider mb-2 inline-block">Category</span>
+                    <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">POI Title</h3>
+                    <a id="poi-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit">
+                        <svg class="w-4 h-4 mr-1 group-hover:underline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span id="poi-detail-location" class="group-hover:underline">Location</span>
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Details Area -->
+            <div class="p-6 overflow-y-auto space-y-6">
+                <div id="poi-detail-experience-container" class="hidden">
+                    <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">The Experience</h4>
+                    <div id="poi-detail-experience" class="text-gray-200 leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 text-sm">
+                    </div>
+                </div>
+                
+                <div id="poi-detail-why-picked-container" class="hidden">
+                    <h4 class="text-sm font-bold text-pink-400 uppercase tracking-wider mb-2">Why Argyle Picked This</h4>
+                    <div id="poi-detail-why-picked" class="text-pink-100 leading-relaxed bg-pink-900/20 p-4 rounded-xl border border-pink-500/20 text-sm">
+                    </div>
+                </div>
+                
+                <div id="poi-detail-notes-container" class="hidden">
+                    <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Notes & Description</h4>
+                    <div id="poi-detail-notes" class="text-gray-300 prose prose-invert max-w-none text-sm leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 whitespace-pre-wrap">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer Actions -->
+            <div class="p-4 bg-gray-900 border-t border-gray-700 flex justify-between items-center shrink-0">
+                <button id="poi-detail-remove-btn" class="text-red-400 hover:text-red-300 hover:bg-red-950/50 px-4 py-2 rounded-xl transition-colors font-bold text-sm flex items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    Delete POI
+                </button>
+                <div class="flex space-x-3">
+                    <button id="poi-detail-schedule-btn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-xl font-bold transition-colors">
+                        Add to Itinerary
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4">
+        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm border border-gray-600 shadow-2xl">
+            <h3 id="confirm-modal-title" class="text-xl font-bold text-white mb-2">Confirm Action</h3>
+            <p id="confirm-modal-message" class="text-gray-400 text-sm mb-6 whitespace-pre-wrap">Are you sure you want to do this?</p>
+            <div id="confirm-modal-actions" class="flex justify-end space-x-3">
+                <!-- Buttons injected via JS -->
+            </div>
+        </div>
+    </div>
+    
     <div id="poi-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
             <h3 class="text-2xl font-bold text-white mb-6">Add Point of Interest</h3>
@@ -272,6 +360,24 @@
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
             <h3 class="text-2xl font-bold text-white mb-6">Trip Settings</h3>
             <div class="space-y-4">
+                <div id="settings-draft-fields" class="hidden space-y-4 border-b border-gray-700 pb-4 mb-4">
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-sm font-bold">Start Day of the Week</label>
+                        <select id="settings-start-day" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                            <option value="0">Monday</option>
+                            <option value="1">Tuesday</option>
+                            <option value="2">Wednesday</option>
+                            <option value="3">Thursday</option>
+                            <option value="4">Friday</option>
+                            <option value="5">Saturday</option>
+                            <option value="6">Sunday</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-sm font-bold">Trip Length (Days)</label>
+                        <input type="number" id="settings-duration" min="1" max="60" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
                 <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">Background Search Query</label>
                     <input type="text" id="settings-bg-query" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Paris, Tokyo, Beach">
@@ -373,7 +479,8 @@
             } else {
                 const start = new Date(tripData.event.start * 1000);
                 const end = new Date(tripData.event.end * 1000);
-                document.getElementById('trip-dates').innerText = `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+                const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
+                document.getElementById('trip-dates').innerText = `${start.toLocaleDateString('en-US', tzOpts)} - ${end.toLocaleDateString('en-US', tzOpts)}`;
 
                 // Countdown
                 const now = new Date();
@@ -406,7 +513,7 @@
             
             if(!tripData.activities || tripData.activities.length === 0) {
                 grid.innerHTML = `
-                    <div class="col-span-full py-12 text-center text-gray-400 bg-white/5 border border-white/10 rounded-2xl border-dashed">
+                    <div class="w-full py-12 text-center text-gray-400 bg-white/5 border border-white/10 rounded-2xl border-dashed">
                         <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                         <p>No activities planned yet.</p>
                     </div>
@@ -414,43 +521,64 @@
                 return;
             }
             
+            const grouped = {};
             tripData.activities.forEach(act => {
                 const start = act.start ? new Date(act.start * 1000) : null;
-                const end = act.end ? new Date(act.end * 1000) : null;
+                let dayKey = 'Unscheduled';
+                let sortKey = 9999999999;
                 
-                let timeStr = "";
-                if(start && end) {
+                if (start) {
+                    const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                     if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
                         const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
                         tripStart.setHours(0,0,0,0);
-                        const msDiff = start - tripStart;
+                        const actStart = new Date(start);
+                        actStart.setHours(0,0,0,0);
+                        const msDiff = actStart - tripStart;
                         const dayNum = Math.floor(msDiff / (1000 * 60 * 60 * 24)) + 1;
-                        timeStr = `Day ${dayNum} &bull; ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                        dayKey = `Day ${dayNum} - ${start.toLocaleDateString('en-US', {weekday:'short', ...tzOpts})}`;
+                        sortKey = dayNum;
                     } else {
-                        timeStr = `${start.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})} &bull; ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                        dayKey = start.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric', ...tzOpts});
+                        const s = new Date(start);
+                        s.setHours(0,0,0,0);
+                        sortKey = s.getTime();
                     }
                 }
                 
-                const bg = (act.background_url && act.background_url.startsWith('http')) ? act.background_url : 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop';
+                if(!grouped[dayKey]) grouped[dayKey] = { sortKey: sortKey, items: [] };
+                grouped[dayKey].items.push(act);
+            });
+            
+            const sortedKeys = Object.keys(grouped).sort((a,b) => grouped[a].sortKey - grouped[b].sortKey);
+            
+            sortedKeys.forEach(dayKey => {
+                const col = document.createElement('div');
+                col.className = "flex flex-col gap-4 bg-white/5 rounded-2xl p-4 border border-white/10";
+                col.innerHTML = `<h3 class="text-white font-bold text-center border-b border-white/10 pb-2 mb-2">${dayKey}</h3>`;
                 
-                const card = document.createElement('div');
-                card.className = "group relative min-h-[12rem] rounded-2xl overflow-hidden shadow-lg cursor-pointer transform transition-all hover:-translate-y-1 hover:shadow-2xl border border-white/10 flex flex-col";
-                card.onclick = () => openActivityDetails(act.id);
-                card.innerHTML = `
-                    <div class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-110" style="background-image: url('${bg}')"></div>
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
-                    
-                    <button onclick="event.stopPropagation(); deleteActivity('${act.id}')" class="absolute top-3 right-3 text-white/50 hover:text-red-400 bg-black/40 hover:bg-black/70 p-1.5 rounded-full backdrop-blur opacity-0 group-hover:opacity-100 transition-all z-10">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                    </button>
-                    
-                    <div class="relative mt-auto w-full p-4 pt-20 z-10 flex flex-col justify-end">
-                        <h3 class="text-xl font-bold text-white mb-1 drop-shadow-md leading-tight">${act.title}</h3>
-                        ${act.location ? `<p class="text-sm text-gray-300 mb-1 drop-shadow-md"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>${act.location}</p>` : ''}
-                        <p class="text-xs font-semibold text-indigo-300 uppercase tracking-wider drop-shadow-md">${timeStr}</p>
-                    </div>
-                `;
-                grid.appendChild(card);
+                grouped[dayKey].items.forEach(act => {
+                    const start = act.start ? new Date(act.start * 1000) : null;
+                    const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
+                    const timeStr = start ? start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts}) : '';
+                    const card = document.createElement('div');
+                    card.className = "bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group flex flex-col gap-1";
+                    card.onclick = () => openActivityDetails(act.id);
+                    card.innerHTML = `
+                        <div class="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-500"></div>
+                        <div class="pl-2 pr-6">
+                            <h3 class="font-bold text-white text-sm truncate group-hover:text-blue-300 transition" title="${act.title}">${act.title}</h3>
+                            <p class="text-xs text-gray-400 mt-0.5 font-semibold text-indigo-400">${timeStr}</p>
+                            ${act.location ? `<p class="text-[11px] text-gray-500 mt-1 truncate flex items-center"><svg class="w-3 h-3 mr-1 inline shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>${act.location}</p>` : ''}
+                        </div>
+                        
+                        <button onclick="event.stopPropagation(); deleteActivity('${act.id}')" class="absolute top-2 right-2 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-gray-800 rounded-md">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    `;
+                    col.appendChild(card);
+                });
+                grid.appendChild(col);
             });
         }
 
@@ -462,7 +590,7 @@
             let unscheduled = 0;
 
             if (pois.length === 0) {
-                list.innerHTML = `<div class="text-center text-gray-500 py-12">No POIs added yet. Start planning!</div>`;
+                list.innerHTML = `<div class="col-span-full text-center text-gray-500 py-12">No POIs added yet. Start planning!</div>`;
             } else {
                 pois.forEach((poi, index) => {
                     if (!poi.is_scheduled) unscheduled++;
@@ -477,48 +605,189 @@
                     const colorClass = catColors[poi.category] || catColors['other'];
 
                     const div = document.createElement('div');
-                    div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group`;
+                    div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group relative flex flex-col`;
+                    div.onclick = () => openPoiDetails(index);
                     
                     let scheduleBadge = poi.is_scheduled 
                         ? `<span class="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded-full border border-green-500/30 flex items-center"><svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg> Scheduled</span>`
                         : `<span class="bg-yellow-500/20 text-yellow-400 text-xs px-2 py-1 rounded-full border border-yellow-500/30">Unscheduled</span>`;
 
                     div.innerHTML = `
-                        <div class="flex justify-between items-start">
+                        <input type="checkbox" class="poi-checkbox absolute top-4 right-4 w-5 h-5 bg-gray-900 border-gray-600 rounded cursor-pointer z-10" data-index="${index}" data-id="${poi.id}" onclick="event.stopPropagation(); updatePoiBulkActions()">
+                        <div class="flex justify-between items-start pr-8">
                             <div>
-                                <div class="flex items-center gap-3 mb-1">
-                                    <h4 class="text-xl font-bold text-white">${poi.name}</h4>
+                                <h4 class="text-xl font-bold text-white mb-2 leading-tight">${poi.name}</h4>
+                                <div class="flex flex-wrap items-center gap-2 mb-3">
+                                    <span class="${colorClass} text-xs px-2 py-1 rounded-md font-bold uppercase tracking-wider">${poi.category || 'other'}</span>
                                     ${scheduleBadge}
+                                    <span class="text-xs text-gray-400"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${poi.duration_mins}m</span>
                                 </div>
-                                <p class="text-sm text-gray-400 flex items-center mt-2">
-                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                                    ${poi.location}
-                                </p>
                             </div>
-                            <button onclick="deletePoi(${index})" class="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-2 ml-2" title="Delete POI">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
                         </div>
-                        <div class="mt-4 flex justify-between items-center">
-                            <div class="flex flex-wrap gap-2 items-center">
-                                <span class="px-3 py-1 rounded-full text-xs font-bold border ${colorClass} capitalize">${poi.category}</span>
-                                <span class="px-3 py-1 rounded-full text-xs font-bold border bg-gray-700/30 text-gray-300 border-gray-600/50 flex items-center">
-                                    <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                    ${poi.duration_mins} mins
-                                </span>
-                            </div>
-                            ${!poi.is_scheduled ? `<button onclick="schedulePoi('${poi.id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-colors">Add to Itinerary</button>` : ''}
-                        </div>
-                        ${poi.notes ? `<p class="mt-3 text-sm text-gray-400 italic bg-black/20 p-3 rounded-lg">${poi.notes}</p>` : ''}
+                        <p class="text-sm text-gray-400 flex items-center mb-3 line-clamp-1">
+                            <svg class="w-4 h-4 mr-1 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+                            <span class="truncate">${poi.location}</span>
+                        </p>
+                        <p class="text-sm text-gray-300 line-clamp-3 mb-4">${poi.description || ''}</p>
+                        
+                        <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('${poi.image_url || ''}')"></div>
                     `;
                     list.appendChild(div);
                 });
             }
 
             document.getElementById('unscheduled-count').innerText = unscheduled;
+            updatePoiBulkActions();
+        }
+
+        function updatePoiBulkActions() {
+            const checkboxes = document.querySelectorAll('.poi-checkbox:checked');
+            const actionBar = document.getElementById('poi-bulk-actions');
+            const countLabel = document.getElementById('poi-selected-count');
+            
+            if (checkboxes.length > 0) {
+                countLabel.innerText = `${checkboxes.length} selected`;
+                actionBar.classList.remove('hidden');
+            } else {
+                actionBar.classList.add('hidden');
+            }
+        }
+
+        async function bulkSchedulePois() {
+            const checkboxes = document.querySelectorAll('.poi-checkbox:checked');
+            if(checkboxes.length === 0) return;
+            
+            openConfirmModal("Schedule POIs", "Are you sure you want to schedule the selected POIs via Smart Engine?", [
+                { text: "Cancel" },
+                {
+                    text: "Schedule",
+                    className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        for(let i=0; i<checkboxes.length; i++) {
+                            const poiId = checkboxes[i].dataset.id;
+                            const idx = parseInt(checkboxes[i].dataset.index);
+                            if(tripData.metadata.pois[idx].is_scheduled) continue;
+                            try {
+                                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ poi_id: poiId })
+                                });
+                                const data = await res.json();
+                                if (data.error) {
+                                    alert(`Failed to schedule ${tripData.metadata.pois[idx].name}: ${data.error}`);
+                                }
+                            } catch (e) {
+                                console.error(e);
+                            }
+                        }
+                        await fetchTripData();
+                        updatePoiBulkActions();
+                    }
+                }
+            ]);
+        }
+
+        async function bulkDeletePois() {
+            const checkboxes = document.querySelectorAll('.poi-checkbox:checked');
+            if(checkboxes.length === 0) return;
+            
+            openConfirmModal("Delete POIs?", "Are you sure you want to remove the selected POIs from your list? This cannot be undone.", [
+                { text: "Cancel" },
+                {
+                    text: "Delete",
+                    className: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        const indices = Array.from(checkboxes).map(c => parseInt(c.dataset.index)).sort((a,b) => b - a);
+                        indices.forEach(idx => tripData.metadata.pois.splice(idx, 1));
+                        
+                        await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(tripData.metadata)
+                        });
+                        renderPois();
+                        updatePoiBulkActions();
+                    }
+                }
+            ]);
         }
 
         // Modals
+        let activePoiIndex = null;
+        
+        function openPoiDetails(index) {
+            activePoiIndex = index;
+            const poi = tripData.metadata.pois[index];
+            if (!poi) return;
+            
+            document.getElementById('poi-detail-title').innerText = poi.name;
+            document.getElementById('poi-detail-category').innerText = poi.category || 'other';
+            document.getElementById('poi-detail-location').innerText = poi.location || 'Unknown location';
+            
+            if (poi.image_url) {
+                document.getElementById('poi-detail-header').style.backgroundImage = `url('${poi.image_url}')`;
+            } else {
+                document.getElementById('poi-detail-header').style.backgroundImage = 'none';
+                document.getElementById('poi-detail-header').classList.add('bg-gray-700');
+            }
+            
+            if (poi.link) {
+                document.getElementById('poi-detail-link').href = poi.link;
+                document.getElementById('poi-detail-link').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-link').classList.add('hidden');
+            }
+            
+            if (poi.experience) {
+                document.getElementById('poi-detail-experience').innerText = poi.experience;
+                document.getElementById('poi-detail-experience-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-experience-container').classList.add('hidden');
+            }
+            
+            if (poi.why_picked) {
+                document.getElementById('poi-detail-why-picked').innerText = poi.why_picked;
+                document.getElementById('poi-detail-why-picked-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-why-picked-container').classList.add('hidden');
+            }
+            
+            let combinedNotes = [];
+            if (poi.description) combinedNotes.push(poi.description);
+            if (poi.notes) combinedNotes.push(poi.notes);
+            
+            if (combinedNotes.length > 0) {
+                document.getElementById('poi-detail-notes').innerText = combinedNotes.join('\\n\\n');
+                document.getElementById('poi-detail-notes-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-notes-container').classList.add('hidden');
+            }
+            
+            document.getElementById('poi-detail-remove-btn').onclick = () => {
+                closePoiDetails();
+                deletePoi(index);
+            };
+            
+            const schedBtn = document.getElementById('poi-detail-schedule-btn');
+            if (!poi.is_scheduled) {
+                schedBtn.classList.remove('hidden');
+                schedBtn.onclick = () => {
+                    closePoiDetails();
+                    schedulePoi(poi.id);
+                };
+            } else {
+                schedBtn.classList.add('hidden');
+            }
+            
+            document.getElementById('poi-details-modal').classList.remove('hidden');
+        }
+        
+        function closePoiDetails() {
+            document.getElementById('poi-details-modal').classList.add('hidden');
+            activePoiIndex = null;
+        }
+        
         function openAddPoiModal() {
             document.getElementById('poi-name').value = '';
             document.getElementById('poi-location').value = '';
@@ -533,6 +802,15 @@
         function openSettingsModal() {
             document.getElementById('settings-bg-query').value = tripData.metadata.background_url || '';
             document.getElementById('settings-notes').value = tripData.metadata.notes || '';
+            
+            if (tripData.metadata.is_draft) {
+                document.getElementById('settings-draft-fields').classList.remove('hidden');
+                document.getElementById('settings-start-day').value = tripData.metadata.draft_start_day || 0;
+                document.getElementById('settings-duration').value = tripData.metadata.draft_duration_days || 1;
+            } else {
+                document.getElementById('settings-draft-fields').classList.add('hidden');
+            }
+            
             document.getElementById('settings-modal').classList.remove('hidden');
         }
         function closeSettingsModal() {
@@ -562,10 +840,14 @@
             document.getElementById('ai-planner-loading').classList.remove('hidden');
             
             try {
+                const start = tripData.event.start;
+                const end = tripData.event.end;
+                const durationDays = (start && end) ? Math.max(1, Math.ceil((end - start) / 86400)) : 1;
+                
                 const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/generate_pois`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ prompt: prompt })
+                    body: JSON.stringify({ prompt: prompt, duration_days: durationDays })
                 });
                 const data = await res.json();
                 
@@ -645,21 +927,58 @@
             renderPois();
         }
 
+        function openConfirmModal(title, message, buttons) {
+            document.getElementById('confirm-modal-title').innerText = title;
+            document.getElementById('confirm-modal-message').innerText = message;
+            
+            const actionsContainer = document.getElementById('confirm-modal-actions');
+            actionsContainer.innerHTML = '';
+            
+            buttons.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = opt.className || "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm";
+                btn.innerText = opt.text;
+                btn.onclick = () => {
+                    closeConfirmModal();
+                    if (opt.onClick) opt.onClick();
+                };
+                actionsContainer.appendChild(btn);
+            });
+            
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+        
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+        }
+
         async function deletePoi(index) {
-            if(confirm("Delete this POI?")) {
-                tripData.metadata.pois.splice(index, 1);
-                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(tripData.metadata)
-                });
-                renderPois();
-            }
+            openConfirmModal("Delete POI?", "Are you sure you want to remove this from your list? This cannot be undone.", [
+                { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm" },
+                { 
+                    text: "Delete", 
+                    className: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        tripData.metadata.pois.splice(index, 1);
+                        await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(tripData.metadata)
+                        });
+                        renderPois();
+                    }
+                }
+            ]);
         }
 
         async function saveSettings() {
             tripData.metadata.background_url = document.getElementById('settings-bg-query').value;
             tripData.metadata.notes = document.getElementById('settings-notes').value;
+            
+            if (tripData.metadata.is_draft) {
+                tripData.metadata.draft_start_day = parseInt(document.getElementById('settings-start-day').value);
+                tripData.metadata.draft_duration_days = parseInt(document.getElementById('settings-duration').value);
+            }
             
             await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
                 method: 'POST',
@@ -813,16 +1132,39 @@
         }
         
         async function deleteActivity(actId) {
-            const doDelete = confirm("Do you want to delete this event ENTIRELY from Google Calendar as well? \n\nClick OK to delete completely.\nClick Cancel to just unlink it from this trip.");
-            
-            try {
-                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/activity/${encodeURIComponent(actId)}?delete_from_calendar=${doDelete}`, {
-                    method: 'DELETE'
-                });
-                fetchTripData();
-            } catch(e) {
-                alert("Error removing activity");
-            }
+            openConfirmModal("Remove Activity", "Do you want to delete this event ENTIRELY from Google Calendar as well, or just unlink it from this trip?", [
+                { text: "Cancel" },
+                { 
+                    text: "Unlink Only",
+                    className: "px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        try {
+                            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/activity/${encodeURIComponent(actId)}?delete_from_calendar=false`, {
+                                method: 'DELETE'
+                            });
+                            closeActivityDetails();
+                            fetchTripData();
+                        } catch(e) {
+                            alert("Error removing activity");
+                        }
+                    }
+                },
+                { 
+                    text: "Delete from Calendar", 
+                    className: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        try {
+                            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/activity/${encodeURIComponent(actId)}?delete_from_calendar=true`, {
+                                method: 'DELETE'
+                            });
+                            closeActivityDetails();
+                            fetchTripData();
+                        } catch(e) {
+                            alert("Error removing activity");
+                        }
+                    }
+                }
+            ]);
         }
 
         function openActivityDetails(actId) {
@@ -833,14 +1175,17 @@
             const end = act.end ? new Date(act.end * 1000) : null;
             let timeStr = "Time not specified";
             if(start && end) {
+                const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                 if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
                     const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
                     tripStart.setHours(0,0,0,0);
-                    const msDiff = start - tripStart;
+                    const actStart = new Date(start);
+                    actStart.setHours(0,0,0,0);
+                    const msDiff = actStart - tripStart;
                     const dayNum = Math.floor(msDiff / (1000 * 60 * 60 * 24)) + 1;
-                    timeStr = `Day ${dayNum} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                    timeStr = `Day ${dayNum} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts})}`;
                 } else {
-                    timeStr = `${start.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}`;
+                    timeStr = `${start.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric', ...tzOpts})} from ${start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts})} to ${end.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts})}`;
                 }
             }
             

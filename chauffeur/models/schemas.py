@@ -218,7 +218,13 @@ class TripPOI(BaseModel):
     mapbox_id: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    why_picked: Optional[str] = None
+    experience: Optional[str] = None
+    image_url: Optional[str] = None
+    link: Optional[str] = None
     notes: Optional[str] = None
+    ideal_time_start: Optional[str] = None
+    ideal_time_end: Optional[str] = None
     duration_mins: int = 60
     is_scheduled: bool = False
     scheduled_start: Optional[float] = None
@@ -237,6 +243,7 @@ class TripMetadata(BaseModel):
     mock_end_date: Optional[float] = None
     background_url: Optional[str] = None
     notes: Optional[str] = None
+    timeZone: Optional[str] = None
     pois: List[TripPOI] = Field(default_factory=list)
 
 class CreateTripRequest(BaseModel):

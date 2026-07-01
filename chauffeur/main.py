@@ -355,10 +355,10 @@ def create_trip_api(req: CreateTripRequest):
             "pois": [],
             "activities": []
         }
-        storage.save_trip_metadata(metadata)
+        storage.set_trip_metadata(draft_id, metadata)
         return {"success": True, "event_id": draft_id}
 
-    cal_id = req.calendar_id or (settings.calendar_ids[0] if settings.calendar_ids else "primary")
+    cal_id = req.calendar_id or (settings.get('calendar_ids', [])[0] if settings.get('calendar_ids') else "primary")
     
     event_body = {
         "summary": req.title,
@@ -378,7 +378,7 @@ def create_trip_api(req: CreateTripRequest):
         metadata = storage.get_trip_metadata(event_id)
         if not metadata:
             metadata = {"event_id": event_id, "pois": [], "activities": []}
-            storage.save_trip_metadata(metadata)
+            storage.set_trip_metadata(event_id, metadata)
             
         return {"success": True, "event_id": event_id}
     except Exception as e:
@@ -405,19 +405,51 @@ def get_trip_api(event_id: str):
         from datetime import datetime, timezone
         mock_start = metadata.get("mock_start_date")
         mock_end = metadata.get("mock_end_date")
-        start_dt = datetime.fromtimestamp(mock_start, tz=timezone.utc) if mock_start else datetime.now(timezone.utc)
-        end_dt = datetime.fromtimestamp(mock_end, tz=timezone.utc) if mock_end else datetime.now(timezone.utc)
-        return {
-            "metadata": metadata,
-            "event": {
-                "id": event_id,
-                "summary": metadata.get("title", "Draft Trip"),
-                "location": metadata.get("location", ""),
-                "start": {"dateTime": start_dt.isoformat()},
-                "end": {"dateTime": end_dt.isoformat()}
-            }
+        
+        tz_str = metadata.get("timeZone")
+        if (not tz_str or tz_str == "UTC") and metadata.get("location"):
+            from services.maps import get_timezone
+            new_tz = get_timezone(metadata.get("location"))
+            if new_tz and new_tz != "UTC":
+                tz_str = new_tz
+                metadata["timeZone"] = tz_str
+                storage.set_trip_metadata(event_id, metadata)
+            
+        event_details = {
+            "id": event_id,
+            "title": metadata.get("title", "Draft Trip"),
+            "location": metadata.get("location", ""),
+            "start": mock_start if mock_start else datetime.now(timezone.utc).timestamp(),
+            "end": mock_end if mock_end else datetime.now(timezone.utc).timestamp(),
+            "timeZone": tz_str or "UTC"
         }
         
+        activities_details = []
+        for poi in metadata.get("pois", []):
+            if poi.get("is_scheduled") and poi.get("event_id"):
+                background_url = poi.get("image_url")
+                if not background_url:
+                    import urllib.parse
+                    query = poi.get("name") or poi.get("location", "travel")
+                    encoded_query = urllib.parse.quote(query)
+                    background_url = f"/api/unsplash/background?query={encoded_query}"
+                    
+                activities_details.append({
+                    "id": poi.get("event_id"),
+                    "title": poi.get("name", ""),
+                    "location": poi.get("location", ""),
+                    "description": poi.get("description", ""),
+                    "start": poi.get("scheduled_start", 0),
+                    "end": poi.get("scheduled_end", 0),
+                    "background_url": background_url
+                })
+        activities_details.sort(key=lambda x: x["start"] if x["start"] else 0)
+        
+        return {
+            "metadata": metadata,
+            "event": event_details,
+            "activities": activities_details
+        }
     if not metadata and "::" in event_id:
         cal_id, raw_event_id = event_id.split("::", 1)
         base_id = f"{cal_id}::{raw_event_id.split('_')[0]}"
@@ -450,7 +482,8 @@ def get_trip_api(event_id: str):
                 "title": g.get("summary", ""),
                 "location": g.get("location", ""),
                 "start": parse_dt(start_str),
-                "end": parse_dt(end_str)
+                "end": parse_dt(end_str),
+                "timeZone": g['start'].get('timeZone', g.get('timeZone', 'UTC'))
             }
         except Exception as e:
             print(f"Error fetching trip details from Google Calendar: {e}")
@@ -542,10 +575,23 @@ def add_activity_api(event_id: str, payload: dict):
 @app.delete("/api/trip/{event_id}/activity/{activity_id}")
 def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: bool = False):
     meta = storage.get_trip_metadata(event_id)
-    if meta and "activities" in meta and activity_id in meta["activities"]:
-        meta["activities"].remove(activity_id)
-        storage.set_trip_metadata(event_id, meta)
-        
+    if meta:
+        changed = False
+        if "activities" in meta and activity_id in meta["activities"]:
+            meta["activities"].remove(activity_id)
+            changed = True
+            
+        for poi in meta.get("pois", []):
+            if poi.get("event_id") == activity_id:
+                poi["is_scheduled"] = False
+                poi["event_id"] = None
+                poi["scheduled_start"] = None
+                poi["scheduled_end"] = None
+                changed = True
+                break
+                
+        if changed:
+            storage.set_trip_metadata(event_id, meta)
     if delete_from_calendar and "::" in activity_id:
         cal_id, raw_id = activity_id.split("::", 1)
         try:
@@ -559,12 +605,28 @@ def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: b
 
 @app.post("/api/trip/{event_id}")
 def save_trip_api(event_id: str, payload: dict):
+    if payload.get("is_draft"):
+        from datetime import datetime, timedelta
+        base = datetime(2030, 1, 1) # Tuesday
+        day_of_week = payload.get("draft_start_day", 0)
+        offset = (day_of_week - base.weekday()) % 7
+        if offset < 0:
+            offset += 7
+        mock_start = base + timedelta(days=offset, hours=9)
+        duration = payload.get("draft_duration_days", 1)
+        mock_end = mock_start + timedelta(days=duration)
+        
+        payload["mock_start_date"] = mock_start.timestamp()
+        payload["mock_end_date"] = mock_end.timestamp()
+
     storage.set_trip_metadata(event_id, payload)
     return {"status": "ok"}
 
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")
+    duration_days = payload.get("duration_days", 1)
+    
     if not user_prompt:
         return {"error": "Prompt is required"}
         
@@ -576,7 +638,7 @@ def generate_pois_api(event_id: str, payload: dict):
     trip_obj = TripMetadata(**meta)
     
     from services.trip_planner import generate_trip_pois
-    pois = generate_trip_pois(trip_obj, user_prompt)
+    pois = generate_trip_pois(trip_obj, user_prompt, duration_days)
     
     # Save back to trip metadata
     if 'pois' not in meta:

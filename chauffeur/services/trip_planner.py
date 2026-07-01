@@ -1,11 +1,12 @@
 import uuid
 import datetime
+import urllib.parse
 from typing import List, Dict, Any, Optional
 
 from models.schemas import TripMetadata, TripPOI, Event
 from services import storage, maps, calendar
 
-def generate_trip_pois(trip: TripMetadata, user_prompt: str) -> List[TripPOI]:
+def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> List[TripPOI]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
     and grounds them to real-world locations via Mapbox.
@@ -25,7 +26,8 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str) -> List[TripPOI]:
         
     system_prompt = """You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-Your job is to suggest a list of 3-6 Points of Interest (POIs) that match their request.
+The user's trip is """ + str(duration_days) + """ days long. Your job is to suggest enough Points of Interest (POIs) to fill this trip (aim for 2-3 POIs per day, up to a maximum of 12 suggestions per response) that match their request and are located in or near the specified Trip Location.
+If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {
@@ -34,14 +36,30 @@ You MUST respond with a single valid JSON object of the following exact structur
       "name": "The name of the location (e.g., French Laundry)",
       "category": "A short category string (e.g., 🍷 Vineyard, 🏖️ Beach, 🍽️ Restaurant)",
       "description": "A 1-2 sentence compelling description of the experience.",
-      "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')"
+      "why_picked": "Explain why this specifically matches the user's request (e.g., 'You mentioned wanting a Michelin star experience...').",
+      "experience": "Describe what they will actually do there, what the vibe is like, or tips for the visit.",
+      "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
+      "duration_mins": 90,
+      "ideal_time_start": "09:00",
+      "ideal_time_end": "12:00"
     }
   ]
 }
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
-    user_req = f"User Request: {user_prompt}\nTrip Notes/Context: {trip.notes or 'None'}\nGenerate suggestions."
+    existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
+    existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
+    
+    user_req = (
+        f"Trip Title: {trip.title or 'Unknown'}\n"
+        f"Trip Location: {trip.location or 'Unknown'}\n"
+        f"Trip Notes/Context: {trip.notes or 'None'}\n"
+        f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
+        f"User Request: {user_prompt}\n"
+        f"Generate suggestions."
+    )
     
     try:
         response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
@@ -66,6 +84,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             best_location = locations[0].get('description', query)
             mapbox_id = locations[0].get('mapbox_id')
             
+        encoded_query = urllib.parse.quote(f"{name} {best_location}")
+        image_url = f"/api/unsplash/background?query={urllib.parse.quote(name)}"
+        link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
+            
         poi = TripPOI(
             id=uuid.uuid4().hex,
             name=name,
@@ -73,7 +95,13 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             mapbox_id=mapbox_id,
             category=s.get('category'),
             description=s.get('description'),
-            duration_mins=90 # Default assumption
+            why_picked=s.get('why_picked'),
+            experience=s.get('experience'),
+            image_url=image_url,
+            link=link,
+            ideal_time_start=s.get('ideal_time_start'),
+            ideal_time_end=s.get('ideal_time_end'),
+            duration_mins=s.get('duration_mins', 90)
         )
         pois.append(poi)
         
@@ -135,29 +163,56 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
                 
     overlapping_events.sort(key=lambda x: x.start)
     
-    needed_gap_delta = datetime.timedelta(minutes=poi.duration_mins + 60)
+    current_time = trip_start
     best_start = None
     
-    current_time = trip_start
-    if current_time.hour < 9:
-        current_time = current_time.replace(hour=9, minute=0, second=0)
+    import zoneinfo
+    trip_tz_str = getattr(trip, 'timeZone', None)
+    if not trip_tz_str or trip_tz_str == "UTC":
+        if trip.location:
+            from services.maps import get_timezone
+            new_tz = get_timezone(trip.location)
+            if new_tz and new_tz != "UTC":
+                trip_tz_str = new_tz
+    try:
+        local_tz = zoneinfo.ZoneInfo(trip_tz_str or "UTC")
+    except Exception:
+        local_tz = datetime.timezone.utc
+    
+    ideal_start_time = None
+    ideal_end_time = None
+    if poi.ideal_time_start:
+        try: ideal_start_time = datetime.datetime.strptime(poi.ideal_time_start, "%H:%M").time()
+        except: pass
+    if poi.ideal_time_end:
+        try: ideal_end_time = datetime.datetime.strptime(poi.ideal_time_end, "%H:%M").time()
+        except: pass
         
-    for e in overlapping_events:
-        gap = e.start - current_time
-        if gap >= needed_gap_delta:
-            if current_time.hour >= 9 and (current_time + datetime.timedelta(minutes=poi.duration_mins)).hour <= 20:
-                best_start = current_time + datetime.timedelta(minutes=30)
+    if not ideal_start_time: ideal_start_time = datetime.time(9, 0)
+    if not ideal_end_time: ideal_end_time = datetime.time(20, 0)
+    
+    duration_delta = datetime.timedelta(minutes=poi.duration_mins)
+    buffer_delta = datetime.timedelta(minutes=30)
+    
+    while current_time + duration_delta <= trip_end:
+        slot_start = current_time
+        slot_end = current_time + duration_delta
+        
+        if slot_start.astimezone(local_tz).time() >= ideal_start_time and slot_end.astimezone(local_tz).time() <= ideal_end_time:
+            overlaps = False
+            for e in overlapping_events:
+                if (slot_start - buffer_delta) < e.end and (slot_end + buffer_delta) > e.start:
+                    overlaps = True
+                    break
+                    
+            if not overlaps:
+                best_start = slot_start
                 break
-        current_time = max(current_time, e.end)
+                
+        current_time += datetime.timedelta(minutes=30)
         
     if not best_start:
-        gap = trip_end - current_time
-        if gap >= needed_gap_delta:
-            if current_time.hour >= 9:
-                best_start = current_time + datetime.timedelta(minutes=30)
-                
-    if not best_start:
-        best_start = trip_start + (trip_end - trip_start) / 2
+        return None
         
     best_end = best_start + datetime.timedelta(minutes=poi.duration_mins)
     

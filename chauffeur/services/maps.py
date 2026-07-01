@@ -619,6 +619,19 @@ def extract_street_address(address: str) -> str:
             
     return address
 
+def get_timezone(address: str) -> str:
+    coords = geocode_address(address)
+    if not coords:
+        return "UTC"
+    lat, lon = coords
+    try:
+        from timezonefinder import TimezoneFinder
+        tf = TimezoneFinder()
+        tz = tf.timezone_at(lng=lon, lat=lat)
+        return tz or "UTC"
+    except ImportError:
+        return "UTC"
+
 def geocode_address(address: str) -> Optional[tuple[float, float]]:
     if not address or not address.strip():
         return None
