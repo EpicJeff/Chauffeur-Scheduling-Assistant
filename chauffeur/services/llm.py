@@ -732,7 +732,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
 
-def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = None) -> str:
+def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = None, context: dict = None) -> str:
     import json
     import urllib.request
     from services import storage
@@ -747,6 +747,34 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
     else:
         DATA_DIR = '.'
         
+    page_context_str = ""
+    if context:
+        path = context.get('pathname', '')
+        search = context.get('search', '')
+        page_context_str = f"\n\nCURRENT PAGE CONTEXT:\nThe user is currently viewing the page: {path}{search}\n"
+        
+        try:
+            if 'trip' in path and 'event_id=' in search:
+                from urllib.parse import parse_qs
+                qs = parse_qs(search.lstrip('?'))
+                event_id = qs.get('event_id', [''])[0]
+                if event_id:
+                    trip = storage.get_trip(event_id)
+                    if trip:
+                        page_context_str += f"Current Trip Details: {json.dumps(trip)}\n"
+            elif 'trips' in path:
+                trips = storage.load_trips()
+                page_context_str += f"All Current Trips: {json.dumps(trips)}\n"
+            elif 'errand' in path:
+                errands = storage.load_errands()
+                page_context_str += f"All Current Errands: {json.dumps(errands)}\n"
+            elif 'schedule' in path or 'dashboard_v2' in path or path == '/' or path == '/chauffeur/':
+                page_context_str += "They are looking at the schedule/calendar.\n"
+            elif 'config' in path:
+                page_context_str += f"Current System Settings: {json.dumps(settings)}\n"
+        except Exception as e:
+            page_context_str += f"(Failed to load extended page context: {str(e)})\n"
+            
     provider = settings.get('llm_provider', 'gemini')
     
     storage.add_chat_message('user', user_msg)
@@ -767,7 +795,7 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
     except Exception:
         pass
 
-    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}{capabilities_str}
+    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}{capabilities_str}{page_context_str}
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
 Use the tools provided to fetch the current state, add rules, add overrides, manage errands, search places (POIs), update your memory, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.

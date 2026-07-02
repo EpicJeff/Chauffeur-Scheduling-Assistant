@@ -489,10 +489,14 @@ async function submitChat(e) {
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const pageContext = {
+                    pathname: window.location.pathname,
+                    search: window.location.search
+                };
                 const res = await fetch(`${apiBase}api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
+                    body: JSON.stringify({ message: text, context: pageContext })
                 });
 
                 if (!res.ok) {
