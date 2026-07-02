@@ -237,7 +237,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         for e in overlapping_events:
             # Use dynamic travel time instead of static buffer
             travel_mins = 30
-            if e.location and poi.location:
+            if getattr(e, 'location', None) and getattr(poi, 'location', None):
                 poi_loc_clean = poi.location.lower().strip()
                 e_loc_clean = e.location.lower().strip()
                 if poi_loc_clean == e_loc_clean:

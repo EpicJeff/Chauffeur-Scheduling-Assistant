@@ -436,7 +436,7 @@ async function fetchMapsStatsDashboard() {
             }
         }
 
-function loadChatHistory() {
+async function loadChatHistory() {
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 const res = await fetch(`${apiBase}api/chat/history`);
