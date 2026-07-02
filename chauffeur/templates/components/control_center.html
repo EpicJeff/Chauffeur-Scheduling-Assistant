@@ -210,6 +210,7 @@
         var chatMessages = document.getElementById('chat-messages');
         var chatInput = document.getElementById('chat-input');
         var chatSubmitBtn = document.getElementById('chat-submit-btn');
+        var mapsStatsInterval = null;
         
         function formatControlCenterTime(dateStr) {
             if (typeof window.formatTime === 'function') {
@@ -228,9 +229,28 @@
                     if (isHidden) {
                         content.classList.remove('hidden');
                         chevron.classList.add('rotate-180');
+                        
+                        // Trigger fetching if expanding specific ones
+                        if (contentId === 'notif-content') {
+                            if (typeof fetchNotifications === 'function') fetchNotifications();
+                        } else if (contentId === 'stats-accordion-content') {
+                            if (typeof fetchMapsStatsDashboard === 'function') {
+                                fetchMapsStatsDashboard();
+                                if (typeof mapsStatsInterval !== 'undefined' && !mapsStatsInterval) {
+                                    mapsStatsInterval = setInterval(fetchMapsStatsDashboard, 5000);
+                                }
+                            }
+                        }
                     } else {
                         content.classList.add('hidden');
                         chevron.classList.remove('rotate-180');
+                        
+                        if (contentId === 'stats-accordion-content') {
+                            if (typeof mapsStatsInterval !== 'undefined' && mapsStatsInterval) {
+                                clearInterval(mapsStatsInterval);
+                                mapsStatsInterval = null;
+                            }
+                        }
                     }
                 }
             };
