@@ -205,8 +205,11 @@
 
         </div>
     </div><script>
-        const isReadOnly = window.isReadOnly || false;
-        const isKiosk = window.isKiosk || false;
+        var isReadOnly = window.isReadOnly || false;
+        var isKiosk = window.isKiosk || false;
+        var chatMessages = document.getElementById('chat-messages');
+        var chatInput = document.getElementById('chat-input');
+        var chatSubmitBtn = document.getElementById('chat-submit-btn');
         
         function formatControlCenterTime(dateStr) {
             if (typeof window.formatTime === 'function') {

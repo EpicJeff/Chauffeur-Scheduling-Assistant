@@ -3413,20 +3413,8 @@
         }
 
         // --- Agentic Chat Logic ---
-        const chatMessages = document.getElementById('chat-messages');
-        const chatInput = document.getElementById('chat-input');
         const chatSubmitBtn = document.getElementById('chat-submit-btn');
 
-        async 
-
-        async function clearChatHistory() {
-            if (!confirm('Clear all AI chat history? The AI might forget learned patterns.')) return;
-            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-            await fetch(`${apiBase}api/chat/history`, { method: 'DELETE' });
-            loadChatHistory();
-        }
-
-        
 
         
 
