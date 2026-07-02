@@ -603,6 +603,45 @@ def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: b
             
     return {"status": "ok"}
 
+@app.delete("/api/trip/{event_id}/activities")
+def clear_itinerary_api(event_id: str, delete_from_calendar: bool = False):
+    meta = storage.get_trip_metadata(event_id)
+    if not meta: return {"status": "ok"}
+    
+    activities_to_delete = meta.get("activities", [])
+    
+    changed = False
+    if "activities" in meta and meta["activities"]:
+        meta["activities"] = []
+        changed = True
+        
+    for poi in meta.get("pois", []):
+        if poi.get("is_scheduled") or poi.get("event_id"):
+            poi["is_scheduled"] = False
+            poi["event_id"] = None
+            poi["scheduled_start"] = None
+            poi["scheduled_end"] = None
+            changed = True
+            
+    if changed:
+        storage.set_trip_metadata(event_id, meta)
+        
+    if delete_from_calendar:
+        try:
+            from services.calendar import get_calendar_service
+            service = get_calendar_service()
+            for act_id in activities_to_delete:
+                if "::" in act_id:
+                    cal_id, raw_id = act_id.split("::", 1)
+                    try:
+                        service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
+                    except Exception as e:
+                        print(f"Error deleting {act_id} from calendar: {e}")
+        except Exception as e:
+            print(f"Error getting calendar service: {e}")
+            
+    return {"status": "ok"}
+
 @app.post("/api/trip/{event_id}")
 def save_trip_api(event_id: str, payload: dict):
     if payload.get("is_draft"):

@@ -111,7 +111,10 @@
             <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col">
                 <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
                     <div>
+                    <div class="flex justify-between items-center mb-6">
                         <h2 class="text-3xl font-bold text-white">Daily Itinerary</h2>
+                        <button onclick="clearItinerary()" class="text-sm px-4 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-lg border border-red-500/30 transition-colors">Clear Itinerary</button>
+                    </div>
                         <p class="text-gray-400 text-sm mt-1">Events, flights, and excursions planned for this trip.</p>
                     </div>
                     <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
@@ -137,9 +140,16 @@
                             Smart Planner
                         </button>
                         <button onclick="openAddPoiModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            Add POI
-                        </button>
+                        <div class="flex items-center space-x-4">
+                            <label class="flex items-center space-x-2 text-gray-400 hover:text-white cursor-pointer transition-colors">
+                                <input type="checkbox" id="poi-select-all" class="w-5 h-5 bg-gray-900 border-gray-600 rounded cursor-pointer" onclick="toggleAllPois(this)">
+                                <span class="text-sm font-bold">Select All</span>
+                            </label>
+                            <button onclick="openAddPoiModal()" class="flex items-center px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 font-bold">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                Add POI
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
@@ -148,7 +158,7 @@
                 </div>
 
                 <!-- Floating Bulk Action Bar -->
-                <div id="poi-bulk-actions" class="hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 border border-gray-600 rounded-full px-6 py-3 shadow-2xl flex items-center space-x-6 z-40">
+                <div id="poi-bulk-actions" class="hidden fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 border border-gray-600 rounded-full px-6 py-3 shadow-2xl flex items-center space-x-6 z-40">
                     <span id="poi-selected-count" class="text-white font-bold text-sm">0 selected</span>
                     <div class="h-6 w-px bg-gray-700"></div>
                     <button onclick="bulkSchedulePois()" class="text-indigo-400 hover:text-indigo-300 font-bold text-sm flex items-center">
@@ -302,6 +312,14 @@
                         <option value="activity">Activity</option>
                         <option value="shopping">Shopping</option>
                         <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-1 text-sm font-bold">Priority</label>
+                    <select id="poi-modal-priority" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                        <option value="must">Must See</option>
+                        <option value="want" selected>Want to go</option>
+                        <option value="stretch">Stretch Goal</option>
                     </select>
                 </div>
                 <div>
@@ -558,7 +576,7 @@
             sortedKeys.forEach(dayKey => {
                 const col = document.createElement('div');
                 col.className = "flex flex-col gap-4 bg-white/5 rounded-2xl p-4 border border-white/10 h-full";
-                col.innerHTML = `<h3 class="text-white font-bold text-center border-b border-white/10 pb-2 mb-2">${dayKey}</h3>`;
+                col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2"><h3 class="text-white font-bold">${dayKey}</h3><button onclick="clearItinerary()" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
                 
                 grouped[dayKey].items.forEach(act => {
                     const start = act.start ? new Date(act.start * 1000) : null;
@@ -625,6 +643,9 @@
                         'other': 'bg-gray-600/30 text-gray-300 border-gray-500/50'
                     };
                     const colorClass = catColors[poi.category] || catColors['other'];
+                    
+                    const prioColors = { 'must': 'bg-red-500/20 text-red-400 border-red-500/30', 'want': 'bg-blue-500/20 text-blue-400 border-blue-500/30', 'stretch': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' };
+                    const prioLabel = { 'must': 'Must See', 'want': 'Want', 'stretch': 'Stretch' };
 
                     const div = document.createElement('div');
                     div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group relative flex flex-col`;
@@ -641,6 +662,7 @@
                                 <h4 class="text-xl font-bold text-white mb-2 leading-tight">${poi.name}</h4>
                                 <div class="flex flex-wrap items-center gap-2 mb-3">
                                     <span class="${colorClass} text-xs px-2 py-1 rounded-md font-bold uppercase tracking-wider">${poi.category || 'other'}</span>
+                                    <span class="${prioColors[poi.priority] || prioColors['want']} text-xs px-2 py-1 rounded-full border font-bold">${prioLabel[poi.priority] || 'Want'}</span>
                                     ${scheduleBadge}
                                     <span class="text-xs text-gray-400"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${poi.duration_mins}m</span>
                                 </div>
@@ -659,6 +681,17 @@
             }
 
             document.getElementById('unscheduled-count').innerText = unscheduled;
+            updatePoiBulkActions();
+        }
+
+        function toggleAllPois(checkbox) {
+            const checkboxes = document.querySelectorAll('.poi-checkbox');
+            checkboxes.forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                if (!tripData.metadata.pois[idx].is_scheduled) {
+                    cb.checked = checkbox.checked;
+                }
+            });
             updatePoiBulkActions();
         }
 
@@ -685,20 +718,25 @@
                     text: "Schedule",
                     className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
-                        for(let i=0; i<checkboxes.length; i++) {
-                            const poiId = checkboxes[i].dataset.id;
-                            const idx = parseInt(checkboxes[i].dataset.index);
+                        const prioOrder = { 'must': 3, 'want': 2, 'stretch': 1 };
+                        const sortedCheckboxes = Array.from(checkboxes).sort((a, b) => {
+                            const poiA = tripData.metadata.pois[parseInt(a.dataset.index)];
+                            const poiB = tripData.metadata.pois[parseInt(b.dataset.index)];
+                            const pA = prioOrder[poiA.priority || 'want'] || 2;
+                            const pB = prioOrder[poiB.priority || 'want'] || 2;
+                            return pB - pA;
+                        });
+
+                        for(let i=0; i<sortedCheckboxes.length; i++) {
+                            const poiId = sortedCheckboxes[i].dataset.id;
+                            const idx = parseInt(sortedCheckboxes[i].dataset.index);
                             if(tripData.metadata.pois[idx].is_scheduled) continue;
                             try {
-                                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
+                                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
                                     method: 'POST',
                                     headers: {'Content-Type': 'application/json'},
                                     body: JSON.stringify({ poi_id: poiId })
                                 });
-                                const data = await res.json();
-                                if (data.error) {
-                                    alert(`Failed to schedule ${tripData.metadata.pois[idx].name}: ${data.error}`);
-                                }
                             } catch (e) {
                                 console.error(e);
                             }
@@ -746,6 +784,7 @@
             document.getElementById('poi-detail-title').innerText = poi.name;
             document.getElementById('poi-detail-category').innerText = poi.category || 'other';
             document.getElementById('poi-detail-location').innerText = poi.location || 'Unknown location';
+            document.getElementById('poi-priority').value = poi.priority || 'want';
             
             if (poi.image_url) {
                 document.getElementById('poi-detail-header').style.backgroundImage = `url('${poi.image_url}')`;
@@ -780,7 +819,7 @@
             if (poi.notes) combinedNotes.push(poi.notes);
             
             if (combinedNotes.length > 0) {
-                document.getElementById('poi-detail-notes').innerText = combinedNotes.join('\\n\\n');
+                document.getElementById('poi-detail-notes').innerText = combinedNotes.join('\n\n');
                 document.getElementById('poi-detail-notes-container').classList.remove('hidden');
             } else {
                 document.getElementById('poi-detail-notes-container').classList.add('hidden');
@@ -806,8 +845,19 @@
         }
         
         function closePoiDetails() {
+            // Persist priority change
+            const p = document.getElementById('poi-priority').value;
+            if (activePoiIndex !== null && tripData.metadata.pois[activePoiIndex]) {
+                tripData.metadata.pois[activePoiIndex].priority = p;
+                fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(tripData.metadata)
+                });
+            }
             document.getElementById('poi-details-modal').classList.add('hidden');
             activePoiIndex = null;
+            renderPois();
         }
         
         function openAddPoiModal() {
@@ -883,20 +933,9 @@
                 }
                 
                 const pois = data.pois;
-                let html = '';
-                // Only show newly generated POIs by checking the end of the list, 
-                // but since the endpoint returns all POIs, we could just render all,
-                // or just the last few. Let's render all for simplicity in the modal,
-                // or ideally just update the main list. 
-                // Actually, wait, the prompt might just add them to the POIs list. 
-                // We want the user to click "Accept" or "Add to Itinerary".
-                // Since the endpoint already added them to the tripData.metadata, 
-                // let's just show the last N items in the modal.
-                // Wait, it is better if they are added directly and the user sees them.
-                html = `<p class="text-green-400 font-bold mb-4">Successfully added ${pois.length} suggestions to your POI list!</p>`;
+                let html = `<p class="text-green-400 font-bold mb-4">Successfully added ${pois.length} suggestions to your POI list!</p>`;
                 document.getElementById('ai-planner-results').innerHTML = html;
                 
-                // Refresh main screen
                 tripData.metadata.pois = data.pois;
                 renderPois();
                 
@@ -918,7 +957,6 @@
                 if (data.error) {
                     alert(data.error);
                 } else {
-                    // Refresh completely to show new scheduled activities
                     fetchTripData();
                 }
             } catch(e) {
@@ -932,6 +970,7 @@
                 location: document.getElementById('poi-location').value,
                 mapbox_id: document.getElementById('poi-mapbox-id').value || null,
                 category: document.getElementById('poi-category').value,
+                priority: document.getElementById('poi-modal-priority').value,
                 duration_mins: parseInt(document.getElementById('poi-duration').value) || 60,
                 notes: document.getElementById('poi-notes').value,
                 is_scheduled: false
@@ -1201,6 +1240,40 @@
                             fetchTripData();
                         } catch(e) {
                             alert("Error removing activity");
+                        }
+                    }
+                }
+            ]);
+        }
+
+        async function clearItinerary() {
+            openConfirmModal("Clear Itinerary", "Do you want to completely delete all scheduled POIs from Google Calendar, or just unlink them from this trip?", [
+                { text: "Cancel" },
+                { 
+                    text: "Unlink Only",
+                    className: "px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        try {
+                            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/activities?delete_from_calendar=false`, {
+                                method: 'DELETE'
+                            });
+                            fetchTripData();
+                        } catch(e) {
+                            alert("Error clearing itinerary");
+                        }
+                    }
+                },
+                { 
+                    text: "Delete from Calendar", 
+                    className: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        try {
+                            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/activities?delete_from_calendar=true`, {
+                                method: 'DELETE'
+                            });
+                            fetchTripData();
+                        } catch(e) {
+                            alert("Error clearing itinerary");
                         }
                     }
                 }

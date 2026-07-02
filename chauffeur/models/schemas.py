@@ -223,6 +223,7 @@ class TripPOI(BaseModel):
     image_url: Optional[str] = None
     link: Optional[str] = None
     notes: Optional[str] = None
+    priority: str = "want" # "must", "want", "stretch"
     ideal_time_start: Optional[str] = None
     ideal_time_end: Optional[str] = None
     duration_mins: int = 60
