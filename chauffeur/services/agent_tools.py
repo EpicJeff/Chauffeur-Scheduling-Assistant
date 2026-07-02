@@ -190,6 +190,18 @@ class AddTripPoiTool(BaseModel):
     duration_mins: int = Field(default=60, description="Duration in minutes.")
     notes: Optional[str] = Field(default="", description="Any notes.")
 
+class EditTripPoiTool(BaseModel):
+    """
+    Edits the properties of an existing Trip POI. Use this when the user asks you to update a POI's location, name, priority, or duration.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    poi_id: str = Field(..., description="The ID of the POI to edit.")
+    name: Optional[str] = Field(default=None, description="Optional new name.")
+    location: Optional[str] = Field(default=None, description="Optional new location/address.")
+    category: Optional[str] = Field(default=None, description="Optional new category.")
+    duration_mins: Optional[int] = Field(default=None, description="Optional new duration in minutes.")
+    priority: Optional[str] = Field(default=None, description="Optional new priority (must, want, stretch).")
+
 class StartDriveTool(BaseModel):
     """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
     driver_id: str = Field(..., description="The ID of the driver.")
@@ -223,6 +235,7 @@ TOOL_SCHEMAS = {
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
     "search_places": SearchPlacesTool.model_json_schema(),
     "add_trip_poi": AddTripPoiTool.model_json_schema(),
+    "edit_trip_poi": EditTripPoiTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -479,6 +492,25 @@ def handle_add_trip_poi(args: dict) -> dict:
     storage.set_trip_metadata(event_id, metadata)
     return {"status": "success", "message": f"Added POI {poi['name']} to Trip {event_id}."}
 
+def handle_edit_trip_poi(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    poi_id = args.get('poi_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or 'pois' not in metadata:
+        return {"status": "error", "message": "Trip not found or has no POIs."}
+        
+    target_poi = next((p for p in metadata['pois'] if p['id'] == poi_id), None)
+    if not target_poi:
+        return {"status": "error", "message": "POI not found in this trip."}
+        
+    for field in ['name', 'location', 'category', 'duration_mins', 'priority']:
+        if args.get(field) is not None:
+            target_poi[field] = args.get(field)
+            
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success", "message": f"Updated POI {target_poi['name']}."}
+
 
 def handle_start_drive(args: dict) -> dict:
     from services import storage
@@ -533,6 +565,7 @@ TOOL_HANDLERS = {
     "delete_errand_rule": handle_delete_errand_rule,
     "search_places": handle_search_places,
     "add_trip_poi": handle_add_trip_poi,
+    "edit_trip_poi": handle_edit_trip_poi,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

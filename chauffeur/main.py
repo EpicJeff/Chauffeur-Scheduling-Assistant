@@ -761,6 +761,39 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+@app.put("/api/trip/{event_id}/poi/{poi_id}")
+def edit_trip_poi_api(event_id: str, poi_id: str, payload: dict):
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        
+        poi = next((p for p in trip_obj.pois if p.id == poi_id), None)
+        if not poi:
+            return {"error": "POI not found"}
+            
+        # Update allowed fields
+        if "name" in payload: poi.name = payload["name"]
+        if "location" in payload: poi.location = payload["location"]
+        if "category" in payload: poi.category = payload["category"]
+        if "duration_mins" in payload: poi.duration_mins = payload["duration_mins"]
+        if "priority" in payload: poi.priority = payload["priority"]
+        if "ideal_time_start" in payload: poi.ideal_time_start = payload["ideal_time_start"]
+        if "ideal_time_end" in payload: poi.ideal_time_end = payload["ideal_time_end"]
+        if "description" in payload: poi.description = payload["description"]
+        if "notes" in payload: poi.notes = payload["notes"]
+        
+        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+        storage.set_trip_metadata(event_id, meta)
+        
+        return {"status": "ok", "poi": next((p for p in meta['pois'] if p['id'] == poi_id), {})}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 
 # --- Drivers API ---
 @app.get("/api/drivers")
