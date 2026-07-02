@@ -227,6 +227,22 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
             
         overlaps = False
         for e in overlapping_events:
+            is_same_location = False
+            if e.location and poi.location:
+                poi_loc_clean = poi.location.lower().strip()
+                e_loc_clean = e.location.lower().strip()
+                if poi_loc_clean == e_loc_clean:
+                    is_same_location = True
+                else:
+                    key = (e.location, poi.location)
+                    if key not in location_travel_times:
+                        location_travel_times[key] = maps.get_travel_time_minutes(e.location, poi.location)
+                    if location_travel_times[key] == 0:
+                        is_same_location = True
+                        
+            if is_same_location:
+                continue
+                
             if (slot_start - buffer_delta) < e.end and (slot_end + buffer_delta) > e.start:
                 overlaps = True
                 break
@@ -267,10 +283,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         
         scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
         for sp in scheduled_on_day:
-            poi_name_lower = (poi.name or "").lower()
-            sp_name_lower = (sp.name or "").lower()
+            poi_loc_clean = (poi.location or "").lower().strip()
+            sp_loc_clean = (sp.location or "").lower().strip()
             
-            if poi.location and sp.location and (poi.location == sp.location or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
+            if poi.location and sp.location and (poi_loc_clean == sp_loc_clean or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
                 score += 1000
                 
             if poi.location and sp.location:
@@ -283,9 +299,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
                 elif travel_mins <= 30:
                     score += 250
                     
-                sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
-                # If very close, and scheduled right after (or before), give a clustering bonus!
-                if travel_mins <= 15 and sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2):
+                sp_start = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz)
+                sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc).astimezone(local_tz)
+                # If very close, and scheduled right after, right before, or overlapping, give a clustering bonus!
+                if travel_mins <= 15 and (
+                    (sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2)) or
+                    (sp_start - datetime.timedelta(hours=2) <= slot_end <= sp_start) or
+                    (slot_start >= sp_start and slot_end <= sp_end) or
+                    (slot_start <= sp_start and slot_end >= sp_end)
+                ):
                     score += 1500
                     
             if is_dessert and sp.category == 'food':

@@ -744,7 +744,13 @@
                             const poiB = tripData.metadata.pois[parseInt(b.dataset.index)];
                             const pA = prioOrder[poiA.priority || 'want'] || 2;
                             const pB = prioOrder[poiB.priority || 'want'] || 2;
-                            return pB - pA;
+                            if (pB !== pA) return pB - pA;
+                            
+                            const locA = (poiA.location || "").toLowerCase();
+                            const locB = (poiB.location || "").toLowerCase();
+                            if (locA < locB) return -1;
+                            if (locA > locB) return 1;
+                            return 0;
                         });
 
                         for(let i=0; i<sortedCheckboxes.length; i++) {
