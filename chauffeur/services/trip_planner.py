@@ -240,21 +240,24 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         if is_food and not is_dessert:
             conflict = False
             scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
+            non_dessert_food = []
             for sp in scheduled_on_day:
                 if sp.category == 'food':
                     sp_text = f"{sp.name or ''} {sp.description or ''}".lower()
                     sp_is_dessert = any(w in sp_text for w in ['dessert', 'ice cream', 'gelato', 'sweet', 'cafe', 'coffee', 'bakery', 'pastry'])
                     if not sp_is_dessert:
-                        sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
-                        sp_lunch = datetime.time(11, 0) <= sp_time < datetime.time(14, 0)
-                        sp_dinner = datetime.time(17, 0) <= sp_time < datetime.time(21, 0)
+                        non_dessert_food.append(sp)
                         
-                        if is_lunch_block and sp_lunch:
-                            conflict = True
-                            break
-                        if is_dinner_block and sp_dinner:
-                            conflict = True
-                            break
+            if len(non_dessert_food) >= 2:
+                conflict = True
+            elif len(non_dessert_food) == 1:
+                sp = non_dessert_food[0]
+                sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
+                is_sp_lunch = sp_time < datetime.time(16, 0)
+                is_slot_lunch = slot_time < datetime.time(16, 0)
+                if is_sp_lunch == is_slot_lunch:
+                    conflict = True
+            
             if conflict:
                 continue
                 

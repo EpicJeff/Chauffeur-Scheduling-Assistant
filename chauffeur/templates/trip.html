@@ -423,6 +423,17 @@
         </div>
     </div>
     
+    <!-- Schedule Loading Overlay -->
+    <div id="schedule-loading-overlay" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4">
+        <div class="flex flex-col items-center justify-center">
+            <svg class="animate-spin h-12 w-12 text-indigo-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-indigo-400 font-bold animate-pulse text-lg tracking-wide shadow-black/50 drop-shadow-md">Scheduling Smart Itinerary...</p>
+        </div>
+    </div>
+
     <!-- Add Activity Modal -->
     <div id="activity-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -725,6 +736,8 @@
                     text: "Schedule",
                     className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
+                        const schedLoading = document.getElementById('schedule-loading-overlay');
+                        if (schedLoading) schedLoading.classList.remove('hidden');
                         const prioOrder = { 'must': 3, 'want': 2, 'stretch': 1 };
                         const sortedCheckboxes = Array.from(checkboxes).sort((a, b) => {
                             const poiA = tripData.metadata.pois[parseInt(a.dataset.index)];
@@ -750,6 +763,7 @@
                         }
                         await fetchTripData();
                         updatePoiBulkActions();
+                        if (schedLoading) schedLoading.classList.add('hidden');
                     }
                 }
             ]);
@@ -954,6 +968,8 @@
         }
         
         async function schedulePoi(poiId) {
+            const schedLoading = document.getElementById('schedule-loading-overlay');
+            if (schedLoading) schedLoading.classList.remove('hidden');
             try {
                 const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
                     method: 'POST',
@@ -969,6 +985,7 @@
             } catch(e) {
                 alert("Error scheduling POI");
             }
+            if (schedLoading) schedLoading.classList.add('hidden');
         }
 
         async function savePoi() {

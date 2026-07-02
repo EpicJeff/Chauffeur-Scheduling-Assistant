@@ -137,38 +137,6 @@ def cleanup_corrupted_travel_times():
 
 cleanup_corrupted_travel_times()
 
-def prime_api_usage_seeding():
-    import datetime
-    current_month = datetime.datetime.now().strftime("%Y-%m")
-    seeds = {
-        'matrix': 117902,
-        'directions': 2499,
-        'geocode': 927
-    }
-    with db_lock:
-        settings_docs = settings_table.all()
-        settings = dict(settings_docs[0]) if settings_docs else {}
-        has_seeded = settings.get('has_seeded_truth_2026_06', False)
-        
-        for endpoint, seed_val in seeds.items():
-            log_records = api_requests_log_table.search(Query().endpoint == endpoint)
-            log_sum = sum(r.get('count', 0) for r in log_records)
-            expected_min = seed_val + log_sum
-            
-            res = api_usage_table.search((Query().month == current_month) & (Query().endpoint == endpoint))
-            if res:
-                current_val = res[0].get('count', 0)
-                if current_val < expected_min:
-                    api_usage_table.update({'count': expected_min}, (Query().month == current_month) & (Query().endpoint == endpoint))
-            else:
-                api_usage_table.insert({'month': current_month, 'endpoint': endpoint, 'count': expected_min})
-                    
-        if not has_seeded and settings_docs:
-            settings['has_seeded_truth_2026_06'] = True
-            settings_table.update(settings, doc_ids=[settings_docs[0].doc_id])
-
-prime_api_usage_seeding()
-
 # Geocode Cache
 def mark_all_daily_schedules_dirty():
     with db_lock:
