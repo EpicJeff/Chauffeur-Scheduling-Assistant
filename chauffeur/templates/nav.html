@@ -56,6 +56,18 @@
 
             <!-- Right aligned elements -->
             <div class="flex items-center gap-2">
+                <!-- Control Center Icon -->
+                <div class="hidden md:flex items-center relative">
+                    <button onclick="if(typeof toggleOperationsSidebar === 'function') toggleOperationsSidebar()"
+                        class="text-indigo-400 hover:text-indigo-300 p-2 rounded-full hover:bg-gray-700 transition-colors focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                        <span id="maps-stats-warning-dot" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-500 rounded-full hidden border-2 border-gray-900"></span>
+                    </button>
+                </div>
+
                 <!-- Settings Icon (Right aligned) -->
                 <div class="hidden md:flex items-center" id="settings-nav-item">
                     <a href="config"
