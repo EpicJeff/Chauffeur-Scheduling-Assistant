@@ -186,8 +186,11 @@
                     <!-- Detailed Mapbox Controls (Visible if Mapbox is enabled globally) -->
                     <div x-show="!disableMapbox" x-transition
                         class="mt-4 mb-6 p-5 bg-gray-900/50 rounded-xl border border-gray-700">
-                        <h3 class="text-md font-bold text-blue-400 uppercase tracking-wider mb-4">Mapbox Tiered API
-                            Limits</h3>
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-md font-bold text-blue-400 uppercase tracking-wider">Mapbox Tiered API
+                                Limits</h3>
+                            <button @click="showMapboxSyncModal = true" class="text-xs px-3 py-1.5 bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 border border-blue-500/50 rounded-lg font-bold transition-colors shadow-sm">Sync Usage with Dashboard</button>
+                        </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                             <!-- Matrix Config -->
@@ -2149,6 +2152,40 @@
             </div>
         </div>
 
+        <!-- Mapbox Sync Modal -->
+        <div x-show="showMapboxSyncModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm" x-transition.opacity>
+            <div class="bg-gray-800 rounded-2xl shadow-2xl border border-gray-700 w-full max-w-md overflow-hidden transform transition-all" @click.away="showMapboxSyncModal = false">
+                <div class="p-6">
+                    <h3 class="text-xl font-bold text-white mb-2">Sync Mapbox Dashboard Usage</h3>
+                    <p class="text-sm text-gray-400 mb-6">Enter the usage numbers currently shown in your Mapbox dashboard. This will overwrite the local tracking for the current month so the UI limits trigger correctly.</p>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm font-bold">Directions API requests</label>
+                            <input type="number" x-model.number="syncDirections" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 outline-none rounded p-3 text-white font-mono" min="0">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm font-bold">Matrix API elements</label>
+                            <input type="number" x-model.number="syncMatrix" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 outline-none rounded p-3 text-white font-mono" min="0">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm font-bold">Temporary Geocoding API requests</label>
+                            <input type="number" x-model.number="syncGeocode" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 outline-none rounded p-3 text-white font-mono" min="0">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm font-bold">Search Box API requests</label>
+                            <input type="number" x-model.number="syncSearch" class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 outline-none rounded p-3 text-white font-mono" min="0">
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-900 p-4 border-t border-gray-700 flex justify-end space-x-3">
+                    <button @click="showMapboxSyncModal = false" class="px-4 py-2 text-gray-400 hover:text-white font-bold transition-colors">Cancel</button>
+                    <button @click="syncMapboxUsage()" :disabled="syncingMapbox" class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-6 py-2 rounded-lg font-bold shadow-md transition-colors flex items-center">
+                        <span x-text="syncingMapbox ? 'Syncing...' : 'Sync Usage'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
     <script>
         function configApp() {
@@ -2157,6 +2194,12 @@
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 saving: false,
                 analyzingHabits: false,
+                showMapboxSyncModal: false,
+                syncMatrix: 0,
+                syncDirections: 0,
+                syncGeocode: 0,
+                syncSearch: 0,
+                syncingMapbox: false,
                 debugLogs: [],
                 showDebugLogs: false,
                 daysToShow: 7,
@@ -3245,6 +3288,30 @@
                     } catch (e) {
                         this.llmTestSuccess = false;
                         this.llmTestResult = `Error: ${e.message}`;
+                    }
+                },
+                async syncMapboxUsage() {
+                    this.syncingMapbox = true;
+                    try {
+                        const requests = [
+                            { endpoint: 'directions', count: this.syncDirections },
+                            { endpoint: 'matrix', count: this.syncMatrix },
+                            { endpoint: 'geocode', count: this.syncGeocode },
+                            { endpoint: 'searchbox', count: this.syncSearch }
+                        ];
+                        for (const req of requests) {
+                            if (req.count !== null && req.count !== undefined) {
+                                await fetch(`${this.apiBase}api/test/set_mapbox_usage?endpoint=${req.endpoint}&count=${req.count}`, {
+                                    method: 'POST'
+                                });
+                            }
+                        }
+                        this.showMapboxSyncModal = false;
+                        alert('Mapbox usage synced successfully!');
+                    } catch (e) {
+                        alert(`Error syncing usage: ${e.message}`);
+                    } finally {
+                        this.syncingMapbox = false;
                     }
                 },
                 async generateAIRules() {
