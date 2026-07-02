@@ -759,14 +759,16 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
                 qs = parse_qs(search.lstrip('?'))
                 event_id = qs.get('event_id', [''])[0]
                 if event_id:
-                    trip = storage.get_trip(event_id)
-                    if trip:
-                        page_context_str += f"Current Trip Details: {json.dumps(trip)}\n"
+                    from main import get_trip_api
+                    trip_resp = get_trip_api(event_id)
+                    if trip_resp and "error" not in trip_resp:
+                        page_context_str += f"Current Trip Details: {json.dumps(trip_resp)}\n"
             elif 'trips' in path:
-                trips = storage.load_trips()
-                page_context_str += f"All Current Trips: {json.dumps(trips)}\n"
+                from main import get_all_trips_api
+                trips_resp = get_all_trips_api()
+                page_context_str += f"All Current Trips: {json.dumps(trips_resp)}\n"
             elif 'errand' in path:
-                errands = storage.load_errands()
+                errands = storage.get_all_errands()
                 page_context_str += f"All Current Errands: {json.dumps(errands)}\n"
             elif 'schedule' in path or 'dashboard_v2' in path or path == '/' or path == '/chauffeur/':
                 page_context_str += "They are looking at the schedule/calendar.\n"
