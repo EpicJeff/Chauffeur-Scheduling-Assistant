@@ -513,10 +513,12 @@ async function submitChat(e) {
                     appendMessage('assistant', data.reply);
                     if (typeof window.forceSync === 'function') {
                         window.forceSync();
-                    } else if (typeof window.fetchTripMetadata === 'function') {
-                        window.fetchTripMetadata();
+                    } else if (typeof window.fetchTripData === 'function') {
+                        window.fetchTripData();
                     } else if (typeof window.renderConfig === 'function') {
-                        location.reload();
+                        window.location.reload();
+                    } else {
+                        window.location.reload();
                     }
                 }
             } catch (err) {
