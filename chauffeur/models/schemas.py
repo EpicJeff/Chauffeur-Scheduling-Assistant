@@ -129,6 +129,8 @@ class Settings(BaseModel):
     mapbox_geocode_limit: int = 90000
     mapbox_searchbox_limit: int = 500
     mapbox_category_limit: int = 45000
+    enable_mapbox_map_loads: bool = True
+    mapbox_map_loads_limit: int = 45000
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
     llm_gemini_model: str = "gemini-3.5-flash"

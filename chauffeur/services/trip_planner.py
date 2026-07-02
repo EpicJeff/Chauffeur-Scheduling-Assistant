@@ -1,7 +1,7 @@
 import uuid
 import datetime
 import urllib.parse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from models.schemas import TripMetadata, TripPOI, Event
 from services import storage, maps, calendar
@@ -107,20 +107,20 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     return pois
 
-def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
+def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
     """
     Finds the best open time slot during the trip and schedules the POI in Google Calendar (or isolated environment if draft).
-    Returns the event_id if successful, or None if failed.
+    Returns a tuple of (event_id, error_reason, suggested_fixes). If successful, error_reason is None.
     """
     settings = storage.get_settings()
     cals = settings.get('calendar_ids', [])
     if not cals:
-        return None
+        return None, "No calendars configured in settings.", None
         
     if trip.is_draft:
         # Isolated Scheduling Engine
         if not trip.mock_start_date or not trip.mock_end_date:
-            return None
+            return None, "Draft trip has no dates set.", None
         trip_start = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
         trip_end = datetime.datetime.fromtimestamp(trip.mock_end_date, tz=datetime.timezone.utc)
         trip_cals = cals
@@ -146,7 +146,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         
         if not trip_event:
             print("Trip event not found, cannot schedule POI.")
-            return None
+            return None, "The main trip event could not be found on your calendar.", None
             
         trip_start = trip_event.start
         trip_end = trip_event.end
@@ -218,117 +218,136 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
     valid_slots = []
     location_travel_times = {}
     
-    while current_time + duration_delta <= trip_end:
-        slot_start = current_time
-        slot_end = current_time + duration_delta
-        current_time += datetime.timedelta(minutes=30)
-        
-        slot_local = slot_start.astimezone(local_tz)
-        slot_time = slot_local.time()
-        slot_date = slot_local.strftime("%Y-%m-%d")
-        
-        if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
-            continue
+    def find_slots(enforce_ideal_times=True):
+        slots = []
+        curr = trip_start
+        while curr + duration_delta <= trip_end:
+            slot_start = curr
+            slot_end = curr + duration_delta
+            curr += datetime.timedelta(minutes=30)
             
-        if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
-            continue
+            slot_local = slot_start.astimezone(local_tz)
+            slot_time = slot_local.time()
+            slot_date = slot_local.strftime("%Y-%m-%d")
             
-        overlaps = False
-        for e in overlapping_events:
-            # Use dynamic travel time instead of static buffer
-            travel_mins = 30
-            if getattr(e, 'location', None) and getattr(poi, 'location', None):
-                poi_loc_clean = poi.location.lower().strip()
-                e_loc_clean = e.location.lower().strip()
-                if poi_loc_clean == e_loc_clean:
-                    travel_mins = 0
-                else:
-                    key = (e.location, poi.location)
-                    if key not in location_travel_times:
-                        location_travel_times[key] = maps.get_travel_time_minutes(e.location, poi.location)
-                    travel_mins = location_travel_times[key]
-            
-            dynamic_buffer = datetime.timedelta(minutes=travel_mins)
-            
-            # The slot cannot overlap with the event + the dynamic travel buffer
-            if (slot_start - dynamic_buffer) < e.end and (slot_end + dynamic_buffer) > e.start:
-                overlaps = True
-                break
-                
-        if overlaps:
-            continue
-            
-        is_lunch_block = datetime.time(11, 0) <= slot_time < datetime.time(14, 0)
-        is_dinner_block = datetime.time(17, 0) <= slot_time < datetime.time(21, 0)
-        
-        if is_food and not is_dessert:
-            conflict = False
-            scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
-            non_dessert_food = []
-            for sp in scheduled_on_day:
-                if sp.category == 'food':
-                    sp_text = f"{sp.name or ''} {sp.description or ''}".lower()
-                    sp_is_dessert = any(w in sp_text for w in ['dessert', 'ice cream', 'gelato', 'sweet', 'cafe', 'coffee', 'bakery', 'pastry'])
-                    if not sp_is_dessert:
-                        non_dessert_food.append(sp)
-                        
-            if len(non_dessert_food) >= 2:
-                conflict = True
-            elif len(non_dessert_food) == 1:
-                sp = non_dessert_food[0]
-                sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
-                is_sp_lunch = sp_time < datetime.time(16, 0)
-                is_slot_lunch = slot_time < datetime.time(16, 0)
-                if is_sp_lunch == is_slot_lunch:
-                    conflict = True
-            
-            if conflict:
+            if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
-        score = 0
-        days_from_start = (slot_local.date() - trip_start.astimezone(local_tz).date()).days
-        score += max(0, 100 - (days_from_start * 10))
-        
-        scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
-        for sp in scheduled_on_day:
-            poi_loc_clean = (poi.location or "").lower().strip()
-            sp_loc_clean = (sp.location or "").lower().strip()
-            poi_name_lower = (poi.name or "").lower()
-            sp_name_lower = (sp.name or "").lower()
-            
-            if poi.location and sp.location and (poi_loc_clean == sp_loc_clean or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
-                score += 1000
+            if enforce_ideal_times:
+                if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
+                    continue
                 
-            if poi.location and sp.location:
-                key = (sp.location, poi.location)
-                if key not in location_travel_times:
-                    location_travel_times[key] = maps.get_travel_time_minutes(sp.location, poi.location)
-                travel_mins = location_travel_times[key]
-                if travel_mins <= 15:
-                    score += 500
-                elif travel_mins <= 30:
-                    score += 250
+            overlaps = False
+            for e in overlapping_events:
+                # Use dynamic travel time instead of static buffer
+                travel_mins = 30
+                if getattr(e, 'location', None) and getattr(poi, 'location', None):
+                    poi_loc_clean = poi.location.lower().strip()
+                    e_loc_clean = e.location.lower().strip()
+                    if poi_loc_clean == e_loc_clean:
+                        travel_mins = 0
+                    else:
+                        key = (e.location, poi.location)
+                        if key not in location_travel_times:
+                            location_travel_times[key] = maps.get_travel_time_minutes(e.location, poi.location)
+                        travel_mins = location_travel_times[key]
+                
+                dynamic_buffer = datetime.timedelta(minutes=travel_mins)
+                
+                # The slot cannot overlap with the event + the dynamic travel buffer
+                if (slot_start - dynamic_buffer) < e.end and (slot_end + dynamic_buffer) > e.start:
+                    overlaps = True
+                    break
                     
-                sp_start = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz)
-                sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc).astimezone(local_tz)
-                # If very close, and scheduled right after, right before, or overlapping, give a clustering bonus!
-                if travel_mins <= 15 and (
-                    (sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2)) or
-                    (sp_start - datetime.timedelta(hours=2) <= slot_end <= sp_start) or
-                    (slot_start >= sp_start and slot_end <= sp_end) or
-                    (slot_start <= sp_start and slot_end >= sp_end)
-                ):
-                    score += 1500
+            if overlaps:
+                continue
+                
+            is_lunch_block = datetime.time(11, 0) <= slot_time < datetime.time(14, 0)
+            is_dinner_block = datetime.time(17, 0) <= slot_time < datetime.time(21, 0)
+            
+            if is_food and not is_dessert:
+                conflict = False
+                scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
+                non_dessert_food = []
+                for sp in scheduled_on_day:
+                    if sp.category == 'food':
+                        sp_text = f"{sp.name or ''} {sp.description or ''}".lower()
+                        sp_is_dessert = any(w in sp_text for w in ['dessert', 'ice cream', 'gelato', 'sweet', 'cafe', 'coffee', 'bakery', 'pastry'])
+                        if not sp_is_dessert:
+                            non_dessert_food.append(sp)
+                            
+                if len(non_dessert_food) >= 2:
+                    conflict = True
+                elif len(non_dessert_food) == 1:
+                    sp = non_dessert_food[0]
+                    sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
+                    is_sp_lunch = sp_time < datetime.time(16, 0)
+                    is_slot_lunch = slot_time < datetime.time(16, 0)
+                    if is_sp_lunch == is_slot_lunch:
+                        conflict = True
+                
+                if conflict:
+                    continue
                     
-            if is_dessert and sp.category == 'food':
-                sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
-                if sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2):
-                    score += 2000
+            score = 0
+            days_from_start = (slot_local.date() - trip_start.astimezone(local_tz).date()).days
+            score += max(0, 100 - (days_from_start * 10))
+            
+            scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
+            for sp in scheduled_on_day:
+                poi_loc_clean = (poi.location or "").lower().strip()
+                sp_loc_clean = (sp.location or "").lower().strip()
+                poi_name_lower = (poi.name or "").lower()
+                sp_name_lower = (sp.name or "").lower()
+                
+                if poi.location and sp.location and (poi_loc_clean == sp_loc_clean or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
+                    score += 1000
                     
-        valid_slots.append((score, slot_start))
+                if poi.location and sp.location:
+                    key = (sp.location, poi.location)
+                    if key not in location_travel_times:
+                        location_travel_times[key] = maps.get_travel_time_minutes(sp.location, poi.location)
+                    travel_mins = location_travel_times[key]
+                    if travel_mins <= 15:
+                        score += 500
+                    elif travel_mins <= 30:
+                        score += 250
+                        
+                    sp_start = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz)
+                    sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc).astimezone(local_tz)
+                    # If very close, and scheduled right after, right before, or overlapping, give a clustering bonus!
+                    if travel_mins <= 15 and (
+                        (sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2)) or
+                        (sp_start - datetime.timedelta(hours=2) <= slot_end <= sp_start) or
+                        (slot_start >= sp_start and slot_end <= sp_end) or
+                        (slot_start <= sp_start and slot_end >= sp_end)
+                    ):
+                        score += 1500
+                        
+                if is_dessert and sp.category == 'food':
+                    sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
+                    if sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2):
+                        score += 2000
+                        
+            slots.append((score, slot_start))
+        return slots
+        
+    valid_slots = find_slots(enforce_ideal_times=True)
         
     if not valid_slots:
-        return None
+        suggested_fixes = []
+        if ideal_start_time != datetime.time(9, 0) or ideal_end_time != datetime.time(21, 0):
+            # Try without ideal times
+            alt_slots = find_slots(enforce_ideal_times=False)
+            if alt_slots:
+                alt_slots.sort(key=lambda x: (-x[0], x[1]))
+                best_alt_start = alt_slots[0][1]
+                suggested_fixes.append({
+                    "type": "clear_times",
+                    "label": f"Schedule at {best_alt_start.strftime('%a %I:%M %p')} (Ignore Ideal Times)"
+                })
+        
+        return None, "Could not find an available time slot matching constraints (e.g. ideal times, overlapping activities, or meal conflicts).", {"suggested_fixes": suggested_fixes}
         
     valid_slots.sort(key=lambda x: (-x[0], x[1]))
     best_start = valid_slots[0][1]
@@ -342,7 +361,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         poi.scheduled_start = best_start.timestamp()
         poi.scheduled_end = best_end.timestamp()
         poi.event_id = event_id
-        return event_id
+        return event_id, None, None
     
     target_cal = trip_cals[0] if trip_cals else cals[0]
     
@@ -366,21 +385,27 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         poi.scheduled_start = best_start.timestamp()
         poi.scheduled_end = best_end.timestamp()
         poi.event_id = event_id
+        return event_id, None, None
         
-    return event_id
+    return None, "Failed to create the event in Google Calendar.", None
 
-def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> bool:
+def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     Schedules multiple POIs at once using a clustering algorithm based on distance and priority.
+    Returns a dictionary mapping poi_id to a dict containing {"success": bool, "reason": str}.
     """
     settings = storage.get_settings()
     cals = settings.get('calendar_ids', [])
+    results = {}
+    
     if not cals:
-        return False
+        for pid in poi_ids:
+            results[pid] = {"success": False, "reason": "No calendars configured in settings."}
+        return results
         
     target_pois = [p for p in trip.pois if p.id in poi_ids and not p.is_scheduled]
     if not target_pois:
-        return True
+        return results
         
     # Pre-cache distances
     locations = [p.location for p in target_pois if p.location]
@@ -408,14 +433,16 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> bool:
             clusters.append([p])
             
     # Schedule each cluster as a block
-    success = True
     for cluster in clusters:
         for poi in cluster:
             # For now, just reuse the single scheduler but we can upgrade this to block scheduling
             # since the single scheduler now correctly handles dynamic buffers!
-            # Wait, the single scheduler has the is_same_location bug! We need to fix it!
-            res = schedule_poi(trip, poi)
-            if not res:
-                success = False
+            event_id, reason, meta = schedule_poi(trip, poi)
+            if event_id:
+                results[poi.id] = {"success": True, "reason": None}
+            else:
+                results[poi.id] = {"success": False, "reason": reason}
+                if meta and "suggested_fixes" in meta:
+                    results[poi.id]["suggested_fixes"] = meta["suggested_fixes"]
                 
-    return success
+    return results

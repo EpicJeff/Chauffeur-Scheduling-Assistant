@@ -386,7 +386,19 @@ def create_trip_api(req: CreateTripRequest):
 
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
-    response = templates.TemplateResponse(request=request, name="trip.html", context={"event_id": event_id})
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    mapbox_key = maps.get_mapbox_api_key()
+    enable_loads = maps.get_map_option('enable_mapbox_map_loads', True)
+    limit = maps.get_map_option('mapbox_map_loads_limit', 45000)
+    current_usage = storage.get_mapbox_usage(current_month, 'map_loads')
+    allow_map_loads = enable_loads and (current_usage < limit)
+    
+    response = templates.TemplateResponse(request=request, name="trip.html", context={
+        "event_id": event_id,
+        "mapbox_key": mapbox_key,
+        "allow_map_loads": allow_map_loads
+    })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -748,15 +760,17 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
         trip_obj = TripMetadata(**meta)
         
         from services.trip_planner import schedule_pois_bulk
-        result = schedule_pois_bulk(trip_obj, poi_ids)
-        if not result:
-            return {"error": "Failed to schedule some or all POIs."}
-            
-        # Update POI in DB
-        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
-        storage.set_trip_metadata(event_id, meta)
+        results = schedule_pois_bulk(trip_obj, poi_ids)
         
-        return {"status": "ok", "scheduled_count": len(poi_ids)}
+        # Check if at least one POI was successfully scheduled
+        any_success = any(r.get("success", False) for r in results.values())
+        
+        if any_success:
+            # Update POI in DB
+            meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+            storage.set_trip_metadata(event_id, meta)
+        
+        return {"status": "ok", "results": results}
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
@@ -1605,12 +1619,26 @@ def get_maps_stats():
             "limit": maps.get_map_option('mapbox_category_limit', 45000),
             "disabled": maps.get_map_option('disable_mapbox_category', False) or maps.get_map_option('disable_mapbox', False)
         },
+        "map_loads": {
+            "monthly": storage.get_mapbox_usage(current_month, 'map_loads'),
+            "rolling_24h": storage.get_rolling_usage('map_loads', 86400),
+            "rpm": storage.get_rolling_usage('map_loads', 60),
+            "limit": maps.get_map_option('mapbox_map_loads_limit', 45000),
+            "disabled": not maps.get_map_option('enable_mapbox_map_loads', True) or maps.get_map_option('disable_mapbox', False)
+        },
         "has_key": bool(maps.get_mapbox_api_key())
     }
     
     return {"status": "success", "month": current_month, "stats": stats}
 
 # --- Telemetry API ---
+@app.post("/api/telemetry/mapbox_map_load")
+def track_mapbox_map_load():
+    import datetime
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    storage.record_mapbox_usage(current_month, 'map_loads')
+    return {"status": "recorded"}
+
 @app.post("/api/telemetry")
 def submit_telemetry(event: TelemetryEvent):
     storage.add_telemetry_event(event.model_dump() if hasattr(event, 'model_dump') else event.dict())

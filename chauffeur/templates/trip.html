@@ -53,6 +53,10 @@
             z-index: -1;
         }
     </style>
+    {% if allow_map_loads %}
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+    {% endif %}
 </head>
 <body class="p-0 m-0 min-h-screen flex flex-col relative">
 
@@ -101,17 +105,28 @@
                     <span class="text-gray-300">Unscheduled POIs:</span>
                     <span id="unscheduled-count" class="font-bold text-white bg-red-500/50 px-2 py-0.5 rounded">0</span>
                 </div>
-                <div class="mt-6">
-                    <button id="rebuild-schedule-btn" onclick="rebuildSchedule()" class="w-full flex justify-center items-center bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 px-4 py-2 rounded-xl text-sm font-bold transition-all">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                        Rebuild Schedule
-                    </button>
-                </div>
             </div>
         </div>
 
         <!-- Right Column: Itinerary and POIs -->
         <div class="w-full xl:w-3/4 flex flex-col gap-8 shrink-0">
+            <!-- Interactive Map Section -->
+            <div id="map-container" class="glass-panel rounded-3xl p-2 shadow-2xl relative overflow-hidden transition-all duration-300 h-96">
+                <!-- Mapbox Map Element -->
+                <div id="poi-map" class="w-full h-full rounded-2xl"></div>
+                
+                <!-- Expand Map Button -->
+                <button onclick="toggleMapExpansion()" id="map-expand-btn" class="absolute top-6 right-6 bg-gray-900/80 hover:bg-black/90 text-white p-2 rounded-xl backdrop-blur border border-white/20 shadow-lg transition-colors z-10" title="Expand Map">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+                </button>
+
+                <!-- Map Disabled Placeholder -->
+                <div id="map-disabled-overlay" class="absolute inset-0 bg-gray-900/80 backdrop-blur-sm hidden flex-col items-center justify-center rounded-2xl z-20">
+                    <svg class="w-12 h-12 text-gray-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    <p class="text-gray-300 font-bold text-lg">Map Disabled</p>
+                    <p class="text-gray-500 text-sm mt-1">Map Loads API limit reached or disabled in settings.</p>
+                </div>
+            </div>
             
             <!-- Activities Section -->
             <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col">
@@ -121,6 +136,10 @@
                         <p class="text-gray-400 text-sm mt-1">Events, flights, and excursions planned for this trip.</p>
                     </div>
                     <div class="flex items-center space-x-4">
+                        <button id="rebuild-schedule-btn" onclick="rebuildSchedule()" class="px-4 py-2 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 font-bold rounded-xl transition-all flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Rebuild Schedule
+                        </button>
                         <button onclick="clearItinerary()" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-xl border border-red-500/30 transition-colors">Clear Itinerary</button>
                         <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
@@ -228,7 +247,7 @@
     </div>
     
     <!-- POI Details Modal -->
-    <div id="poi-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div id="poi-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4">
         <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <!-- Header Image Area -->
             <div id="poi-detail-header" class="h-56 relative bg-cover bg-center shrink-0">
@@ -249,11 +268,22 @@
             <!-- Priority Setting -->
             <div class="p-6 pb-0">
                 <label class="block text-gray-400 mb-1 text-sm font-bold">Priority Setting</label>
-                <select id="poi-priority" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold">
+                <select id="poi-priority" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold mb-4">
                     <option value="must">Must See</option>
                     <option value="want">Want to go</option>
                     <option value="stretch">Stretch Goal</option>
                 </select>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div id="poi-detail-duration-container" class="hidden">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold">Duration</label>
+                        <div id="poi-detail-duration" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-bold"></div>
+                    </div>
+                    <div id="poi-detail-ideal-time-container" class="hidden">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold">Ideal Time</label>
+                        <div id="poi-detail-ideal-time" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-bold"></div>
+                    </div>
+                </div>
             </div>
             
             <!-- Details Area -->
@@ -455,6 +485,24 @@
             </div>
         </div>
     </div>
+    <!-- Failed POIs Modal -->
+    <div id="failed-pois-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl flex flex-col max-h-[90vh]">
+            <h3 class="text-2xl font-bold text-red-400 mb-2 flex items-center">
+                <svg class="w-7 h-7 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                Failed to Schedule POIs
+            </h3>
+            <p class="text-gray-300 text-sm mb-6">The following POIs could not be added to your itinerary due to constraints.</p>
+            
+            <div id="failed-pois-list" class="flex-1 overflow-y-auto pr-2 space-y-4">
+                <!-- Injected via JS -->
+            </div>
+            
+            <div class="mt-6 flex justify-end shrink-0 border-t border-gray-700 pt-4">
+                <button onclick="closeFailedPoisModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors font-bold">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Settings Modal -->
     <div id="settings-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -620,14 +668,15 @@
             
             renderPois();
             renderActivities();
+            renderMap();
         }
 
         async function rebuildSchedule() {
             if (!tripData) return;
             const btn = document.getElementById('rebuild-schedule-btn');
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = '<svg class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Rebuilding...';
-            btn.disabled = true;
+            
+            const schedLoading = document.getElementById('schedule-loading-overlay');
+            if (schedLoading) schedLoading.classList.remove('hidden');
 
             try {
                 let s, e;
@@ -663,8 +712,7 @@
             } catch (err) {
                 alert(err.message);
             } finally {
-                btn.innerHTML = originalHtml;
-                btn.disabled = false;
+                if (schedLoading) schedLoading.classList.add('hidden');
             }
         }
 
@@ -871,7 +919,25 @@
                                 body: JSON.stringify({ poi_ids: selected })
                             });
                             const data = await res.json();
-                            if (data.error) alert(data.error);
+                            
+                            if (data.error) {
+                                alert(data.error);
+                            } else if (data.results) {
+                                // Gather failures
+                                const failures = [];
+                                for (const [poiId, result] of Object.entries(data.results)) {
+                                    if (!result.success) {
+                                        const poi = tripData.metadata.pois.find(p => p.id === poiId);
+                                        if (poi) {
+                                            failures.push({ poi, reason: result.reason, suggested_fixes: result.suggested_fixes });
+                                        }
+                                    }
+                                }
+                                
+                                if (failures.length > 0) {
+                                    openFailedPoisModal(failures);
+                                }
+                            }
                         } catch(e) {
                             alert("Error in bulk schedule");
                         }
@@ -959,6 +1025,22 @@
                 document.getElementById('poi-detail-notes-container').classList.remove('hidden');
             } else {
                 document.getElementById('poi-detail-notes-container').classList.add('hidden');
+            }
+            
+            if (poi.duration_mins) {
+                document.getElementById('poi-detail-duration').innerText = poi.duration_mins + ' mins';
+                document.getElementById('poi-detail-duration-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-duration-container').classList.add('hidden');
+            }
+            
+            if (poi.ideal_time_start || poi.ideal_time_end) {
+                const s = poi.ideal_time_start || 'Any';
+                const e = poi.ideal_time_end || 'Any';
+                document.getElementById('poi-detail-ideal-time').innerText = s + ' - ' + e;
+                document.getElementById('poi-detail-ideal-time-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-ideal-time-container').classList.add('hidden');
             }
             
             document.getElementById('poi-detail-remove-btn').onclick = () => {
@@ -1070,6 +1152,114 @@
             document.getElementById('settings-modal').classList.add('hidden');
         }
 
+        // Failed POIs Modal logic
+        function closeFailedPoisModal() {
+            document.getElementById('failed-pois-modal').classList.add('hidden');
+        }
+
+        function openFailedPoisModal(failures) {
+            const list = document.getElementById('failed-pois-list');
+            list.innerHTML = '';
+            
+            failures.forEach(f => {
+                const poi = f.poi;
+                const reason = f.reason;
+                const fixes = f.suggested_fixes || [];
+                const poiIndex = tripData.metadata.pois.findIndex(p => p.id === poi.id);
+                
+                const div = document.createElement('div');
+                div.className = "bg-gray-900 border border-red-500/30 rounded-xl p-4";
+                
+                let suggestionsHtml = '';
+                if (poi.priority === 'must') {
+                    suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', 'priority_want')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">Lower Priority to 'Want'</button>`;
+                }
+                
+                if (fixes.length > 0) {
+                    fixes.forEach(fix => {
+                        suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', '${fix.type}')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">${fix.label}</button>`;
+                    });
+                } else if (poi.ideal_time_start || poi.ideal_time_end) {
+                    suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', 'clear_times')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">Clear Ideal Time Constraints</button>`;
+                }
+                
+                let detailsHtml = '';
+                if (poi.duration_mins || poi.ideal_time_start || poi.ideal_time_end) {
+                    const dur = poi.duration_mins ? `${poi.duration_mins} mins` : '';
+                    let ideal = '';
+                    if (poi.ideal_time_start || poi.ideal_time_end) {
+                        ideal = `${poi.ideal_time_start || 'Any'} - ${poi.ideal_time_end || 'Any'}`;
+                    }
+                    const text = [dur, ideal].filter(x => x).join(' | ');
+                    detailsHtml = `<p class="text-xs text-gray-400 font-bold mb-2">${text}</p>`;
+                }
+                
+                div.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-white text-lg">${poi.name}</h4>
+                        <div class="flex space-x-2">
+                            <button onclick="openPoiDetails(${poiIndex})" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded border border-gray-600">View Details</button>
+                            <span class="text-xs bg-red-900/50 text-red-300 px-2 py-1 rounded border border-red-700/50">Failed</span>
+                        </div>
+                    </div>
+                    ${detailsHtml}
+                    <p class="text-sm text-gray-400 mb-3"><strong class="text-red-400">Reason:</strong> ${reason}</p>
+                    <div class="flex flex-wrap gap-2">
+                        ${suggestionsHtml}
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+            
+            document.getElementById('failed-pois-modal').classList.remove('hidden');
+        }
+
+        async function applyPoiFix(poiId, fixType) {
+            const poi = tripData.metadata.pois.find(p => p.id === poiId);
+            if (!poi) return;
+            
+            if (fixType === 'priority_want') {
+                poi.priority = 'want';
+            } else if (fixType === 'clear_times') {
+                poi.ideal_time_start = null;
+                poi.ideal_time_end = null;
+            }
+            
+            try {
+                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(tripData.metadata)
+                });
+                
+                // Close modal and attempt to schedule again
+                closeFailedPoisModal();
+                
+                // Re-trigger the bulk schedule for just this POI
+                const schedLoading = document.getElementById('schedule-loading-overlay');
+                if (schedLoading) schedLoading.classList.remove('hidden');
+                
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ poi_ids: [poi.id] })
+                });
+                const data = await res.json();
+                
+                if (data.results && data.results[poi.id] && !data.results[poi.id].success) {
+                    // Failed again
+                    openFailedPoisModal([{poi, reason: data.results[poi.id].reason, suggested_fixes: data.results[poi.id].suggested_fixes}]);
+                }
+                
+                await fetchTripData();
+                updatePoiBulkActions();
+                if (schedLoading) schedLoading.classList.add('hidden');
+                
+            } catch (e) {
+                alert("Error applying fix: " + e.message);
+            }
+        }
+
         // Smart Planner logic
         function openAiPlannerModal() {
             document.getElementById('ai-planner-prompt').value = '';
@@ -1160,6 +1350,20 @@
                 is_scheduled: false
             };
             
+            if (poi.mapbox_id) {
+                try {
+                    const sessionToken = "trip_" + Math.random().toString(36).substring(7);
+                    const response = await fetch(`api/places/retrieve?mapbox_id=${poi.mapbox_id}&session_token=${sessionToken}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        poi.lat = data.lat;
+                        poi.lng = data.lng;
+                    }
+                } catch(e) {
+                    console.error("Failed to fetch coordinates for new POI", e);
+                }
+            }
+
             if(!tripData.metadata.pois) tripData.metadata.pois = [];
             tripData.metadata.pois.push(poi);
             
@@ -1521,6 +1725,130 @@
         }
 
         fetchTripData();
+        const mapboxKey = '{{ mapbox_key }}';
+        const allowMapLoads = {{ allow_map_loads | lower }};
+        let poiMap = null;
+        let mapMarkers = [];
+
+        async function renderMap() {
+            if (!allowMapLoads) {
+                document.getElementById('map-disabled-overlay').classList.remove('hidden');
+                document.getElementById('map-disabled-overlay').classList.add('flex');
+                return;
+            }
+            if (!mapboxKey) return;
+            
+            // Check for legacy POIs needing geocoding
+            let needsSave = false;
+            if (tripData && tripData.metadata && tripData.metadata.pois) {
+                for (let i = 0; i < tripData.metadata.pois.length; i++) {
+                    const poi = tripData.metadata.pois[i];
+                    if (!poi.lat || !poi.lng) {
+                        try {
+                            if (poi.mapbox_id) {
+                                const sessionToken = "trip_" + Math.random().toString(36).substring(7);
+                                const response = await fetch(`api/places/retrieve?mapbox_id=${poi.mapbox_id}&session_token=${sessionToken}`);
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    poi.lat = data.lat;
+                                    poi.lng = data.lng;
+                                    needsSave = true;
+                                }
+                            }
+                        } catch(e) {
+                            console.error("Failed to geocode legacy POI", poi.name, e);
+                        }
+                    }
+                }
+                if (needsSave) {
+                    await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(tripData.metadata)
+                    });
+                }
+            }
+
+            if (!poiMap) {
+                mapboxgl.accessToken = mapboxKey;
+                poiMap = new mapboxgl.Map({
+                    container: 'poi-map',
+                    style: 'mapbox://styles/mapbox/dark-v11',
+                    center: [-98.5795, 39.8283], // US center default
+                    zoom: 3
+                });
+
+                poiMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+                poiMap.once('load', () => {
+                    fetch('api/telemetry/mapbox_map_load', { method: 'POST' });
+                });
+            }
+
+            // Clear old markers
+            mapMarkers.forEach(m => m.remove());
+            mapMarkers = [];
+
+            const bounds = new mapboxgl.LngLatBounds();
+            let hasValidCoords = false;
+
+            if (tripData && tripData.metadata && tripData.metadata.pois) {
+                tripData.metadata.pois.forEach((poi, idx) => {
+                    if (poi.lat && poi.lng) {
+                        hasValidCoords = true;
+                        
+                        // Create popup
+                        const popupContent = `
+                            <div class="text-gray-900 p-1">
+                                <p class="font-bold mb-1">${poi.name}</p>
+                                <p class="text-xs uppercase font-semibold text-gray-500 mb-2">${poi.category || 'other'}</p>
+                                <button onclick="openPoiDetails(${idx})" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1 px-2 rounded transition-colors">Details</button>
+                            </div>
+                        `;
+                        const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
+
+                        // Create marker element
+                        const el = document.createElement('div');
+                        el.className = 'w-6 h-6 rounded-full border-2 border-white shadow-md cursor-pointer transition-transform hover:scale-110 flex items-center justify-center text-white';
+                        el.style.backgroundColor = poi.is_scheduled ? '#10b981' : (prioColors[poi.priority] ? prioColors[poi.priority].split('text-')[1].split(' ')[0] : '#3b82f6');
+                        // Use a custom property for fallback color if extracting class name fails
+                        
+                        // Map marker
+                        const marker = new mapboxgl.Marker({color: poi.is_scheduled ? '#10b981' : '#f59e0b'})
+                            .setLngLat([poi.lng, poi.lat])
+                            .setPopup(popup)
+                            .addTo(poiMap);
+                        
+                        mapMarkers.push(marker);
+                        bounds.extend([poi.lng, poi.lat]);
+                    }
+                });
+            }
+
+            if (hasValidCoords) {
+                poiMap.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+            }
+        }
+
+        let isMapExpanded = false;
+        function toggleMapExpansion() {
+            const container = document.getElementById('map-container');
+            const icon = document.querySelector('#map-expand-btn svg');
+            isMapExpanded = !isMapExpanded;
+            
+            if (isMapExpanded) {
+                container.classList.remove('h-96', 'relative');
+                container.classList.add('fixed', 'inset-4', 'z-50', 'h-auto');
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14h4v4m0-4l-5 5m11-1h4v4m0-4l5 5M4 10h4V6m0 4l-5-5m11 1h4V6m0 4l5-5"></path>';
+            } else {
+                container.classList.remove('fixed', 'inset-4', 'z-50', 'h-auto');
+                container.classList.add('h-96', 'relative');
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>';
+            }
+            if (poiMap) {
+                setTimeout(() => poiMap.resize(), 300);
+            }
+        }
     </script>
     {% include 'components/control_center.html' %}
 </body>
