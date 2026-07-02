@@ -565,15 +565,21 @@
                     const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                     const timeStr = start ? start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts}) : '';
                     
-                    const relatedPoi = (tripData.metadata.pois || []).find(p => p.event_id === act.id);
-                    const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️', 'other': '📍', 'travel': '✈️', 'lodging': '🏨' };
-                    let cat = relatedPoi ? relatedPoi.category : 'other';
-                    if (!relatedPoi) {
+                    const relatedPoi = (tripData.metadata.pois || []).find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
+                    let emoji = '📍';
+                    if (relatedPoi && relatedPoi.category) {
+                        const match = relatedPoi.category.match(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u);
+                        if (match) {
+                            emoji = match[0];
+                        } else {
+                            const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️' };
+                            emoji = catEmojis[relatedPoi.category.toLowerCase()] || '📍';
+                        }
+                    } else {
                         const t = act.title.toLowerCase();
-                        if (t.includes('flight') || t.includes('train') || t.includes('drive')) cat = 'travel';
-                        else if (t.includes('hotel') || t.includes('resort') || t.includes('airbnb')) cat = 'lodging';
+                        if (t.includes('flight') || t.includes('train') || t.includes('drive') || t.includes('travel')) emoji = '✈️';
+                        else if (t.includes('hotel') || t.includes('resort') || t.includes('airbnb') || t.includes('stay')) emoji = '🏨';
                     }
-                    const emoji = catEmojis[cat] || '📍';
 
                     const card = document.createElement('div');
                     card.className = "bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group flex flex-col gap-1";
