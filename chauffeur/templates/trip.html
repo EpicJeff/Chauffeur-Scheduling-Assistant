@@ -1362,6 +1362,17 @@
                 } catch(e) {
                     console.error("Failed to fetch coordinates for new POI", e);
                 }
+            } else if (poi.location) {
+                try {
+                    const response = await fetch(`api/places/geocode?address=${encodeURIComponent(poi.location)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        poi.lat = data.lat;
+                        poi.lng = data.lng;
+                    }
+                } catch(e) {
+                    console.error("Failed to geocode new POI", e);
+                }
             }
 
             if(!tripData.metadata.pois) tripData.metadata.pois = [];
@@ -1754,6 +1765,14 @@
                                     poi.lng = data.lng;
                                     needsSave = true;
                                 }
+                            } else if (poi.location) {
+                                const response = await fetch(`api/places/geocode?address=${encodeURIComponent(poi.location)}`);
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    poi.lat = data.lat;
+                                    poi.lng = data.lng;
+                                    needsSave = true;
+                                }
                             }
                         } catch(e) {
                             console.error("Failed to geocode legacy POI", poi.name, e);
@@ -1807,14 +1826,11 @@
                         `;
                         const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
 
-                        // Create marker element
-                        const el = document.createElement('div');
-                        el.className = 'w-6 h-6 rounded-full border-2 border-white shadow-md cursor-pointer transition-transform hover:scale-110 flex items-center justify-center text-white';
-                        el.style.backgroundColor = poi.is_scheduled ? '#10b981' : (prioColors[poi.priority] ? prioColors[poi.priority].split('text-')[1].split(' ')[0] : '#3b82f6');
-                        // Use a custom property for fallback color if extracting class name fails
+                        const prioHexColors = { 'must': '#ef4444', 'want': '#3b82f6', 'stretch': '#eab308' };
+                        const markerColor = poi.is_scheduled ? '#10b981' : (prioHexColors[poi.priority] || '#3b82f6');
                         
                         // Map marker
-                        const marker = new mapboxgl.Marker({color: poi.is_scheduled ? '#10b981' : '#f59e0b'})
+                        const marker = new mapboxgl.Marker({color: markerColor})
                             .setLngLat([poi.lng, poi.lat])
                             .setPopup(popup)
                             .addTo(poiMap);

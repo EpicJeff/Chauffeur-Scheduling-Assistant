@@ -1636,7 +1636,7 @@ def get_maps_stats():
 def track_mapbox_map_load():
     import datetime
     current_month = datetime.datetime.now().strftime("%Y-%m")
-    storage.record_mapbox_usage(current_month, 'map_loads')
+    storage.increment_mapbox_usage(current_month, 'map_loads')
     return {"status": "recorded"}
 
 @app.post("/api/telemetry")
@@ -1716,6 +1716,14 @@ def get_places_retrieve(mapbox_id: str, session_token: str):
         return result
     from fastapi import HTTPException
     raise HTTPException(status_code=400, detail="Failed to retrieve location")
+
+@app.get("/api/places/geocode")
+def get_places_geocode(address: str):
+    result = maps.geocode_address(address)
+    if result:
+        return {"lat": result[0], "lng": result[1]}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=400, detail="Failed to geocode address")
 
 from functools import lru_cache
 
