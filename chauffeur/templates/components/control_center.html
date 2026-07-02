@@ -552,7 +552,6 @@ async function submitChat(e) {
         }
 
 let isOperationsSidebarOpen = false;
-        let mapsStatsInterval = null;
 
         function toggleOperationsSidebar() {
             const sidebar = document.getElementById('operations-sidebar');
@@ -572,7 +571,6 @@ let isOperationsSidebarOpen = false;
                 }
                 if (!document.getElementById('stats-accordion-content').classList.contains('hidden')) {
                     fetchMapsStatsDashboard();
-                    if (!mapsStatsInterval) mapsStatsInterval = setInterval(fetchMapsStatsDashboard, 5000);
                 }
             } else {
                 sidebar.classList.remove('translate-x-0');

@@ -1605,7 +1605,7 @@ def get_maps_stats():
             "limit": maps.get_map_option('mapbox_category_limit', 45000),
             "disabled": maps.get_map_option('disable_mapbox_category', False) or maps.get_map_option('disable_mapbox', False)
         },
-        "has_key": bool(maps.get_map_option('mapbox_api_key', ''))
+        "has_key": bool(maps.get_mapbox_api_key())
     }
     
     return {"status": "success", "month": current_month, "stats": stats}

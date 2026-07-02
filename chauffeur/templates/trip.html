@@ -101,6 +101,12 @@
                     <span class="text-gray-300">Unscheduled POIs:</span>
                     <span id="unscheduled-count" class="font-bold text-white bg-red-500/50 px-2 py-0.5 rounded">0</span>
                 </div>
+                <div class="mt-6">
+                    <button id="rebuild-schedule-btn" onclick="rebuildSchedule()" class="w-full flex justify-center items-center bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 px-4 py-2 rounded-xl text-sm font-bold transition-all">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Rebuild Schedule
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -614,6 +620,52 @@
             
             renderPois();
             renderActivities();
+        }
+
+        async function rebuildSchedule() {
+            if (!tripData) return;
+            const btn = document.getElementById('rebuild-schedule-btn');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<svg class="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Rebuilding...';
+            btn.disabled = true;
+
+            try {
+                let s, e;
+                const isDraft = tripData.metadata.is_draft || false;
+                
+                if (isDraft) {
+                    if (tripData.metadata.mock_start_date && tripData.metadata.mock_end_date) {
+                        s = new Date(tripData.metadata.mock_start_date * 1000).toISOString().split('T')[0];
+                        e = new Date(tripData.metadata.mock_end_date * 1000).toISOString().split('T')[0];
+                    } else {
+                        throw new Error("Draft trip has no start or end date set.");
+                    }
+                } else {
+                    if (tripData.event.start && tripData.event.start.dateTime) {
+                        s = tripData.event.start.dateTime.split('T')[0];
+                        e = tripData.event.end.dateTime.split('T')[0];
+                    } else if (tripData.event.start && tripData.event.start.date) {
+                        s = tripData.event.start.date;
+                        e = tripData.event.end.date;
+                    } else {
+                        throw new Error("Trip event has no valid dates.");
+                    }
+                }
+
+                const url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force=true&draft=${isDraft}`;
+                const res = await fetch(url, { method: 'POST' });
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`Schedule rebuild failed: ${errText}`);
+                }
+                
+                await fetchTripData();
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
         }
 
         function renderActivities() {
