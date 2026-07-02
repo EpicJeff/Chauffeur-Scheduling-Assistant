@@ -568,12 +568,14 @@
                     const relatedPoi = (tripData.metadata.pois || []).find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
                     let emoji = '📍';
                     if (relatedPoi && relatedPoi.category) {
-                        const match = relatedPoi.category.match(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u);
-                        if (match) {
-                            emoji = match[0];
+                        const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️', 'other': '📍' };
+                        const normalizedCat = relatedPoi.category.toLowerCase().trim();
+                        if (catEmojis[normalizedCat]) {
+                            emoji = catEmojis[normalizedCat];
                         } else {
-                            const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️' };
-                            emoji = catEmojis[relatedPoi.category.toLowerCase()] || '📍';
+                            // Backwards compatibility for old trips that had emojis embedded in the category name
+                            const match = relatedPoi.category.match(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u);
+                            if (match) emoji = match[0];
                         }
                     } else {
                         const t = act.title.toLowerCase();

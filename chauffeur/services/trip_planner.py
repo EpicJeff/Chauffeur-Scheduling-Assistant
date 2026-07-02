@@ -34,7 +34,7 @@ You MUST respond with a single valid JSON object of the following exact structur
   "suggestions": [
     {
       "name": "The name of the location (e.g., French Laundry)",
-      "category": "A short category string (e.g., 🍷 Vineyard, 🏖️ Beach, 🍽️ Restaurant)",
+      "category": "A predefined category string. MUST be one of exactly these: 'sightseeing', 'food', 'activity', 'shopping', or 'other'",
       "description": "A 1-2 sentence compelling description of the experience.",
       "why_picked": "Explain why this specifically matches the user's request (e.g., 'You mentioned wanting a Michelin star experience...').",
       "experience": "Describe what they will actually do there, what the vibe is like, or tips for the visit.",
