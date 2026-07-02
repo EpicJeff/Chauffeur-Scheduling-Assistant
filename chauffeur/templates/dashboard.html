@@ -571,6 +571,25 @@
                                             class="px-1 bg-gray-900 text-yellow-400 rounded"></span></span>
                                 </div>
                             </div>
+                            
+                            <!-- Category Card -->
+                            <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
+                                <div class="flex items-center justify-between text-[10px] mb-2">
+                                    <span class="font-bold text-gray-400 uppercase">Category</span>
+                                    <span id="category-monthly-text"
+                                        class="text-orange-400 font-mono font-bold"></span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden mb-2">
+                                    <div id="category-progress" class="h-1.5 rounded-full transition-all duration-500"
+                                        style="width: 0%"></div>
+                                </div>
+                                <div
+                                    class="flex items-center justify-between text-[10px] text-gray-500 font-mono font-bold">
+                                    <span>24h: <strong id="category-24h-text" class="text-gray-300"></strong></span>
+                                    <span>RPM: <span id="category-rpm-text"
+                                            class="px-1 bg-gray-900 text-orange-400 rounded"></span></span>
+                                </div>
+                            </div>
 
                         </div>
                     </div>
@@ -3590,6 +3609,24 @@
                 } else {
                     sbRpm.textContent = "0";
                     sbRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
+                }
+
+                // Category updates
+                stats.category = stats.category || { monthly: 0, limit: 1, rolling_24h: 0, rpm: 0, disabled: false };
+                const catPct = Math.min(100, (stats.category.monthly / stats.category.limit) * 100);
+                document.getElementById('category-monthly-text').textContent = `${stats.category.monthly} / ${stats.category.limit}`;
+                const catProgress = document.getElementById('category-progress');
+                catProgress.style.width = `${catPct}%`;
+                catProgress.className = `h-2.5 rounded-full transition-all duration-500 ${stats.category.monthly >= stats.category.limit ? 'bg-red-500' : (stats.category.monthly >= stats.category.limit * 0.8 ? 'bg-amber-500' : 'bg-orange-500')}`;
+                document.getElementById('category-24h-text').textContent = stats.category.rolling_24h;
+
+                const catRpm = document.getElementById('category-rpm-text');
+                if (stats.category.rpm > 0) {
+                    catRpm.textContent = stats.category.rpm;
+                    catRpm.className = "px-1.5 py-0.5 bg-gray-900 text-orange-400 rounded font-bold border border-orange-900/30 animate-pulse";
+                } else {
+                    catRpm.textContent = "0";
+                    catRpm.className = "px-1.5 py-0.5 bg-gray-900 text-gray-500 rounded font-bold border border-gray-800";
                 }
 
                 // Update warning dot on API Stats button in header

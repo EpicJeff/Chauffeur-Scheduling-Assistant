@@ -130,12 +130,14 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         for p in trip.pois:
             if p.is_scheduled and p.id != poi.id and p.scheduled_start and p.scheduled_end:
                 class MockEvent:
-                    def __init__(self, start, end):
+                    def __init__(self, start, end, location):
                         self.start = start
                         self.end = end
+                        self.location = location
                 overlapping_events.append(MockEvent(
                     datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc),
-                    datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc)
+                    datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc),
+                    p.location
                 ))
     else:
         # Standard Scheduling Engine
@@ -189,7 +191,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         except: pass
         
     if not ideal_start_time: ideal_start_time = datetime.time(9, 0)
-    if not ideal_end_time: ideal_end_time = datetime.time(22, 0)
+    if not ideal_end_time: ideal_end_time = datetime.time(21, 0)
+    
+    # Hard cap: don't start anything after 9:30 PM unless it's explicitly marked for nightlife
+    hard_cap_start = datetime.time(21, 30)
     
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
     buffer_delta = datetime.timedelta(minutes=30)
@@ -222,28 +227,31 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         slot_time = slot_local.time()
         slot_date = slot_local.strftime("%Y-%m-%d")
         
+        if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+            continue
+            
         if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
             continue
             
         overlaps = False
         for e in overlapping_events:
-            is_same_location = False
+            # Use dynamic travel time instead of static buffer
+            travel_mins = 30
             if e.location and poi.location:
                 poi_loc_clean = poi.location.lower().strip()
                 e_loc_clean = e.location.lower().strip()
                 if poi_loc_clean == e_loc_clean:
-                    is_same_location = True
+                    travel_mins = 0
                 else:
                     key = (e.location, poi.location)
                     if key not in location_travel_times:
                         location_travel_times[key] = maps.get_travel_time_minutes(e.location, poi.location)
-                    if location_travel_times[key] == 0:
-                        is_same_location = True
-                        
-            if is_same_location:
-                continue
-                
-            if (slot_start - buffer_delta) < e.end and (slot_end + buffer_delta) > e.start:
+                    travel_mins = location_travel_times[key]
+            
+            dynamic_buffer = datetime.timedelta(minutes=travel_mins)
+            
+            # The slot cannot overlap with the event + the dynamic travel buffer
+            if (slot_start - dynamic_buffer) < e.end and (slot_end + dynamic_buffer) > e.start:
                 overlaps = True
                 break
                 
@@ -285,6 +293,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         for sp in scheduled_on_day:
             poi_loc_clean = (poi.location or "").lower().strip()
             sp_loc_clean = (sp.location or "").lower().strip()
+            poi_name_lower = (poi.name or "").lower()
+            sp_name_lower = (sp.name or "").lower()
             
             if poi.location and sp.location and (poi_loc_clean == sp_loc_clean or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
                 score += 1000
@@ -358,3 +368,54 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         poi.event_id = event_id
         
     return event_id
+
+def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> bool:
+    """
+    Schedules multiple POIs at once using a clustering algorithm based on distance and priority.
+    """
+    settings = storage.get_settings()
+    cals = settings.get('calendar_ids', [])
+    if not cals:
+        return False
+        
+    target_pois = [p for p in trip.pois if p.id in poi_ids and not p.is_scheduled]
+    if not target_pois:
+        return True
+        
+    # Pre-cache distances
+    locations = [p.location for p in target_pois if p.location]
+    maps.prime_matrix_cache(locations)
+    
+    # Priority grouping
+    prio_map = {'must': 3, 'want': 2, 'stretch': 1}
+    target_pois.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
+    
+    # Simple Greedy Clustering
+    clusters = [] # list of lists of POIs
+    for p in target_pois:
+        added = False
+        for cluster in clusters:
+            # Check travel time to cluster centroid (just use the first item)
+            centroid = cluster[0]
+            if not p.location or not centroid.location:
+                continue
+            travel_mins = maps.get_travel_time_minutes(centroid.location, p.location)
+            if travel_mins <= 20:
+                cluster.append(p)
+                added = True
+                break
+        if not added:
+            clusters.append([p])
+            
+    # Schedule each cluster as a block
+    success = True
+    for cluster in clusters:
+        for poi in cluster:
+            # For now, just reuse the single scheduler but we can upgrade this to block scheduling
+            # since the single scheduler now correctly handles dynamic buffers!
+            # Wait, the single scheduler has the is_same_location bug! We need to fix it!
+            res = schedule_poi(trip, poi)
+            if not res:
+                success = False
+                
+    return success

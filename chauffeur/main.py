@@ -703,31 +703,63 @@ def generate_pois_api(event_id: str, payload: dict):
 
 @app.post("/api/trip/{event_id}/schedule_poi")
 def schedule_poi_api(event_id: str, payload: dict):
-    poi_id = payload.get("poi_id")
-    if not poi_id:
-        return {"error": "poi_id is required"}
+    try:
+        poi_id = payload.get("poi_id")
+        if not poi_id:
+            return {"error": "poi_id is required"}
+            
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
         
-    meta = storage.get_trip_metadata(event_id)
-    if not meta:
-        return {"error": "Trip not found"}
+        poi = next((p for p in trip_obj.pois if p.id == poi_id), None)
+        if not poi:
+            return {"error": "POI not found"}
+            
+        from services.trip_planner import schedule_poi
+        event_calendar_id = schedule_poi(trip_obj, poi)
+        if not event_calendar_id:
+            return {"error": "Failed to schedule POI (no available time slot or calendar missing)"}
+            
+        # Update POI in DB
+        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+        storage.set_trip_metadata(event_id, meta)
         
-    from models.schemas import TripMetadata
-    trip_obj = TripMetadata(**meta)
-    
-    poi = next((p for p in trip_obj.pois if p.id == poi_id), None)
-    if not poi:
-        return {"error": "POI not found"}
+        return {"status": "ok", "event_id": event_calendar_id}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.post("/api/trip/{event_id}/schedule_pois_bulk")
+def schedule_pois_bulk_api(event_id: str, payload: dict):
+    try:
+        poi_ids = payload.get("poi_ids")
+        if not poi_ids or not isinstance(poi_ids, list):
+            return {"error": "poi_ids list is required"}
+            
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
         
-    from services.trip_planner import schedule_poi
-    event_calendar_id = schedule_poi(trip_obj, poi)
-    if not event_calendar_id:
-        return {"error": "Failed to schedule POI (no available time slot or calendar missing)"}
+        from services.trip_planner import schedule_pois_bulk
+        result = schedule_pois_bulk(trip_obj, poi_ids)
+        if not result:
+            return {"error": "Failed to schedule some or all POIs."}
+            
+        # Update POI in DB
+        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+        storage.set_trip_metadata(event_id, meta)
         
-    # Update POI in DB
-    meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
-    storage.set_trip_metadata(event_id, meta)
-    
-    return {"status": "ok", "event_id": event_calendar_id}
+        return {"status": "ok", "scheduled_count": len(poi_ids)}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 # --- Drivers API ---

@@ -727,46 +727,33 @@
         }
 
         async function bulkSchedulePois() {
-            const checkboxes = document.querySelectorAll('.poi-checkbox:checked');
-            if(checkboxes.length === 0) return;
+            const selected = Array.from(document.querySelectorAll('.poi-checkbox:checked'))
+                .map(cb => cb.dataset.id)
+                .filter(id => id);
+                
+            if (selected.length === 0) return;
             
-            openConfirmModal("Schedule POIs", "Are you sure you want to schedule the selected POIs via Smart Engine?", [
-                { text: "Cancel" },
-                {
-                    text: "Schedule",
+            openConfirmModal("Schedule POIs", `Are you sure you want to schedule the ${selected.length} selected POIs via Smart Engine?`, [
+                { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold text-sm" },
+                { 
+                    text: "Schedule", 
                     className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
                         const schedLoading = document.getElementById('schedule-loading-overlay');
                         if (schedLoading) schedLoading.classList.remove('hidden');
-                        const prioOrder = { 'must': 3, 'want': 2, 'stretch': 1 };
-                        const sortedCheckboxes = Array.from(checkboxes).sort((a, b) => {
-                            const poiA = tripData.metadata.pois[parseInt(a.dataset.index)];
-                            const poiB = tripData.metadata.pois[parseInt(b.dataset.index)];
-                            const pA = prioOrder[poiA.priority || 'want'] || 2;
-                            const pB = prioOrder[poiB.priority || 'want'] || 2;
-                            if (pB !== pA) return pB - pA;
-                            
-                            const locA = (poiA.location || "").toLowerCase();
-                            const locB = (poiB.location || "").toLowerCase();
-                            if (locA < locB) return -1;
-                            if (locA > locB) return 1;
-                            return 0;
-                        });
-
-                        for(let i=0; i<sortedCheckboxes.length; i++) {
-                            const poiId = sortedCheckboxes[i].dataset.id;
-                            const idx = parseInt(sortedCheckboxes[i].dataset.index);
-                            if(tripData.metadata.pois[idx].is_scheduled) continue;
-                            try {
-                                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_poi`, {
-                                    method: 'POST',
-                                    headers: {'Content-Type': 'application/json'},
-                                    body: JSON.stringify({ poi_id: poiId })
-                                });
-                            } catch (e) {
-                                console.error(e);
-                            }
+                        
+                        try {
+                            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ poi_ids: selected })
+                            });
+                            const data = await res.json();
+                            if (data.error) alert(data.error);
+                        } catch(e) {
+                            alert("Error in bulk schedule");
                         }
+                        
                         await fetchTripData();
                         updatePoiBulkActions();
                         if (schedLoading) schedLoading.classList.add('hidden');
