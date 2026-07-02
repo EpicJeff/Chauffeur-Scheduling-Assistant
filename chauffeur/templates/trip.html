@@ -111,16 +111,16 @@
             <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col">
                 <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
                     <div>
-                    <div class="flex justify-between items-center mb-6">
                         <h2 class="text-3xl font-bold text-white">Daily Itinerary</h2>
-                        <button onclick="clearItinerary()" class="text-sm px-4 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-lg border border-red-500/30 transition-colors">Clear Itinerary</button>
-                    </div>
                         <p class="text-gray-400 text-sm mt-1">Events, flights, and excursions planned for this trip.</p>
                     </div>
-                    <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                        Add Activity
-                    </button>
+                    <div class="flex items-center space-x-4">
+                        <button onclick="clearItinerary()" class="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold rounded-xl border border-red-500/30 transition-colors">Clear Itinerary</button>
+                        <button onclick="openAddActivityModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                            Add Activity
+                        </button>
+                    </div>
                 </div>
                 <div id="activities-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-start pb-4">
                     <!-- Activities populated via JS -->
