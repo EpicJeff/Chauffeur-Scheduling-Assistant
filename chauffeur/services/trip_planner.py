@@ -189,7 +189,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         except: pass
         
     if not ideal_start_time: ideal_start_time = datetime.time(9, 0)
-    if not ideal_end_time: ideal_end_time = datetime.time(20, 0)
+    if not ideal_end_time: ideal_end_time = datetime.time(22, 0)
     
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
     buffer_delta = datetime.timedelta(minutes=30)
@@ -267,7 +267,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
         
         scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
         for sp in scheduled_on_day:
-            if poi.location and sp.location and (poi.location == sp.location or poi.name in sp.name or sp.name in poi.name):
+            poi_name_lower = (poi.name or "").lower()
+            sp_name_lower = (sp.name or "").lower()
+            
+            if poi.location and sp.location and (poi.location == sp.location or poi_name_lower in sp_name_lower or sp_name_lower in poi_name_lower):
                 score += 1000
                 
             if poi.location and sp.location:
@@ -279,6 +282,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Optional[str]:
                     score += 500
                 elif travel_mins <= 30:
                     score += 250
+                    
+                sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
+                # If very close, and scheduled right after (or before), give a clustering bonus!
+                if travel_mins <= 15 and sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2):
+                    score += 1500
                     
             if is_dessert and sp.category == 'food':
                 sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
