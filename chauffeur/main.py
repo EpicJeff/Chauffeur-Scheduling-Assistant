@@ -622,6 +622,16 @@ def save_trip_api(event_id: str, payload: dict):
     storage.set_trip_metadata(event_id, payload)
     return {"status": "ok"}
 
+@app.delete("/api/trip/{event_id}")
+def delete_trip(event_id: str):
+    from services import storage
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="Trip not found")
+        
+    storage.delete_trip_metadata(event_id)
+    return {"success": True}
+
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")

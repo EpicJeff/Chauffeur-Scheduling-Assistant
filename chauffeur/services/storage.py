@@ -946,3 +946,8 @@ def set_trip_metadata(event_id: str, metadata: dict):
         from tinydb import Query
         metadata['event_id'] = event_id
         trip_metadata_table.upsert(metadata, Query().event_id == event_id)
+
+def delete_trip_metadata(event_id: str):
+    with db_lock:
+        from tinydb import Query
+        trip_metadata_table.remove(Query().event_id == event_id)
