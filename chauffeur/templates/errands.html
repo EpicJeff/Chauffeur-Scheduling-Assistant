@@ -665,7 +665,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                alert("Failed to add errand.");
+                showGlobalAlert("Failed to add errand.");
             }
         }
 
@@ -869,5 +869,6 @@
         // Initialize
         fetchErrands();
     </script>
+    {% include 'components/control_center.html' %}
 </body>
 </html>

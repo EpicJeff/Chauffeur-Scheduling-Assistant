@@ -732,14 +732,14 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     res = _call_llm_json(provider, url, api_key, model, system_prompt, "Please analyze the original vs modified schedules and generate the rules.")
     return res
 
-def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = None, context: dict = None) -> str:
+def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = None, context: dict = None, conversation_id: str = None) -> str:
     import json
+    import time
     import urllib.request
     from services import storage
     from services import agent_tools
     
-    settings_docs = storage.settings_table.all()
-    settings = settings_docs[0] if settings_docs else {}
+    settings = storage.get_settings()
     
     import os
     if os.path.exists('/data/options.json'):
@@ -778,9 +778,96 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             page_context_str += f"(Failed to load extended page context: {str(e)})\n"
             
     provider = settings.get('llm_provider', 'gemini')
+    if context and context.get('model_override'):
+        provider = context.get('model_override')
     
-    storage.add_chat_message('user', user_msg)
-    raw_history = storage.get_chat_history(limit=20)
+    if not conversation_id:
+        convs = storage.get_all_conversations()
+        general_convs = [c for c in convs if c.get('type') == 'general']
+        if general_convs:
+            conversation_id = general_convs[0]['id']
+        else:
+            import uuid
+            conversation_id = storage.create_conversation({
+                'id': uuid.uuid4().hex,
+                'type': 'general', 
+                'mode': 'standard', 
+                'title': 'General Chat', 
+                'messages': [],
+                'created_at': time.time(),
+                'updated_at': time.time()
+            })
+            
+    storage.add_message_to_conversation(conversation_id, {'role': 'user', 'content': user_msg, 'timestamp': time.time()})
+    
+    conv = storage.get_conversation(conversation_id)
+    
+    mode = context.get('mode') if context and context.get('mode') else (conv.get('mode', 'standard') if conv else 'standard')
+    if mode == 'planner':
+        path = context.get('pathname', '') if context else ''
+        search = context.get('search', '') if context else ''
+        duration_days = context.get('duration_days', 1) if context else 1
+        
+        event_id = None
+        if 'trip' in path and 'event_id=' in search:
+            from urllib.parse import parse_qs
+            qs = parse_qs(search.lstrip('?'))
+            event_id = qs.get('event_id', [''])[0]
+            
+        if not event_id:
+            err = "⚠️ Smart Planner mode is only available on a specific Trip page."
+            storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
+            return err
+            
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            err = "⚠️ Trip not found."
+            storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
+            return err
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        
+        # Determine intent (POIs vs Accommodations)
+        system_prompt = "You are a classifier. The user is asking to add things to their trip itinerary. Decide if they are asking for 'accommodations' (hotels, airbnbs, lodging, places to stay, house) or 'pois' (activities, restaurants, sights, points of interest, etc). Respond with a JSON object exactly like this: {\"intent\": \"accommodations\"} or {\"intent\": \"pois\"}."
+        
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        api_key = settings.get('llm_gemini_api_key', '')
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
+        
+        try:
+            res = _call_llm_json(provider, url, api_key, model, system_prompt, user_msg)
+            intent = res.get('intent', 'pois').lower()
+        except Exception as e:
+            print(f"Failed to classify intent: {e}")
+            intent = 'pois'
+            
+        if intent == 'accommodations':
+            from services.trip_planner import generate_trip_accommodations
+            accs = generate_trip_accommodations(trip_obj, user_msg)
+            
+            if 'accommodations' not in meta:
+                meta['accommodations'] = []
+            for acc in accs:
+                meta['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
+                
+            reply = f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
+        else:
+            from services.trip_planner import generate_trip_pois
+            pois = generate_trip_pois(trip_obj, user_msg, duration_days)
+            
+            if 'pois' not in meta:
+                meta['pois'] = []
+            for poi in pois:
+                meta['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
+                
+            reply = f"✨ I've generated and added {len(pois)} new Points of Interest to your trip based on your request!"
+            
+        storage.set_trip_metadata(event_id, meta)
+        storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})
+        return reply
+
+    raw_history = conv.get('messages', [])[-20:] if conv else []
     
     ai_memory = settings.get('ai_memory', '')
     memory_str = f"\n\nCUSTOM INSTRUCTIONS (Memory):\n{ai_memory}\n" if ai_memory else ""
@@ -847,7 +934,7 @@ You can use update_memory to save persistent rules, preferences, or global instr
                     msg_resp = data.get('message', {})
             except Exception as e:
                 err = f"Ollama request failed: {str(e)}"
-                storage.add_chat_message('assistant', err)
+                storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
                 return err
                 
             messages.append(msg_resp)
@@ -879,14 +966,14 @@ You can use update_memory to save persistent rules, preferences, or global instr
                     messages.append(tool_msg)
             else:
                 final_text = msg_resp.get("content", "")
-                storage.add_chat_message('assistant', final_text)
+                storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': final_text, 'timestamp': time.time()})
                 return final_text
                 
     elif provider == 'gemini':
         api_key = settings.get('llm_gemini_api_key', '')
         if not api_key:
             err = "Error: Gemini API Key is missing. Please configure it in the settings."
-            storage.add_chat_message('assistant', err)
+            storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
             return err
             
         gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
@@ -926,12 +1013,12 @@ You can use update_memory to save persistent rules, preferences, or global instr
                     if hasattr(e, 'read'):
                         err += f" {e.read().decode('utf-8')}"
                 except: pass
-                storage.add_chat_message('assistant', err)
+                storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
                 return err
                 
             if "candidates" not in data or not data["candidates"]:
                 err = "Gemini returned empty response."
-                storage.add_chat_message('assistant', err)
+                storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
                 return err
                 
             candidate = data["candidates"][0]
@@ -963,7 +1050,51 @@ You can use update_memory to save persistent rules, preferences, or global instr
                 })
             else:
                 final_text = "".join([p.get("text", "") for p in parts if "text" in p])
-                storage.add_chat_message('assistant', final_text)
+                storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': final_text, 'timestamp': time.time()})
                 return final_text
 
     return "Error: Max loops reached or unknown provider."
+
+def auto_name_conversation(conversation_id: str, first_message: str):
+    from services import storage
+    import json
+    import urllib.request
+    try:
+        settings = storage.get_settings()
+        provider = settings.get('llm_provider', 'gemini')
+        prompt = f"Summarize this message into a short 3-5 word conversation title. DO NOT use quotes. Message: \n{first_message}"
+        
+        title = ""
+        if provider == 'ollama':
+            url = settings.get('llm_ollama_url', 'http://localhost:11434')
+            model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+            req_url = f"{url.rstrip('/')}/api/chat"
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0.3}
+            }
+            req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                title = data.get('message', {}).get('content', '')
+        elif provider == 'gemini':
+            api_key = settings.get('llm_gemini_api_key', '')
+            gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+            if api_key:
+                req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.3}
+                }
+                req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    title = data['candidates'][0]['content']['parts'][0]['text']
+
+        title = title.strip().replace('"', '')
+        if title:
+            storage.update_conversation_title(conversation_id, title)
+    except Exception as e:
+        print(f"Error auto-naming conversation: {e}")

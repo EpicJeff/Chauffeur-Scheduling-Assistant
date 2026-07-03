@@ -4,6 +4,21 @@ from datetime import datetime
 import uuid
 import time
 
+class Message(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    role: str
+    content: str
+    timestamp: float = Field(default_factory=time.time)
+
+class Conversation(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    type: str = "general" # 'general', 'schedule', 'errands', 'trips'
+    mode: str = "standard" # 'standard', 'planner'
+    title: str = "New Conversation"
+    context_id: Optional[str] = None # Trip ID, Errand ID, etc.
+    messages: List[Message] = Field(default_factory=list)
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
 class Event(BaseModel):
     id: str
     title: str
@@ -233,6 +248,25 @@ class TripPOI(BaseModel):
     scheduled_start: Optional[float] = None
     scheduled_end: Optional[float] = None
     event_id: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    wikidata_id: Optional[str] = None
+    opening_hours: Optional[str] = None
+
+class TripAccommodation(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    location: str
+    mapbox_id: Optional[str] = None
+    check_in_date: Optional[str] = None # YYYY-MM-DD
+    check_out_date: Optional[str] = None # YYYY-MM-DD
+    notes: Optional[str] = None
+    event_id: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    wikidata_id: Optional[str] = None
+    opening_hours: Optional[str] = None
+    image_url: Optional[str] = None
 
 class TripMetadata(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -248,6 +282,7 @@ class TripMetadata(BaseModel):
     notes: Optional[str] = None
     timeZone: Optional[str] = None
     pois: List[TripPOI] = Field(default_factory=list)
+    accommodations: List[TripAccommodation] = Field(default_factory=list)
 
 class CreateTripRequest(BaseModel):
     title: str

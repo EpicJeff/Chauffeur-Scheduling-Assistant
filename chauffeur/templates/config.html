@@ -2553,13 +2553,13 @@
                         }
                         
                         if (data.new_rules_count === 0 && data.new_priority_rules_count === 0) {
-                            alert("Analysis complete. No new significant patterns were found that aren't already covered by your existing rules.");
+                            showGlobalAlert("Analysis complete. No new significant patterns were found that aren't already covered by your existing rules.");
                         } else {
-                            alert(`Analysis complete!\nAdded ${data.new_rules_count} new standard rules.\nAdded ${data.new_priority_rules_count} new priority rules.\n(Duplicates were ignored)`);
+                            showGlobalAlert(`Analysis complete!\nAdded ${data.new_rules_count} new standard rules.\nAdded ${data.new_priority_rules_count} new priority rules.\n(Duplicates were ignored)`);
                         }
                         await this.loadRules();
                     } catch (e) {
-                        alert(e.message);
+                        showGlobalAlert(e.message);
                     } finally {
                         this.analyzingHabits = false;
                     }
@@ -2683,13 +2683,13 @@
                         fetch(`${apiBase}api/cache`, { method: 'DELETE' })
                             .then(r => {
                                 if (r.ok) {
-                                    alert("Caches cleared successfully.");
+                                    showGlobalAlert("Caches cleared successfully.");
                                 } else {
-                                    alert("Failed to clear caches: HTTP status " + r.status);
+                                    showGlobalAlert("Failed to clear caches: HTTP status " + r.status);
                                 }
                             })
                             .catch(err => {
-                                alert("Failed to clear caches: " + err);
+                                showGlobalAlert("Failed to clear caches: " + err);
                             });
                     }
                 },
@@ -2856,7 +2856,7 @@
                 async submitPassenger() {
                     this.saving = true;
                     try {
-                        if (!this.newPassenger.name) return alert('Name is required');
+                        if (!this.newPassenger.name) return showGlobalAlert('Name is required');
                         const payload = { ...this.newPassenger };
 
                         if (this.editPassengerId) {
@@ -2999,16 +2999,16 @@
                         if (this.newRule.constraint_type === 'attendance' || this.newRule.constraint_type === 'no_split') {
                             this.newRule.driver_id = 'any';
                         }
-                        if (!this.newRule.driver_id) return alert('Driver is required');
+                        if (!this.newRule.driver_id) return showGlobalAlert('Driver is required');
 
                         if (this.newRule.constraint_type === 'group') {
-                            if (this.newRule.filter_sets.length < 2) return alert('You must specify at least two filter sets to group');
+                            if (this.newRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group');
                             for (let i = 0; i < this.newRule.filter_sets.length; i++) {
                                 let fs = this.newRule.filter_sets[i];
-                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.time_start && !fs.time_end && !fs.location) return alert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, time, etc)');
+                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.time_start && !fs.time_end && !fs.location) return showGlobalAlert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, time, etc)');
                             }
                         } else {
-                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return alert('You must specify at least one constraint (keyword, passenger, time, etc)');
+                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, time, etc)');
                         }
 
                         const payload = JSON.parse(JSON.stringify(this.newRule));
@@ -3082,7 +3082,7 @@
                         }
                         this.newPriorityRuleKeywordInput = '';
 
-                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return alert('You must specify at least one constraint (keyword, passenger, time, etc)');
+                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, time, etc)');
                         this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
 
                         const payload = JSON.parse(JSON.stringify(this.newPriorityRule));
@@ -3173,8 +3173,8 @@
                     await this.loadErrandRules();
                 },
                 async submitErrandRule() {
-                    if (!this.newErrandRule.title) return alert('Title is required');
-                    if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return alert('You must specify at least two filter sets to group errands');
+                    if (!this.newErrandRule.title) return showGlobalAlert('Title is required');
+                    if (this.newErrandRule.constraint_type === 'grouping' && this.newErrandRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group errands');
                     const payload = {
                         title: this.newErrandRule.title,
                         constraint_type: this.newErrandRule.constraint_type,
@@ -3340,9 +3340,9 @@
                             }
                         }
                         this.showMapboxSyncModal = false;
-                        alert('Mapbox usage synced successfully!');
+                        showGlobalAlert('Mapbox usage synced successfully!');
                     } catch (e) {
-                        alert(`Error syncing usage: ${e.message}`);
+                        showGlobalAlert(`Error syncing usage: ${e.message}`);
                     } finally {
                         this.syncingMapbox = false;
                     }
@@ -3366,7 +3366,7 @@
                         this.aiRulesResult = data.message;
 
                         if (data.success) {
-                            alert("AI Rules Synthesized Successfully!");
+                            showGlobalAlert("AI Rules Synthesized Successfully!");
                             await this.loadRules();
                             await this.loadPriorityRules();
                             await this.loadThemes();
@@ -3394,7 +3394,7 @@
                     }
 
                     if (!targetText || !targetText.trim()) {
-                        alert('Please enter some text first before attempting to refine it.');
+                        showGlobalAlert('Please enter some text first before attempting to refine it.');
                         this.refiningPhilosophy = false;
                         this.refiningDriverBio = false;
                         this.refiningPassengerBio = false;
@@ -3421,10 +3421,10 @@
                                 this.newPassenger.bio = data.refined_text;
                             }
                         } else {
-                            alert(`Failed to refine text: ${data.message}`);
+                            showGlobalAlert(`Failed to refine text: ${data.message}`);
                         }
                     } catch (e) {
-                        alert(`Error refining text: ${e.message}`);
+                        showGlobalAlert(`Error refining text: ${e.message}`);
                     } finally {
                         this.refiningPhilosophy = false;
                         this.refiningDriverBio = false;

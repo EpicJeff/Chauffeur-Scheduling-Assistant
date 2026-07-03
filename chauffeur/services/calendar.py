@@ -145,7 +145,8 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
                         "source_event_ids": [],
                         "recurring_event_id": e.get('recurringEventId') or (e['id'].split('_')[0] if '_' in e.get('id', '') else None),
                         "trip_id": e.get('extendedProperties', {}).get('private', {}).get('trip_id'),
-                        "poi_id": e.get('extendedProperties', {}).get('private', {}).get('poi_id')
+                        "poi_id": e.get('extendedProperties', {}).get('private', {}).get('poi_id'),
+                        "event_type": e.get('extendedProperties', {}).get('private', {}).get('event_type') or "standard"
                     }
                 
                 grouped_events[group_key]["calendar_ids"].append(cal_id)
@@ -167,6 +168,7 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
             source_event_ids=g["source_event_ids"],
             recurring_event_id=g.get("recurring_event_id"),
             all_day=g.get("all_day", False),
+            event_type=g.get("event_type", "standard"),
             trip_id=g.get("trip_id"),
             poi_id=g.get("poi_id")
         )
@@ -341,7 +343,7 @@ def write_event_color(calendar_id: str, event_id: str, color_id: str):
     except Exception as ex:
         print(f"Error updating color for {event_id}: {ex}")
 
-def create_event(calendar_id: str, title: str, start: str, end: str, location: str = None, description: str = None, trip_id: str = None, poi_id: str = None) -> str:
+def create_event(calendar_id: str, title: str, start: str, end: str, location: str = None, description: str = None, trip_id: str = None, poi_id: str = None, event_type: str = None) -> str:
     """
     Creates a new event in Google Calendar and returns the event ID.
     start and end should be ISO formatted datetime strings.
@@ -362,6 +364,8 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
         extended_props['trip_id'] = trip_id
     if poi_id:
         extended_props['poi_id'] = poi_id
+    if event_type:
+        extended_props['event_type'] = event_type
         
     if extended_props:
         event_body['extendedProperties'] = {'private': extended_props}
@@ -372,3 +376,17 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
     except Exception as ex:
         print(f"Error creating event in {calendar_id}: {ex}")
         return None
+
+def delete_event(calendar_id: str, event_id: str):
+    """
+    Deletes an event from Google Calendar.
+    """
+    service = get_calendar_service()
+    original_id = event_id.split('::', 1)[-1]
+    try:
+        service.events().delete(calendarId=calendar_id, eventId=original_id).execute()
+        return True
+    except Exception as ex:
+        print(f"Error deleting event {event_id} from {calendar_id}: {ex}")
+        return False
+

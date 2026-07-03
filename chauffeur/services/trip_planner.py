@@ -26,7 +26,7 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int 
         
     system_prompt = """You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-The user's trip is """ + str(duration_days) + """ days long. Your job is to suggest enough Points of Interest (POIs) to fill this trip (aim for 2-3 POIs per day, up to a maximum of 12 suggestions per response) that match their request and are located in or near the specified Trip Location.
+The user's trip is """ + str(duration_days) + """ days long. Your job is to suggest enough Points of Interest (POIs) to fill this trip (aim for 3-5 POIs per day, up to a maximum of 30 suggestions per response) that match their request and are located in or near the specified Trip Location.
 If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
 
 You MUST respond with a single valid JSON object of the following exact structure:
@@ -74,18 +74,37 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         name = s.get('name')
         query = s.get('search_query', name)
         
-        # Ground to real location using Mapbox autocomplete/search
-        locations = maps.autocomplete_location(query)
+        import re
+        clean_query = re.sub(r'\(.*?\)', '', query).strip()
+        clean_name = re.sub(r'\(.*?\)', '', name).strip()
+        
+        # Ground to real location using Mapbox search
+        locations = maps.search_places(clean_query, trip.location)
         best_location = query # Fallback
         mapbox_id = None
+        poi_lat = None
+        poi_lng = None
         
         if locations:
             # Pick the first result
-            best_location = locations[0].get('description', query)
+            best_location = locations[0].get('address') or locations[0].get('name') or query
             mapbox_id = locations[0].get('mapbox_id')
+            poi_lat = locations[0].get('lat')
+            poi_lng = locations[0].get('lon')
+            wikidata_id = locations[0].get('wikidata_id')
+            opening_hours = locations[0].get('opening_hours')
+        else:
+            wikidata_id = None
+            opening_hours = None
             
         encoded_query = urllib.parse.quote(f"{name} {best_location}")
-        image_url = f"/api/unsplash/background?query={urllib.parse.quote(name)}"
+        
+        # Build image URL with wikidata_id if available
+        if wikidata_id:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+        else:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            
         link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
             
         poi = TripPOI(
@@ -101,7 +120,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             link=link,
             ideal_time_start=s.get('ideal_time_start'),
             ideal_time_end=s.get('ideal_time_end'),
-            duration_mins=s.get('duration_mins', 90)
+            duration_mins=s.get('duration_mins', 90),
+            lat=poi_lat,
+            lng=poi_lng,
+            wikidata_id=wikidata_id,
+            opening_hours=opening_hours
         )
         pois.append(poi)
         
@@ -139,6 +162,21 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc),
                     p.location
                 ))
+                
+        accommodation_events = []
+        for acc in getattr(trip, 'accommodations', []):
+            if acc.check_in_date and acc.check_out_date:
+                class MockAccEvent:
+                    def __init__(self, start, end, location):
+                        self.start = start
+                        self.end = end
+                        self.location = location
+                try:
+                    start_dt = datetime.datetime.strptime(acc.check_in_date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+                    end_dt = datetime.datetime.strptime(acc.check_out_date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+                    accommodation_events.append(MockAccEvent(start_dt, end_dt, acc.location))
+                except Exception:
+                    pass
     else:
         # Standard Scheduling Engine
         events = calendar.fetch_upcoming_events(cals, days=60)
@@ -156,9 +194,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             trip_cals = cals
             
         overlapping_events = []
+        accommodation_events = []
         for e in events:
             if e.id == trip_event.id:
                 continue
+            if getattr(e, 'event_type', 'standard') == 'trip_background':
+                if getattr(e, 'trip_id', None) == trip.id:
+                    accommodation_events.append(e)
+                continue
+                
             if e.end > trip_start and e.start < trip_end:
                 if any(c in trip_cals for c in e.calendar_ids):
                     overlapping_events.append(e)
@@ -196,6 +240,24 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
     # Hard cap: don't start anything after 9:30 PM unless it's explicitly marked for nightlife
     hard_cap_start = datetime.time(21, 30)
     
+    poi_hours_start = None
+    poi_hours_end = None
+    if getattr(poi, 'opening_hours', None):
+        oh = poi.opening_hours.lower()
+        if '24/7' in oh:
+            poi_hours_start = datetime.time(0, 0)
+            poi_hours_end = datetime.time(23, 59)
+        else:
+            import re
+            match = re.search(r'(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})', oh)
+            if match:
+                try:
+                    h1, m1, h2, m2 = map(int, match.groups())
+                    poi_hours_start = datetime.time(h1, m1)
+                    poi_hours_end = datetime.time(h2, m2)
+                except ValueError:
+                    pass
+    
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
     buffer_delta = datetime.timedelta(minutes=30)
     
@@ -230,11 +292,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             slot_time = slot_local.time()
             slot_date = slot_local.strftime("%Y-%m-%d")
             
-            if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+            if (slot_time < datetime.time(8, 0) or slot_time > hard_cap_start) and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
             if enforce_ideal_times:
                 if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
+                    continue
+            
+            if poi_hours_start and poi_hours_end:
+                if slot_time < poi_hours_start or slot_end.astimezone(local_tz).time() > poi_hours_end:
                     continue
                 
             overlaps = False
@@ -293,6 +359,28 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             days_from_start = (slot_local.date() - trip_start.astimezone(local_tz).date()).days
             score += max(0, 100 - (days_from_start * 10))
             
+            day_home_base = trip.location
+            for acc in accommodation_events:
+                # Check if slot date falls between check in and check out dates (accounting for timezones)
+                if acc.start.date() <= slot_start.date() <= acc.end.date():
+                    day_home_base = acc.location
+                    break
+                    
+            if poi.location and day_home_base:
+                key = (day_home_base, poi.location)
+                if key not in location_travel_times:
+                    location_travel_times[key] = maps.get_travel_time_minutes(day_home_base, poi.location)
+                travel_mins_from_base = location_travel_times[key]
+                
+                if travel_mins_from_base > 60:
+                    score -= 1000
+                elif travel_mins_from_base > 45:
+                    score -= 500
+                elif travel_mins_from_base > 30:
+                    score -= 200
+                else:
+                    score += 200
+            
             scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
             for sp in scheduled_on_day:
                 poi_loc_clean = (poi.location or "").lower().strip()
@@ -344,7 +432,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                 best_alt_start = alt_slots[0][1]
                 suggested_fixes.append({
                     "type": "clear_times",
-                    "label": f"Schedule at {best_alt_start.strftime('%a %I:%M %p')} (Ignore Ideal Times)"
+                    "label": f"Schedule at {best_alt_start.astimezone(local_tz).strftime('%a %I:%M %p')} (Ignore Ideal Times)"
                 })
         
         return None, "Could not find an available time slot matching constraints (e.g. ideal times, overlapping activities, or meal conflicts).", {"suggested_fixes": suggested_fixes}
@@ -446,3 +534,316 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Dict[str, Dict
                     results[poi.id]["suggested_fixes"] = meta["suggested_fixes"]
                 
     return results
+
+def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> List[TripAccommodation]:
+    """
+    Generates suggested accommodations based on the user's prompt and currently scheduled POIs.
+    """
+    from services.llm import _call_llm_json
+    from models.schemas import TripAccommodation
+    
+    settings = storage.get_settings()
+    provider = settings.get('llm_provider', 'gemini')
+    if provider == 'ollama':
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+        api_key = None
+    else:
+        url = ""
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        api_key = settings.get('llm_gemini_api_key')
+        
+    system_prompt = """You are an expert travel agent. 
+The user wants to find accommodations (hotels, Airbnbs, chateaus, etc.) for their trip.
+Review their scheduled POIs to understand where they will be spending their time, and suggest central accommodations that minimize travel time.
+If they have a multi-leg trip (e.g., Paris for 3 days, Countryside for 2 days), suggest an accommodation for each leg, and specify the check-in and check-out dates.
+
+You MUST respond with a single valid JSON object of the following exact structure:
+{
+  "accommodations": [
+    {
+      "name": "The name of the accommodation (e.g., Ritz Paris)",
+      "location": "A search query or address to find this place on a map (e.g. 'Ritz, Paris, France')",
+      "notes": "Explain why this is a good fit and what POIs it is close to.",
+      "check_in_date": "YYYY-MM-DD",
+      "check_out_date": "YYYY-MM-DD"
+    }
+  ]
+}
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
+"""
+    
+    scheduled_pois = [p for p in trip.pois if p.is_scheduled and p.scheduled_start]
+    poi_context = "Scheduled POIs:\n"
+    import datetime
+    for p in scheduled_pois:
+        dt = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc)
+        poi_context += f"- {p.name} at {p.location} on {dt.strftime('%Y-%m-%d')}\n"
+        
+    if not scheduled_pois:
+        poi_context = "No POIs scheduled yet.\n"
+        
+    existing_accs = [a.name for a in trip.accommodations]
+    existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
+    
+    user_req = (
+        f"Trip Title: {trip.title or 'Unknown'}\n"
+        f"Trip Location: {trip.location or 'Unknown'}\n"
+        f"Existing Accommodations: {existing_accs_str}\n"
+        f"{poi_context}\n"
+        f"User Request: {user_prompt}\n"
+        f"Generate accommodation suggestions."
+    )
+    
+    try:
+        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+    except Exception as e:
+        print(f"Error generating accommodations: {e}")
+        return []
+        
+    suggestions = response_json.get('accommodations', [])
+    accs = []
+    
+    for s in suggestions:
+        name = s.get('name')
+        query = s.get('location', name)
+        
+        # Ground to real location using Mapbox search
+        locations = maps.search_places(query, trip.location)
+        best_location = query # Fallback
+        mapbox_id = None
+        lat = None
+        lng = None
+        
+        if locations:
+            best_location = locations[0].get('address') or locations[0].get('name') or query
+            mapbox_id = locations[0].get('mapbox_id')
+            lat = locations[0].get('lat')
+            lng = locations[0].get('lon')
+            wikidata_id = locations[0].get('wikidata_id')
+            opening_hours = locations[0].get('opening_hours')
+        else:
+            wikidata_id = None
+            opening_hours = None
+            
+        acc = TripAccommodation(
+            id=uuid.uuid4().hex,
+            name=name,
+            location=best_location,
+            mapbox_id=mapbox_id,
+            lat=lat,
+            lng=lng,
+            wikidata_id=wikidata_id,
+            opening_hours=opening_hours,
+            check_in_date=s.get('check_in_date'),
+            check_out_date=s.get('check_out_date'),
+            notes=s.get('notes')
+        )
+        accs.append(acc)
+        
+    return accs
+
+
+def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: int = 1):
+    from services.llm import _call_llm_json
+    import urllib.parse
+    import datetime
+    import uuid
+    import re
+    from models.schemas import TripPOI, TripAccommodation
+    from services import storage, maps
+    
+    settings = storage.get_settings()
+    provider = settings.get('llm_provider', 'gemini')
+    if provider == 'ollama':
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+        api_key = None
+    else:
+        url = ""
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        api_key = settings.get('llm_gemini_api_key')
+        
+    num_pois = max(1, duration_days * 4)
+    
+    system_prompt = f"""You are an expert travel agent. 
+The user will provide a prompt describing what they want to do on their trip.
+The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including both accommodations and Points of Interest (POIs).
+Since the trip is {duration_days} days, please generate approximately {num_pois} POIs to ensure a full itinerary, and 1 or more accommodations based on the trip length.
+
+You MUST respond with a single valid JSON object of the following exact structure:
+{{
+  "accommodations": [
+    {{
+      "name": "The name of the accommodation (e.g., Ritz Paris)",
+      "location": "A search query or address to find this place on a map (e.g. 'Ritz, Paris, France')",
+      "notes": "Explain why this is a good fit and what POIs it is close to.",
+      "check_in_date": "YYYY-MM-DD",
+      "check_out_date": "YYYY-MM-DD"
+    }}
+  ],
+  "pois": [
+    {{
+      "name": "The name of the location (e.g., French Laundry)",
+      "category": "A predefined category string. MUST be one of exactly these: 'sightseeing', 'food', 'activity', 'shopping', or 'other'",
+      "description": "A 1-2 sentence compelling description of the experience.",
+      "why_picked": "Explain why this specifically matches the user's request (e.g., 'You mentioned wanting a Michelin star experience...').",
+      "experience": "Describe what they will actually do there, what the vibe is like, or tips for the visit.",
+      "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
+      "duration_mins": 90,
+      "ideal_time_start": "09:00",
+      "ideal_time_end": "12:00"
+    }}
+  ]
+}}
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes.
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
+"""
+
+    if trip.is_draft and trip.mock_start_date:
+        trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+    else:
+        trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
+    trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+    
+    date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')}\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')}"
+    
+    existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
+    existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
+    
+    existing_accs = [a.name for a in trip.accommodations] if trip.accommodations else []
+    existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
+    
+    user_req = (
+        f"Trip Title: {trip.title or 'Unknown'}\n"
+        f"Trip Location: {trip.location or 'Unknown'}\n"
+        f"Trip Notes/Context: {trip.notes or 'None'}\n"
+        f"{date_bounds_str}\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
+        f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
+        f"User Request: {user_prompt}\n"
+        f"Generate a full itinerary with exactly {num_pois} POIs and required accommodations."
+    )
+    
+    try:
+        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+    except Exception as e:
+        print(f"Error generating trip plan: {e}")
+        return [], []
+        
+    sugg_pois = response_json.get('pois', [])
+    sugg_accs = response_json.get('accommodations', [])
+    
+    pois = []
+    for s in sugg_pois:
+        name = s.get('name')
+        
+        # Deduplication check
+        if any(p.lower() == name.lower() for p in existing_poi_names):
+            continue
+            
+        query = s.get('search_query', name)
+        
+        clean_query = re.sub(r'\(.*?\)', '', query).strip()
+        clean_name = re.sub(r'\(.*?\)', '', name).strip()
+        
+        locations = maps.search_places(clean_query, trip.location)
+        best_location = query # Fallback
+        mapbox_id = None
+        poi_lat = None
+        poi_lng = None
+        
+        if locations:
+            best_location = locations[0].get('address') or locations[0].get('name') or query
+            mapbox_id = locations[0].get('mapbox_id')
+            poi_lat = locations[0].get('lat')
+            poi_lng = locations[0].get('lon')
+            wikidata_id = locations[0].get('wikidata_id')
+            opening_hours = locations[0].get('opening_hours')
+        else:
+            wikidata_id = None
+            opening_hours = None
+            
+        encoded_query = urllib.parse.quote(f"{name} {best_location}")
+        
+        if wikidata_id:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+        else:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            
+        link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
+            
+        poi = TripPOI(
+            id=uuid.uuid4().hex,
+            name=name,
+            location=best_location,
+            mapbox_id=mapbox_id,
+            lat=poi_lat,
+            lng=poi_lng,
+            wikidata_id=wikidata_id,
+            opening_hours=opening_hours,
+            category=s.get('category', 'other'),
+            description=s.get('description'),
+            why_picked=s.get('why_picked'),
+            experience=s.get('experience'),
+            ideal_time_start=s.get('ideal_time_start'),
+            ideal_time_end=s.get('ideal_time_end'),
+            duration_mins=s.get('duration_mins', 90),
+            image_url=image_url,
+            google_maps_link=link
+        )
+        pois.append(poi)
+
+    accs = []
+    for s in sugg_accs:
+        name = s.get('name')
+        
+        # Deduplication check
+        if any(a.lower() == name.lower() for a in existing_accs):
+            continue
+            
+        query = s.get('location', name)
+        
+        clean_query = re.sub(r'\(.*?\)', '', query).strip()
+        clean_name = re.sub(r'\(.*?\)', '', name).strip()
+        
+        locations = maps.search_places(clean_query, trip.location)
+        best_location = query # Fallback
+        mapbox_id = None
+        lat = None
+        lng = None
+        
+        if locations:
+            best_location = locations[0].get('address') or locations[0].get('name') or query
+            mapbox_id = locations[0].get('mapbox_id')
+            lat = locations[0].get('lat')
+            lng = locations[0].get('lon')
+            wikidata_id = locations[0].get('wikidata_id')
+            opening_hours = locations[0].get('opening_hours')
+        else:
+            wikidata_id = None
+            opening_hours = None
+            
+        if wikidata_id:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+        else:
+            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            
+        acc = TripAccommodation(
+            id=uuid.uuid4().hex,
+            name=name,
+            location=best_location,
+            mapbox_id=mapbox_id,
+            lat=lat,
+            lng=lng,
+            wikidata_id=wikidata_id,
+            opening_hours=opening_hours,
+            image_url=image_url,
+            check_in_date=s.get('check_in_date'),
+            check_out_date=s.get('check_out_date'),
+            notes=s.get('notes')
+        )
+        accs.append(acc)
+        
+    return pois, accs

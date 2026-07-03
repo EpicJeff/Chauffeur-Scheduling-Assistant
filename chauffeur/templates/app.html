@@ -273,7 +273,7 @@
                 fetchSchedule(true);
             } catch (err) {
                 console.error(err);
-                alert("Failed to complete errand");
+                showGlobalAlert("Failed to complete errand");
                 if (btnElement) {
                     btnElement.disabled = false;
                     btnElement.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg> Mark Errand Completed`;
@@ -358,9 +358,9 @@
 
         async function testPushNotification() {
             try {
-                if (!currentDriverId) return alert("Select a driver first");
+                if (!currentDriverId) return showGlobalAlert("Select a driver first");
                 const res = await fetch(`${apiBase}api/telemetry/test_push?driver_id=${currentDriverId}`, { method: 'POST' });
-                if (res.ok) alert("Test push notification sent!");
+                if (res.ok) showGlobalAlert("Test push notification sent!");
             } catch (err) {
                 console.error(err);
             }
@@ -438,12 +438,12 @@
 
         async function enableNotifications() {
             if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                alert("Push notifications are not supported by your browser.");
+                showGlobalAlert("Push notifications are not supported by your browser.");
                 return;
             }
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') {
-                alert("Permission not granted.");
+                showGlobalAlert("Permission not granted.");
                 return;
             }
 
@@ -465,10 +465,10 @@
                         subscription: subscription
                     })
                 });
-                alert("Notifications enabled!");
+                showGlobalAlert("Notifications enabled!");
             } catch (e) {
                 console.error(e);
-                alert("Failed to enable notifications: " + e.message);
+                showGlobalAlert("Failed to enable notifications: " + e.message);
             }
         }
 
@@ -655,7 +655,7 @@
                 console.error("Failed to start drive", e);
                 btn.disabled = false;
                 btn.innerHTML = `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start Drive`;
-                alert("Failed to start drive. Check connection.");
+                showGlobalAlert("Failed to start drive. Check connection.");
             }
         }
 
@@ -1415,17 +1415,31 @@
             }
         }
 
+        let activeConversationId = null;
+
         async function loadChatHistory() {
             if (!chatMessages) return;
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/chat/history`);
-                const data = await res.json();
-                chatMessages.innerHTML = '';
-                if (data.history && data.history.length > 0) {
-                    data.history.forEach(msg => appendMessage(msg.role, msg.content));
-                } else {
-                    appendMessage('assistant', 'Hello! I am Argyle. Need help with your route today?');
+                
+                // Fetch conversations to find active one
+                const cRes = await fetch(`${apiBase}api/chat/conversations`);
+                const cData = await cRes.json();
+                if (cData.conversations && cData.conversations.length > 0) {
+                    const gen = cData.conversations.find(c => c.type === 'general');
+                    if (gen) activeConversationId = gen.id;
+                    else activeConversationId = cData.conversations[0].id;
+                }
+
+                if (activeConversationId) {
+                    const res = await fetch(`${apiBase}api/chat/history?conversation_id=${activeConversationId}`);
+                    const data = await res.json();
+                    chatMessages.innerHTML = '';
+                    if (data.history && data.history.length > 0) {
+                        data.history.forEach(msg => appendMessage(msg.role, msg.content));
+                    } else {
+                        appendMessage('assistant', 'Hello! I am Argyle. Need help with your route today?');
+                    }
                 }
                 scrollToBottom();
             } catch (err) {
@@ -1470,7 +1484,7 @@
                 const res = await fetch(`${apiBase}api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId })
+                    body: JSON.stringify({ message: text, source: 'pwa', driver_id: selectedDriverId, conversation_id: activeConversationId })
                 });
 
                 const data = await res.json();

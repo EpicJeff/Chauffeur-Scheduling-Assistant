@@ -683,6 +683,75 @@ def delete_trip(event_id: str):
     storage.delete_trip_metadata(event_id)
     return {"success": True}
 
+
+@app.post("/api/trip/{event_id}/generate_plan")
+def generate_trip_plan_api(event_id: str, payload: dict):
+    user_prompt = payload.get("prompt", "")
+    duration_days = payload.get("duration_days", 1)
+    
+    if not user_prompt:
+        return {"error": "Prompt is required"}
+        
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found"}
+        
+    from models.schemas import TripMetadata
+    trip_obj = TripMetadata(**meta)
+    
+    from services.trip_planner import generate_trip_plan
+    pois, accs = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    
+    # Save back to trip metadata
+    if 'pois' not in meta:
+        meta['pois'] = []
+    if 'accommodations' not in meta:
+        meta['accommodations'] = []
+        
+    for poi in pois:
+        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+        meta['pois'].append(poi_dict)
+        
+    for acc in accs:
+        acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+        meta['accommodations'].append(acc_dict)
+        
+    storage.set_trip_metadata(event_id, meta)
+    
+    return {"pois": meta['pois'], "accommodations": meta['accommodations']}
+
+@app.post("/api/trip/{event_id}/generate_accommodations")
+def generate_trip_accommodations_api(event_id: str, payload: dict):
+    try:
+        user_prompt = payload.get("prompt")
+        if not user_prompt:
+            return {"error": "Prompt is required"}
+            
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        
+        from services.trip_planner import generate_trip_accommodations
+        accs = generate_trip_accommodations(trip_obj, user_prompt)
+        
+        # Save back to trip metadata
+        if 'accommodations' not in meta:
+            meta['accommodations'] = []
+        
+        for acc in accs:
+            acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+            meta['accommodations'].append(acc_dict)
+            
+        storage.set_trip_metadata(event_id, meta)
+        
+        return {"accommodations": meta['accommodations']}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")
@@ -804,6 +873,129 @@ def edit_trip_poi_api(event_id: str, poi_id: str, payload: dict):
         storage.set_trip_metadata(event_id, meta)
         
         return {"status": "ok", "poi": next((p for p in meta['pois'] if p['id'] == poi_id), {})}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.post("/api/trip/{event_id}/accommodation")
+def add_trip_accommodation_api(event_id: str, payload: dict):
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata, TripAccommodation
+        trip_obj = TripMetadata(**meta)
+        
+        acc = TripAccommodation(
+            name=payload.get("name", "New Accommodation"),
+            location=payload.get("location", ""),
+            check_in_date=payload.get("check_in_date"),
+            check_out_date=payload.get("check_out_date"),
+            notes=payload.get("notes")
+        )
+        
+        if not trip_obj.is_draft and acc.check_in_date and acc.check_out_date:
+            from services import calendar
+            settings = storage.get_settings()
+            cals = settings.get('calendar_ids', [])
+            if cals:
+                # Create an all-day or background event
+                acc.event_id = calendar.create_event(
+                    calendar_id=cals[0],
+                    title=f"Stay: {acc.name}",
+                    start=f"{acc.check_in_date}T15:00:00",
+                    end=f"{acc.check_out_date}T11:00:00",
+                    location=acc.location,
+                    description=acc.notes,
+                    trip_id=trip_obj.id,
+                    event_type="trip_background"
+                )
+        
+        if 'accommodations' not in meta:
+            meta['accommodations'] = []
+            
+        acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+        meta['accommodations'].append(acc_dict)
+        storage.set_trip_metadata(event_id, meta)
+        
+        return {"status": "ok", "accommodation": acc_dict}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.put("/api/trip/{event_id}/accommodation/{acc_id}")
+def edit_trip_accommodation_api(event_id: str, acc_id: str, payload: dict):
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        
+        acc = next((a for a in trip_obj.accommodations if a.id == acc_id), None)
+        if not acc:
+            return {"error": "Accommodation not found"}
+            
+        if "name" in payload: acc.name = payload["name"]
+        if "location" in payload: acc.location = payload["location"]
+        if "check_in_date" in payload: acc.check_in_date = payload["check_in_date"]
+        if "check_out_date" in payload: acc.check_out_date = payload["check_out_date"]
+        if "notes" in payload: acc.notes = payload["notes"]
+        
+        if not trip_obj.is_draft and acc.event_id:
+            from services import calendar
+            details = {
+                "title": f"Stay: {acc.name}",
+                "location": acc.location,
+                "description": acc.notes or "",
+            }
+            if acc.check_in_date and acc.check_out_date:
+                details["start"] = f"{acc.check_in_date}T15:00:00+00:00"
+                details["end"] = f"{acc.check_out_date}T11:00:00+00:00"
+                
+            # We assume the event is on the primary calendar; ideally we'd look up the exact source_event_id
+            settings = storage.get_settings()
+            cals = settings.get('calendar_ids', [])
+            if cals:
+                source_id = f"{cals[0]}::{acc.event_id}"
+                calendar.update_event_details([source_id], details)
+                
+        meta['accommodations'] = [a.model_dump() if hasattr(a, 'model_dump') else a.dict() for a in trip_obj.accommodations]
+        storage.set_trip_metadata(event_id, meta)
+        
+        return {"status": "ok", "accommodation": next((a for a in meta['accommodations'] if a['id'] == acc_id), {})}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.delete("/api/trip/{event_id}/accommodation/{acc_id}")
+def delete_trip_accommodation_api(event_id: str, acc_id: str):
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+            
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        
+        acc = next((a for a in trip_obj.accommodations if a.id == acc_id), None)
+        if not acc:
+            return {"error": "Accommodation not found"}
+            
+        if not trip_obj.is_draft and acc.event_id:
+            from services import calendar
+            settings = storage.get_settings()
+            cals = settings.get('calendar_ids', [])
+            if cals:
+                calendar.delete_event(cals[0], acc.event_id)
+                
+        trip_obj.accommodations = [a for a in trip_obj.accommodations if a.id != acc_id]
+        meta['accommodations'] = [a.model_dump() if hasattr(a, 'model_dump') else a.dict() for a in trip_obj.accommodations]
+        storage.set_trip_metadata(event_id, meta)
+        
+        return {"status": "ok"}
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
@@ -1414,25 +1606,71 @@ class ChatMessagePayload(BaseModel):
     source: Optional[str] = "admin"
     driver_id: Optional[str] = None
     context: Optional[dict] = None
+    conversation_id: Optional[str] = None
 
 @app.post("/api/chat")
-def handle_chat(payload: ChatMessagePayload):
-    from services.llm import agentic_chat_loop
+def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
+    from services.llm import agentic_chat_loop, auto_name_conversation
     try:
-        reply = agentic_chat_loop(payload.message, source=payload.source, driver_id=payload.driver_id, context=payload.context)
+        is_first = False
+        if payload.conversation_id:
+            conv = storage.get_conversation(payload.conversation_id)
+            if conv and len(conv.get("messages", [])) == 0:
+                is_first = True
+        
+        import threading
+        if is_first and payload.conversation_id:
+            threading.Thread(target=auto_name_conversation, args=(payload.conversation_id, payload.message)).start()
+
+        reply = agentic_chat_loop(
+            payload.message, 
+            source=payload.source, 
+            driver_id=payload.driver_id, 
+            context=payload.context,
+            conversation_id=payload.conversation_id
+        )
         return {"reply": reply}
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/api/chat/history")
-def get_chat_history():
-    return {"history": storage.get_chat_history()}
+def get_chat_history(conversation_id: str = None):
+    if not conversation_id:
+        return {"history": []}
+    conv = storage.get_conversation(conversation_id)
+    return {"history": conv.get("messages", []) if conv else []}
 
 @app.delete("/api/chat/history")
 def clear_chat_history():
     storage.clear_chat_history()
     return {"status": "cleared"}
+
+class CreateConversationPayload(BaseModel):
+    type: str = "general"
+    mode: str = "standard"
+    title: str = "New Conversation"
+    context_id: Optional[str] = None
+
+@app.get("/api/chat/conversations")
+def get_conversations():
+    return {"conversations": storage.get_all_conversations()}
+
+@app.post("/api/chat/conversations")
+def create_conversation(payload: CreateConversationPayload):
+    conv_data = payload.model_dump() if hasattr(payload, 'model_dump') else payload.dict()
+    import uuid, time
+    conv_data['id'] = uuid.uuid4().hex
+    conv_data['messages'] = []
+    conv_data['created_at'] = time.time()
+    conv_data['updated_at'] = time.time()
+    conv_id = storage.create_conversation(conv_data)
+    return {"id": conv_id, "conversation": conv_data}
+
+@app.delete("/api/chat/conversations/{conv_id}")
+def delete_conversation(conv_id: str):
+    storage.delete_conversation(conv_id)
+    return {"status": "deleted"}
 
 class LLMTestPayload(BaseModel):
     provider: str
@@ -1704,6 +1942,13 @@ def get_route_info(origin: str, destination: str):
     mins = maps.get_travel_time_minutes(origin, destination)
     return {"duration": f"{mins * 60}s", "distanceMeters": mins * 1000}  # Mock distance
 
+@app.get("/api/maps/route_geometry")
+def get_route_geometry_api(origin: str, destination: str, profile: str = "driving"):
+    result = maps.get_route_geometry(origin, destination, profile)
+    if result:
+        return result
+    return {"error": "Could not fetch route"}
+
 @app.get("/api/places/autocomplete")
 def get_places_autocomplete(input: str, session_token: str = None):
     suggestions = maps.autocomplete_location(input, session_token)
@@ -1728,11 +1973,61 @@ def get_places_geocode(address: str):
 from functools import lru_cache
 
 @lru_cache(maxsize=128)
-def _fetch_unsplash_url(query: str, api_key: str) -> str:
+def _fetch_wikidata_image(wikidata_id: str) -> str:
     import urllib.parse
     import requests
+    import hashlib
+    headers = {"User-Agent": "ChauffeurScheduleAssistant/1.0 (https://github.com/EpicJeff/Chauffeur-Scheduling-Assistant; jeff@example.com)"}
+    try:
+        url = f"https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={wikidata_id}&property=P18&format=json"
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.ok:
+            data = res.json()
+            claims = data.get('claims', {}).get('P18', [])
+            if claims:
+                filename = claims[0].get('mainsnak', {}).get('datavalue', {}).get('value')
+                if filename:
+                    # Construct wikimedia commons URL using Special:FilePath
+                    return f"https://commons.wikimedia.org/wiki/Special:FilePath/{urllib.parse.quote(filename)}?width=800"
+    except Exception as e:
+        print(f"Wikidata Image Fetch Error: {e}")
+    return None
+
+def _fetch_wikipedia_image_url(query: str) -> str:
+    import urllib.parse
+    import requests
+    headers = {"User-Agent": "ChauffeurScheduleAssistant/1.0 (https://github.com/EpicJeff/Chauffeur-Scheduling-Assistant; jeff@example.com)"}
+    try:
+        search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(query)}&format=json"
+        res = requests.get(search_url, headers=headers, timeout=3)
+        if res.ok:
+            data = res.json()
+            search_results = data.get('query', {}).get('search', [])
+            if search_results:
+                page_id = search_results[0]['pageid']
+                img_url = f"https://en.wikipedia.org/w/api.php?action=query&pageids={page_id}&prop=pageimages&format=json&pithumbsize=1000"
+                img_res = requests.get(img_url, headers=headers, timeout=3)
+                if img_res.ok:
+                    img_data = img_res.json()
+                    pages = img_data.get('query', {}).get('pages', {})
+                    if str(page_id) in pages:
+                        thumbnail = pages[str(page_id)].get('thumbnail')
+                        if thumbnail and thumbnail.get('source'):
+                            return thumbnail['source']
+    except Exception as e:
+        print(f"Wikipedia Image Fetch Error: {e}")
+    return None
+
+def _fetch_unsplash_url(query: str, api_key: str, wikidata_id: str = None) -> str:
+    import urllib.parse
+    import requests
+    import hashlib
     
-    fallback_url = "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop"
+    # Generate a deterministic placeholder based on the query name
+    hash_val = int(hashlib.md5(query.encode('utf-8')).hexdigest(), 16) if query else 0
+    placeholder_idx = (hash_val % 3) + 1
+    fallback_url = f"/static/placeholders/{placeholder_idx}.png"
+
     if not query:
         return fallback_url
         
@@ -1743,41 +2038,48 @@ def _fetch_unsplash_url(query: str, api_key: str) -> str:
     elif 'london' in query.lower():
         fallback_url = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1920&auto=format&fit=crop"
 
+    # 1. Try Wikidata First if we have a wikidata_id
+    if wikidata_id:
+        wiki_img = _fetch_wikidata_image(wikidata_id)
+        if wiki_img:
+            return wiki_img
+
+    # 2. Try Wikipedia Search as a fallback
+    wiki_img = _fetch_wikipedia_image_url(query)
+    if wiki_img:
+        return wiki_img
+
+    # 3. Try Unsplash API if key is present
     if not api_key:
         print("Unsplash API: No API key found in options")
     else:
         encoded_query = urllib.parse.quote(query)
         try:
             api_url = f"https://api.unsplash.com/search/photos?query={encoded_query}&orientation=landscape&per_page=1"
-            print(f"Unsplash API Request: {api_url}")
             res = requests.get(
                 api_url,
                 headers={"Authorization": f"Client-ID {api_key}"},
                 timeout=5
             )
-            print(f"Unsplash API Response: {res.status_code} - {res.text[:200]}")
             if res.ok:
                 data = res.json()
                 if data.get("results") and len(data["results"]) > 0:
                     return data["results"][0]["urls"]["regular"]
-                else:
-                    print(f"Unsplash API: No results found for query '{query}'")
         except Exception as e:
             print(f"Unsplash API Error: {e}")
 
+    # 4. Fallback
     return fallback_url
 
 @app.get("/api/unsplash/background")
-def get_unsplash_background(query: str):
+def get_unsplash_background(query: str, wikidata_id: str = None):
     # Uses official Unsplash API if a key is provided in Addon Config
     api_key = maps.get_map_option('unsplash_api_key', None)
     
-    url = _fetch_unsplash_url(query, api_key)
-    
+    url = _fetch_unsplash_url(query, api_key, wikidata_id)
+        
     return RedirectResponse(url=url, headers={"Cache-Control": "public, max-age=86400"})
 
-
-# --- Schedule API ---
 import hashlib
 
 def hash_events(events_list):
@@ -3389,3 +3691,52 @@ def test_set_mapbox_usage(endpoint: str, count: int):
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.post("/api/admin/backfill_wikidata")
+def backfill_wikidata():
+    from services import storage, maps
+    import urllib.parse
+    
+    with storage.db_lock:
+        trips = storage.trip_metadata_table.all()
+        count = 0
+        for t in trips:
+            updated = False
+            
+            # Trip Background
+            if not t.get('background_url') or 'wikidata_id=' not in t.get('background_url', ''):
+                loc = t.get('location', '')
+                if loc:
+                    res = maps.search_places(loc)
+                    if res and res[0].get('wikidata_id'):
+                        t['background_url'] = f"/api/unsplash/background?query={urllib.parse.quote(loc)}&wikidata_id={res[0]['wikidata_id']}"
+                        updated = True
+
+            # POIs
+            for poi in t.get('pois', []):
+                if not poi.get('wikidata_id'):
+                    query = f"{poi.get('name', '')} {poi.get('location', '')}"
+                    res = maps.search_places(query)
+                    if res:
+                        poi['wikidata_id'] = res[0].get('wikidata_id')
+                        poi['opening_hours'] = res[0].get('opening_hours')
+                        if poi['wikidata_id']:
+                            poi['image_url'] = f"/api/unsplash/background?query={urllib.parse.quote(poi['name'])}&wikidata_id={poi['wikidata_id']}"
+                        updated = True
+                        
+            # Accommodations
+            for acc in t.get('accommodations', []):
+                if not acc.get('wikidata_id'):
+                    query = f"{acc.get('name', '')} {acc.get('location', '')}"
+                    res = maps.search_places(query)
+                    if res:
+                        acc['wikidata_id'] = res[0].get('wikidata_id')
+                        acc['opening_hours'] = res[0].get('opening_hours')
+                        updated = True
+                        
+            if updated:
+                storage.trip_metadata_table.update(t, doc_ids=[t.doc_id])
+                count += 1
+                
+    return {"status": "success", "trips_updated": count}
+

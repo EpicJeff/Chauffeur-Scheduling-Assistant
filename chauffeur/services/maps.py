@@ -167,6 +167,56 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     fallback = max(MOCK_TIME, min_time_mins)
     return (fallback, 0) if return_traffic else fallback
 
+def get_route_geometry(origin: str, destination: str, profile: str = "driving") -> Optional[dict]:
+    """
+    Returns the route geometry and duration using Mapbox Directions API.
+    profile can be 'driving', 'walking', 'cycling', etc.
+    Returns: {"duration_mins": float, "geometry": dict, "distance_meters": float} or None.
+    """
+    cached = storage.get_cached_route_geometry(origin, destination, profile)
+    if cached:
+        return cached
+
+    mapbox_key = get_mapbox_api_key()
+    if not mapbox_key:
+        return None
+        
+    coords_origin = geocode_address(origin)
+    coords_dest = geocode_address(destination)
+    if not coords_origin or not coords_dest:
+        return None
+        
+    lat_s, lon_s = coords_origin
+    lat_d, lon_d = coords_dest
+    
+    if not check_usage_limits_and_spikes('directions', increment=1):
+        return None
+        
+    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{lon_s},{lat_s};{lon_d},{lat_d}"
+    params = {
+        "access_token": mapbox_key,
+        "overview": "full",
+        "geometries": "geojson"
+    }
+    
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get('routes') and len(data['routes']) > 0:
+                route = data['routes'][0]
+                result = {
+                    "duration_mins": route['duration'] / 60.0,
+                    "distance_meters": route['distance'],
+                    "geometry": route['geometry']
+                }
+                storage.set_cached_route_geometry(origin, destination, profile, result)
+                return result
+    except Exception as e:
+        print(f"Error fetching route geometry: {e}")
+        
+    return None
+
 def prime_matrix_cache(locations: list[str]):
     from services import storage
     if not locations:
@@ -587,7 +637,8 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
             params["viewbox"] = f"{center_lon-0.5},{center_lat-0.5},{center_lon+0.5},{center_lat+0.5}"
             
         headers = {
-            "User-Agent": "ChauffeurScheduleAssistant/1.0"
+            "User-Agent": "ChauffeurScheduleAssistant/1.0",
+            "Accept-Language": "en-US,en;q=0.9"
         }
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=10)
@@ -738,7 +789,7 @@ def autocomplete_location(input_text: str, session_token: str = None) -> list[di
                     "session_token": session_token,
                     "q": input_text,
                     "limit": 5,
-                    "types": "address,poi"
+                    "language": "en"
                 }
                 try:
                     resp = requests.get(url, params=params, timeout=5)
@@ -769,7 +820,7 @@ def autocomplete_location(input_text: str, session_token: str = None) -> list[di
                 "access_token": mapbox_key,
                 "autocomplete": "true",
                 "limit": 5,
-                "types": "address,poi"
+                "language": "en"
             }
             try:
                 resp = requests.get(url, params=params, timeout=5)
@@ -786,7 +837,8 @@ def autocomplete_location(input_text: str, session_token: str = None) -> list[di
     url = "https://photon.komoot.io/api/"
     params = {
         "q": input_text,
-        "limit": 5
+        "limit": 5,
+        "lang": "en"
     }
     headers = {
         "User-Agent": "ChauffeurScheduleAssistant/1.0"
@@ -921,95 +973,9 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
             if coords:
                 center_lat, center_lon = coords
 
-    disable_mapbox_category = get_map_option('disable_mapbox_category', False)
+    results = []
 
-    if mapbox_key and not disable_mapbox:
-        success = False
-        
-        # 1. Try Mapbox Category Search API first (optimized for POIs)
-        if not disable_mapbox_category and check_usage_limits_and_spikes('category', 1):
-            category_slug = query.strip().replace(" ", "_").lower()
-            url_cat = f"https://api.mapbox.com/search/searchbox/v1/category/{urllib.parse.quote(category_slug)}"
-            params_cat = {
-                "access_token": mapbox_key,
-                "limit": 5,
-            }
-            if center_lon is not None and center_lat is not None:
-                params_cat['proximity'] = f"{center_lon},{center_lat}"
-                
-            try:
-                resp_cat = requests.get(url_cat, params=params_cat, timeout=5)
-                if resp_cat.status_code == 200:
-                    data = resp_cat.json()
-                    features = data.get("features", [])
-                    if features:
-                        success = True
-                        results = []
-                        for f in features:
-                            props = f.get("properties", {})
-                            name = props.get("name", "")
-                            place = props.get("place_formatted", "")
-                            full_address = f"{name}, {place}".strip(", ")
-                            coords = f.get("geometry", {}).get("coordinates", [])
-                            distance = props.get("distance", 0)
-                            
-                            if name and coords and len(coords) == 2:
-                                lon, lat = coords[0], coords[1]
-                                storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
-                                results.append({
-                                    "name": name,
-                                    "address": full_address,
-                                    "distance_meters": distance,
-                                    "lat": lat,
-                                    "lon": lon,
-                                    "source": "mapbox_category"
-                                })
-                        return results
-            except Exception as ex:
-                print(f"Mapbox Category API exception: {ex}")
-            
-        # 2. Fallback to Mapbox Forward Search if Category Search fails (e.g. for specific brands like "Target")
-        if not success and check_usage_limits_and_spikes('searchbox', 1, check_only=True):
-            check_usage_limits_and_spikes('searchbox', 1)
-            url_fwd = "https://api.mapbox.com/search/searchbox/v1/forward"
-            params_fwd = {
-                "access_token": mapbox_key,
-                "q": query,
-                "limit": 5,
-            }
-            if center_lon is not None and center_lat is not None:
-                params_fwd['proximity'] = f"{center_lon},{center_lat}"
-                
-            try:
-                resp = requests.get(url_fwd, params=params_fwd, timeout=5)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    features = data.get("features", [])
-                    results = []
-                    for f in features:
-                        props = f.get("properties", {})
-                        name = props.get("name", "")
-                        place = props.get("place_formatted", "")
-                        full_address = f"{name}, {place}".strip(", ")
-                        coords = f.get("geometry", {}).get("coordinates", [])
-                        distance = props.get("distance", 0)
-                        
-                        if name and coords and len(coords) == 2:
-                            lon, lat = coords[0], coords[1]
-                            storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
-                            results.append({
-                                "name": name,
-                                "address": full_address,
-                                "distance_meters": distance,
-                                "lat": lat,
-                                "lon": lon,
-                                "source": "mapbox_forward"
-                            })
-                    return results
-            except Exception as ex:
-                print(f"Mapbox Forward API exception: {ex}")
-            
-    # Fallback to Nominatim OpenStreetMap search
+    # 1. Primary: Nominatim OpenStreetMap search (For enriched extratags: wikidata, opening_hours)
     with api_rate_lock:
         if not hasattr(geocode_address, "last_nominatim_time"):
             geocode_address.last_nominatim_time = 0
@@ -1017,42 +983,84 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
         elapsed = now - geocode_address.last_nominatim_time
         if elapsed < 1.1:
             time.sleep(1.1 - elapsed)
+        
+        headers = {'User-Agent': 'ChauffeurScheduleAssistant/1.0 (https://github.com/EpicJeff/Chauffeur-Scheduling-Assistant)'}
+        nom_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=5&extratags=1"
+        if center_lat is not None and center_lon is not None:
+            viewbox = f"{center_lon - 0.5},{center_lat + 0.5},{center_lon + 0.5},{center_lat - 0.5}"
+            nom_url += f"&viewbox={viewbox}&bounded=0"
             
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": query,
-            "format": "json",
-            "limit": 5
-        }
-        if center_lon is not None and center_lat is not None:
-            # Create a ~20km viewbox around center for Nominatim
-            params["viewbox"] = f"{center_lon-0.2},{center_lat-0.2},{center_lon+0.2},{center_lat+0.2}"
-            params["bounded"] = 1
-            
-        headers = {
-            "User-Agent": "ChauffeurScheduleAssistant/1.0"
-        }
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            resp = requests.get(nom_url, headers=headers, timeout=10)
             geocode_address.last_nominatim_time = time.time()
             if resp.status_code == 200:
                 data = resp.json()
-                results = []
                 for item in data:
-                    lat = float(item["lat"])
-                    lon = float(item["lon"])
-                    display_name = item.get("display_name", "")
-                    # Cache it
-                    storage.set_cached_geocode(display_name, lat, lon, display_name)
+                    lat = float(item.get("lat", 0))
+                    lon = float(item.get("lon", 0))
+                    name = item.get("name", query)
+                    address = item.get("display_name", "")
+                    extratags = item.get("extratags", {}) or {}
+                    wikidata_id = extratags.get("wikidata")
+                    opening_hours = extratags.get("opening_hours")
+                    
+                    storage.set_cached_geocode(address, lat, lon, address)
                     results.append({
-                        "name": item.get("name") or display_name.split(',')[0],
-                        "address": display_name,
-                        "distance_meters": 0, # Nominatim doesn't directly give distance in this API
+                        "name": name,
+                        "address": address,
+                        "distance_meters": 0,
                         "lat": lat,
-                        "lon": lon
+                        "lon": lon,
+                        "source": "nominatim",
+                        "wikidata_id": wikidata_id,
+                        "opening_hours": opening_hours
                     })
-                return results
-        except Exception as e:
-            print(f"Nominatim error: {e}")
+                if results:
+                    return results
+        except Exception as ex:
+            print(f"Nominatim API exception in search_places: {ex}")
+
+    # 2. Fallback: Mapbox Forward Search
+    if mapbox_key and not disable_mapbox:
+        check_usage_limits_and_spikes('searchbox', 1)
+        url_fwd = "https://api.mapbox.com/search/searchbox/v1/forward"
+        params_fwd = {
+            "access_token": mapbox_key,
+            "q": query,
+            "limit": 5,
+            "language": "en"
+        }
+        if center_lon is not None and center_lat is not None:
+            params_fwd['proximity'] = f"{center_lon},{center_lat}"
             
-    return []
+        try:
+            resp = requests.get(url_fwd, params=params_fwd, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                features = data.get("features", [])
+                for f in features:
+                    props = f.get("properties", {})
+                    name = props.get("name", "")
+                    place = props.get("place_formatted", "")
+                    full_address = f"{name}, {place}".strip(", ")
+                    coords = f.get("geometry", {}).get("coordinates", [])
+                    distance = props.get("distance", 0)
+                    
+                    if name and coords and len(coords) == 2:
+                        lon, lat = coords[0], coords[1]
+                        storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
+                        results.append({
+                            "name": name,
+                            "address": full_address,
+                            "distance_meters": distance,
+                            "lat": lat,
+                            "lon": lon,
+                            "source": "mapbox_forward",
+                            "wikidata_id": None,
+                            "opening_hours": None
+                        })
+                return results
+        except Exception as ex:
+            print(f"Mapbox Forward API exception: {ex}")
+
+    return results

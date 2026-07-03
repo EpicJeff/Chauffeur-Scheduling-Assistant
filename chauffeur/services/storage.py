@@ -55,10 +55,15 @@ with db_lock:
     pending_notifications_table = db.table('pending_notifications')
     event_configs_table = db.table('event_configs')
     api_requests_log_table = db.table('api_requests_log')
-    chat_history_table = db.table('chat_history')
+    conversations_table = db.table('conversations')
     errands_table = db.table('errands')
     errand_rules_table = db.table('errand_rules')
     trip_metadata_table = db.table('trip_metadata')
+
+    ROUTES_DB_PATH = os.path.join(os.path.dirname(DB_PATH), 'routes_cache.json')
+    fix_corrupted_db(ROUTES_DB_PATH)
+    routes_db = TinyDB(ROUTES_DB_PATH)
+    route_geometry_cache_table = routes_db.table('route_geometry')
 
 def migrate_passengers_from_settings():
     with db_lock:
@@ -205,10 +210,10 @@ def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10
             cached_data = result[0]
             timestamp = cached_data.get('timestamp', 0)
             if ignore_age or time.time() - timestamp <= max_age_mins * 60:
-                return cached_data['minutes']
+                return cached_data.get('duration_mins', cached_data.get('minutes'))
         return None
 
-def set_cached_travel_time(origin: str, destination: str, minutes: int):
+def set_cached_travel_time(origin: str, destination: str, duration_mins: int):
     if not origin or not destination:
         return
     import time
@@ -216,10 +221,46 @@ def set_cached_travel_time(origin: str, destination: str, minutes: int):
     dest_clean = destination.strip().lower()
     with db_lock:
         QueryObj = Query()
-        distance_cache_table.upsert(
-            {'origin': orig_clean, 'destination': dest_clean, 'minutes': int(minutes), 'timestamp': time.time()},
-            (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean)
-        )
+        distance_cache_table.upsert({
+            'origin': orig_clean,
+            'destination': dest_clean,
+            'duration_mins': duration_mins,
+            'timestamp': time.time()
+        }, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
+
+def get_cached_route_geometry(origin: str, destination: str, profile: str, max_age_mins: int = 10080) -> Optional[dict]:
+    # Cache for 1 week by default (10080 mins)
+    if not origin or not destination:
+        return None
+    import time
+    orig_clean = origin.strip().lower()
+    dest_clean = destination.strip().lower()
+    with db_lock:
+        QueryObj = Query()
+        result = route_geometry_cache_table.search((QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean) & (QueryObj.profile == profile))
+        if result:
+            cached_data = result[0]
+            if time.time() - cached_data.get('timestamp', 0) <= max_age_mins * 60:
+                return cached_data.get('data')
+            else:
+                route_geometry_cache_table.remove(doc_ids=[result[0].doc_id])
+    return None
+
+def set_cached_route_geometry(origin: str, destination: str, profile: str, data: dict):
+    if not origin or not destination:
+        return
+    import time
+    orig_clean = origin.strip().lower()
+    dest_clean = destination.strip().lower()
+    with db_lock:
+        QueryObj = Query()
+        route_geometry_cache_table.upsert({
+            'origin': orig_clean,
+            'destination': dest_clean,
+            'profile': profile,
+            'data': data,
+            'timestamp': time.time()
+        }, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean) & (QueryObj.profile == profile))
 
 # Driver CRUD
 def get_all_drivers() -> List[dict]:
@@ -280,24 +321,49 @@ def get_passengers() -> List[dict]:
     with db_lock:
         return passengers_table.all()
 
-def add_chat_message(role: str, content: str) -> None:
+def get_all_conversations() -> List[dict]:
     import time
     with db_lock:
-        chat_history_table.insert({
-            'role': role,
-            'content': content,
-            'timestamp': time.time()
-        })
+        cutoff = time.time() - (30 * 86400)
+        conversations_table.remove(Query().updated_at < cutoff)
+        return conversations_table.all()
 
-def get_chat_history(limit: int = 100) -> list:
+def get_conversation(conv_id: str) -> Optional[dict]:
     with db_lock:
-        msgs = chat_history_table.all()
-        msgs.sort(key=lambda x: x.get('timestamp', 0))
-        return msgs[-limit:]
+        res = conversations_table.search(Query().id == conv_id)
+        return res[0] if res else None
+
+def create_conversation(conv_data: dict) -> str:
+    with db_lock:
+        conversations_table.insert(conv_data)
+        return conv_data['id']
+
+def update_conversation(conv_id: str, conv_data: dict) -> None:
+    with db_lock:
+        conversations_table.update(conv_data, Query().id == conv_id)
+
+def delete_conversation(conv_id: str) -> None:
+    with db_lock:
+        conversations_table.remove(Query().id == conv_id)
+
+def add_message_to_conversation(conv_id: str, message: dict) -> None:
+    import time
+    with db_lock:
+        conv = conversations_table.search(Query().id == conv_id)
+        if conv:
+            c = conv[0]
+            if 'messages' not in c:
+                c['messages'] = []
+            c['messages'].append(message)
+            c['updated_at'] = time.time()
+            conversations_table.update(c, Query().id == conv_id)
+        else:
+            # Fallback for old behaviour or unknown conv, but ideally we should have a default general conv.
+            pass
 
 def clear_chat_history() -> None:
     with db_lock:
-        chat_history_table.truncate()
+        conversations_table.truncate()
 
 def add_passenger(passenger_data: dict) -> int:
     with db_lock:
@@ -919,3 +985,11 @@ def delete_trip_metadata(event_id: str):
     with db_lock:
         from tinydb import Query
         trip_metadata_table.remove(Query().event_id == event_id)
+
+def update_conversation_title(conversation_id: str, title: str):
+    with db_lock:
+        from tinydb import Query
+        Conv = Query()
+        import time
+        conversations_table.update({'title': title, 'updated_at': time.time()}, Conv.id == conversation_id)
+

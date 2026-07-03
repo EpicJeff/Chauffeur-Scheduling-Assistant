@@ -152,6 +152,27 @@
                 </div>
             </div>
 
+
+            <!-- Accommodations Section -->
+            <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col relative pb-8 mb-8">
+                <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">Accommodations</h2>
+                        <p class="text-gray-400 text-sm mt-1">Your home base for the trip.</p>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <button onclick="openAddAccommodationModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                            Add Accommodation
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="accommodations-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Accommodations populated via JS -->
+                </div>
+            </div>
+            
             <!-- POIs Section -->
             <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col relative pb-24">
                 <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
@@ -164,10 +185,7 @@
                             <input type="checkbox" id="poi-select-all" class="w-5 h-5 bg-gray-900 border-gray-600 rounded cursor-pointer" onclick="toggleAllPois(this)">
                             <span class="text-sm font-bold">Select All</span>
                         </label>
-                        <button onclick="openAiPlannerModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg transition-colors flex items-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                            Smart Planner
-                        </button>
+                        
                         <button onclick="openAddPoiModal()" class="flex items-center px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 font-bold">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                             Add POI
@@ -325,6 +343,59 @@
         </div>
     </div>
     
+    <!-- Accommodation Details Modal -->
+    <div id="acc-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4">
+        <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- Header Image Area -->
+            <div id="acc-detail-header" class="h-56 relative bg-cover bg-center shrink-0">
+                <div class="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent"></div>
+                <button onclick="closeAccDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+                <div class="absolute bottom-0 left-0 p-6 w-full">
+                    <span class="px-3 py-1 bg-indigo-900/60 backdrop-blur border border-indigo-500/30 rounded-full text-xs font-bold text-indigo-200 uppercase tracking-wider mb-2 inline-block">Home Base</span>
+                    <h3 id="acc-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">Accommodation Title</h3>
+                    <a id="acc-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit">
+                        <svg class="w-4 h-4 mr-1 group-hover:underline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span id="acc-detail-location" class="group-hover:underline">Location</span>
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Details Area -->
+            <div class="p-6 overflow-y-auto space-y-6">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-900 border border-gray-600 rounded-lg p-4">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Check-In</label>
+                        <div id="acc-detail-checkin" class="text-white font-bold text-lg"></div>
+                    </div>
+                    <div class="bg-gray-900 border border-gray-600 rounded-lg p-4">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Check-Out</label>
+                        <div id="acc-detail-checkout" class="text-white font-bold text-lg"></div>
+                    </div>
+                </div>
+                
+                <div id="acc-detail-notes-container" class="hidden">
+                    <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Notes & Description</h4>
+                    <div id="acc-detail-notes" class="text-gray-300 prose prose-invert max-w-none text-sm leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 whitespace-pre-wrap"></div>
+                </div>
+            </div>
+            
+            <!-- Footer Actions -->
+            <div class="p-4 bg-gray-900 border-t border-gray-700 flex justify-between items-center shrink-0">
+                <button onclick="deleteAccommodation()" class="text-red-400 hover:text-red-300 hover:bg-red-950/50 px-4 py-2 rounded-xl transition-colors font-bold text-sm flex items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    Delete
+                </button>
+                <div class="flex space-x-3">
+                    <button id="acc-detail-edit-btn" class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-xl font-bold transition-colors">
+                        Edit Accommodation
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- POI Edit Modal -->
     <div id="poi-edit-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4 overflow-y-auto">
         <div class="bg-gray-800 rounded-2xl w-full max-w-2xl border border-gray-700 shadow-2xl flex flex-col my-8">
@@ -455,16 +526,16 @@
     <div id="ai-planner-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-3xl border border-gray-600 shadow-2xl flex flex-col max-h-[90vh]">
             <h3 class="text-2xl font-bold text-white mb-2">Smart Planner</h3>
-            <p class="text-gray-400 text-sm mb-6">Tell us what you want to do on this trip.</p>
+            <p class="text-gray-400 text-sm mb-6">Tell us what you want to do on this trip. The AI will generate a complete itinerary.</p>
             
             <div id="ai-planner-input-area" class="shrink-0">
                 <textarea id="ai-planner-prompt" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-4 text-white focus:outline-none focus:border-indigo-500" rows="3" placeholder="e.g. I want to visit a vineyard, get some sun at the beach, and eat at a Michelin Star restaurant."></textarea>
                 
                 <div class="mt-4 flex justify-end space-x-4">
                     <button onclick="closeAiPlannerModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                    <button id="ai-generate-btn" onclick="generatePois()" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors flex items-center">
+                    <button id="ai-generate-btn" onclick="generatePlan()" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors flex items-center">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        Generate Ideas
+                        Generate Trip Plan
                     </button>
                 </div>
             </div>
@@ -504,6 +575,45 @@
         </div>
     </div>
 
+
+    <!-- Accommodation Modal -->
+    <div id="accommodation-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
+            <h3 id="acc-modal-title" class="text-2xl font-bold text-white mb-6">Add Accommodation</h3>
+            <div class="space-y-4">
+                <input type="hidden" id="acc-id">
+                <div>
+                    <label class="block text-gray-400 mb-1 text-sm font-bold">Name</label>
+                    <input type="text" id="acc-name" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Ritz Paris">
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-1 text-sm font-bold">Location</label>
+                    <input type="text" id="acc-location" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="Address">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-1">Check In</label>
+                        <input type="date" id="acc-check-in" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-1">Check Out</label>
+                        <input type="date" id="acc-check-out" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-1 text-sm font-bold">Notes</label>
+                    <textarea id="acc-notes" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="mt-8 flex justify-between items-center">
+                <button id="acc-delete-btn" onclick="deleteAccommodation()" class="px-5 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold transition-colors hidden">Delete</button>
+                <div class="flex space-x-4 ml-auto">
+                    <button onclick="closeAccommodationModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
+                    <button onclick="saveAccommodation()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <!-- Settings Modal -->
     <div id="settings-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
@@ -615,12 +725,298 @@
         const EVENT_ID = '{{ event_id }}';
         let tripData = { event: null, metadata: { pois: [], activities: [] }, activities: [] };
         
+        // Globals for map routing and filtering
+        let poiMap = null;
+        let mapMarkers = [];
+        let selectedDayKey = null;
+        let groupedActivities = {};
+        let cachedRoutes = {};
+        let renderMapTimeout = null;
+
+        function toggleDayFilter(dayKey) {
+            if (selectedDayKey === dayKey) selectedDayKey = null;
+            else selectedDayKey = dayKey;
+            renderAccommodations();
+            renderActivities();
+            renderMap();
+        }
+
+        async function loadRouteBetween(act, nextAct, pill, dayKey) {
+            const routeKey = act.id + '-' + nextAct.id;
+            if (cachedRoutes[routeKey]) {
+                updateRoutePill(pill, cachedRoutes[routeKey]);
+                return;
+            }
+            
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking`);
+                let data = await res.json();
+                
+                let type = 'walking';
+                let duration = 0;
+                let geometry = null;
+                
+                if (data.duration_mins !== undefined) {
+                    if (data.duration_mins <= 15) {
+                        duration = data.duration_mins;
+                        geometry = data.geometry;
+                    } else {
+                        res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving`);
+                        data = await res.json();
+                        if (data.duration_mins !== undefined) {
+                            type = 'driving';
+                            duration = data.duration_mins;
+                            geometry = data.geometry;
+                        }
+                    }
+                }
+                
+                if (geometry) {
+                    cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey };
+                    updateRoutePill(pill, cachedRoutes[routeKey]);
+                    if (renderMapTimeout) clearTimeout(renderMapTimeout);
+                    renderMapTimeout = setTimeout(() => { renderMap(); }, 300);
+                } else {
+                    if (pill) pill.remove();
+                }
+            } catch (e) {
+                console.error(e);
+                if (pill) pill.remove();
+            }
+        }
+
+        function updateRoutePill(pill, routeData) {
+            if (!pill) return;
+            pill.className = "self-center my-1 py-1 px-3 rounded-full bg-blue-900/40 border border-blue-500/30 text-xs text-blue-200 flex items-center gap-1.5 shadow-sm";
+            
+            const walkIcon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.73 21a2 2 0 01-3.46 0l-1.63-5.26a1.996 1.996 0 00-1.89-1.4H4.5a2.5 2.5 0 110-5h2l2.36-3.77A2.002 2.002 0 0110.55 4h2.9a2 2 0 011.69.94l2.5 4.07h2.86a2 2 0 010 4h-4a2 2 0 01-1.7-.95l-1.34-2.14-1.28 4.26 1.63 5.26z"></path></svg>`;
+            const driveIcon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>`;
+
+            const icon = routeData.type === "walking" ? walkIcon : driveIcon;
+            
+            pill.innerHTML = icon + `<span class="font-semibold">${Math.round(routeData.duration)} min ${routeData.type}</span>`;
+        }
+        
         async function fetchTripData() {
             const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`);
             if(res.ok) {
                 tripData = await res.json();
                 renderTrip();
             }
+        }
+
+
+
+        function formatAccommodationDate(dateStr) {
+            if (!dateStr) return '?';
+            if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
+                const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+                tripStart.setHours(0,0,0,0);
+                const d = new Date(dateStr + "T00:00:00");
+                const msDiff = d - tripStart;
+                const dayNum = Math.round(msDiff / (1000 * 60 * 60 * 24)) + 1;
+                const formattedDate = d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+                if (dayNum > 0 && dayNum <= 60) {
+                    return `Day ${dayNum} (${formattedDate})`;
+                }
+                return formattedDate;
+            }
+            return new Date(dateStr + "T00:00:00").toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+        }
+
+        function renderAccommodations() {
+            const list = document.getElementById('accommodations-list');
+            list.innerHTML = '';
+            
+            const accs = tripData.metadata.accommodations || [];
+            if (accs.length === 0) {
+                list.innerHTML = `<div class="col-span-full text-center py-6 text-gray-500 font-medium">No accommodations added yet.</div>`;
+                return;
+            }
+            
+            accs.forEach(acc => {
+                const div = document.createElement('div');
+                div.className = "bg-gray-800/80 border border-gray-700 p-5 rounded-2xl hover:border-gray-500 transition-colors cursor-pointer flex flex-col h-full";
+                div.onclick = () => openAccDetails(acc.id);
+                
+                div.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="text-lg font-bold text-white truncate pr-2">${acc.name}</h4>
+                        <div class="bg-indigo-900/40 text-indigo-300 text-xs px-2 py-1 rounded font-bold border border-indigo-500/20 whitespace-nowrap">Home Base</div>
+                    </div>
+                    <div class="text-sm text-gray-400 flex items-center mb-3">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+                        ${acc.location || 'No location specified'}
+                    </div>
+                    <div class="text-sm text-gray-300 bg-black/20 p-2 rounded flex justify-between">
+                        <span>Check-In:</span>
+                        <span class="font-bold">${formatAccommodationDate(acc.check_in_date)}</span>
+                    </div>
+                    <div class="text-sm text-gray-300 bg-black/20 p-2 rounded mt-1 flex justify-between mb-4">
+                        <span>Check-Out:</span>
+                        <span class="font-bold">${formatAccommodationDate(acc.check_out_date)}</span>
+                    </div>
+                    <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('/api/unsplash/background?query=${encodeURIComponent(acc.name).replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}')"></div>
+                `;
+                list.appendChild(div);
+            });
+        }
+        
+        function openAddAccommodationModal() {
+            document.getElementById('acc-modal-title').innerText = 'Add Accommodation';
+            document.getElementById('acc-id').value = '';
+            document.getElementById('acc-name').value = '';
+            document.getElementById('acc-location').value = '';
+            document.getElementById('acc-check-in').value = '';
+            document.getElementById('acc-check-out').value = '';
+            document.getElementById('acc-notes').value = '';
+            document.getElementById('acc-delete-btn').classList.add('hidden');
+            document.getElementById('accommodation-modal').classList.remove('hidden');
+        }
+        
+        function openEditAccommodationModal(id) {
+            const accs = tripData.metadata.accommodations || [];
+            const acc = accs.find(a => a.id === id);
+            if (!acc) return;
+            
+            document.getElementById('acc-modal-title').innerText = 'Edit Accommodation';
+            document.getElementById('acc-id').value = acc.id;
+            document.getElementById('acc-name').value = acc.name || '';
+            document.getElementById('acc-location').value = acc.location || '';
+            document.getElementById('acc-check-in').value = acc.check_in_date || '';
+            document.getElementById('acc-check-out').value = acc.check_out_date || '';
+            document.getElementById('acc-notes').value = acc.notes || '';
+            
+            document.getElementById('acc-delete-btn').classList.remove('hidden');
+            document.getElementById('accommodation-modal').classList.remove('hidden');
+        }
+        
+        function closeAccommodationModal() {
+            document.getElementById('accommodation-modal').classList.add('hidden');
+        }
+        
+        function openAccDetails(id) {
+            const accs = tripData.metadata.accommodations || [];
+            const acc = accs.find(a => a.id === id);
+            if (!acc) return;
+            
+            document.getElementById('acc-id').value = id;
+            
+            document.getElementById('acc-detail-title').innerText = acc.name || 'Unknown';
+            document.getElementById('acc-detail-location').innerText = acc.location || 'Location not specified';
+            
+            const linkUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((acc.name || '') + ' ' + (acc.location || ''));
+            document.getElementById('acc-detail-link').href = linkUrl;
+            
+            const imgUrl = `/api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`;
+            document.getElementById('acc-detail-header').style.backgroundImage = `url('${imgUrl}')`;
+            
+            document.getElementById('acc-detail-checkin').innerText = formatAccommodationDate(acc.check_in_date);
+            document.getElementById('acc-detail-checkout').innerText = formatAccommodationDate(acc.check_out_date);
+            
+            const notesEl = document.getElementById('acc-detail-notes');
+            const notesContainer = document.getElementById('acc-detail-notes-container');
+            if (acc.notes) {
+                notesEl.innerText = acc.notes;
+                notesContainer.classList.remove('hidden');
+            } else {
+                notesContainer.classList.add('hidden');
+            }
+            
+            document.getElementById('acc-detail-edit-btn').onclick = () => {
+                closeAccDetails();
+                openEditAccommodationModal(id);
+            };
+            
+            document.getElementById('acc-details-modal').classList.remove('hidden');
+        }
+        
+        function closeAccDetails() {
+            document.getElementById('acc-details-modal').classList.add('hidden');
+        }
+        
+        async function saveAccommodation() {
+            const id = document.getElementById('acc-id').value;
+            const payload = {
+                name: document.getElementById('acc-name').value,
+                location: document.getElementById('acc-location').value,
+                check_in_date: document.getElementById('acc-check-in').value,
+                check_out_date: document.getElementById('acc-check-out').value,
+                notes: document.getElementById('acc-notes').value,
+            };
+            
+            const method = id ? 'PUT' : 'POST';
+            const url = id ? `api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${id}` : `api/trip/${encodeURIComponent(EVENT_ID)}/accommodation`;
+            
+            const btn = document.querySelector('#accommodation-modal button.bg-blue-600');
+            const originalText = btn.innerText;
+            btn.innerText = 'Saving...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch(url, {
+                    method: method,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if(res.ok) {
+                    closeAccommodationModal();
+                    await fetchTripData();
+                } else {
+                    const data = await res.json();
+                    showGlobalAlert(data.error || 'Failed to save accommodation');
+                }
+            } catch (err) {
+                console.error(err);
+                showGlobalAlert('Network error saving accommodation');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+        
+        function deleteAccommodation() {
+            const id = document.getElementById('acc-id').value;
+            if(!id) return;
+            
+            openConfirmModal("Delete Accommodation?", "Are you sure you want to delete this accommodation?", [
+                {
+                    label: "Cancel",
+                    class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium",
+                    action: "close"
+                },
+                {
+                    label: "Delete",
+                    class: "px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-sm font-medium",
+                    action: async () => {
+                        closeConfirmModal();
+                        const btn = document.getElementById('acc-delete-btn');
+                        btn.innerText = 'Deleting...';
+                        btn.disabled = true;
+                        
+                        try {
+                            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${id}`, {
+                                method: 'DELETE'
+                            });
+                            if(res.ok) {
+                                closeAccommodationModal();
+                                closeAccDetails();
+                                await fetchTripData();
+                            } else {
+                                const data = await res.json();
+                                showGlobalAlert(data.error || 'Failed to delete accommodation');
+                            }
+                        } catch (err) {
+                            console.error(err);
+                            showGlobalAlert('Network error deleting accommodation');
+                        } finally {
+                            btn.innerText = 'Delete';
+                            btn.disabled = false;
+                        }
+                    }
+                }
+            ]);
         }
 
         function renderTrip() {
@@ -667,6 +1063,7 @@
             }
             
             renderPois();
+            renderAccommodations();
             renderActivities();
             renderMap();
         }
@@ -710,7 +1107,7 @@
                 
                 await fetchTripData();
             } catch (err) {
-                alert(err.message);
+                showGlobalAlert(err.message);
             } finally {
                 if (schedLoading) schedLoading.classList.add('hidden');
             }
@@ -760,13 +1157,17 @@
             });
             
             const sortedKeys = Object.keys(grouped).sort((a,b) => grouped[a].sortKey - grouped[b].sortKey);
+            groupedActivities = grouped;
             
             sortedKeys.forEach(dayKey => {
                 const col = document.createElement('div');
-                col.className = "flex flex-col gap-4 bg-white/5 rounded-2xl p-4 border border-white/10 h-full";
-                col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2"><h3 class="text-white font-bold">${dayKey}</h3><button onclick="clearItinerary()" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
+                let opacityClass = (selectedDayKey && selectedDayKey !== dayKey) ? 'opacity-40' : 'opacity-100';
+                col.className = `flex flex-col gap-4 bg-white/5 rounded-2xl p-4 border border-white/10 h-full transition-opacity ${opacityClass}`;
                 
-                grouped[dayKey].items.forEach(act => {
+                const safeDayKey = dayKey.replace(/'/g, "\\'");
+                col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2 cursor-pointer hover:text-blue-400 group" onclick="toggleDayFilter('${safeDayKey}')"><h3 class="text-white font-bold group-hover:text-blue-400 transition-colors">${dayKey}</h3><button onclick="event.stopPropagation(); clearItinerary()" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
+                
+                grouped[dayKey].items.forEach((act, index) => {
                     const start = act.start ? new Date(act.start * 1000) : null;
                     const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                     const timeStr = start ? start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts}) : '';
@@ -805,6 +1206,19 @@
                         </button>
                     `;
                     col.appendChild(card);
+                    
+                    if (index < grouped[dayKey].items.length - 1) {
+                        const nextAct = grouped[dayKey].items[index+1];
+                        if (act.location && nextAct.location) {
+                            const pillId = `route-pill-${act.id}-${nextAct.id}`;
+                            const pill = document.createElement('div');
+                            pill.id = pillId;
+                            pill.className = "self-center my-1 py-1 px-3 rounded-full bg-gray-800 border border-gray-700 text-xs text-gray-400 flex items-center gap-1 shadow-sm opacity-50";
+                            pill.innerHTML = `<svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>Calculating...</span>`;
+                            col.appendChild(pill);
+                            loadRouteBetween(act, nextAct, pill, dayKey);
+                        }
+                    }
                 });
                 grid.appendChild(col);
             });
@@ -836,7 +1250,7 @@
                     const prioLabel = { 'must': 'Must See', 'want': 'Want', 'stretch': 'Stretch' };
 
                     const div = document.createElement('div');
-                    div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group relative flex flex-col`;
+                    div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group relative flex flex-col h-full`;
                     div.onclick = () => openPoiDetails(index);
                     
                     let scheduleBadge = poi.is_scheduled 
@@ -853,6 +1267,7 @@
                                     <span class="${prioColors[poi.priority] || prioColors['want']} text-xs px-2 py-1 rounded-full border font-bold">${prioLabel[poi.priority] || 'Want'}</span>
                                     ${scheduleBadge}
                                     <span class="text-xs text-gray-400"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${poi.duration_mins}m</span>
+                                    ${poi.opening_hours ? `<span class="text-xs text-gray-400 ml-1" title="Opening Hours"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>${poi.opening_hours.length > 20 ? poi.opening_hours.substring(0, 20) + '...' : poi.opening_hours}</span>` : ''}
                                 </div>
                             </div>
                         </div>
@@ -875,10 +1290,7 @@
         function toggleAllPois(checkbox) {
             const checkboxes = document.querySelectorAll('.poi-checkbox');
             checkboxes.forEach(cb => {
-                const idx = parseInt(cb.dataset.index);
-                if (!tripData.metadata.pois[idx].is_scheduled) {
-                    cb.checked = checkbox.checked;
-                }
+                cb.checked = checkbox.checked;
             });
             updatePoiBulkActions();
         }
@@ -921,7 +1333,7 @@
                             const data = await res.json();
                             
                             if (data.error) {
-                                alert(data.error);
+                                showGlobalAlert(data.error);
                             } else if (data.results) {
                                 // Gather failures
                                 const failures = [];
@@ -939,7 +1351,7 @@
                                 }
                             }
                         } catch(e) {
-                            alert("Error in bulk schedule");
+                            showGlobalAlert("Error in bulk schedule");
                         }
                         
                         await fetchTripData();
@@ -1115,11 +1527,11 @@
                     fetchTripMetadata(); // Refresh the list
                 } else {
                     const data = await res.json();
-                    alert("Error saving POI: " + data.error);
+                    showGlobalAlert("Error saving POI: " + data.error);
                 }
             } catch (err) {
                 console.error(err);
-                alert("Error saving POI.");
+                showGlobalAlert("Error saving POI.");
             }
         }
         
@@ -1256,7 +1668,7 @@
                 if (schedLoading) schedLoading.classList.add('hidden');
                 
             } catch (e) {
-                alert("Error applying fix: " + e.message);
+                showGlobalAlert("Error applying fix: " + e.message);
             }
         }
 
@@ -1272,29 +1684,34 @@
         
         function closeAiPlannerModal() {
             document.getElementById('ai-planner-modal').classList.add('hidden');
-            fetchTripData(); // refresh the background list
+            fetchTripData();
         }
 
-        async function generatePois() {
+        async function generatePlan() {
             const prompt = document.getElementById('ai-planner-prompt').value;
-            if (!prompt) return alert("Please enter a prompt!");
+            if (!prompt) return showGlobalAlert("Please enter a prompt!");
             
             document.getElementById('ai-planner-input-area').classList.add('hidden');
-            document.getElementById('ai-planner-loading').classList.remove('hidden');
+            document.getElementById('ai-planner-actions').classList.add('hidden');
+            document.getElementById('ai-planner-results').classList.add('hidden');
+            
+            const loading = document.getElementById('ai-planner-loading');
+            loading.classList.remove('hidden');
+            loading.querySelector('p').innerText = "Generating comprehensive trip plan...";
             
             try {
                 const start = tripData.event.start;
                 const end = tripData.event.end;
                 const durationDays = (start && end) ? Math.max(1, Math.ceil((end - start) / 86400)) : 1;
                 
-                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/generate_pois`, {
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/generate_plan`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ prompt: prompt, duration_days: durationDays })
                 });
                 const data = await res.json();
                 
-                document.getElementById('ai-planner-loading').classList.add('hidden');
+                loading.classList.add('hidden');
                 document.getElementById('ai-planner-results').classList.remove('hidden');
                 document.getElementById('ai-planner-actions').classList.remove('hidden');
                 
@@ -1303,17 +1720,19 @@
                     return;
                 }
                 
-                const pois = data.pois;
-                let html = `<p class="text-green-400 font-bold mb-4">Successfully added ${pois.length} suggestions to your POI list!</p>`;
+                const pois = data.pois || [];
+                const accs = data.accommodations || [];
+                
+                let html = `<p class="text-green-400 font-bold mb-4">Successfully planned ${pois.length} POIs and ${accs.length} Accommodations!</p>`;
                 document.getElementById('ai-planner-results').innerHTML = html;
                 
-                tripData.metadata.pois = data.pois;
-                renderPois();
+                await fetchTripData();
                 
             } catch(e) {
+                console.error(e);
                 document.getElementById('ai-planner-loading').classList.add('hidden');
                 document.getElementById('ai-planner-input-area').classList.remove('hidden');
-                alert("Error generating POIs");
+                showGlobalAlert("Error generating trip plan");
             }
         }
         
@@ -1328,12 +1747,12 @@
                 });
                 const data = await res.json();
                 if (data.error) {
-                    alert(data.error);
+                    showGlobalAlert(data.error);
                 } else {
                     fetchTripData();
                 }
             } catch(e) {
-                alert("Error scheduling POI");
+                showGlobalAlert("Error scheduling POI");
             }
             if (schedLoading) schedLoading.classList.add('hidden');
         }
@@ -1449,22 +1868,35 @@
             renderTrip();
         }
 
-        async function deleteTrip() {
-            if(!confirm("Are you sure you want to delete this trip? This action cannot be undone.")) return;
-            try {
-                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                const res = await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}`, {
-                    method: 'DELETE'
-                });
-                if(res.ok) {
-                    window.location.href = 'trips';
-                } else {
-                    alert("Failed to delete trip.");
+        function deleteTrip() {
+            openConfirmModal("Delete Trip?", "Are you sure you want to delete this trip? This action cannot be undone.", [
+                {
+                    label: "Cancel",
+                    class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium",
+                    action: "close"
+                },
+                {
+                    label: "Delete",
+                    class: "px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-sm font-medium",
+                    action: async () => {
+                        closeConfirmModal();
+                        try {
+                            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                            const res = await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                                method: 'DELETE'
+                            });
+                            if(res.ok) {
+                                window.location.href = 'trips';
+                            } else {
+                                showGlobalAlert("Failed to delete trip.");
+                            }
+                        } catch (err) {
+                            showGlobalAlert("Error deleting trip.");
+                            console.error(err);
+                        }
+                    }
                 }
-            } catch (err) {
-                alert("Error deleting trip.");
-                console.error(err);
-            }
+            ]);
         }
 
         // Autocomplete
@@ -1580,7 +2012,7 @@
             let payload = {};
             if(currentActTab === 'link') {
                 const val = document.getElementById('act-existing-select').value;
-                if(!val) return alert("Select an event to link.");
+                if(!val) return showGlobalAlert("Select an event to link.");
                 payload = { activity_id: val };
             } else {
                 payload = {
@@ -1589,7 +2021,7 @@
                     start: document.getElementById('act-start').value + ':00Z',
                     end: document.getElementById('act-end').value + ':00Z'
                 };
-                if(!payload.title || !document.getElementById('act-start').value) return alert("Title and start time required.");
+                if(!payload.title || !document.getElementById('act-start').value) return showGlobalAlert("Title and start time required.");
             }
             
             const btn = document.querySelector('#activity-modal button:last-child');
@@ -1604,7 +2036,7 @@
                 closeAddActivityModal();
                 fetchTripData();
             } catch(e) {
-                alert("Error saving activity");
+                showGlobalAlert("Error saving activity");
             }
             btn.innerText = "Save Activity";
         }
@@ -1623,7 +2055,7 @@
                             closeActivityDetails();
                             fetchTripData();
                         } catch(e) {
-                            alert("Error removing activity");
+                            showGlobalAlert("Error removing activity");
                         }
                     }
                 },
@@ -1638,7 +2070,7 @@
                             closeActivityDetails();
                             fetchTripData();
                         } catch(e) {
-                            alert("Error removing activity");
+                            showGlobalAlert("Error removing activity");
                         }
                     }
                 }
@@ -1658,7 +2090,7 @@
                             });
                             fetchTripData();
                         } catch(e) {
-                            alert("Error clearing itinerary");
+                            showGlobalAlert("Error clearing itinerary");
                         }
                     }
                 },
@@ -1672,7 +2104,7 @@
                             });
                             fetchTripData();
                         } catch(e) {
-                            alert("Error clearing itinerary");
+                            showGlobalAlert("Error clearing itinerary");
                         }
                     }
                 }
@@ -1738,8 +2170,6 @@
         fetchTripData();
         const mapboxKey = '{{ mapbox_key }}';
         const allowMapLoads = {{ allow_map_loads | lower }};
-        let poiMap = null;
-        let mapMarkers = [];
 
         async function renderMap() {
             if (!allowMapLoads) {
@@ -1808,11 +2238,56 @@
             mapMarkers.forEach(m => m.remove());
             mapMarkers = [];
 
+            // Clear old routes
+            if (poiMap && poiMap.isStyleLoaded()) {
+                const style = poiMap.getStyle();
+                if (style && style.layers) {
+                    style.layers.forEach(layer => {
+                        if (layer.id.startsWith('route-layer-')) poiMap.removeLayer(layer.id);
+                    });
+                }
+                const sources = style ? style.sources : null;
+                if (sources) {
+                    Object.keys(sources).forEach(sourceId => {
+                        if (sourceId.startsWith('route-source-')) poiMap.removeSource(sourceId);
+                    });
+                }
+            }
+
             const bounds = new mapboxgl.LngLatBounds();
             let hasValidCoords = false;
 
             if (tripData && tripData.metadata && tripData.metadata.pois) {
+                let allowedActivityIds = null;
+                let selectedDateStr = null;
+                
+                if (selectedDayKey && groupedActivities[selectedDayKey]) {
+                    allowedActivityIds = new Set(groupedActivities[selectedDayKey].items.map(a => a.id));
+                    
+                    // Determine the YYYY-MM-DD for the selected day to filter accommodations
+                    if (selectedDayKey !== 'Unscheduled' && groupedActivities[selectedDayKey].items.length > 0) {
+                        const firstAct = groupedActivities[selectedDayKey].items[0];
+                        if (firstAct.start) {
+                            const start = new Date(firstAct.start * 1000);
+                            const tzOpts = tripData.metadata.timeZone ? { timeZone: tripData.metadata.timeZone } : {};
+                            const parts = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', ...tzOpts }).formatToParts(start);
+                            const y = parts.find(p => p.type === 'year').value;
+                            const m = parts.find(p => p.type === 'month').value;
+                            const d = parts.find(p => p.type === 'day').value;
+                            selectedDateStr = `${y}-${m}-${d}`;
+                        }
+                    }
+                }
+                
                 tripData.metadata.pois.forEach((poi, idx) => {
+                    if (allowedActivityIds) {
+                        let match = false;
+                        allowedActivityIds.forEach(actId => {
+                            if (poi.event_id === actId || (poi.event_id && actId.endsWith(poi.event_id))) match = true;
+                        });
+                        if (!match) return; // Skip marker for other days
+                    }
+                    
                     if (poi.lat && poi.lng) {
                         hasValidCoords = true;
                         
@@ -1839,10 +2314,90 @@
                         bounds.extend([poi.lng, poi.lat]);
                     }
                 });
+                
+                // Map Accommodations
+                const accs = tripData.metadata.accommodations || [];
+                accs.forEach(acc => {
+                    // Filter accommodation if a day is selected
+                    if (selectedDateStr) {
+                        if (!acc.check_in_date || !acc.check_out_date) return;
+                        if (selectedDateStr < acc.check_in_date || selectedDateStr > acc.check_out_date) return;
+                    }
+                    
+                    if (acc.lat && acc.lng) {
+                        hasValidCoords = true;
+                        
+                        const popupContent = `
+                            <div class="text-gray-900 p-1">
+                                <p class="font-bold mb-1">${acc.name}</p>
+                                <p class="text-xs uppercase font-semibold text-gray-500 mb-2">Accommodation</p>
+                            </div>
+                        `;
+                        const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
+                        
+                        // Custom hotel-like icon
+                        const el = document.createElement('div');
+                        el.className = 'w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white cursor-pointer';
+                        el.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>';
+                        
+                        const marker = new mapboxgl.Marker({element: el})
+                            .setLngLat([acc.lng, acc.lat])
+                            .setPopup(popup)
+                            .addTo(poiMap);
+                            
+                        mapMarkers.push(marker);
+                        bounds.extend([acc.lng, acc.lat]);
+                    }
+                });
+
+            }
+            
+            // Draw route lines
+            if (poiMap && poiMap.isStyleLoaded()) {
+                Object.keys(cachedRoutes).forEach(key => {
+                    const r = cachedRoutes[key];
+                    if (!selectedDayKey || r.dayKey !== selectedDayKey) return;
+                    
+                    const sourceId = `route-source-${key}`;
+                    const layerId = `route-layer-${key}`;
+                    
+                    if (!poiMap.getSource(sourceId)) {
+                        poiMap.addSource(sourceId, {
+                            type: 'geojson',
+                            data: {
+                                type: 'Feature',
+                                properties: {},
+                                geometry: r.geometry
+                            }
+                        });
+                    }
+                    
+                    if (!poiMap.getLayer(layerId)) {
+                        poiMap.addLayer({
+                            id: layerId,
+                            type: 'line',
+                            source: sourceId,
+                            layout: {
+                                'line-join': 'round',
+                                'line-cap': 'round'
+                            },
+                            paint: {
+                                'line-color': r.type === 'walking' ? '#10b981' : '#3b82f6',
+                                'line-width': 4,
+                                'line-dasharray': r.type === 'walking' ? [2, 2] : [1]
+                            }
+                        });
+                    }
+                    
+                    r.geometry.coordinates.forEach(coord => {
+                        bounds.extend(coord);
+                        hasValidCoords = true;
+                    });
+                });
             }
 
             if (hasValidCoords) {
-                poiMap.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+                poiMap.fitBounds(bounds, { padding: 50, maxZoom: 15 });
             }
         }
 
@@ -1854,17 +2409,39 @@
             
             if (isMapExpanded) {
                 container.classList.remove('h-96', 'relative');
-                container.classList.add('fixed', 'inset-4', 'z-50', 'h-auto');
+                container.classList.add('fixed', 'z-40', 'h-auto');
+                
+                container.style.top = '5rem';
+                container.style.bottom = '1rem';
+                container.style.left = '1rem';
+                container.style.right = (typeof isOperationsSidebarOpen !== 'undefined' && isOperationsSidebarOpen && window.innerWidth >= 768) ? 'calc(640px + 1rem)' : '1rem';
+                
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14h4v4m0-4l-5 5m11-1h4v4m0-4l5 5M4 10h4V6m0 4l-5-5m11 1h4V6m0 4l5-5"></path>';
             } else {
-                container.classList.remove('fixed', 'inset-4', 'z-50', 'h-auto');
+                container.classList.remove('fixed', 'z-40', 'h-auto');
                 container.classList.add('h-96', 'relative');
+                
+                container.style.top = '';
+                container.style.bottom = '';
+                container.style.left = '';
+                container.style.right = '';
+                
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>';
             }
             if (poiMap) {
                 setTimeout(() => poiMap.resize(), 300);
             }
         }
+        
+        window.addEventListener('sidebarToggled', (e) => {
+            if (isMapExpanded) {
+                const container = document.getElementById('map-container');
+                container.style.right = (e.detail.isOpen && window.innerWidth >= 768) ? 'calc(640px + 1rem)' : '1rem';
+                if (poiMap) {
+                    setTimeout(() => poiMap.resize(), 300);
+                }
+            }
+        });
     </script>
     {% include 'components/control_center.html' %}
 </body>
