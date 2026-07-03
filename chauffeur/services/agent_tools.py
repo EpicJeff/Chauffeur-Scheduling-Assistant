@@ -178,6 +178,15 @@ class SearchPlacesTool(BaseModel):
     query: str = Field(..., description="The name, category, or address to search for (e.g., 'gas station', 'Starbucks').")
     proximity_location: str = Field(default="", description="A known location (address or name) to search near. Usually one of the driver's scheduled stops.")
 
+class GenerateTripPlanTool(BaseModel):
+    """
+    Generates a complete trip itinerary, including multiple Points of Interest (POIs) and Accommodations, in a single AI pass.
+    Always use this when the user asks you to plan a trip, generate ideas for a trip, or suggests a list of things to do on a trip.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    prompt: str = Field(..., description="The user's preferences for the trip (e.g. 'Michelin star restaurants, bold red wines, sightseeing').")
+
+
 class AddTripPoiTool(BaseModel):
     """
     Adds a Point of Interest (POI) to a specific Trip. Use this when a user says they want to visit a location during a trip.
@@ -234,6 +243,7 @@ TOOL_SCHEMAS = {
     "add_errand_rule": AddErrandRuleTool.model_json_schema(),
     "delete_errand_rule": DeleteErrandRuleTool.model_json_schema(),
     "search_places": SearchPlacesTool.model_json_schema(),
+    "generate_trip_plan": GenerateTripPlanTool.model_json_schema(),
     "add_trip_poi": AddTripPoiTool.model_json_schema(),
     "edit_trip_poi": EditTripPoiTool.model_json_schema(),
 }
@@ -469,6 +479,50 @@ def handle_search_places(args: dict) -> dict:
         return {"status": "success", "message": "No places found matching the query."}
     return {"status": "success", "results": results}
 
+def handle_generate_trip_plan(args: dict) -> dict:
+    from services import storage
+    from models.schemas import TripMetadata
+    from services.trip_planner import generate_trip_plan
+    
+    event_id = args.get('event_id')
+    user_prompt = args.get('prompt', '')
+    
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {event_id} not found."}
+        
+    duration_days = meta.get('draft_duration_days')
+    if duration_days is None:
+        start_ts = meta.get('mock_start_date')
+        end_ts = meta.get('mock_end_date')
+        if start_ts and end_ts:
+            duration_days = max(1, int((end_ts - start_ts) / 86400) + 1)
+        else:
+            duration_days = 3
+            
+    trip_obj = TripMetadata(**meta)
+    pois, accs = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    
+    if 'pois' not in meta:
+        meta['pois'] = []
+    if 'accommodations' not in meta:
+        meta['accommodations'] = []
+        
+    for poi in pois:
+        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+        meta['pois'].append(poi_dict)
+        
+    for acc in accs:
+        acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+        meta['accommodations'].append(acc_dict)
+        
+    storage.set_trip_metadata(event_id, meta)
+    
+    return {
+        "status": "success",
+        "message": f"Generated and added {len(pois)} POIs and {len(accs)} accommodations to the trip."
+    }
+
 def handle_add_trip_poi(args: dict) -> dict:
     from services import storage
     event_id = args.get('event_id')
@@ -564,6 +618,7 @@ TOOL_HANDLERS = {
     "add_errand_rule": handle_add_errand_rule,
     "delete_errand_rule": handle_delete_errand_rule,
     "search_places": handle_search_places,
+    "generate_trip_plan": handle_generate_trip_plan,
     "add_trip_poi": handle_add_trip_poi,
     "edit_trip_poi": handle_edit_trip_poi,
 }

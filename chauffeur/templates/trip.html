@@ -100,9 +100,9 @@
                     <svg class="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                     Smart Itinerary Engine
                 </h3>
-                <p class="text-sm text-gray-400 mb-4">The solver will automatically schedule your POIs as bounded errands during gaps in your trip dates.</p>
+                <p class="text-sm text-gray-400 mb-4">The solver will automatically schedule your Attractions as bounded errands during gaps in your trip dates.</p>
                 <div class="flex justify-between items-center text-sm">
-                    <span class="text-gray-300">Unscheduled POIs:</span>
+                    <span class="text-gray-300">Unscheduled Attractions:</span>
                     <span id="unscheduled-count" class="font-bold text-white bg-red-500/50 px-2 py-0.5 rounded">0</span>
                 </div>
             </div>
@@ -177,7 +177,7 @@
             <div class="glass-panel rounded-3xl p-6 md:p-8 shadow-2xl flex flex-col relative pb-24">
                 <div class="flex justify-between items-end mb-6 border-b border-white/10 pb-4">
                     <div>
-                        <h2 class="text-3xl font-bold text-white">Points of Interest</h2>
+                        <h2 class="text-3xl font-bold text-white">Attractions</h2>
                         <p class="text-gray-400 text-sm mt-1">Places to go and things to do.</p>
                     </div>
                     <div class="flex items-center space-x-4">
@@ -188,7 +188,7 @@
                         
                         <button onclick="openAddPoiModal()" class="flex items-center px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-lg transition-transform transform hover:-translate-y-0.5 font-bold">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                            Add POI
+                            Add Attraction
                         </button>
                     </div>
                 </div>
@@ -217,7 +217,7 @@
         </button>
     </div>
 
-    <!-- Modals (Add POI, Settings, Add Activity, Activity Details) -->
+    <!-- Modals (Add Attraction, Settings, Add Activity, Activity Details) -->
     <div id="activity-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <!-- Header Image Area -->
@@ -275,7 +275,7 @@
                 </button>
                 <div class="absolute bottom-0 left-0 p-6 w-full">
                     <span id="poi-detail-category" class="px-3 py-1 bg-white/20 backdrop-blur rounded-full text-xs font-bold text-white uppercase tracking-wider mb-2 inline-block">Category</span>
-                    <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">POI Title</h3>
+                    <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">Attraction Title</h3>
                     <a id="poi-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit">
                         <svg class="w-4 h-4 mr-1 group-hover:underline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                         <span id="poi-detail-location" class="group-hover:underline">Location</span>
@@ -329,11 +329,11 @@
             <div class="p-4 bg-gray-900 border-t border-gray-700 flex justify-between items-center shrink-0">
                 <button id="poi-detail-remove-btn" class="text-red-400 hover:text-red-300 hover:bg-red-950/50 px-4 py-2 rounded-xl transition-colors font-bold text-sm flex items-center">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                    Delete POI
+                    Delete Attraction
                 </button>
                 <div class="flex space-x-3">
                     <button id="poi-detail-edit-btn" class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-xl font-bold transition-colors">
-                        Edit POI
+                        Edit Attraction
                     </button>
                     <button id="poi-detail-schedule-btn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-xl font-bold transition-colors">
                         Add to Itinerary
@@ -400,7 +400,7 @@
     <div id="poi-edit-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4 overflow-y-auto">
         <div class="bg-gray-800 rounded-2xl w-full max-w-2xl border border-gray-700 shadow-2xl flex flex-col my-8">
             <div class="p-6 border-b border-gray-700 flex justify-between items-center">
-                <h3 class="text-xl font-bold text-white">Edit POI</h3>
+                <h3 class="text-xl font-bold text-white">Edit Attraction</h3>
                 <button onclick="closePoiEdit()" class="text-gray-400 hover:text-white transition-colors">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
@@ -517,7 +517,7 @@
             </div>
             <div class="mt-8 flex justify-end space-x-4">
                 <button onclick="closeAddPoiModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                <button onclick="savePoi()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save POI</button>
+                <button onclick="savePoi()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save Attraction</button>
             </div>
         </div>
     </div>
@@ -561,7 +561,7 @@
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-2xl border border-gray-600 shadow-2xl flex flex-col max-h-[90vh]">
             <h3 class="text-2xl font-bold text-red-400 mb-2 flex items-center">
                 <svg class="w-7 h-7 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                Failed to Schedule POIs
+                Failed to Schedule Attractions
             </h3>
             <p class="text-gray-300 text-sm mb-6">The following POIs could not be added to your itinerary due to constraints.</p>
             
@@ -1231,7 +1231,7 @@
             let unscheduled = 0;
 
             if (pois.length === 0) {
-                list.innerHTML = `<div class="col-span-full text-center text-gray-500 py-12">No POIs added yet. Start planning!</div>`;
+                list.innerHTML = `<div class="col-span-full text-center text-gray-500 py-12">No Attractions added yet. Start planning!</div>`;
             } else {
                 pois.forEach((poi, index) => {
                     if (!poi.is_scheduled) unscheduled++;
@@ -1314,7 +1314,7 @@
                 
             if (selected.length === 0) return;
             
-            openConfirmModal("Schedule POIs", `Are you sure you want to schedule the ${selected.length} selected POIs via Smart Engine?`, [
+            openConfirmModal("Schedule Attractions", `Are you sure you want to schedule the ${selected.length} selected Attractions via Smart Engine?`, [
                 { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold text-sm" },
                 { 
                     text: "Schedule", 
@@ -1365,7 +1365,7 @@
             const checkboxes = document.querySelectorAll('.poi-checkbox:checked');
             if(checkboxes.length === 0) return;
             
-            openConfirmModal("Delete POIs?", "Are you sure you want to remove the selected POIs from your list? This cannot be undone.", [
+            openConfirmModal("Delete Attractions?", "Are you sure you want to remove the selected Attractions from your list? This cannot be undone.", [
                 { text: "Cancel" },
                 {
                     text: "Delete",
@@ -1831,7 +1831,7 @@
         }
 
         async function deletePoi(index) {
-            openConfirmModal("Delete POI?", "Are you sure you want to remove this from your list? This cannot be undone.", [
+            openConfirmModal("Delete Attraction?", "Are you sure you want to remove this from your list? This cannot be undone.", [
                 { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm" },
                 { 
                     text: "Delete", 
@@ -2076,7 +2076,7 @@
         }
 
         async function clearItinerary() {
-            openConfirmModal("Clear Itinerary", "Do you want to completely delete all scheduled POIs from Google Calendar, or just unlink them from this trip?", [
+            openConfirmModal("Clear Itinerary", "Do you want to completely delete all scheduled Attractions from Google Calendar, or just unlink them from this trip?", [
                 { text: "Cancel" },
                 { 
                     text: "Unlink Only",
