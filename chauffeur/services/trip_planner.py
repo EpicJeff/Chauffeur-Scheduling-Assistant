@@ -141,6 +141,21 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
     if not cals:
         return None, "No calendars configured in settings.", None
         
+    import zoneinfo
+    trip_tz_str = getattr(trip, 'timeZone', None)
+    if not trip_tz_str or trip_tz_str == "UTC":
+        if trip.location:
+            from services.maps import get_timezone
+            tz_str = get_timezone(trip.location)
+            local_tz = zoneinfo.ZoneInfo(tz_str) if tz_str else datetime.timezone.utc
+        else:
+            local_tz = datetime.timezone.utc
+    else:
+        try:
+            local_tz = zoneinfo.ZoneInfo(trip_tz_str)
+        except Exception:
+            local_tz = datetime.timezone.utc
+        
     if trip.is_draft:
         # Isolated Scheduling Engine
         if not trip.mock_start_date or not trip.mock_end_date:
@@ -173,8 +188,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                         self.end = end
                         self.location = location
                 try:
-                    start_dt = datetime.datetime.strptime(acc.check_in_date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
-                    end_dt = datetime.datetime.strptime(acc.check_out_date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
+                    start_dt = datetime.datetime.strptime(acc.check_in_date, "%Y-%m-%d").replace(hour=15, tzinfo=local_tz)
+                    end_dt = datetime.datetime.strptime(acc.check_out_date, "%Y-%m-%d").replace(hour=11, tzinfo=local_tz)
                     accommodation_events.append(MockAccEvent(start_dt, end_dt, acc.location))
                 except Exception:
                     pass
@@ -213,19 +228,6 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
     current_time = trip_start
     best_start = None
     
-    import zoneinfo
-    trip_tz_str = getattr(trip, 'timeZone', None)
-    if not trip_tz_str or trip_tz_str == "UTC":
-        if trip.location:
-            from services.maps import get_timezone
-            new_tz = get_timezone(trip.location)
-            if new_tz and new_tz != "UTC":
-                trip_tz_str = new_tz
-    try:
-        local_tz = zoneinfo.ZoneInfo(trip_tz_str or "UTC")
-    except Exception:
-        local_tz = datetime.timezone.utc
-    
     ideal_start_time = None
     ideal_end_time = None
     if poi.ideal_time_start:
@@ -260,7 +262,6 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     pass
     
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
-    buffer_delta = datetime.timedelta(minutes=30)
     
     is_food = poi.category == 'food'
     is_dessert = False
@@ -362,8 +363,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             
             day_home_base = trip.location
             for acc in accommodation_events:
-                # Check if slot date falls between check in and check out dates (accounting for timezones)
-                if acc.start.date() <= slot_start.date() <= acc.end.date():
+                if acc.start <= slot_start <= acc.end:
                     day_home_base = acc.location
                     break
                     
@@ -439,6 +439,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         return None, "Could not find an available time slot matching constraints (e.g. ideal times, overlapping activities, or meal conflicts).", {"suggested_fixes": suggested_fixes}
         
     valid_slots.sort(key=lambda x: (-x[0], x[1]))
+    if valid_slots[0][0] < 0:
+        return None, "All available slots require > 60 minutes of travel from your home base or other scheduled activities.", None
     best_start = valid_slots[0][1]
         
     best_end = best_start + datetime.timedelta(minutes=poi.duration_mins)
