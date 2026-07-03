@@ -373,12 +373,18 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     location_travel_times[key] = maps.get_travel_time_minutes(day_home_base, poi.location)
                 travel_mins_from_base = location_travel_times[key]
                 
-                if travel_mins_from_base > 60:
+                if travel_mins_from_base > 180:
+                    score -= 10000
+                elif travel_mins_from_base > 120:
+                    score -= 5000
+                elif travel_mins_from_base > 90:
                     score -= 1000
-                elif travel_mins_from_base > 45:
+                elif travel_mins_from_base > 60:
                     score -= 500
-                elif travel_mins_from_base > 30:
+                elif travel_mins_from_base > 45:
                     score -= 200
+                elif travel_mins_from_base > 30:
+                    score -= 50
                 else:
                     score += 200
             
@@ -439,8 +445,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         return None, "Could not find an available time slot matching constraints (e.g. ideal times, overlapping activities, or meal conflicts).", {"suggested_fixes": suggested_fixes}
         
     valid_slots.sort(key=lambda x: (-x[0], x[1]))
-    if valid_slots[0][0] < 0:
-        return None, "All available slots require > 60 minutes of travel from your home base or other scheduled activities.", None
+    if valid_slots[0][0] < -2000:
+        return None, "All available slots require > 2 hours of travel from your home base or other scheduled activities.", None
     best_start = valid_slots[0][1]
         
     best_end = best_start + datetime.timedelta(minutes=poi.duration_mins)
