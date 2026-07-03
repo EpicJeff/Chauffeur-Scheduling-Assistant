@@ -24,15 +24,16 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int 
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
         api_key = settings.get('llm_gemini_api_key')
         
-    system_prompt = """You are an expert travel agent. 
+    num_pois = max(1, duration_days * 4)
+    system_prompt = f"""You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-The user's trip is """ + str(duration_days) + """ days long. Your job is to suggest enough Points of Interest (POIs) to fill this trip (aim for 3-5 POIs per day, up to a maximum of 30 suggestions per response) that match their request and are located in or near the specified Trip Location.
+The user's trip is {duration_days} days long. Your job is to suggest approximately {num_pois} Points of Interest (POIs) to fill this trip that match their request and are located in or near the specified Trip Location.
 If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
 
 You MUST respond with a single valid JSON object of the following exact structure:
-{
+{{
   "suggestions": [
-    {
+    {{
       "name": "The name of the location (e.g., French Laundry)",
       "category": "A predefined category string. MUST be one of exactly these: 'sightseeing', 'food', 'activity', 'shopping', or 'other'",
       "description": "A 1-2 sentence compelling description of the experience.",
@@ -42,9 +43,9 @@ You MUST respond with a single valid JSON object of the following exact structur
       "duration_mins": 90,
       "ideal_time_start": "09:00",
       "ideal_time_end": "12:00"
-    }
+    }}
   ]
-}
+}}
 Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """

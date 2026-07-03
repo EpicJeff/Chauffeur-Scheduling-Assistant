@@ -806,7 +806,7 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
     if mode == 'planner':
         path = context.get('pathname', '') if context else ''
         search = context.get('search', '') if context else ''
-        duration_days = context.get('duration_days', 1) if context else 1
+        duration_days = context.get('duration_days') if context else None
         
         event_id = None
         if 'trip' in path and 'event_id=' in search:
@@ -828,8 +828,18 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
         from models.schemas import TripMetadata
         trip_obj = TripMetadata(**meta)
         
-        # Determine intent (POIs vs Accommodations)
-        system_prompt = "You are a classifier. The user is asking to add things to their trip itinerary. Decide if they are asking for 'accommodations' (hotels, airbnbs, lodging, places to stay, house) or 'pois' (activities, restaurants, sights, points of interest, etc). Respond with a JSON object exactly like this: {\"intent\": \"accommodations\"} or {\"intent\": \"pois\"}."
+        if duration_days is None:
+            duration_days = meta.get('draft_duration_days')
+        if duration_days is None:
+            start_ts = meta.get('mock_start_date')
+            end_ts = meta.get('mock_end_date')
+            if start_ts and end_ts:
+                duration_days = max(1, int((end_ts - start_ts) / 86400) + 1)
+            else:
+                duration_days = 3
+        
+        # Determine intent (POIs vs Accommodations vs Entire Trip)
+        system_prompt = "You are a classifier. The user is asking to add things to their trip itinerary. Decide if they are asking for 'accommodations' (hotels, airbnbs, lodging, places to stay, house), 'pois' (activities, restaurants, sights, points of interest, etc), or an 'entire_trip' (they want you to plan a full trip, an entire itinerary, or both accommodations and pois at the same time). Respond with a JSON object exactly like this: {\"intent\": \"accommodations\"}, {\"intent\": \"pois\"}, or {\"intent\": \"entire_trip\"}."
         
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         api_key = settings.get('llm_gemini_api_key', '')
@@ -852,6 +862,21 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
                 meta['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
                 
             reply = f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
+        elif intent == 'entire_trip':
+            from services.trip_planner import generate_trip_plan
+            pois, accs = generate_trip_plan(trip_obj, user_msg, duration_days)
+            
+            if 'accommodations' not in meta:
+                meta['accommodations'] = []
+            for acc in accs:
+                meta['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
+                
+            if 'pois' not in meta:
+                meta['pois'] = []
+            for poi in pois:
+                meta['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
+                
+            reply = f"✨ I've generated and added {len(pois)} new Points of Interest and {len(accs)} accommodations to your trip based on your request!"
         else:
             from services.trip_planner import generate_trip_pois
             pois = generate_trip_pois(trip_obj, user_msg, duration_days)
