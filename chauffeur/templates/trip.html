@@ -1662,7 +1662,12 @@
                 });
                 const data = await res.json();
                 if (data.error) {
-                    showGlobalAlert(data.error);
+                    const poiObj = tripData.metadata.pois.find(p => p.id === poiId);
+                    if (poiObj) {
+                        openFailedPoisModal([{poi: poiObj, reason: data.error, suggested_fixes: data.suggested_fixes}]);
+                    } else {
+                        showGlobalAlert(data.error);
+                    }
                 } else {
                     fetchTripData();
                 }

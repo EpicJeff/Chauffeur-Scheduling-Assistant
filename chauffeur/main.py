@@ -801,9 +801,9 @@ def schedule_poi_api(event_id: str, payload: dict):
             return {"error": "POI not found"}
             
         from services.trip_planner import schedule_poi
-        event_calendar_id = schedule_poi(trip_obj, poi)
+        event_calendar_id, reason, suggested_fixes = schedule_poi(trip_obj, poi)
         if not event_calendar_id:
-            return {"error": "Failed to schedule POI (no available time slot or calendar missing)"}
+            return {"error": reason or "Failed to schedule POI (no available time slot or calendar missing)", "suggested_fixes": suggested_fixes}
             
         # Update POI in DB
         meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
