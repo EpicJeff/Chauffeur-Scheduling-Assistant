@@ -181,6 +181,11 @@
                         <p class="text-gray-400 text-sm mt-1">Places to go and things to do.</p>
                     </div>
                     <div class="flex items-center space-x-4">
+                        <select id="poi-sort" onchange="renderPois()" class="bg-gray-900 border border-gray-600 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-blue-500 text-sm font-bold cursor-pointer">
+                            <option value="default">Default Sort</option>
+                            <option value="priority">Priority</option>
+                            <option value="category">Category</option>
+                        </select>
                         <label class="flex items-center space-x-2 text-gray-400 hover:text-white cursor-pointer transition-colors">
                             <input type="checkbox" id="poi-select-all" class="w-5 h-5 bg-gray-900 border-gray-600 rounded cursor-pointer" onclick="toggleAllPois(this)">
                             <span class="text-sm font-bold">Select All</span>
@@ -204,14 +209,14 @@
     </div> <!-- Close Main Container -->
 
     <!-- Floating Bulk Action Bar -->
-    <div id="poi-bulk-actions" class="hidden fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 border border-gray-600 rounded-full px-6 py-3 shadow-2xl flex items-center space-x-6 z-40">
-        <span id="poi-selected-count" class="text-white font-bold text-sm">0 selected</span>
-        <div class="h-6 w-px bg-gray-700"></div>
-        <button onclick="bulkSchedulePois()" class="text-indigo-400 hover:text-indigo-300 font-bold text-sm flex items-center">
+    <div id="poi-bulk-actions" class="hidden fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-indigo-600 to-blue-600 border border-indigo-400/50 rounded-full px-6 py-3 shadow-[0_0_40px_rgba(79,70,229,0.5)] flex items-center space-x-6 z-40 backdrop-blur-md">
+        <span id="poi-selected-count" class="text-white font-extrabold text-sm tracking-wide">0 selected</span>
+        <div class="h-6 w-px bg-white/30"></div>
+        <button onclick="bulkSchedulePois()" class="text-white hover:text-indigo-200 font-bold text-sm flex items-center transition-colors">
             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
             Schedule
         </button>
-        <button onclick="bulkDeletePois()" class="text-red-400 hover:text-red-300 font-bold text-sm flex items-center">
+        <button onclick="bulkDeletePois()" class="text-red-100 hover:text-white font-bold text-sm flex items-center transition-colors">
             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
             Delete
         </button>
@@ -268,15 +273,24 @@
     <div id="poi-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4">
         <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <!-- Header Image Area -->
-            <div id="poi-detail-header" class="h-56 relative bg-cover bg-center shrink-0">
+            <div id="poi-detail-header" class="h-56 relative bg-cover bg-center shrink-0 group">
                 <div class="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent"></div>
-                <button onclick="closePoiDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all">
+                
+                <button onclick="navigatePoi(-1)" class="absolute top-1/2 left-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-0 group-hover:opacity-100 z-10">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                
+                <button onclick="navigatePoi(1)" class="absolute top-1/2 right-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-0 group-hover:opacity-100 z-10">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </button>
+                
+                <button onclick="closePoiDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all z-20">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
                 <div class="absolute bottom-0 left-0 p-6 w-full">
                     <span id="poi-detail-category" class="px-3 py-1 bg-white/20 backdrop-blur rounded-full text-xs font-bold text-white uppercase tracking-wider mb-2 inline-block">Category</span>
-                    <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md">Attraction Title</h3>
-                    <a id="poi-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit">
+                    <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md relative z-20">Attraction Title</h3>
+                    <a id="poi-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit relative z-20">
                         <svg class="w-4 h-4 mr-1 group-hover:underline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                         <span id="poi-detail-location" class="group-hover:underline">Location</span>
                     </a>
@@ -284,23 +298,20 @@
             </div>
             
             <!-- Priority Setting -->
-            <div class="p-6 pb-0">
-                <label class="block text-gray-400 mb-1 text-sm font-bold">Priority Setting</label>
-                <select id="poi-priority" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-bold mb-4">
-                    <option value="must">Must See</option>
-                    <option value="want">Want to go</option>
-                    <option value="stretch">Stretch Goal</option>
-                </select>
+            <div class="p-6 pb-0 flex flex-wrap items-center gap-6">
+                <div class="flex flex-col">
+                    <label class="text-gray-500 mb-1 text-xs font-bold uppercase tracking-wider">Priority</label>
+                    <div id="poi-priority" class="text-white font-bold text-lg"></div>
+                </div>
                 
-                <div class="grid grid-cols-2 gap-4">
-                    <div id="poi-detail-duration-container" class="hidden">
-                        <label class="block text-gray-400 mb-1 text-sm font-bold">Duration</label>
-                        <div id="poi-detail-duration" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-bold"></div>
-                    </div>
-                    <div id="poi-detail-ideal-time-container" class="hidden">
-                        <label class="block text-gray-400 mb-1 text-sm font-bold">Ideal Time</label>
-                        <div id="poi-detail-ideal-time" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-bold"></div>
-                    </div>
+                <div id="poi-detail-duration-container" class="flex flex-col hidden">
+                    <label class="text-gray-500 mb-1 text-xs font-bold uppercase tracking-wider">Duration</label>
+                    <div id="poi-detail-duration" class="text-white font-bold text-lg"></div>
+                </div>
+                
+                <div id="poi-detail-ideal-time-container" class="flex flex-col hidden">
+                    <label class="text-gray-500 mb-1 text-xs font-bold uppercase tracking-wider">Ideal Time</label>
+                    <div id="poi-detail-ideal-time" class="text-white font-bold text-lg"></div>
                 </div>
             </div>
             
@@ -1209,6 +1220,8 @@
             });
         }
 
+        let displayedPoiIndices = [];
+
         function renderPois() {
             const list = document.getElementById('pois-list');
             list.innerHTML = '';
@@ -1218,8 +1231,22 @@
 
             if (pois.length === 0) {
                 list.innerHTML = `<div class="col-span-full text-center text-gray-500 py-12">No Attractions added yet. Start planning!</div>`;
+                displayedPoiIndices = [];
             } else {
-                pois.forEach((poi, index) => {
+                let sortedPois = pois.map((poi, idx) => ({poi, idx}));
+                const sortEl = document.getElementById('poi-sort');
+                const sortVal = sortEl ? sortEl.value : 'default';
+                
+                if (sortVal === 'priority') {
+                    const pWeights = { 'must': 3, 'want': 2, 'stretch': 1 };
+                    sortedPois.sort((a, b) => (pWeights[b.poi.priority || 'want'] || 0) - (pWeights[a.poi.priority || 'want'] || 0));
+                } else if (sortVal === 'category') {
+                    sortedPois.sort((a, b) => (a.poi.category || 'other').localeCompare(b.poi.category || 'other'));
+                }
+                
+                displayedPoiIndices = sortedPois.map(x => x.idx);
+                
+                sortedPois.forEach(({poi, idx: index}) => {
                     if (!poi.is_scheduled) unscheduled++;
                     
                     const catColors = {
@@ -1383,7 +1410,9 @@
             document.getElementById('poi-detail-title').innerText = poi.name;
             document.getElementById('poi-detail-category').innerText = poi.category || 'other';
             document.getElementById('poi-detail-location').innerText = poi.location || 'Unknown location';
-            document.getElementById('poi-priority').value = poi.priority || 'want';
+            
+            const prioLabel = { 'must': 'Must See', 'want': 'Want', 'stretch': 'Stretch' };
+            document.getElementById('poi-priority').innerText = prioLabel[poi.priority || 'want'] || 'Want to go';
             
             if (poi.image_url) {
                 document.getElementById('poi-detail-header').style.backgroundImage = `url('${poi.image_url}')`;
@@ -1467,9 +1496,20 @@
             document.getElementById('poi-details-modal').classList.remove('hidden');
         }
         
+        function navigatePoi(direction) {
+            if (displayedPoiIndices.length === 0) return;
+            let currentPos = displayedPoiIndices.indexOf(activePoiIndex);
+            if (currentPos === -1) currentPos = 0;
+            
+            let newPos = currentPos + direction;
+            if (newPos < 0) newPos = displayedPoiIndices.length - 1;
+            if (newPos >= displayedPoiIndices.length) newPos = 0;
+            
+            openPoiDetails(displayedPoiIndices[newPos]);
+        }
+        
         function closePoiDetails() {
             document.getElementById('poi-details-modal').classList.add('hidden');
-            activePoiIndex = null;
         }
         
         function openPoiEdit(poi) {
@@ -1509,7 +1549,15 @@
                 });
                 if (res.ok) {
                     closePoiEdit();
-                    fetchTripMetadata(); // Refresh the list
+                    await fetchTripData(); // Refresh the list
+                    
+                    // Re-open details dialog for the edited POI
+                    if (tripData && tripData.metadata && tripData.metadata.pois) {
+                        const newIndex = tripData.metadata.pois.findIndex(p => String(p.id) === String(poiId));
+                        if (newIndex !== -1) {
+                            openPoiDetails(newIndex);
+                        }
+                    }
                 } else {
                     const data = await res.json();
                     showGlobalAlert("Error saving POI: " + data.error);
