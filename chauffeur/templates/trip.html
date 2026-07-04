@@ -1535,6 +1535,7 @@
         }
 
         function openFailedPoisModal(failures) {
+            window.currentFailedPois = failures;
             const list = document.getElementById('failed-pois-list');
             list.innerHTML = '';
             
@@ -1609,10 +1610,7 @@
                     body: JSON.stringify(tripData.metadata)
                 });
                 
-                // Close modal and attempt to schedule again
-                closeFailedPoisModal();
-                
-                // Re-trigger the bulk schedule for just this POI
+                // Keep modal open, show loading
                 const schedLoading = document.getElementById('schedule-loading-overlay');
                 if (schedLoading) schedLoading.classList.remove('hidden');
                 
@@ -1624,8 +1622,23 @@
                 const data = await res.json();
                 
                 if (data.results && data.results[poi.id] && !data.results[poi.id].success) {
-                    // Failed again
-                    openFailedPoisModal([{poi, reason: data.results[poi.id].reason, suggested_fixes: data.results[poi.id].suggested_fixes}]);
+                    // Failed again, update the reason
+                    const failIdx = window.currentFailedPois.findIndex(f => f.poi.id === poi.id);
+                    if (failIdx >= 0) {
+                        window.currentFailedPois[failIdx].reason = data.results[poi.id].reason;
+                        window.currentFailedPois[failIdx].suggested_fixes = data.results[poi.id].suggested_fixes;
+                    }
+                } else {
+                    // Success! Remove from list
+                    if (window.currentFailedPois) {
+                        window.currentFailedPois = window.currentFailedPois.filter(f => f.poi.id !== poi.id);
+                    }
+                }
+                
+                if (window.currentFailedPois && window.currentFailedPois.length > 0) {
+                    openFailedPoisModal(window.currentFailedPois);
+                } else {
+                    closeFailedPoisModal();
                 }
                 
                 await fetchTripData();
