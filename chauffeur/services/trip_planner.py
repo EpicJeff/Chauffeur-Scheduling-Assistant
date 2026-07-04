@@ -104,9 +104,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
         # Build image URL with wikidata_id if available
         if wikidata_id:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
         else:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
             
         link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
             
@@ -780,9 +780,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         encoded_query = urllib.parse.quote(f"{name} {best_location}")
         
         if wikidata_id:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
         else:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
             
         link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
             
@@ -838,9 +838,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             opening_hours = None
             
         if wikidata_id:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
         else:
-            image_url = f"/api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
             
         acc = TripAccommodation(
             id=uuid.uuid4().hex,

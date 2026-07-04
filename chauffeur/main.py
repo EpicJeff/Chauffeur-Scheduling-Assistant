@@ -444,7 +444,7 @@ def get_trip_api(event_id: str):
                     import urllib.parse
                     query = poi.get("name") or poi.get("location", "travel")
                     encoded_query = urllib.parse.quote(query)
-                    background_url = f"/api/unsplash/background?query={encoded_query}"
+                    background_url = f"api/unsplash/background?query={encoded_query}"
                     
                 activities_details.append({
                     "id": poi.get("event_id"),
@@ -3764,7 +3764,7 @@ def backfill_wikidata():
                 if loc:
                     res = maps.search_places(loc)
                     if res and res[0].get('wikidata_id'):
-                        t['background_url'] = f"/api/unsplash/background?query={urllib.parse.quote(loc)}&wikidata_id={res[0]['wikidata_id']}"
+                        t['background_url'] = f"api/unsplash/background?query={urllib.parse.quote(loc)}&wikidata_id={res[0]['wikidata_id']}"
                         updated = True
 
             # POIs
@@ -3776,7 +3776,7 @@ def backfill_wikidata():
                         poi['wikidata_id'] = res[0].get('wikidata_id')
                         poi['opening_hours'] = res[0].get('opening_hours')
                         if poi['wikidata_id']:
-                            poi['image_url'] = f"/api/unsplash/background?query={urllib.parse.quote(poi['name'])}&wikidata_id={poi['wikidata_id']}"
+                            poi['image_url'] = f"api/unsplash/background?query={urllib.parse.quote(poi['name'])}&wikidata_id={poi['wikidata_id']}"
                         updated = True
                         
             # Accommodations

@@ -856,7 +856,7 @@
                         <span>Check-Out:</span>
                         <span class="font-bold">${formatAccommodationDate(acc.check_out_date)}</span>
                     </div>
-                    <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('/api/unsplash/background?query=${encodeURIComponent(acc.name).replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}')"></div>
+                    <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('api/unsplash/background?query=${encodeURIComponent(acc.name).replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}')"></div>
                 `;
                 list.appendChild(div);
             });
