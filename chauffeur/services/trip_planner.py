@@ -3,7 +3,7 @@ import datetime
 import urllib.parse
 from typing import List, Dict, Any, Optional, Tuple
 
-from models.schemas import TripMetadata, TripPOI, Event
+from models.schemas import TripMetadata, TripPOI, Event, TripAccommodation
 from services import storage, maps, calendar
 
 def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> List[TripPOI]:
