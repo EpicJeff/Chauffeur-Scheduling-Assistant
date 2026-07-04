@@ -718,7 +718,7 @@
             renderMap();
         }
 
-        async function loadRouteBetween(act, nextAct, pill, dayKey) {
+        async function loadRouteBetween(act, nextAct, pill, dayKey, isCommute = false) {
             const routeKey = act.id + '-' + nextAct.id;
             if (cachedRoutes[routeKey]) {
                 updateRoutePill(pill, cachedRoutes[routeKey]);
@@ -729,16 +729,16 @@
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                 
                 let originLat = null, originLng = null, destLat = null, destLng = null;
-                const pOrig = tripData.metadata.pois.find(p => p.event_id === act.id);
+                const pOrig = tripData.metadata.pois.find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
                 if (pOrig && pOrig.lat) { originLat = pOrig.lat; originLng = pOrig.lng; }
                 else if (tripData.metadata.accommodations) {
-                    const aOrig = tripData.metadata.accommodations.find(a => a.event_id === act.id);
+                    const aOrig = tripData.metadata.accommodations.find(a => a.id === act.id);
                     if (aOrig && aOrig.lat) { originLat = aOrig.lat; originLng = aOrig.lng; }
                 }
-                const pDest = tripData.metadata.pois.find(p => p.event_id === nextAct.id);
+                const pDest = tripData.metadata.pois.find(p => p.event_id === nextAct.id || (p.event_id && nextAct.id.endsWith(p.event_id)));
                 if (pDest && pDest.lat) { destLat = pDest.lat; destLng = pDest.lng; }
                 else if (tripData.metadata.accommodations) {
-                    const aDest = tripData.metadata.accommodations.find(a => a.event_id === nextAct.id);
+                    const aDest = tripData.metadata.accommodations.find(a => a.id === nextAct.id);
                     if (aDest && aDest.lat) { destLat = aDest.lat; destLng = aDest.lng; }
                 }
                 
@@ -770,7 +770,7 @@
                 }
                 
                 if (geometry) {
-                    cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey };
+                    cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey, isCommute };
                     updateRoutePill(pill, cachedRoutes[routeKey]);
                     if (renderMapTimeout) clearTimeout(renderMapTimeout);
                     renderMapTimeout = setTimeout(() => { renderMap(); }, 300);
@@ -1163,6 +1163,30 @@
                 const safeDayKey = dayKey.replace(/'/g, "\\'");
                 col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2 cursor-pointer hover:text-blue-400 group" onclick="toggleDayFilter('${safeDayKey}')"><h3 class="text-white font-bold group-hover:text-blue-400 transition-colors">${dayKey}</h3><button onclick="event.stopPropagation(); clearDay('${safeDayKey}')" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
                 
+                const dayItems = grouped[dayKey].items;
+                let dayAccAct = null;
+                if (dayItems.length > 0 && tripData.metadata.accommodations && tripData.metadata.accommodations.length > 0) {
+                    const firstAct = dayItems[0];
+                    if (firstAct.start) {
+                        const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
+                        const d = new Date(firstAct.start * 1000);
+                        const year = d.toLocaleDateString('en-US', { year: 'numeric', ...tzOpts });
+                        const month = d.toLocaleDateString('en-US', { month: '2-digit', ...tzOpts });
+                        const day = d.toLocaleDateString('en-US', { day: '2-digit', ...tzOpts });
+                        const dateStr = `${year}-${month}-${day}`;
+                        
+                        const acc = tripData.metadata.accommodations.find(a => 
+                            a.check_in_date && a.check_out_date && 
+                            dateStr >= a.check_in_date && dateStr <= a.check_out_date &&
+                            a.lat && a.lng
+                        );
+                        if (acc) {
+                            dayAccAct = { id: acc.id, location: acc.location || acc.name, name: acc.name };
+                            loadRouteBetween(dayAccAct, firstAct, null, dayKey, true);
+                        }
+                    }
+                }
+                
                 grouped[dayKey].items.forEach((act, index) => {
                     const start = act.start ? new Date(act.start * 1000) : null;
                     const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
@@ -1214,6 +1238,8 @@
                             col.appendChild(pill);
                             loadRouteBetween(act, nextAct, pill, dayKey);
                         }
+                    } else if (dayAccAct) {
+                        loadRouteBetween(act, dayAccAct, null, dayKey, true);
                     }
                 });
                 grid.appendChild(col);
@@ -1334,7 +1360,22 @@
                     className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
                         const schedLoading = document.getElementById('schedule-loading-overlay');
-                        if (schedLoading) schedLoading.classList.remove('hidden');
+                        if (schedLoading) {
+                            schedLoading.classList.remove('hidden');
+                            // Add a progress text element if it doesn't exist
+                            if (!document.getElementById('schedule-progress-text')) {
+                                const spinnerContainer = schedLoading.querySelector('.flex.flex-col.items-center');
+                                if (spinnerContainer) {
+                                    const progress = document.createElement('div');
+                                    progress.id = 'schedule-progress-text';
+                                    progress.className = 'mt-4 text-indigo-300 font-medium text-lg';
+                                    progress.innerText = `Scheduling 0 of ${selected.length}...`;
+                                    spinnerContainer.appendChild(progress);
+                                }
+                            } else {
+                                document.getElementById('schedule-progress-text').innerText = `Scheduling 0 of ${selected.length}...`;
+                            }
+                        }
                         
                         try {
                             const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
@@ -1342,28 +1383,57 @@
                                 headers: {'Content-Type': 'application/json'},
                                 body: JSON.stringify({ poi_ids: selected })
                             });
-                            const data = await res.json();
                             
-                            if (data.error) {
-                                showGlobalAlert(data.error);
-                            } else if (data.results) {
-                                // Gather failures
-                                const failures = [];
-                                for (const [poiId, result] of Object.entries(data.results)) {
-                                    if (!result.success) {
-                                        const poi = tripData.metadata.pois.find(p => p.id === poiId);
-                                        if (poi) {
-                                            failures.push({ poi, reason: result.reason, suggested_fixes: result.suggested_fixes });
+                            const reader = res.body.getReader();
+                            const decoder = new TextDecoder("utf-8");
+                            let buffer = "";
+                            const failures = [];
+                            let completed = 0;
+                            
+                            while (true) {
+                                const {done, value} = await reader.read();
+                                if (done) break;
+                                
+                                buffer += decoder.decode(value, {stream: true});
+                                const lines = buffer.split("\n");
+                                buffer = lines.pop(); // keep incomplete line
+                                
+                                for (const line of lines) {
+                                    if (line.trim()) {
+                                        try {
+                                            const result = JSON.parse(line);
+                                            completed++;
+                                            
+                                            if (document.getElementById('schedule-progress-text')) {
+                                                document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${selected.length}...`;
+                                            }
+                                            
+                                            if (result.success) {
+                                                // Fetch incremental trip data to show the schedule "popping in"
+                                                await fetchTripData();
+                                            } else {
+                                                const poi = tripData.metadata.pois.find(p => p.id === result.poi_id);
+                                                if (poi) {
+                                                    failures.push({ poi, reason: result.reason, suggested_fixes: result.suggested_fixes });
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.error("Error parsing NDJSON chunk", line, e);
                                         }
                                     }
                                 }
-                                
-                                if (failures.length > 0) {
-                                    openFailedPoisModal(failures);
-                                }
                             }
+                            
+                            if (failures.length > 0) {
+                                openFailedPoisModal(failures);
+                            }
+                            
                         } catch(e) {
                             showGlobalAlert("Error in bulk schedule");
+                        } finally {
+                            if (schedLoading) {
+                                schedLoading.classList.add('hidden');
+                            }
                         }
                         
                         await fetchTripData();
@@ -2369,9 +2439,10 @@
                                 'line-cap': 'round'
                             },
                             paint: {
-                                'line-color': r.type === 'walking' ? '#10b981' : '#3b82f6',
-                                'line-width': 4,
-                                'line-dasharray': r.type === 'walking' ? [2, 2] : [1]
+                                'line-color': r.isCommute ? '#a855f7' : (r.type === 'walking' ? '#10b981' : '#3b82f6'),
+                                'line-width': r.isCommute ? 3 : 4,
+                                'line-dasharray': r.isCommute ? [2, 2] : (r.type === 'walking' ? [2, 2] : [1]),
+                                'line-opacity': r.isCommute ? 0.7 : 1
                             }
                         });
                     }

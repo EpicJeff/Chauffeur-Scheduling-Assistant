@@ -27,7 +27,9 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int 
     num_pois = max(1, duration_days * 4)
     system_prompt = f"""You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-The user's trip is {duration_days} days long. Your job is to suggest approximately {num_pois} Points of Interest (POIs) to fill this trip that match their request and are located in or near the specified Trip Location.
+The user's trip is {duration_days} days long. 
+If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for and nothing more.
+If their request is open-ended, suggest approximately {num_pois} Points of Interest (POIs) to fill this trip that match their request and are located in or near the specified Trip Location.
 If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
 
 You MUST respond with a single valid JSON object of the following exact structure:
@@ -486,27 +488,28 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         
     return None, "Failed to create the event in Google Calendar.", None
 
-def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+from typing import Iterator
+
+def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[str, Any]]:
     """
     Schedules multiple POIs at once using a clustering algorithm based on distance and priority.
-    Returns a dictionary mapping poi_id to a dict containing {"success": bool, "reason": str}.
+    Yields a dictionary for each POI: {"poi_id": str, "success": bool, "reason": str}.
     """
     settings = storage.get_settings()
     cals = settings.get('calendar_ids', [])
-    results = {}
     
     if not cals:
         for pid in poi_ids:
-            results[pid] = {"success": False, "reason": "No calendars configured in settings."}
-        return results
+            yield {"poi_id": pid, "success": False, "reason": "No calendars configured in settings."}
+        return
         
     target_pois = [p for p in trip.pois if p.id in poi_ids and not p.is_scheduled]
     if not target_pois:
-        return results
+        return
         
     # Pre-cache distances
     locations = [p.location for p in target_pois if p.location]
-    maps.prime_matrix_cache(locations)
+    maps.prime_matrix_cache(locations, ignore_age=True)
     
     # Priority grouping
     prio_map = {'must': 3, 'want': 2, 'stretch': 1}
@@ -536,13 +539,12 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Dict[str, Dict
             # since the single scheduler now correctly handles dynamic buffers!
             event_id, reason, meta = schedule_poi(trip, poi)
             if event_id:
-                results[poi.id] = {"success": True, "reason": None}
+                yield {"poi_id": poi.id, "success": True, "reason": None}
             else:
-                results[poi.id] = {"success": False, "reason": reason}
+                res = {"poi_id": poi.id, "success": False, "reason": reason}
                 if meta and "suggested_fixes" in meta:
-                    results[poi.id]["suggested_fixes"] = meta["suggested_fixes"]
-                
-    return results
+                    res["suggested_fixes"] = meta["suggested_fixes"]
+                yield res
 
 def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> List[TripAccommodation]:
     """
@@ -678,7 +680,8 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: in
     system_prompt = f"""You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
 The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including both accommodations and Points of Interest (POIs).
-Since the trip is {duration_days} days, please generate approximately {num_pois} POIs to ensure a full itinerary, and 1 or more accommodations based on the trip length.
+If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
+If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, and 1 or more accommodations based on the trip length.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
@@ -732,7 +735,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"User Request: {user_prompt}\n"
-        f"Generate a full itinerary with exactly {num_pois} POIs and required accommodations."
+        f"Generate the requested accommodations and POIs, adhering strictly to any quantities specified by the user."
     )
     
     try:

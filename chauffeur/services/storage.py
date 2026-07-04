@@ -155,6 +155,8 @@ def clear_schedule_caches():
         daily_schedules_table.truncate()
         cache_table.truncate()
         distance_cache_table.truncate()
+        global _distance_mem_cache
+        _distance_mem_cache = None
         geocode_cache_table.truncate()
 
 def purge_poisoned_caches():
@@ -162,6 +164,8 @@ def purge_poisoned_caches():
     with db_lock:
         distance_cache_table.remove(Query().minutes == 15)
         geocode_cache_table.remove(Query().lat == 0.0)
+        global _distance_mem_cache
+        _distance_mem_cache = None
 
 purge_poisoned_caches()
 
@@ -197,6 +201,18 @@ def set_cached_geocode(address: str, lat: float, lon: float, display_name: str =
             'display_name': display_name
         }, Query().address == address.strip().lower())
 
+_distance_mem_cache = None
+
+def _init_distance_mem_cache():
+    global _distance_mem_cache
+    if _distance_mem_cache is None:
+        _distance_mem_cache = {}
+        for row in distance_cache_table.all():
+            o = row.get('origin', '')
+            d = row.get('destination', '')
+            if o and d:
+                _distance_mem_cache[(o, d)] = row
+
 def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[int]:
     if not origin or not destination:
         return None
@@ -204,10 +220,9 @@ def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10
     orig_clean = origin.strip().lower()
     dest_clean = destination.strip().lower()
     with db_lock:
-        QueryObj = Query()
-        result = distance_cache_table.search((QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
-        if result:
-            cached_data = result[0]
+        _init_distance_mem_cache()
+        cached_data = _distance_mem_cache.get((orig_clean, dest_clean))
+        if cached_data:
             timestamp = cached_data.get('timestamp', 0)
             if ignore_age or time.time() - timestamp <= max_age_mins * 60:
                 return cached_data.get('duration_mins', cached_data.get('minutes'))
@@ -220,13 +235,16 @@ def set_cached_travel_time(origin: str, destination: str, duration_mins: int):
     orig_clean = origin.strip().lower()
     dest_clean = destination.strip().lower()
     with db_lock:
+        _init_distance_mem_cache()
         QueryObj = Query()
-        distance_cache_table.upsert({
+        row = {
             'origin': orig_clean,
             'destination': dest_clean,
             'duration_mins': duration_mins,
             'timestamp': time.time()
-        }, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
+        }
+        _distance_mem_cache[(orig_clean, dest_clean)] = row
+        distance_cache_table.upsert(row, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
 
 def get_cached_route_geometry(origin: str, destination: str, profile: str, max_age_mins: int = 10080) -> Optional[dict]:
     # Cache for 1 week by default (10080 mins)

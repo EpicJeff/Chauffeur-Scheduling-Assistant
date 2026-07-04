@@ -156,7 +156,7 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
         return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
         
     # 2. If not in cache, fallback to priming the cache for just this pair
-    prime_matrix_cache([origin, destination])
+    prime_matrix_cache([origin, destination], ignore_age=not return_traffic)
     
     # 3. Check cache again
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
@@ -175,7 +175,10 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
     profile can be 'driving', 'walking', 'cycling', etc.
     Returns: {"duration_mins": float, "geometry": dict, "distance_meters": float} or None.
     """
-    cached = storage.get_cached_route_geometry(origin, destination, profile)
+    cache_origin = f"{origin_lat},{origin_lng}" if origin_lat is not None and origin_lng is not None else origin
+    cache_dest = f"{dest_lat},{dest_lng}" if dest_lat is not None and dest_lng is not None else destination
+
+    cached = storage.get_cached_route_geometry(cache_origin, cache_dest, profile)
     if cached:
         return cached
 
@@ -220,14 +223,14 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving",
                     "distance_meters": route['distance'],
                     "geometry": route['geometry']
                 }
-                storage.set_cached_route_geometry(origin, destination, profile, result)
+                storage.set_cached_route_geometry(cache_origin, cache_dest, profile, result)
                 return result
     except Exception as e:
         print(f"Error fetching route geometry: {e}")
         
     return None
 
-def prime_matrix_cache(locations: list[str]):
+def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
     from services import storage
     if not locations:
         return
@@ -240,8 +243,8 @@ def prime_matrix_cache(locations: list[str]):
     from itertools import combinations
     missing_locs = set()
     for l1, l2 in combinations(unique_locs, 2):
-        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=False)
-        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=False)
+        c1 = storage.get_cached_travel_time(l1.lower(), l2.lower(), max_age_mins=cache_duration, ignore_age=ignore_age)
+        c2 = storage.get_cached_travel_time(l2.lower(), l1.lower(), max_age_mins=cache_duration, ignore_age=ignore_age)
         if c1 is None or c2 is None:
             missing_locs.add(l1)
             missing_locs.add(l2)

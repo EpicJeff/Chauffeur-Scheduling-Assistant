@@ -871,17 +871,22 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
         trip_obj = TripMetadata(**meta)
         
         from services.trip_planner import schedule_pois_bulk
-        results = schedule_pois_bulk(trip_obj, poi_ids)
+        import json
         
-        # Check if at least one POI was successfully scheduled
-        any_success = any(r.get("success", False) for r in results.values())
+        def stream_generator():
+            try:
+                for result in schedule_pois_bulk(trip_obj, poi_ids):
+                    if result.get("success"):
+                        # Save the mutated trip POIs to DB incrementally
+                        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+                        storage.set_trip_metadata(event_id, meta)
+                    yield json.dumps(result) + "\n"
+            except Exception as ex:
+                yield json.dumps({"poi_id": None, "success": False, "reason": f"Internal Error: {str(ex)}"}) + "\n"
+
+        from fastapi.responses import StreamingResponse
+        return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
         
-        if any_success:
-            # Update POI in DB
-            meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
-            storage.set_trip_metadata(event_id, meta)
-        
-        return {"status": "ok", "results": results}
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
