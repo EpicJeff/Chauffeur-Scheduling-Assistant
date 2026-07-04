@@ -908,7 +908,7 @@
             const linkUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent((acc.name || '') + ' ' + (acc.location || ''));
             document.getElementById('acc-detail-link').href = linkUrl;
             
-            const imgUrl = `/api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`;
+            const imgUrl = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + acc.wikidata_id : ''}`;
             document.getElementById('acc-detail-header').style.backgroundImage = `url('${imgUrl}')`;
             
             document.getElementById('acc-detail-checkin').innerText = formatAccommodationDate(acc.check_in_date);
@@ -1317,7 +1317,7 @@
                         </p>
                         <p class="text-sm text-gray-300 line-clamp-3 mb-4">${poi.description || ''}</p>
                         
-                        <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('${poi.image_url || ''}')"></div>
+                        <div class="mt-auto h-32 w-full rounded-xl bg-cover bg-center border border-white/10" style="background-image: url('${(poi.image_url || '').startsWith('/api/') ? poi.image_url.substring(1) : (poi.image_url || '')}')"></div>
                     `;
                     list.appendChild(div);
                 });
@@ -1487,7 +1487,8 @@
             document.getElementById('poi-priority').innerText = prioLabel[poi.priority || 'want'] || 'Want to go';
             
             if (poi.image_url) {
-                document.getElementById('poi-detail-header').style.backgroundImage = `url('${poi.image_url}')`;
+                const fixedUrl = poi.image_url.startsWith('/api/') ? poi.image_url.substring(1) : poi.image_url;
+                document.getElementById('poi-detail-header').style.backgroundImage = `url('${fixedUrl}')`;
             } else {
                 document.getElementById('poi-detail-header').style.backgroundImage = 'none';
                 document.getElementById('poi-detail-header').classList.add('bg-gray-700');
@@ -2195,7 +2196,10 @@
             document.getElementById('act-detail-title').innerText = act.title;
             document.getElementById('act-detail-time').innerText = timeStr;
             
-            const bg = (act.background_url && act.background_url.startsWith('http')) ? act.background_url : 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop';
+            let bg = 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=1920&auto=format&fit=crop';
+            if (act.background_url) {
+                bg = act.background_url.startsWith('/api/') ? act.background_url.substring(1) : act.background_url;
+            }
             document.getElementById('act-detail-header').style.backgroundImage = `url('${bg}')`;
             
             if(act.location) {
