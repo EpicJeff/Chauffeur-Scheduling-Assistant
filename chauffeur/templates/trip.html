@@ -1150,7 +1150,7 @@
                 col.className = `flex flex-col gap-4 bg-white/5 rounded-2xl p-4 border border-white/10 h-full transition-opacity ${opacityClass}`;
                 
                 const safeDayKey = dayKey.replace(/'/g, "\\'");
-                col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2 cursor-pointer hover:text-blue-400 group" onclick="toggleDayFilter('${safeDayKey}')"><h3 class="text-white font-bold group-hover:text-blue-400 transition-colors">${dayKey}</h3><button onclick="event.stopPropagation(); clearItinerary()" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
+                col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2 cursor-pointer hover:text-blue-400 group" onclick="toggleDayFilter('${safeDayKey}')"><h3 class="text-white font-bold group-hover:text-blue-400 transition-colors">${dayKey}</h3><button onclick="event.stopPropagation(); clearDay('${safeDayKey}')" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
                 
                 grouped[dayKey].items.forEach((act, index) => {
                     const start = act.start ? new Date(act.start * 1000) : null;

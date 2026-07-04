@@ -615,6 +615,48 @@ def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: b
             
     return {"status": "ok"}
 
+@app.post("/api/trip/{event_id}/activities/delete_bulk")
+def delete_activities_bulk_api(event_id: str, payload: dict):
+    meta = storage.get_trip_metadata(event_id)
+    if not meta: return {"status": "ok"}
+    
+    activity_ids = payload.get("activity_ids", [])
+    delete_from_calendar = payload.get("delete_from_calendar", False)
+    
+    changed = False
+    for activity_id in activity_ids:
+        if "activities" in meta and activity_id in meta["activities"]:
+            meta["activities"].remove(activity_id)
+            changed = True
+
+        for poi in meta.get("pois", []):
+            if poi.get("event_id") == activity_id:
+                poi["is_scheduled"] = False
+                poi["event_id"] = None
+                poi["scheduled_start"] = None
+                poi["scheduled_end"] = None
+                changed = True
+                break
+
+    if changed:
+        storage.set_trip_metadata(event_id, meta)
+
+    if delete_from_calendar:
+        try:
+            from services.calendar import get_calendar_service
+            service = get_calendar_service()
+            for activity_id in activity_ids:
+                if "::" in activity_id:
+                    cal_id, raw_id = activity_id.split("::", 1)
+                    try:
+                        service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
+                    except Exception as e:
+                        print(f"Error deleting activity {activity_id} from calendar: {e}")
+        except Exception as e:
+            pass
+
+    return {"status": "ok"}
+
 @app.delete("/api/trip/{event_id}/activities")
 def clear_itinerary_api(event_id: str, delete_from_calendar: bool = False):
     meta = storage.get_trip_metadata(event_id)
