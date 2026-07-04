@@ -1615,7 +1615,7 @@
             };
             
             try {
-                const res = await fetch(`/api/trip/${EVENT_ID}/poi/${poiId}`, {
+                const res = await fetch(`api/trip/${EVENT_ID}/poi/${poiId}`, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
