@@ -1943,8 +1943,16 @@ def get_route_info(origin: str, destination: str):
     return {"duration": f"{mins * 60}s", "distanceMeters": mins * 1000}  # Mock distance
 
 @app.get("/api/maps/route_geometry")
-def get_route_geometry_api(origin: str, destination: str, profile: str = "driving"):
-    result = maps.get_route_geometry(origin, destination, profile)
+def get_route_geometry_api(
+    origin: str, 
+    destination: str, 
+    profile: str = "driving",
+    origin_lat: Optional[float] = None,
+    origin_lng: Optional[float] = None,
+    dest_lat: Optional[float] = None,
+    dest_lng: Optional[float] = None
+):
+    result = maps.get_route_geometry(origin, destination, profile, origin_lat, origin_lng, dest_lat, dest_lng)
     if result:
         return result
     return {"error": "Could not fetch route"}

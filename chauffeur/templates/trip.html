@@ -716,7 +716,27 @@
             
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking`);
+                
+                let originLat = null, originLng = null, destLat = null, destLng = null;
+                const pOrig = tripData.metadata.pois.find(p => p.event_id === act.id);
+                if (pOrig && pOrig.lat) { originLat = pOrig.lat; originLng = pOrig.lng; }
+                else if (tripData.metadata.accommodations) {
+                    const aOrig = tripData.metadata.accommodations.find(a => a.event_id === act.id);
+                    if (aOrig && aOrig.lat) { originLat = aOrig.lat; originLng = aOrig.lng; }
+                }
+                const pDest = tripData.metadata.pois.find(p => p.event_id === nextAct.id);
+                if (pDest && pDest.lat) { destLat = pDest.lat; destLng = pDest.lng; }
+                else if (tripData.metadata.accommodations) {
+                    const aDest = tripData.metadata.accommodations.find(a => a.event_id === nextAct.id);
+                    if (aDest && aDest.lat) { destLat = aDest.lat; destLng = aDest.lng; }
+                }
+                
+                let coordsParams = '';
+                if (originLat !== null && destLat !== null) {
+                    coordsParams = `&origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
+                }
+
+                let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking${coordsParams}`);
                 let data = await res.json();
                 
                 let type = 'walking';
@@ -728,7 +748,7 @@
                         duration = data.duration_mins;
                         geometry = data.geometry;
                     } else {
-                        res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving`);
+                        res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving${coordsParams}`);
                         data = await res.json();
                         if (data.duration_mins !== undefined) {
                             type = 'driving';

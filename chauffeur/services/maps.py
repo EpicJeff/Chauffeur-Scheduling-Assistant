@@ -167,7 +167,9 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     fallback = max(MOCK_TIME, min_time_mins)
     return (fallback, 0) if return_traffic else fallback
 
-def get_route_geometry(origin: str, destination: str, profile: str = "driving") -> Optional[dict]:
+def get_route_geometry(origin: str, destination: str, profile: str = "driving",
+                       origin_lat: Optional[float] = None, origin_lng: Optional[float] = None,
+                       dest_lat: Optional[float] = None, dest_lng: Optional[float] = None) -> Optional[dict]:
     """
     Returns the route geometry and duration using Mapbox Directions API.
     profile can be 'driving', 'walking', 'cycling', etc.
@@ -181,8 +183,16 @@ def get_route_geometry(origin: str, destination: str, profile: str = "driving") 
     if not mapbox_key:
         return None
         
-    coords_origin = geocode_address(origin)
-    coords_dest = geocode_address(destination)
+    if origin_lat is not None and origin_lng is not None:
+        coords_origin = (origin_lat, origin_lng)
+    else:
+        coords_origin = geocode_address(origin)
+        
+    if dest_lat is not None and dest_lng is not None:
+        coords_dest = (dest_lat, dest_lng)
+    else:
+        coords_dest = geocode_address(destination)
+        
     if not coords_origin or not coords_dest:
         return None
         
@@ -663,11 +673,22 @@ def extract_street_address(address: str) -> str:
         return address
         
     import re
-    # Find the first part that starts with a digit (e.g. street number)
+    first_digit_index = -1
     for i, part in enumerate(parts):
         if re.match(r'^\s*\d', part):
-            return ", ".join(parts[i:])
+            first_digit_index = i
+            break
             
+    if first_digit_index > 0:
+        # If the part is just a number/zip code near the end, only drop the first part (business name)
+        if first_digit_index >= len(parts) - 3 and re.match(r'^\s*\d+\s*$', parts[first_digit_index].split()[0]):
+            return ", ".join(parts[1:])
+        else:
+            return ", ".join(parts[first_digit_index:])
+            
+    if len(parts) > 3:
+        return ", ".join(parts[1:])
+        
     return address
 
 def get_timezone(address: str) -> str:
