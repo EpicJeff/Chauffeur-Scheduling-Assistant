@@ -408,6 +408,25 @@
                     </div>
                 </div>
                 
+                <div class="grid grid-cols-2 gap-4 mt-2">
+                    <div id="acc-detail-website-container" class="hidden bg-gray-900 border border-gray-600 rounded-lg p-4 col-span-2 sm:col-span-1">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Website</label>
+                        <a id="acc-detail-website" href="#" target="_blank" class="text-blue-400 hover:text-blue-300 font-bold text-sm underline truncate block"></a>
+                    </div>
+                    <div id="acc-detail-phone-container" class="hidden bg-gray-900 border border-gray-600 rounded-lg p-4 col-span-2 sm:col-span-1">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Phone</label>
+                        <div id="acc-detail-phone" class="text-white font-bold text-sm truncate"></div>
+                    </div>
+                    <div id="acc-detail-cuisine-container" class="hidden bg-gray-900 border border-gray-600 rounded-lg p-4 col-span-2 sm:col-span-1">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Cuisine</label>
+                        <div id="acc-detail-cuisine" class="text-white font-bold text-sm capitalize truncate"></div>
+                    </div>
+                    <div id="acc-detail-internet-container" class="hidden bg-gray-900 border border-gray-600 rounded-lg p-4 col-span-2 sm:col-span-1">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold uppercase tracking-wider">Internet</label>
+                        <div id="acc-detail-internet" class="text-white font-bold text-sm capitalize truncate"></div>
+                    </div>
+                </div>
+                
                 <div id="acc-detail-notes-container" class="hidden">
                     <h4 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Notes & Description</h4>
                     <div id="acc-detail-notes" class="text-gray-300 prose prose-invert max-w-none text-sm leading-relaxed bg-white/5 p-4 rounded-xl border border-white/10 whitespace-pre-wrap"></div>
@@ -933,6 +952,35 @@
             
             document.getElementById('acc-detail-checkin').innerText = formatAccommodationDate(acc.check_in_date);
             document.getElementById('acc-detail-checkout').innerText = formatAccommodationDate(acc.check_out_date);
+            
+            if (acc.website) {
+                document.getElementById('acc-detail-website').href = acc.website;
+                document.getElementById('acc-detail-website').innerText = acc.website.replace(/^https?:\/\/(www\.)?/, '');
+                document.getElementById('acc-detail-website-container').classList.remove('hidden');
+            } else {
+                document.getElementById('acc-detail-website-container').classList.add('hidden');
+            }
+
+            if (acc.phone_number) {
+                document.getElementById('acc-detail-phone').innerText = acc.phone_number;
+                document.getElementById('acc-detail-phone-container').classList.remove('hidden');
+            } else {
+                document.getElementById('acc-detail-phone-container').classList.add('hidden');
+            }
+
+            if (acc.cuisine) {
+                document.getElementById('acc-detail-cuisine').innerText = acc.cuisine;
+                document.getElementById('acc-detail-cuisine-container').classList.remove('hidden');
+            } else {
+                document.getElementById('acc-detail-cuisine-container').classList.add('hidden');
+            }
+
+            if (acc.internet_access) {
+                document.getElementById('acc-detail-internet').innerText = acc.internet_access;
+                document.getElementById('acc-detail-internet-container').classList.remove('hidden');
+            } else {
+                document.getElementById('acc-detail-internet-container').classList.add('hidden');
+            }
             
             const notesEl = document.getElementById('acc-detail-notes');
             const notesContainer = document.getElementById('acc-detail-notes-container');
