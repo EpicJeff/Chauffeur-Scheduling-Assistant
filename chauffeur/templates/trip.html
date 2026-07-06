@@ -273,23 +273,25 @@
     
     <!-- POI Details Modal -->
     <div id="poi-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4">
-        <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative">
+            
+            <button onclick="closePoiDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all z-[80]">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+
             <!-- Header Image Area -->
             <div id="poi-detail-header" class="h-56 relative bg-cover bg-center shrink-0 group">
                 <div class="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/60 to-transparent"></div>
                 
-                <button onclick="navigatePoi(-1)" class="absolute top-1/2 left-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-0 group-hover:opacity-100 z-10">
+                <button onclick="navigatePoi(-1)" class="absolute top-1/2 left-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-100 lg:opacity-0 lg:group-hover:opacity-100 z-10">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                 </button>
                 
-                <button onclick="navigatePoi(1)" class="absolute top-1/2 right-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-0 group-hover:opacity-100 z-10">
+                <button onclick="navigatePoi(1)" class="absolute top-1/2 right-4 -translate-y-1/2 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all opacity-100 lg:opacity-0 lg:group-hover:opacity-100 z-10">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </button>
                 
-                <button onclick="closePoiDetails()" class="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/70 p-2 rounded-full backdrop-blur transition-all z-20">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-                <div class="absolute bottom-0 left-0 p-6 w-full">
+                <div class="absolute bottom-0 left-0 p-6 w-full pr-16">
                     <span id="poi-detail-category" class="px-3 py-1 bg-white/20 backdrop-blur rounded-full text-xs font-bold text-white uppercase tracking-wider mb-2 inline-block">Category</span>
                     <h3 id="poi-detail-title" class="text-3xl font-extrabold text-white mb-1 shadow-black/50 drop-shadow-md relative z-20">Attraction Title</h3>
                     <a id="poi-detail-link" href="#" target="_blank" class="text-blue-300 hover:text-blue-200 text-sm flex items-center mt-2 group w-fit relative z-20">
