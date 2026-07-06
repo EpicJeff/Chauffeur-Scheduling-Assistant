@@ -29,7 +29,7 @@ async def migrate_trip_metadata_v247():
                 
                 query = f"{name} {location}"
                 try:
-                    results = await search_places(query)
+                    results = search_places(query)
                     if results and len(results) > 0:
                         best = results[0]
                         poi['website'] = best.get('website')
@@ -52,7 +52,7 @@ async def migrate_trip_metadata_v247():
                 
                 query = f"{name} {location}"
                 try:
-                    results = await search_places(query)
+                    results = search_places(query)
                     if results and len(results) > 0:
                         best = results[0]
                         acc['website'] = best.get('website')
