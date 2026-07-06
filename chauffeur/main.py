@@ -149,9 +149,14 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
+    
+    from services.migrations import run_all_migrations
+    migration_task = asyncio.create_task(run_all_migrations())
+    
     yield
     task.cancel()
     push_task.cancel()
+    migration_task.cancel()
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
 
