@@ -335,6 +335,11 @@
                     <label class="text-gray-500 mb-1 text-xs font-bold uppercase tracking-wider">Internet</label>
                     <div id="poi-detail-internet" class="text-white font-bold text-sm capitalize"></div>
                 </div>
+
+                <div id="poi-detail-hours-container" class="flex flex-col hidden">
+                    <label class="text-gray-500 mb-1 text-xs font-bold uppercase tracking-wider">Hours</label>
+                    <div id="poi-detail-hours" class="text-white font-bold text-sm"></div>
+                </div>
             </div>
             
             <!-- Details Area -->
@@ -1375,7 +1380,6 @@
                                     <span class="${prioColors[poi.priority] || prioColors['want']} text-xs px-2 py-1 rounded-full border font-bold">${prioLabel[poi.priority] || 'Want'}</span>
                                     ${scheduleBadge}
                                     <span class="text-xs text-gray-400"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${poi.duration_mins}m</span>
-                                    ${poi.opening_hours ? `<span class="text-xs text-gray-400 ml-1" title="Opening Hours"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>${poi.opening_hours.length > 20 ? poi.opening_hours.substring(0, 20) + '...' : poi.opening_hours}</span>` : ''}
                                     ${poi.website ? `<a href="${poi.website}" target="_blank" onclick="event.stopPropagation()" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="Website"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>Website</a>` : ''}
                                     ${poi.phone_number ? `<span class="text-xs text-gray-400 ml-1" title="Phone"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>${poi.phone_number}</span>` : ''}
                                     ${poi.cuisine ? `<span class="text-xs text-gray-400 ml-1 capitalize" title="Cuisine"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z"></path></svg>${poi.cuisine}</span>` : ''}
@@ -1640,6 +1644,13 @@
                 document.getElementById('poi-detail-internet-container').classList.remove('hidden');
             } else {
                 document.getElementById('poi-detail-internet-container').classList.add('hidden');
+            }
+            
+            if (poi.opening_hours) {
+                document.getElementById('poi-detail-hours').innerText = poi.opening_hours;
+                document.getElementById('poi-detail-hours-container').classList.remove('hidden');
+            } else {
+                document.getElementById('poi-detail-hours-container').classList.add('hidden');
             }
             
             document.getElementById('poi-detail-remove-btn').onclick = () => {
