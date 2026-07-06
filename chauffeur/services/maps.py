@@ -1027,6 +1027,10 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
                     extratags = item.get("extratags", {}) or {}
                     wikidata_id = extratags.get("wikidata")
                     opening_hours = extratags.get("opening_hours")
+                    website = extratags.get("website") or extratags.get("contact:website")
+                    phone_number = extratags.get("phone") or extratags.get("contact:phone")
+                    cuisine = extratags.get("cuisine")
+                    internet_access = extratags.get("internet_access")
                     
                     storage.set_cached_geocode(address, lat, lon, address)
                     results.append({
@@ -1037,7 +1041,11 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
                         "lon": lon,
                         "source": "nominatim",
                         "wikidata_id": wikidata_id,
-                        "opening_hours": opening_hours
+                        "opening_hours": opening_hours,
+                        "website": website,
+                        "phone_number": phone_number,
+                        "cuisine": cuisine,
+                        "internet_access": internet_access
                     })
                 if results:
                     return results
@@ -1081,7 +1089,11 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
                             "lon": lon,
                             "source": "mapbox_forward",
                             "wikidata_id": None,
-                            "opening_hours": None
+                            "opening_hours": None,
+                            "website": None,
+                            "phone_number": None,
+                            "cuisine": None,
+                            "internet_access": None
                         })
                 return results
         except Exception as ex:

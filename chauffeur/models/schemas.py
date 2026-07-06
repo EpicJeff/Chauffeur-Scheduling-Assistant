@@ -252,6 +252,10 @@ class TripPOI(BaseModel):
     lng: Optional[float] = None
     wikidata_id: Optional[str] = None
     opening_hours: Optional[str] = None
+    website: Optional[str] = None
+    phone_number: Optional[str] = None
+    cuisine: Optional[str] = None
+    internet_access: Optional[str] = None
 
 class TripAccommodation(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -266,6 +270,10 @@ class TripAccommodation(BaseModel):
     lng: Optional[float] = None
     wikidata_id: Optional[str] = None
     opening_hours: Optional[str] = None
+    website: Optional[str] = None
+    phone_number: Optional[str] = None
+    cuisine: Optional[str] = None
+    internet_access: Optional[str] = None
     image_url: Optional[str] = None
 
 class TripMetadata(BaseModel):

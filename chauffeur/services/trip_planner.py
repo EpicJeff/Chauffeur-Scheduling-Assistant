@@ -96,9 +96,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             poi_lng = locations[0].get('lon')
             wikidata_id = locations[0].get('wikidata_id')
             opening_hours = locations[0].get('opening_hours')
+            website = locations[0].get('website')
+            phone_number = locations[0].get('phone_number')
+            cuisine = locations[0].get('cuisine')
+            internet_access = locations[0].get('internet_access')
         else:
             wikidata_id = None
             opening_hours = None
+            website = None
+            phone_number = None
+            cuisine = None
+            internet_access = None
             
         encoded_query = urllib.parse.quote(f"{name} {best_location}")
         
@@ -127,7 +135,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lat=poi_lat,
             lng=poi_lng,
             wikidata_id=wikidata_id,
-            opening_hours=opening_hours
+            opening_hours=opening_hours,
+            website=website,
+            phone_number=phone_number,
+            cuisine=cuisine,
+            internet_access=internet_access
         )
         pois.append(poi)
         
@@ -633,9 +645,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lng = locations[0].get('lon')
             wikidata_id = locations[0].get('wikidata_id')
             opening_hours = locations[0].get('opening_hours')
+            website = locations[0].get('website')
+            phone_number = locations[0].get('phone_number')
+            cuisine = locations[0].get('cuisine')
+            internet_access = locations[0].get('internet_access')
         else:
             wikidata_id = None
             opening_hours = None
+            website = None
+            phone_number = None
+            cuisine = None
+            internet_access = None
             
         acc = TripAccommodation(
             id=uuid.uuid4().hex,
@@ -646,6 +666,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lng=lng,
             wikidata_id=wikidata_id,
             opening_hours=opening_hours,
+            website=website,
+            phone_number=phone_number,
+            cuisine=cuisine,
+            internet_access=internet_access,
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
             notes=s.get('notes')
@@ -773,9 +797,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             poi_lng = locations[0].get('lon')
             wikidata_id = locations[0].get('wikidata_id')
             opening_hours = locations[0].get('opening_hours')
+            website = locations[0].get('website')
+            phone_number = locations[0].get('phone_number')
+            cuisine = locations[0].get('cuisine')
+            internet_access = locations[0].get('internet_access')
         else:
             wikidata_id = None
             opening_hours = None
+            website = None
+            phone_number = None
+            cuisine = None
+            internet_access = None
             
         encoded_query = urllib.parse.quote(f"{name} {best_location}")
         
@@ -795,6 +827,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lng=poi_lng,
             wikidata_id=wikidata_id,
             opening_hours=opening_hours,
+            website=website,
+            phone_number=phone_number,
+            cuisine=cuisine,
+            internet_access=internet_access,
             category=s.get('category', 'other'),
             description=s.get('description'),
             why_picked=s.get('why_picked'),
@@ -833,9 +869,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lng = locations[0].get('lon')
             wikidata_id = locations[0].get('wikidata_id')
             opening_hours = locations[0].get('opening_hours')
+            website = locations[0].get('website')
+            phone_number = locations[0].get('phone_number')
+            cuisine = locations[0].get('cuisine')
+            internet_access = locations[0].get('internet_access')
         else:
             wikidata_id = None
             opening_hours = None
+            website = None
+            phone_number = None
+            cuisine = None
+            internet_access = None
             
         if wikidata_id:
             image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
@@ -851,6 +895,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             lng=lng,
             wikidata_id=wikidata_id,
             opening_hours=opening_hours,
+            website=website,
+            phone_number=phone_number,
+            cuisine=cuisine,
+            internet_access=internet_access,
             image_url=image_url,
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
