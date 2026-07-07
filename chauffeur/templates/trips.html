@@ -60,6 +60,19 @@
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
 
+        /* Dual Slider Thumb */
+        .dual-slider::-webkit-slider-thumb {
+            pointer-events: all;
+            width: 20px;
+            height: 20px;
+            -webkit-appearance: none;
+            background-color: #60a5fa;
+            border-radius: 50%;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border: 2px solid white;
+            cursor: pointer;
+        }
+
         /* HA Theme Overrides */
         body.ha-theme { background: var(--ha-bg) !important; }
         body.ha-theme .glass-panel {
@@ -168,6 +181,32 @@
                     <div>
                         <label class="block text-gray-300 text-sm font-bold mb-2">Duration (Days)</label>
                         <input type="number" id="trip-duration" value="3" min="1" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-4 border-t border-gray-700">
+                    <h4 class="text-sm font-bold text-gray-300 mb-4">Travel Preferences (Optional)</h4>
+                    
+                    <div class="mb-4">
+                        <label class="block text-gray-300 text-sm font-bold mb-4">Budget Range (USD)</label>
+                        <div class="relative w-full h-8">
+                            <!-- Base track -->
+                            <div class="absolute w-full h-2 bg-gray-700 rounded-full top-1/2 -translate-y-1/2"></div>
+                            <!-- Active track -->
+                            <div id="budget-track" class="absolute h-2 bg-blue-500 rounded-full top-1/2 -translate-y-1/2 pointer-events-none" style="left: 0%; right: 0%;"></div>
+                            
+                            <input type="range" id="trip-budget-min" min="0" max="20000" step="100" value="0" class="dual-slider absolute w-full h-2 appearance-none bg-transparent pointer-events-none top-1/2 -translate-y-1/2 z-10" oninput="updateBudgetSlider()">
+                            <input type="range" id="trip-budget-max" min="0" max="20000" step="100" value="20000" class="dual-slider absolute w-full h-2 appearance-none bg-transparent pointer-events-none top-1/2 -translate-y-1/2 z-20" oninput="updateBudgetSlider()">
+                        </div>
+                        <div class="flex justify-between mt-2 text-xs text-gray-400 font-bold">
+                            <span id="budget-min-display">$0</span>
+                            <span id="budget-max-display">$20,000+</span>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Flight Preferences</label>
+                        <input type="text" id="trip-flight-prefs" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Delta airlines, aisle seat, direct flights only">
                     </div>
                 </div>
             </div>
@@ -303,11 +342,39 @@
             }
         }
 
+        function updateBudgetSlider() {
+            let minVal = parseInt(document.getElementById('trip-budget-min').value);
+            let maxVal = parseInt(document.getElementById('trip-budget-max').value);
+            
+            if (minVal > maxVal - 100) {
+                if (event.target.id === 'trip-budget-min') {
+                    document.getElementById('trip-budget-min').value = maxVal - 100;
+                    minVal = maxVal - 100;
+                } else {
+                    document.getElementById('trip-budget-max').value = minVal + 100;
+                    maxVal = minVal + 100;
+                }
+            }
+            
+            const minPercent = (minVal / 20000) * 100;
+            const maxPercent = 100 - (maxVal / 20000) * 100;
+            
+            document.getElementById('budget-track').style.left = minPercent + '%';
+            document.getElementById('budget-track').style.right = maxPercent + '%';
+            
+            document.getElementById('budget-min-display').textContent = '$' + minVal.toLocaleString();
+            document.getElementById('budget-max-display').textContent = maxVal >= 20000 ? '$20,000+' : '$' + maxVal.toLocaleString();
+        }
+
         function openCreateTripModal() {
             document.getElementById('trip-title').value = '';
             document.getElementById('trip-location').value = '';
             document.getElementById('trip-start').value = '';
             document.getElementById('trip-end').value = '';
+            document.getElementById('trip-budget-min').value = '0';
+            document.getElementById('trip-budget-max').value = '20000';
+            document.getElementById('trip-flight-prefs').value = '';
+            updateBudgetSlider();
             document.getElementById('create-trip-modal').classList.remove('hidden');
             setTripType('scheduled');
         }
@@ -317,10 +384,19 @@
         async function saveNewTrip() {
             const title = document.getElementById('trip-title').value;
             const loc = document.getElementById('trip-location').value;
+            const budgetMin = parseInt(document.getElementById('trip-budget-min').value);
+            const budgetMax = parseInt(document.getElementById('trip-budget-max').value);
+            const flightPrefs = document.getElementById('trip-flight-prefs').value;
             
             if (!title) return showGlobalAlert("Title is required.");
             
-            const payload = { title: title, location: loc };
+            const payload = { 
+                title: title, 
+                location: loc,
+                budget_min_usd: budgetMin,
+                budget_max_usd: budgetMax,
+                flight_preferences: flightPrefs
+            };
             if (tripType === 'scheduled') {
                 const start = document.getElementById('trip-start').value;
                 const end = document.getElementById('trip-end').value;

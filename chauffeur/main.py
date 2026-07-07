@@ -357,7 +357,12 @@ def create_trip_api(req: CreateTripRequest):
             "draft_duration_days": req.duration_days,
             "mock_start_date": mock_start.timestamp(),
             "mock_end_date": mock_end.timestamp(),
+            "budget_min_usd": req.budget_min_usd,
+            "budget_max_usd": req.budget_max_usd,
+            "flight_preferences": req.flight_preferences,
             "pois": [],
+            "accommodations": [],
+            "flights": [],
             "activities": []
         }
         storage.set_trip_metadata(draft_id, metadata)
@@ -382,7 +387,16 @@ def create_trip_api(req: CreateTripRequest):
         # Initialize empty metadata so it appears as a trip immediately
         metadata = storage.get_trip_metadata(event_id)
         if not metadata:
-            metadata = {"event_id": event_id, "pois": [], "activities": []}
+            metadata = {
+                "event_id": event_id, 
+                "pois": [], 
+                "accommodations": [],
+                "flights": [],
+                "activities": [],
+                "budget_min_usd": req.budget_min_usd,
+                "budget_max_usd": req.budget_max_usd,
+                "flight_preferences": req.flight_preferences
+            }
             storage.set_trip_metadata(event_id, metadata)
             
         return {"success": True, "event_id": event_id}
@@ -471,9 +485,13 @@ def get_trip_api(event_id: str):
         cal_id, raw_event_id = event_id.split("::", 1)
         base_id = f"{cal_id}::{raw_event_id.split('_')[0]}"
         metadata = storage.get_trip_metadata(base_id)
-    metadata = metadata or {"event_id": event_id, "pois": [], "activities": []}
+    metadata = metadata or {"event_id": event_id, "pois": [], "accommodations": [], "flights": [], "activities": []}
     if "activities" not in metadata:
         metadata["activities"] = []
+    if "accommodations" not in metadata:
+        metadata["accommodations"] = []
+    if "flights" not in metadata:
+        metadata["flights"] = []
     
     event_details = None
     service = None
@@ -747,13 +765,15 @@ def generate_trip_plan_api(event_id: str, payload: dict):
     trip_obj = TripMetadata(**meta)
     
     from services.trip_planner import generate_trip_plan
-    pois, accs = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
     
     # Save back to trip metadata
     if 'pois' not in meta:
         meta['pois'] = []
     if 'accommodations' not in meta:
         meta['accommodations'] = []
+    if 'flights' not in meta:
+        meta['flights'] = []
         
     for poi in pois:
         poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
@@ -763,9 +783,13 @@ def generate_trip_plan_api(event_id: str, payload: dict):
         acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
         meta['accommodations'].append(acc_dict)
         
+    for flight in flights:
+        flight_dict = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+        meta['flights'].append(flight_dict)
+        
     storage.set_trip_metadata(event_id, meta)
     
-    return {"pois": meta['pois'], "accommodations": meta['accommodations']}
+    return {"pois": meta['pois'], "accommodations": meta['accommodations'], "flights": meta['flights']}
 
 @app.post("/api/trip/{event_id}/generate_accommodations")
 def generate_trip_accommodations_api(event_id: str, payload: dict):
@@ -798,6 +822,62 @@ def generate_trip_accommodations_api(event_id: str, payload: dict):
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.post("/api/trip/{event_id}/live_pricing")
+def live_pricing_api(event_id: str):
+    from services.travel_api import get_live_flight_price, get_live_hotel_price, QuotaExceededError
+    
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found"}
+        
+    updated = False
+    quota_exceeded = False
+    
+    try:
+        # Process Flights
+        for flight in meta.get("flights", []):
+            if not flight.get("is_live_price") and flight.get("origin") and flight.get("destination") and flight.get("departure_time"):
+                try:
+                    departure_date = flight["departure_time"].split("T")[0]
+                    price = get_live_flight_price(flight["origin"], flight["destination"], departure_date)
+                    if price is not None:
+                        flight["estimated_price_usd"] = price
+                        flight["is_live_price"] = True
+                        updated = True
+                except QuotaExceededError:
+                    quota_exceeded = True
+                    break
+                except Exception as e:
+                    print(f"Error updating flight price: {e}")
+                    
+        # Process Accommodations
+        if not quota_exceeded:
+            for acc in meta.get("accommodations", []):
+                if not acc.get("is_live_price") and acc.get("location") and acc.get("check_in_date") and acc.get("check_out_date"):
+                    try:
+                        price = get_live_hotel_price(acc["location"], acc["check_in_date"], acc["check_out_date"])
+                        if price is not None:
+                            acc["estimated_price_usd"] = price
+                            acc["is_live_price"] = True
+                            updated = True
+                    except QuotaExceededError:
+                        quota_exceeded = True
+                        break
+                    except Exception as e:
+                        print(f"Error updating accommodation price: {e}")
+    except QuotaExceededError:
+        quota_exceeded = True
+                    
+    if updated:
+        storage.set_trip_metadata(event_id, meta)
+        
+    return {
+        "flights": meta.get("flights", []),
+        "accommodations": meta.get("accommodations", []),
+        "updated": updated,
+        "quota_exceeded": quota_exceeded
+    }
 
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):

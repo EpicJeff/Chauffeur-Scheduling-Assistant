@@ -501,12 +501,14 @@ def handle_generate_trip_plan(args: dict) -> dict:
             duration_days = 3
             
     trip_obj = TripMetadata(**meta)
-    pois, accs = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
     
     if 'pois' not in meta:
         meta['pois'] = []
     if 'accommodations' not in meta:
         meta['accommodations'] = []
+    if 'flights' not in meta:
+        meta['flights'] = []
         
     for poi in pois:
         poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
@@ -516,11 +518,15 @@ def handle_generate_trip_plan(args: dict) -> dict:
         acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
         meta['accommodations'].append(acc_dict)
         
+    for flight in flights:
+        flight_dict = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+        meta['flights'].append(flight_dict)
+        
     storage.set_trip_metadata(event_id, meta)
     
     return {
         "status": "success",
-        "message": f"Generated and added {len(pois)} POIs and {len(accs)} accommodations to the trip."
+        "message": f"Generated and added {len(pois)} POIs, {len(accs)} accommodations, and {len(flights)} flights to the trip."
     }
 
 def handle_add_trip_poi(args: dict) -> dict:

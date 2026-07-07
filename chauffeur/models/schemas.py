@@ -256,6 +256,8 @@ class TripPOI(BaseModel):
     phone_number: Optional[str] = None
     cuisine: Optional[str] = None
     internet_access: Optional[str] = None
+    estimated_price_usd: Optional[float] = None
+    is_live_price: bool = False
 
 class TripAccommodation(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -275,6 +277,22 @@ class TripAccommodation(BaseModel):
     cuisine: Optional[str] = None
     internet_access: Optional[str] = None
     image_url: Optional[str] = None
+    estimated_price_usd: Optional[float] = None
+    is_live_price: bool = False
+
+class TripFlight(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    airline: Optional[str] = None
+    flight_number: Optional[str] = None
+    origin: Optional[str] = None
+    destination: Optional[str] = None
+    departure_time: Optional[str] = None
+    arrival_time: Optional[str] = None
+    class_type: Optional[str] = None
+    estimated_price_usd: Optional[float] = None
+    is_live_price: bool = False
+    notes: Optional[str] = None
+    booking_link: Optional[str] = None
 
 class TripMetadata(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -289,8 +307,12 @@ class TripMetadata(BaseModel):
     background_url: Optional[str] = None
     notes: Optional[str] = None
     timeZone: Optional[str] = None
+    budget_min_usd: Optional[float] = None
+    budget_max_usd: Optional[float] = None
+    flight_preferences: Optional[str] = None
     pois: List[TripPOI] = Field(default_factory=list)
     accommodations: List[TripAccommodation] = Field(default_factory=list)
+    flights: List[TripFlight] = Field(default_factory=list)
 
 class CreateTripRequest(BaseModel):
     title: str
@@ -300,3 +322,6 @@ class CreateTripRequest(BaseModel):
     start_day_of_week: Optional[int] = None
     duration_days: Optional[int] = None
     calendar_id: Optional[str] = None
+    budget_min_usd: Optional[float] = None
+    budget_max_usd: Optional[float] = None
+    flight_preferences: Optional[str] = None

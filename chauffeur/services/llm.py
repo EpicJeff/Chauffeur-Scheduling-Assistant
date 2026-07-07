@@ -864,7 +864,7 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             reply = f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
         elif intent == 'entire_trip':
             from services.trip_planner import generate_trip_plan
-            pois, accs = generate_trip_plan(trip_obj, user_msg, duration_days)
+            pois, accs, flights = generate_trip_plan(trip_obj, user_msg, duration_days)
             
             if 'accommodations' not in meta:
                 meta['accommodations'] = []
@@ -876,7 +876,12 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             for poi in pois:
                 meta['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
                 
-            reply = f"✨ I've generated and added {len(pois)} new Points of Interest and {len(accs)} accommodations to your trip based on your request!"
+            if 'flights' not in meta:
+                meta['flights'] = []
+            for flight in flights:
+                meta['flights'].append(flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict())
+                
+            reply = f"✨ I've generated and added {len(pois)} new Points of Interest, {len(accs)} accommodations, and {len(flights)} flights to your trip based on your request!"
         else:
             from services.trip_planner import generate_trip_pois
             pois = generate_trip_pois(trip_obj, user_msg, duration_days)

@@ -44,21 +44,27 @@ You MUST respond with a single valid JSON object of the following exact structur
       "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
       "duration_mins": 90,
       "ideal_time_start": "09:00",
-      "ideal_time_end": "12:00"
+      "ideal_time_end": "12:00",
+      "estimated_price_usd": 20.0
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the cost of entry/experience per person.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
     existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
-    existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
+    existing_pois_str = ", ".join(existing_poi_names) if existing_pois_str else "None"
     
+    budget_context = ""
+    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
+        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+        
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
+        f"{budget_context}"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"User Request: {user_prompt}\n"
         f"Generate suggestions."
@@ -139,7 +145,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             website=website,
             phone_number=phone_number,
             cuisine=cuisine,
-            internet_access=internet_access
+            internet_access=internet_access,
+            estimated_price_usd=s.get('estimated_price_usd')
         )
         pois.append(poi)
         
@@ -589,10 +596,12 @@ You MUST respond with a single valid JSON object of the following exact structur
       "location": "A search query or address to find this place on a map (e.g. 'Ritz, Paris, France')",
       "notes": "Explain why this is a good fit and what POIs it is close to.",
       "check_in_date": "YYYY-MM-DD",
-      "check_out_date": "YYYY-MM-DD"
+      "check_out_date": "YYYY-MM-DD",
+      "estimated_price_usd": 150.0
     }
   ]
 }
+Note: `estimated_price_usd` is your best estimate of the cost per night in USD based on your general knowledge.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -609,11 +618,16 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_accs = [a.name for a in trip.accommodations]
     existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
     
+    budget_context = ""
+    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
+        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+        
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
         f"Existing Accommodations: {existing_accs_str}\n"
         f"{poi_context}\n"
+        f"{budget_context}"
         f"User Request: {user_prompt}\n"
         f"Generate accommodation suggestions."
     )
@@ -672,7 +686,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             internet_access=internet_access,
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
-            notes=s.get('notes')
+            notes=s.get('notes'),
+            estimated_price_usd=s.get('estimated_price_usd')
         )
         accs.append(acc)
         
@@ -685,7 +700,7 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: in
     import datetime
     import uuid
     import re
-    from models.schemas import TripPOI, TripAccommodation
+    from models.schemas import TripPOI, TripAccommodation, TripFlight
     from services import storage, maps
     
     settings = storage.get_settings()
@@ -703,19 +718,33 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: in
     
     system_prompt = f"""You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including both accommodations and Points of Interest (POIs).
+The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
-If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, and 1 or more accommodations based on the trip length.
+If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, 1 or more accommodations based on the trip length, and logical flights if applicable.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
+  "flights": [
+    {{
+      "airline": "Delta",
+      "flight_number": "DL123",
+      "origin": "JFK",
+      "destination": "CDG",
+      "departure_time": "2026-08-01T18:00:00",
+      "arrival_time": "2026-08-02T07:30:00",
+      "class_type": "Economy",
+      "estimated_price_usd": 850.0,
+      "notes": "Direct flight based on preference."
+    }}
+  ],
   "accommodations": [
     {{
       "name": "The name of the accommodation (e.g., Ritz Paris)",
       "location": "A search query or address to find this place on a map (e.g. 'Ritz, Paris, France')",
       "notes": "Explain why this is a good fit and what POIs it is close to.",
       "check_in_date": "YYYY-MM-DD",
-      "check_out_date": "YYYY-MM-DD"
+      "check_out_date": "YYYY-MM-DD",
+      "estimated_price_usd": 150.0
     }}
   ],
   "pois": [
@@ -728,11 +757,12 @@ You MUST respond with a single valid JSON object of the following exact structur
       "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
       "duration_mins": 90,
       "ideal_time_start": "09:00",
-      "ideal_time_end": "12:00"
+      "ideal_time_end": "12:00",
+      "estimated_price_usd": 20.0
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the cost of entry/experience per person, or per night for hotels, or total for flights.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -750,16 +780,23 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_accs = [a.name for a in trip.accommodations] if trip.accommodations else []
     existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
     
+    budget_context = ""
+    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
+        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+    if getattr(trip, 'flight_preferences', None):
+        budget_context += f"Flight Preferences: {trip.flight_preferences}\n"
+
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{date_bounds_str}\n"
+        f"{budget_context}"
         f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"User Request: {user_prompt}\n"
-        f"Generate the requested accommodations and POIs, adhering strictly to any quantities specified by the user."
+        f"Generate the requested flights, accommodations and POIs, adhering strictly to any quantities specified by the user."
     )
     
     try:
@@ -770,6 +807,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     sugg_pois = response_json.get('pois', [])
     sugg_accs = response_json.get('accommodations', [])
+    sugg_flights = response_json.get('flights', [])
     
     pois = []
     for s in sugg_pois:
@@ -839,7 +877,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
             image_url=image_url,
-            google_maps_link=link
+            google_maps_link=link,
+            estimated_price_usd=s.get('estimated_price_usd')
         )
         pois.append(poi)
 
@@ -902,8 +941,25 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             image_url=image_url,
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
-            notes=s.get('notes')
+            notes=s.get('notes'),
+            estimated_price_usd=s.get('estimated_price_usd')
         )
         accs.append(acc)
         
-    return pois, accs
+    flights = []
+    for s in sugg_flights:
+        flight = TripFlight(
+            id=uuid.uuid4().hex,
+            airline=s.get('airline'),
+            flight_number=s.get('flight_number'),
+            origin=s.get('origin'),
+            destination=s.get('destination'),
+            departure_time=s.get('departure_time'),
+            arrival_time=s.get('arrival_time'),
+            class_type=s.get('class_type'),
+            estimated_price_usd=s.get('estimated_price_usd'),
+            notes=s.get('notes')
+        )
+        flights.append(flight)
+        
+    return pois, accs, flights
