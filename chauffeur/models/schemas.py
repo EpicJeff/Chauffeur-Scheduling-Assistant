@@ -244,6 +244,7 @@ class TripPOI(BaseModel):
     ideal_time_start: Optional[str] = None
     ideal_time_end: Optional[str] = None
     duration_mins: int = 60
+    estimated_price_usd: Optional[float] = None
     is_scheduled: bool = False
     scheduled_start: Optional[float] = None
     scheduled_end: Optional[float] = None
