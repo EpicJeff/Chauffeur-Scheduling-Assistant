@@ -58,8 +58,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_pois_str = ", ".join(existing_poi_names) if existing_pois_str else "None"
     
     budget_context = ""
-    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
-        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+    if getattr(trip, 'budget_max_usd', None) is not None:
+        budget_min = getattr(trip, 'budget_min_usd', 0) or 0
+        budget_context = f"The user has a target trip budget between ${budget_min} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+        budget_context += "CRITICAL BUDGET INSTRUCTION: If the total estimated cost of your suggestions exceeds the user's maximum budget, you MUST populate the 'budget_warning' field explaining why and asking where they are willing to compromise. You must STILL provide the best-effort suggestions in the arrays.\n"
         
     travelers = getattr(trip, 'travelers', 1)
     budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person).\n"
@@ -625,8 +627,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
     
     budget_context = ""
-    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
-        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+    if getattr(trip, 'budget_max_usd', None) is not None:
+        budget_min = getattr(trip, 'budget_min_usd', 0) or 0
+        budget_context = f"The user has a target trip budget between ${budget_min} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+        budget_context += "CRITICAL BUDGET INSTRUCTION: If the total estimated cost of your suggestions exceeds the user's maximum budget, you MUST populate the 'budget_warning' field explaining why and asking where they are willing to compromise. You must STILL provide the best-effort suggestions in the arrays.\n"
         
     travelers = getattr(trip, 'travelers', 1)
     budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person) for the entire stay.\n"
@@ -795,8 +799,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_accs_str = ", ".join(existing_accs) if existing_accs else "None"
     
     budget_context = ""
-    if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
-        budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+    if getattr(trip, 'budget_max_usd', None) is not None:
+        budget_min = getattr(trip, 'budget_min_usd', 0) or 0
+        budget_context = f"The user has a target trip budget between ${budget_min} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
+        budget_context += "CRITICAL BUDGET INSTRUCTION: If the total estimated cost of your suggestions (Flights + Accommodations + POIs) exceeds the user's maximum budget, you MUST populate the 'budget_warning' field explaining why and asking where they are willing to compromise. You must STILL provide the best-effort suggestions in the arrays.\n"
     if getattr(trip, 'flight_preferences', None):
         budget_context += f"Flight Preferences: {trip.flight_preferences}\n"
         
