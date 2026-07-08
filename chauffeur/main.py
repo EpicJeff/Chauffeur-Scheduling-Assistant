@@ -775,17 +775,30 @@ def generate_trip_plan_api(event_id: str, payload: dict):
     if 'flights' not in meta:
         meta['flights'] = []
         
+    # Deduplicate POIs by name
+    existing_poi_names = {p.get('name', '').lower() for p in meta['pois']}
     for poi in pois:
-        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
-        meta['pois'].append(poi_dict)
-        
+        if poi.name.lower() not in existing_poi_names:
+            poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+            meta['pois'].append(poi_dict)
+            existing_poi_names.add(poi.name.lower())
+            
+    # Deduplicate accommodations by name
+    existing_acc_names = {a.get('name', '').lower() for a in meta['accommodations']}
     for acc in accs:
-        acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
-        meta['accommodations'].append(acc_dict)
-        
+        if acc.name.lower() not in existing_acc_names:
+            acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+            meta['accommodations'].append(acc_dict)
+            existing_acc_names.add(acc.name.lower())
+            
+    # Deduplicate flights by origin-destination-airline
+    existing_flight_keys = {f"{f.get('origin')}-{f.get('destination')}-{f.get('airline')}" for f in meta['flights']}
     for flight in flights:
-        flight_dict = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
-        meta['flights'].append(flight_dict)
+        key = f"{flight.origin}-{flight.destination}-{flight.airline}"
+        if key not in existing_flight_keys:
+            flight_dict = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+            meta['flights'].append(flight_dict)
+            existing_flight_keys.add(key)
         
     storage.set_trip_metadata(event_id, meta)
     
@@ -812,9 +825,12 @@ def generate_trip_accommodations_api(event_id: str, payload: dict):
         if 'accommodations' not in meta:
             meta['accommodations'] = []
         
+        existing_acc_names = {a.get('name', '').lower() for a in meta['accommodations']}
         for acc in accs:
-            acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
-            meta['accommodations'].append(acc_dict)
+            if acc.name.lower() not in existing_acc_names:
+                acc_dict = acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict()
+                meta['accommodations'].append(acc_dict)
+                existing_acc_names.add(acc.name.lower())
             
         storage.set_trip_metadata(event_id, meta)
         
@@ -879,6 +895,34 @@ def live_pricing_api(event_id: str):
         "quota_exceeded": quota_exceeded
     }
 
+@app.delete("/api/trip/{event_id}/flight/{item_id}")
+def delete_flight_api(event_id: str, item_id: str):
+    meta = storage.get_trip_metadata(event_id)
+    if not meta or 'flights' not in meta:
+        return {"error": "Trip or flights not found"}
+        
+    initial_count = len(meta['flights'])
+    meta['flights'] = [f for f in meta['flights'] if str(f.get('id')) != str(item_id)]
+    
+    if len(meta['flights']) < initial_count:
+        storage.set_trip_metadata(event_id, meta)
+        return {"status": "ok", "deleted": True}
+    return {"error": "Flight not found"}
+
+@app.delete("/api/trip/{event_id}/accommodation/{item_id}")
+def delete_accommodation_api(event_id: str, item_id: str):
+    meta = storage.get_trip_metadata(event_id)
+    if not meta or 'accommodations' not in meta:
+        return {"error": "Trip or accommodations not found"}
+        
+    initial_count = len(meta['accommodations'])
+    meta['accommodations'] = [a for a in meta['accommodations'] if str(a.get('id')) != str(item_id)]
+    
+    if len(meta['accommodations']) < initial_count:
+        storage.set_trip_metadata(event_id, meta)
+        return {"status": "ok", "deleted": True}
+    return {"error": "Accommodation not found"}
+
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")
@@ -901,9 +945,12 @@ def generate_pois_api(event_id: str, payload: dict):
     if 'pois' not in meta:
         meta['pois'] = []
     
+    existing_poi_names = {p.get('name', '').lower() for p in meta['pois']}
     for poi in pois:
-        poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
-        meta['pois'].append(poi_dict)
+        if poi.name.lower() not in existing_poi_names:
+            poi_dict = poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict()
+            meta['pois'].append(poi_dict)
+            existing_poi_names.add(poi.name.lower())
         
     storage.set_trip_metadata(event_id, meta)
     
