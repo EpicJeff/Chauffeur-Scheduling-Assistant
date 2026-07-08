@@ -103,3 +103,8 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 
 ## Background Trip Events
 - **Trip Passenger Constraint**: If an event overlaps with a background trip and involves passengers who are on that trip, the solver strictly enforces that non-trip drivers cannot be assigned to it. It also ensures that if a trip driver *is* assigned, the event must be geographically close (within 60 minutes) to the trip's location. This acts as an absolute block, taking precedence over any manual driver overrides or recurring assignment rules, preventing home-based events from being mistakenly scheduled while the family is on vacation.
+
+## Draft Trips & AI Scheduling
+- **Draft-First Creation**: All newly generated trips (whether Exact Dates or Flexible Dates) are securely stored locally as Draft Trips in the backend JSON database, protecting the user's primary Google Calendar from unconfirmed events while iterating.
+- **Smart Calendar Analysis**: The agent queries Google Calendar for upcoming free/busy schedules and intelligently cross-references this with destination-specific seasonal heuristics (e.g. avoiding hurricanes) to suggest an optimal booking window via the `/api/trip/{event_id}/suggest_dates` endpoint.
+- **Budget Compliance**: For trip plan generation, the backend enforces the `budget_max_usd` property automatically. It intercepts the LLM output, sums the `estimated_price_usd` for all generated POIs, accommodations, and flights, and forcibly injects a warning payload to the chat context if the total exceeds the budget, preventing the LLM from silently ignoring constraints.

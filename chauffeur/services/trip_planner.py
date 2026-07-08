@@ -175,6 +175,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         pois.append(poi)
         
+    if getattr(trip, 'budget_max_usd', None):
+        total = sum((p.estimated_price_usd or 0) for p in pois)
+        if total > trip.budget_max_usd and not budget_warning:
+            budget_warning = f"Warning: The total estimated cost of these attractions (${total:,.2f}) exceeds your maximum budget of ${trip.budget_max_usd:,.2f}. Please review and let me know where you'd like to compromise."
+            
     return budget_warning, pois
 
 def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
@@ -700,6 +705,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         accs.append(acc)
         
+    if getattr(trip, 'budget_max_usd', None):
+        total = sum((a.estimated_price_usd or 0) for a in accs)
+        if total > trip.budget_max_usd and not budget_warning:
+            budget_warning = f"Warning: The total estimated cost of these accommodations (${total:,.2f}) exceeds your maximum budget of ${trip.budget_max_usd:,.2f}. Please review and let me know where you'd like to compromise."
+            
     return budget_warning, accs
 
 
@@ -918,4 +928,91 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         flights.append(flight)
         
+    if getattr(trip, 'budget_max_usd', None):
+        total = sum((p.estimated_price_usd or 0) for p in pois) + \
+                sum((a.estimated_price_usd or 0) for a in accs) + \
+                sum((f.estimated_price_usd or 0) for f in flights)
+        if total > trip.budget_max_usd and not budget_warning:
+            budget_warning = f"Warning: The total estimated cost of this trip (${total:,.2f}) exceeds your maximum budget of ${trip.budget_max_usd:,.2f}. Let me know where you'd like to make concessions (e.g. cheaper hotels, fewer activities) to bring the cost down."
+            
     return budget_warning, pois, accs, flights
+
+def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict]]:
+    """
+    Analyzes the user's calendar and destination to suggest the optimal trip dates.
+    Returns (error_message, suggestion_dict)
+    """
+    from services.llm import _call_llm_json
+    import datetime
+    
+    settings = storage.get_settings()
+    cals = settings.get('calendar_ids', [])
+    if not cals:
+        return "No calendars configured to analyze your schedule.", None
+        
+    events = calendar.fetch_upcoming_events(cals, days=365) # 1 year
+    
+    # Condense events for LLM (date and summary)
+    condensed_events = []
+    for e in events:
+        s_date = e.start.strftime("%Y-%m-%d")
+        e_date = e.end.strftime("%Y-%m-%d")
+        condensed_events.append(f"{s_date} to {e_date}: {e.summary}")
+        
+    cal_context = "\n".join(condensed_events) if condensed_events else "No upcoming events found on calendar."
+    
+    provider = settings.get('llm_provider', 'gemini')
+    if provider == 'ollama':
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+        api_key = "ollama"
+    else:
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        api_key = settings.get('llm_gemini_api_key')
+        
+    if not api_key:
+        return f"API key not configured for {provider}.", None
+        
+    duration = trip.draft_duration_days or 3
+    start_day = trip.draft_start_day if trip.draft_start_day is not None else 5 # Default Saturday
+    days_map = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
+    
+    system_prompt = f"""
+    You are an expert travel agent and executive assistant. 
+    Your goal is to suggest the optimal date range for a user's trip.
+    
+    Constraints:
+    1. The trip is to: {trip.location or "Unknown Destination"}
+    2. The trip duration is exactly {duration} days.
+    3. The trip SHOULD ideally start on a {days_map.get(start_day, "Any day")}.
+    4. You must avoid overlapping with the user's existing busy schedule if possible.
+    5. You should pick a date range that is historically a good time to visit the destination (e.g. good weather, avoiding monsoon season, etc.) and is at least 2 weeks from today.
+    
+    Return a JSON object with:
+    {{
+        "suggested_start_date": "YYYY-MM-DD",
+        "suggested_end_date": "YYYY-MM-DD",
+        "explanation": "A friendly 2-3 sentence explanation of why you chose these dates, mentioning how it fits their schedule and why it's a good time to visit the destination."
+    }}
+    """
+    
+    user_req = f"""
+    Current Date: {datetime.datetime.now().strftime('%Y-%m-%d')}
+    
+    User's Upcoming Calendar Events:
+    {cal_context}
+    
+    Please suggest the best dates for the trip.
+    """
+    
+    try:
+        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        if "suggested_start_date" in response_json and "suggested_end_date" in response_json:
+            return None, response_json
+        else:
+            return "Failed to parse dates from AI response.", None
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Error calling AI: {e}", None

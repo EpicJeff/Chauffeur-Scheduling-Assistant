@@ -861,7 +861,8 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             for acc in accs:
                 meta['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
                 
-            reply = warning if warning else f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
+            success_msg = f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
+            reply = f"{success_msg}\n\n{warning}" if warning else success_msg
         elif intent == 'entire_trip':
             from services.trip_planner import generate_trip_plan
             warning, pois, accs, flights = generate_trip_plan(trip_obj, user_msg, duration_days)
@@ -881,7 +882,8 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             for flight in flights:
                 meta['flights'].append(flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict())
                 
-            reply = warning if warning else f"✨ I've generated and added {len(pois)} new Points of Interest, {len(accs)} accommodations, and {len(flights)} flights to your trip based on your request!"
+            success_msg = f"✨ I've generated and added {len(pois)} new Points of Interest, {len(accs)} accommodations, and {len(flights)} flights to your trip based on your request!"
+            reply = f"{success_msg}\n\n{warning}" if warning else success_msg
         else:
             from services.trip_planner import generate_trip_pois
             warning, pois = generate_trip_pois(trip_obj, user_msg, duration_days)
@@ -891,7 +893,8 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             for poi in pois:
                 meta['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
                 
-            reply = warning if warning else f"✨ I've generated and added {len(pois)} new Points of Interest to your trip based on your request!"
+            success_msg = f"✨ I've generated and added {len(pois)} new Points of Interest to your trip based on your request!"
+            reply = f"{success_msg}\n\n{warning}" if warning else success_msg
             
         storage.set_trip_metadata(event_id, meta)
         storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})
