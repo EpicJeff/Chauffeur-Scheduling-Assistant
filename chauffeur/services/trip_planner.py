@@ -778,7 +778,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
     trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
     
-    date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')}\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')}"
+    if trip.is_draft:
+        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year ({trip_start_dt.year}) to avoid overlapping with current events. IMPORTANT: Estimate all prices using TODAY'S current prices (do not adjust for inflation). You must still assign check_in/check_out and flight dates between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')} so it plots correctly on the draft calendar."
+    else:
+        date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')}\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')}"
     
     existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
     existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
