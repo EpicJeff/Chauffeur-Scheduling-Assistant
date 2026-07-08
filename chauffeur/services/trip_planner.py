@@ -55,7 +55,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 """
     
     existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
-    existing_pois_str = ", ".join(existing_poi_names) if existing_pois_str else "None"
+    existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
     
     budget_context = ""
     if getattr(trip, 'budget_max_usd', None) is not None:
