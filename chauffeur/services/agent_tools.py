@@ -534,14 +534,22 @@ def handle_generate_trip_plan(args: dict) -> dict:
 
 def handle_add_trip_poi(args: dict) -> dict:
     from services import storage
+    from services.trip_planner import enrich_poi_data
     event_id = args.get('event_id')
     metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": []}
     import uuid
+    
+    name = args.get('name')
+    location = args.get('location')
+    trip_location = metadata.get('location', '')
+    
+    enrichment = enrich_poi_data(name, location, trip_location)
+    
     poi = {
         "id": uuid.uuid4().hex,
-        "name": args.get('name'),
-        "location": args.get('location'),
-        "mapbox_id": args.get('mapbox_id'),
+        "name": name,
+        "location": enrichment.get('location') or location,
+        "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
         "category": args.get('category', 'sightseeing'),
         "duration_mins": args.get('duration_mins', 60),
         "notes": args.get('notes', ''),
@@ -549,6 +557,10 @@ def handle_add_trip_poi(args: dict) -> dict:
         "scheduled_start": None,
         "scheduled_end": None
     }
+    
+    for k, v in enrichment.items():
+        if k not in ['location', 'mapbox_id']:
+            poi[k] = v
     if 'pois' not in metadata:
         metadata['pois'] = []
     metadata['pois'].append(poi)

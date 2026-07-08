@@ -6,6 +6,63 @@ from typing import List, Dict, Any, Optional, Tuple
 from models.schemas import TripMetadata, TripPOI, Event, TripAccommodation
 from services import storage, maps, calendar
 
+def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
+    """
+    Takes a basic POI name and location query and enriches it with Mapbox/Wikidata details.
+    Returns a dictionary of extra metadata to append to the POI.
+    """
+    import re
+    clean_query = re.sub(r'\(.*?\)', '', location_query).strip()
+    clean_name = re.sub(r'\(.*?\)', '', name).strip()
+    
+    locations = maps.search_places(clean_query, trip_location)
+    best_location = location_query # Fallback
+    mapbox_id = None
+    poi_lat = None
+    poi_lng = None
+    wikidata_id = None
+    opening_hours = None
+    website = None
+    phone_number = None
+    cuisine = None
+    internet_access = None
+    
+    if locations:
+        best_location = locations[0].get('address') or locations[0].get('name') or location_query
+        mapbox_id = locations[0].get('mapbox_id')
+        poi_lat = locations[0].get('lat')
+        poi_lng = locations[0].get('lon')
+        wikidata_id = locations[0].get('wikidata_id')
+        opening_hours = locations[0].get('opening_hours')
+        website = locations[0].get('website')
+        phone_number = locations[0].get('phone_number')
+        cuisine = locations[0].get('cuisine')
+        internet_access = locations[0].get('internet_access')
+        
+    encoded_query = urllib.parse.quote(f"{name} {best_location}")
+    
+    if wikidata_id:
+        image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
+    else:
+        image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+        
+    link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
+    
+    return {
+        "location": best_location,
+        "mapbox_id": mapbox_id,
+        "lat": poi_lat,
+        "lng": poi_lng,
+        "wikidata_id": wikidata_id,
+        "opening_hours": opening_hours,
+        "website": website,
+        "phone_number": phone_number,
+        "cuisine": cuisine,
+        "internet_access": internet_access,
+        "image_url": image_url,
+        "link": link
+    }
+
 def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
@@ -90,69 +147,30 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         name = s.get('name')
         query = s.get('search_query', name)
         
-        import re
-        clean_query = re.sub(r'\(.*?\)', '', query).strip()
-        clean_name = re.sub(r'\(.*?\)', '', name).strip()
+        enrichment = enrich_poi_data(name, query, trip.location)
         
-        # Ground to real location using Mapbox search
-        locations = maps.search_places(clean_query, trip.location)
-        best_location = query # Fallback
-        mapbox_id = None
-        poi_lat = None
-        poi_lng = None
-        
-        if locations:
-            # Pick the first result
-            best_location = locations[0].get('address') or locations[0].get('name') or query
-            mapbox_id = locations[0].get('mapbox_id')
-            poi_lat = locations[0].get('lat')
-            poi_lng = locations[0].get('lon')
-            wikidata_id = locations[0].get('wikidata_id')
-            opening_hours = locations[0].get('opening_hours')
-            website = locations[0].get('website')
-            phone_number = locations[0].get('phone_number')
-            cuisine = locations[0].get('cuisine')
-            internet_access = locations[0].get('internet_access')
-        else:
-            wikidata_id = None
-            opening_hours = None
-            website = None
-            phone_number = None
-            cuisine = None
-            internet_access = None
-            
-        encoded_query = urllib.parse.quote(f"{name} {best_location}")
-        
-        # Build image URL with wikidata_id if available
-        if wikidata_id:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
-        else:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
-            
-        link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
-            
         poi = TripPOI(
             id=uuid.uuid4().hex,
             name=name,
-            location=best_location,
-            mapbox_id=mapbox_id,
+            location=enrichment['location'],
+            mapbox_id=enrichment['mapbox_id'],
             category=s.get('category'),
             description=s.get('description'),
             why_picked=s.get('why_picked'),
             experience=s.get('experience'),
-            image_url=image_url,
-            link=link,
+            image_url=enrichment['image_url'],
+            link=enrichment['link'],
             ideal_time_start=s.get('ideal_time_start'),
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
-            lat=poi_lat,
-            lng=poi_lng,
-            wikidata_id=wikidata_id,
-            opening_hours=opening_hours,
-            website=website,
-            phone_number=phone_number,
-            cuisine=cuisine,
-            internet_access=internet_access,
+            lat=enrichment['lat'],
+            lng=enrichment['lng'],
+            wikidata_id=enrichment['wikidata_id'],
+            opening_hours=enrichment['opening_hours'],
+            website=enrichment['website'],
+            phone_number=enrichment['phone_number'],
+            cuisine=enrichment['cuisine'],
+            internet_access=enrichment['internet_access'],
             estimated_price_usd=s.get('estimated_price_usd')
         )
         pois.append(poi)
@@ -659,45 +677,22 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         name = s.get('name')
         query = s.get('location', name)
         
-        # Ground to real location using Mapbox search
-        locations = maps.search_places(query, trip.location)
-        best_location = query # Fallback
-        mapbox_id = None
-        lat = None
-        lng = None
-        
-        if locations:
-            best_location = locations[0].get('address') or locations[0].get('name') or query
-            mapbox_id = locations[0].get('mapbox_id')
-            lat = locations[0].get('lat')
-            lng = locations[0].get('lon')
-            wikidata_id = locations[0].get('wikidata_id')
-            opening_hours = locations[0].get('opening_hours')
-            website = locations[0].get('website')
-            phone_number = locations[0].get('phone_number')
-            cuisine = locations[0].get('cuisine')
-            internet_access = locations[0].get('internet_access')
-        else:
-            wikidata_id = None
-            opening_hours = None
-            website = None
-            phone_number = None
-            cuisine = None
-            internet_access = None
+        enrichment = enrich_poi_data(name, query, trip.location)
             
         acc = TripAccommodation(
             id=uuid.uuid4().hex,
             name=name,
-            location=best_location,
-            mapbox_id=mapbox_id,
-            lat=lat,
-            lng=lng,
-            wikidata_id=wikidata_id,
-            opening_hours=opening_hours,
-            website=website,
-            phone_number=phone_number,
-            cuisine=cuisine,
-            internet_access=internet_access,
+            location=enrichment['location'],
+            mapbox_id=enrichment['mapbox_id'],
+            lat=enrichment['lat'],
+            lng=enrichment['lng'],
+            wikidata_id=enrichment['wikidata_id'],
+            opening_hours=enrichment['opening_hours'],
+            website=enrichment['website'],
+            phone_number=enrichment['phone_number'],
+            cuisine=enrichment['cuisine'],
+            internet_access=enrichment['internet_access'],
+            image_url=enrichment['image_url'],
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
             notes=s.get('notes'),
@@ -846,56 +841,21 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             
         query = s.get('search_query', name)
         
-        clean_query = re.sub(r'\(.*?\)', '', query).strip()
-        clean_name = re.sub(r'\(.*?\)', '', name).strip()
+        enrichment = enrich_poi_data(name, query, trip.location)
         
-        locations = maps.search_places(clean_query, trip.location)
-        best_location = query # Fallback
-        mapbox_id = None
-        poi_lat = None
-        poi_lng = None
-        
-        if locations:
-            best_location = locations[0].get('address') or locations[0].get('name') or query
-            mapbox_id = locations[0].get('mapbox_id')
-            poi_lat = locations[0].get('lat')
-            poi_lng = locations[0].get('lon')
-            wikidata_id = locations[0].get('wikidata_id')
-            opening_hours = locations[0].get('opening_hours')
-            website = locations[0].get('website')
-            phone_number = locations[0].get('phone_number')
-            cuisine = locations[0].get('cuisine')
-            internet_access = locations[0].get('internet_access')
-        else:
-            wikidata_id = None
-            opening_hours = None
-            website = None
-            phone_number = None
-            cuisine = None
-            internet_access = None
-            
-        encoded_query = urllib.parse.quote(f"{name} {best_location}")
-        
-        if wikidata_id:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
-        else:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
-            
-        link = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
-            
         poi = TripPOI(
             id=uuid.uuid4().hex,
             name=name,
-            location=best_location,
-            mapbox_id=mapbox_id,
-            lat=poi_lat,
-            lng=poi_lng,
-            wikidata_id=wikidata_id,
-            opening_hours=opening_hours,
-            website=website,
-            phone_number=phone_number,
-            cuisine=cuisine,
-            internet_access=internet_access,
+            location=enrichment['location'],
+            mapbox_id=enrichment['mapbox_id'],
+            lat=enrichment['lat'],
+            lng=enrichment['lng'],
+            wikidata_id=enrichment['wikidata_id'],
+            opening_hours=enrichment['opening_hours'],
+            website=enrichment['website'],
+            phone_number=enrichment['phone_number'],
+            cuisine=enrichment['cuisine'],
+            internet_access=enrichment['internet_access'],
             category=s.get('category', 'other'),
             description=s.get('description'),
             why_picked=s.get('why_picked'),
@@ -903,8 +863,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_start=s.get('ideal_time_start'),
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
-            image_url=image_url,
-            google_maps_link=link,
+            image_url=enrichment['image_url'],
+            link=enrichment['link'],
             estimated_price_usd=s.get('estimated_price_usd')
         )
         pois.append(poi)
@@ -919,53 +879,22 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             
         query = s.get('location', name)
         
-        clean_query = re.sub(r'\(.*?\)', '', query).strip()
-        clean_name = re.sub(r'\(.*?\)', '', name).strip()
-        
-        locations = maps.search_places(clean_query, trip.location)
-        best_location = query # Fallback
-        mapbox_id = None
-        lat = None
-        lng = None
-        
-        if locations:
-            best_location = locations[0].get('address') or locations[0].get('name') or query
-            mapbox_id = locations[0].get('mapbox_id')
-            lat = locations[0].get('lat')
-            lng = locations[0].get('lon')
-            wikidata_id = locations[0].get('wikidata_id')
-            opening_hours = locations[0].get('opening_hours')
-            website = locations[0].get('website')
-            phone_number = locations[0].get('phone_number')
-            cuisine = locations[0].get('cuisine')
-            internet_access = locations[0].get('internet_access')
-        else:
-            wikidata_id = None
-            opening_hours = None
-            website = None
-            phone_number = None
-            cuisine = None
-            internet_access = None
-            
-        if wikidata_id:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}&wikidata_id={wikidata_id}"
-        else:
-            image_url = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+        enrichment = enrich_poi_data(name, query, trip.location)
             
         acc = TripAccommodation(
             id=uuid.uuid4().hex,
             name=name,
-            location=best_location,
-            mapbox_id=mapbox_id,
-            lat=lat,
-            lng=lng,
-            wikidata_id=wikidata_id,
-            opening_hours=opening_hours,
-            website=website,
-            phone_number=phone_number,
-            cuisine=cuisine,
-            internet_access=internet_access,
-            image_url=image_url,
+            location=enrichment['location'],
+            mapbox_id=enrichment['mapbox_id'],
+            lat=enrichment['lat'],
+            lng=enrichment['lng'],
+            wikidata_id=enrichment['wikidata_id'],
+            opening_hours=enrichment['opening_hours'],
+            website=enrichment['website'],
+            phone_number=enrichment['phone_number'],
+            cuisine=enrichment['cuisine'],
+            internet_access=enrichment['internet_access'],
+            image_url=enrichment['image_url'],
             check_in_date=s.get('check_in_date'),
             check_out_date=s.get('check_out_date'),
             notes=s.get('notes'),
