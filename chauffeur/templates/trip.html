@@ -1060,27 +1060,37 @@
         }
         
         async function deleteAccommodation(id) {
-            if (!confirm("Are you sure you want to delete this accommodation?")) return;
-            try {
-                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${encodeURIComponent(id)}`, { method: 'DELETE' });
-                const data = await res.json();
-                if (data.error) throw new Error(data.error);
-                await fetchTripData();
-            } catch (err) {
-                alert('Failed to delete accommodation: ' + err.message);
-            }
+            openConfirmModal("Delete Accommodation?", "Are you sure you want to delete this accommodation?", [
+                { text: "Cancel", class: "bg-gray-700 hover:bg-gray-600 text-white", onClick: () => closeConfirmModal() },
+                { text: "Delete", class: "bg-red-600 hover:bg-red-700 text-white font-bold", onClick: async () => {
+                    closeConfirmModal();
+                    try {
+                        const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.error) throw new Error(data.error);
+                        await fetchTripData();
+                    } catch (err) {
+                        showGlobalAlert('Failed to delete accommodation: ' + err.message);
+                    }
+                } }
+            ]);
         }
         
         async function deleteFlight(id) {
-            if (!confirm("Are you sure you want to delete this flight?")) return;
-            try {
-                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/flight/${encodeURIComponent(id)}`, { method: 'DELETE' });
-                const data = await res.json();
-                if (data.error) throw new Error(data.error);
-                await fetchTripData();
-            } catch (err) {
-                alert('Failed to delete flight: ' + err.message);
-            }
+            openConfirmModal("Delete Flight?", "Are you sure you want to delete this flight?", [
+                { text: "Cancel", class: "bg-gray-700 hover:bg-gray-600 text-white", onClick: () => closeConfirmModal() },
+                { text: "Delete", class: "bg-red-600 hover:bg-red-700 text-white font-bold", onClick: async () => {
+                    closeConfirmModal();
+                    try {
+                        const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/flight/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (data.error) throw new Error(data.error);
+                        await fetchTripData();
+                    } catch (err) {
+                        showGlobalAlert('Failed to delete flight: ' + err.message);
+                    }
+                } }
+            ]);
         }
         
         async function getLivePricing() {
@@ -1095,17 +1105,17 @@
                 });
                 const data = await res.json();
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    showGlobalAlert('Error: ' + data.error);
                 } else if (data.quota_exceeded) {
-                    alert('You have exhausted your free SerpApi monthly allowance (250 requests). Please use the "Check on Google" buttons to manually check remaining prices.');
+                    showGlobalAlert('You have exhausted your free SerpApi monthly allowance (250 requests). Please use the "Check on Google" buttons to manually check remaining prices.');
                     if (data.updated) await fetchTripData();
                 } else if (data.updated) {
                     await fetchTripData(); // refresh the UI with new prices
                 } else {
-                    alert('All prices are already live or no new prices could be fetched.');
+                    showGlobalAlert('All prices are already live or no new prices could be fetched.');
                 }
             } catch (err) {
-                alert('Request failed');
+                showGlobalAlert('Request failed');
             } finally {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
