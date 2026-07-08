@@ -765,7 +765,7 @@ def generate_trip_plan_api(event_id: str, payload: dict):
     trip_obj = TripMetadata(**meta)
     
     from services.trip_planner import generate_trip_plan
-    pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
     
     # Save back to trip metadata
     if 'pois' not in meta:
@@ -802,7 +802,7 @@ def generate_trip_plan_api(event_id: str, payload: dict):
         
     storage.set_trip_metadata(event_id, meta)
     
-    return {"pois": meta['pois'], "accommodations": meta['accommodations'], "flights": meta['flights']}
+    return {"budget_warning": warning, "pois": meta['pois'], "accommodations": meta['accommodations'], "flights": meta['flights']}
 
 @app.post("/api/trip/{event_id}/generate_accommodations")
 def generate_trip_accommodations_api(event_id: str, payload: dict):
@@ -819,7 +819,7 @@ def generate_trip_accommodations_api(event_id: str, payload: dict):
         trip_obj = TripMetadata(**meta)
         
         from services.trip_planner import generate_trip_accommodations
-        accs = generate_trip_accommodations(trip_obj, user_prompt)
+        warning, accs = generate_trip_accommodations(trip_obj, user_prompt)
         
         # Save back to trip metadata
         if 'accommodations' not in meta:
@@ -834,7 +834,7 @@ def generate_trip_accommodations_api(event_id: str, payload: dict):
             
         storage.set_trip_metadata(event_id, meta)
         
-        return {"accommodations": meta['accommodations']}
+        return {"budget_warning": warning, "accommodations": meta['accommodations']}
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
@@ -941,7 +941,7 @@ def generate_pois_api(event_id: str, payload: dict):
     trip_obj = TripMetadata(**meta)
     
     from services.trip_planner import generate_trip_pois
-    pois = generate_trip_pois(trip_obj, user_prompt, duration_days)
+    warning, pois = generate_trip_pois(trip_obj, user_prompt, duration_days)
     
     # Save back to trip metadata
     if 'pois' not in meta:
@@ -956,7 +956,7 @@ def generate_pois_api(event_id: str, payload: dict):
         
     storage.set_trip_metadata(event_id, meta)
     
-    return {"pois": meta['pois']}
+    return {"budget_warning": warning, "pois": meta['pois']}
 
 @app.post("/api/trip/{event_id}/schedule_poi")
 def schedule_poi_api(event_id: str, payload: dict):

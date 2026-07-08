@@ -854,17 +854,17 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             
         if intent == 'accommodations':
             from services.trip_planner import generate_trip_accommodations
-            accs = generate_trip_accommodations(trip_obj, user_msg)
+            warning, accs = generate_trip_accommodations(trip_obj, user_msg)
             
             if 'accommodations' not in meta:
                 meta['accommodations'] = []
             for acc in accs:
                 meta['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
                 
-            reply = f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
+            reply = warning if warning else f"✨ I've generated and added {len(accs)} new accommodations to your trip based on your request!"
         elif intent == 'entire_trip':
             from services.trip_planner import generate_trip_plan
-            pois, accs, flights = generate_trip_plan(trip_obj, user_msg, duration_days)
+            warning, pois, accs, flights = generate_trip_plan(trip_obj, user_msg, duration_days)
             
             if 'accommodations' not in meta:
                 meta['accommodations'] = []
@@ -881,17 +881,17 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             for flight in flights:
                 meta['flights'].append(flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict())
                 
-            reply = f"✨ I've generated and added {len(pois)} new Points of Interest, {len(accs)} accommodations, and {len(flights)} flights to your trip based on your request!"
+            reply = warning if warning else f"✨ I've generated and added {len(pois)} new Points of Interest, {len(accs)} accommodations, and {len(flights)} flights to your trip based on your request!"
         else:
             from services.trip_planner import generate_trip_pois
-            pois = generate_trip_pois(trip_obj, user_msg, duration_days)
+            warning, pois = generate_trip_pois(trip_obj, user_msg, duration_days)
             
             if 'pois' not in meta:
                 meta['pois'] = []
             for poi in pois:
                 meta['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
                 
-            reply = f"✨ I've generated and added {len(pois)} new Points of Interest to your trip based on your request!"
+            reply = warning if warning else f"✨ I've generated and added {len(pois)} new Points of Interest to your trip based on your request!"
             
         storage.set_trip_metadata(event_id, meta)
         storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})

@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from models.schemas import TripMetadata, TripPOI, Event, TripAccommodation
 from services import storage, maps, calendar
 
-def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> List[TripPOI]:
+def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
     and grounds them to real-world locations via Mapbox.
@@ -34,6 +34,7 @@ If the user already has POIs on their itinerary, try to suggest new places that 
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
+  "budget_warning": "Optional string. If you cannot meet the user's budget with these suggestions, populate this warning explaining why and asking where they are willing to compromise. Still generate your best-effort suggestions.",
   "suggestions": [
     {{
       "name": "The name of the location (e.g., French Laundry)",
@@ -77,8 +78,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating POIs: {e}")
-        return []
+        return None, []
         
+    budget_warning = response_json.get('budget_warning')
     suggestions = response_json.get('suggestions', [])
     pois = []
     
@@ -153,7 +155,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         pois.append(poi)
         
-    return pois
+    return budget_warning, pois
 
 def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
     """
@@ -568,7 +570,7 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     res["suggested_fixes"] = meta["suggested_fixes"]
                 yield res
 
-def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> List[TripAccommodation]:
+def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[Optional[str], List[TripAccommodation]]:
     """
     Generates suggested accommodations based on the user's prompt and currently scheduled POIs.
     """
@@ -593,6 +595,7 @@ If they have a multi-leg trip (e.g., Paris for 3 days, Countryside for 2 days), 
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {
+  "budget_warning": "Optional string. If you cannot meet the user's budget with these suggestions, populate this warning explaining why and asking where they are willing to compromise. Still generate your best-effort suggestions.",
   "accommodations": [
     {
       "name": "The name of the accommodation (e.g., Ritz Paris)",
@@ -642,8 +645,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating accommodations: {e}")
-        return []
+        return None, []
         
+    budget_warning = response_json.get('budget_warning')
     suggestions = response_json.get('accommodations', [])
     accs = []
     
@@ -697,7 +701,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         accs.append(acc)
         
-    return accs
+    return budget_warning, accs
 
 
 def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: int = 1):
@@ -730,6 +734,7 @@ If their request is open-ended, suggest approximately {num_pois} POIs to ensure 
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
+  "budget_warning": "Optional string. If you cannot meet the user's budget with these suggestions, populate this warning explaining why and asking where they are willing to compromise. Still generate your best-effort suggestions.",
   "flights": [
     {{
       "airline": "Delta",
@@ -815,8 +820,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating trip plan: {e}")
-        return [], []
+        return None, [], [], []
         
+    budget_warning = response_json.get('budget_warning')
     sugg_pois = response_json.get('pois', [])
     sugg_accs = response_json.get('accommodations', [])
     sugg_flights = response_json.get('flights', [])
@@ -974,4 +980,4 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         )
         flights.append(flight)
         
-    return pois, accs, flights
+    return budget_warning, pois, accs, flights

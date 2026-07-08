@@ -501,7 +501,7 @@ def handle_generate_trip_plan(args: dict) -> dict:
             duration_days = 3
             
     trip_obj = TripMetadata(**meta)
-    pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
     
     if 'pois' not in meta:
         meta['pois'] = []
@@ -524,10 +524,13 @@ def handle_generate_trip_plan(args: dict) -> dict:
         
     storage.set_trip_metadata(event_id, meta)
     
-    return {
+    res = {
         "status": "success",
         "message": f"Generated and added {len(pois)} POIs, {len(accs)} accommodations, and {len(flights)} flights to the trip."
     }
+    if warning:
+        res["budget_warning"] = warning
+    return res
 
 def handle_add_trip_poi(args: dict) -> dict:
     from services import storage
