@@ -60,6 +60,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
         budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
         
+    travelers = getattr(trip, 'travelers', 1)
+    budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person).\n"
+        
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
@@ -622,6 +625,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     if getattr(trip, 'budget_min_usd', None) is not None and getattr(trip, 'budget_max_usd', None) is not None:
         budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
         
+    travelers = getattr(trip, 'travelers', 1)
+    budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person) for the entire stay.\n"
+        
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
@@ -785,6 +791,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         budget_context = f"The user has a target trip budget between ${trip.budget_min_usd} and ${trip.budget_max_usd}. Keep this in mind when estimating prices.\n"
     if getattr(trip, 'flight_preferences', None):
         budget_context += f"Flight Preferences: {trip.flight_preferences}\n"
+        
+    travelers = getattr(trip, 'travelers', 1)
+    budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd for flights and accommodations MUST reflect the total cost for the ENTIRE group (not per person).\n"
 
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"

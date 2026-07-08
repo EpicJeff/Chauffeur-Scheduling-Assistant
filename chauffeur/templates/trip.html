@@ -742,6 +742,10 @@
                         <label class="block text-gray-400 mb-1 text-sm font-bold">Flight Preferences</label>
                         <input type="text" id="settings-flight-prefs" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Delta airlines, aisle seat">
                     </div>
+                    <div class="mt-4">
+                        <label class="block text-gray-400 mb-1 text-sm font-bold">Number of Travelers</label>
+                        <input type="number" id="settings-travelers" min="1" max="20" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="1">
+                    </div>
                 </div>
                 <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">General Notes</label>
@@ -2058,6 +2062,7 @@
             document.getElementById('settings-budget-min').value = tripData.metadata.budget_min_usd || 0;
             document.getElementById('settings-budget-max').value = tripData.metadata.budget_max_usd || 20000;
             document.getElementById('settings-flight-prefs').value = tripData.metadata.flight_preferences || '';
+            document.getElementById('settings-travelers').value = tripData.metadata.travelers || 1;
             updateSettingsBudgetSlider();
             
             if (tripData.metadata.is_draft) {
@@ -2321,6 +2326,7 @@
             tripData.metadata.budget_min_usd = parseInt(document.getElementById('settings-budget-min').value) || 0;
             tripData.metadata.budget_max_usd = parseInt(document.getElementById('settings-budget-max').value) || 0;
             tripData.metadata.flight_preferences = document.getElementById('settings-flight-prefs').value;
+            tripData.metadata.travelers = parseInt(document.getElementById('settings-travelers').value) || 1;
             
             if (tripData.metadata.is_draft) {
                 tripData.metadata.draft_start_day = parseInt(document.getElementById('settings-start-day').value);

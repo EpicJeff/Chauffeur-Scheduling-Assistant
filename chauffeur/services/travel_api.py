@@ -58,7 +58,7 @@ def check_for_quota_error(results: dict):
     if "error" in results and "Invalid API key" in results["error"]:
         raise Exception("Invalid SerpApi key.")
 
-def get_live_flight_price(origin: str, destination: str, departure_date: str) -> Optional[float]:
+def get_live_flight_price(origin: str, destination: str, departure_date: str, travelers: int = 1) -> Optional[float]:
     """Fetches the lowest available flight price from Google Flights via SerpApi."""
     api_key = get_serpapi_key()
     if not api_key:
@@ -76,6 +76,7 @@ def get_live_flight_price(origin: str, destination: str, departure_date: str) ->
       "departure_id": origin_iata,
       "arrival_id": dest_iata,
       "outbound_date": departure_date,
+      "adults": str(travelers),
       "currency": "USD",
       "hl": "en",
       "api_key": api_key
@@ -103,7 +104,7 @@ def get_live_flight_price(origin: str, destination: str, departure_date: str) ->
         
     return None
 
-def get_live_hotel_price(location: str, check_in_date: str, check_out_date: str) -> Optional[float]:
+def get_live_hotel_price(location: str, check_in_date: str, check_out_date: str, travelers: int = 1) -> Optional[float]:
     """Fetches the average hotel price for a location from Google Hotels via SerpApi."""
     api_key = get_serpapi_key()
     if not api_key:
@@ -114,7 +115,7 @@ def get_live_hotel_price(location: str, check_in_date: str, check_out_date: str)
       "q": location,
       "check_in_date": check_in_date,
       "check_out_date": check_out_date,
-      "adults": "2",
+      "adults": str(travelers),
       "currency": "USD",
       "hl": "en",
       "api_key": api_key

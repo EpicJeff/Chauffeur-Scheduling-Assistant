@@ -847,6 +847,8 @@ def live_pricing_api(event_id: str):
     if not meta:
         return {"error": "Trip not found"}
         
+    travelers = meta.get("travelers", 1)
+        
     updated = False
     quota_exceeded = False
     
@@ -856,7 +858,7 @@ def live_pricing_api(event_id: str):
             if not flight.get("is_live_price") and flight.get("origin") and flight.get("destination") and flight.get("departure_time"):
                 try:
                     departure_date = flight["departure_time"].split("T")[0]
-                    price = get_live_flight_price(flight["origin"], flight["destination"], departure_date)
+                    price = get_live_flight_price(flight["origin"], flight["destination"], departure_date, travelers)
                     if price is not None:
                         flight["estimated_price_usd"] = price
                         flight["is_live_price"] = True
@@ -872,7 +874,7 @@ def live_pricing_api(event_id: str):
             for acc in meta.get("accommodations", []):
                 if not acc.get("is_live_price") and acc.get("location") and acc.get("check_in_date") and acc.get("check_out_date"):
                     try:
-                        price = get_live_hotel_price(acc["location"], acc["check_in_date"], acc["check_out_date"])
+                        price = get_live_hotel_price(acc["location"], acc["check_in_date"], acc["check_out_date"], travelers)
                         if price is not None:
                             acc["estimated_price_usd"] = price
                             acc["is_live_price"] = True
