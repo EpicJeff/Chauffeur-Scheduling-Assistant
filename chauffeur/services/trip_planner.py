@@ -50,7 +50,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the cost of entry/experience per person.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost of entry/experience for the ENTIRE group.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -607,7 +607,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }
   ]
 }
-Note: `estimated_price_usd` is your best estimate of the cost per night in USD based on your general knowledge.
+Note: `estimated_price_usd` is your best estimate of the TOTAL cost of the stay for the ENTIRE group for the full duration of the trip in USD.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -773,7 +773,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the cost of entry/experience per person, or per night for hotels, or total for flights.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost for all travelers and the entire stay/experience.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -803,8 +803,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     travelers = getattr(trip, 'travelers', 1)
     budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd for flights and accommodations MUST reflect the total cost for the ENTIRE group (not per person).\n"
 
+    home_location_str = f"User's Home Location: {settings.get('home_location')} (Use this as the origin for flights unless specified otherwise)\n" if settings.get('home_location') else ""
+
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
+        f"{home_location_str}"
         f"Trip Location: {trip.location or 'Unknown'}\n"
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{date_bounds_str}\n"
