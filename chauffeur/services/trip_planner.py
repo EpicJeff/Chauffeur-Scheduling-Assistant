@@ -307,7 +307,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             
             if is_e_bg:
                 if getattr(e, 'trip_id', None) == trip.id:
-                    accommodation_events.append(e)
+                    if not getattr(e, 'poi_id', None):
+                        accommodation_events.append(e)
             
             if getattr(poi, 'is_background', False):
                 if not is_e_bg: continue
@@ -317,6 +318,26 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             if e.end > trip_start and e.start < trip_end:
                 if any(c in trip_cals for c in e.calendar_ids):
                     overlapping_events.append(e)
+                    
+        for p in trip.pois:
+            if p.is_scheduled and p.id != poi.id and p.scheduled_start and p.scheduled_end:
+                p_is_bg = getattr(p, 'is_background', False)
+                if getattr(poi, 'is_background', False):
+                    if not p_is_bg: continue
+                else:
+                    if p_is_bg: continue
+                
+                if getattr(p, 'event_id', '') and p.event_id.startswith("draft_poi_"):
+                    class MockEvent:
+                        def __init__(self, start, end, location):
+                            self.start = start
+                            self.end = end
+                            self.location = location
+                    overlapping_events.append(MockEvent(
+                        datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc),
+                        datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc),
+                        p.location
+                    ))
                 
     overlapping_events.sort(key=lambda x: x.start)
     
