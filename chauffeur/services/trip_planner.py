@@ -783,9 +783,13 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
     if trip.is_draft and trip.mock_start_date:
         trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
     else:
-        trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
-    trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+        from services.calendar import get_event_dates
+        trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
+        if not trip_start_dt or not trip_end_dt:
+            trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
     
     if trip.is_draft:
         date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices. You must strictly use these exact mock dates for any flights or accommodations so it plots correctly on the draft calendar, even if the user asked for different relative days."

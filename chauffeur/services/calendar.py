@@ -251,6 +251,38 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
     with _metadata_cache_lock:
         return {cal_id: _metadata_cache[cal_id] for cal_id in calendar_ids if cal_id in _metadata_cache}
 
+def get_event_dates(event_id: str):
+    \"\"\"
+    Given a composite event_id 'cal_id::base_id', returns (start_dt, end_dt)
+    \"\"\"
+    service = get_calendar_service()
+    try:
+        if '::' in event_id:
+            cal_id, base_id = event_id.split('::', 1)
+        else:
+            return None, None
+            
+        e = service.events().get(calendarId=cal_id, eventId=base_id).execute()
+        
+        start_str = e['start'].get('dateTime', e['start'].get('date'))
+        end_str = e['end'].get('dateTime', e['end'].get('date'))
+        
+        start_str = start_str.replace('Z', '+00:00')
+        end_str = end_str.replace('Z', '+00:00')
+        
+        local_tz = datetime.datetime.now().astimezone().tzinfo
+        if len(start_str) <= 10:
+            start_dt = datetime.datetime.strptime(start_str, "%Y-%m-%d").replace(tzinfo=local_tz)
+            end_dt = datetime.datetime.strptime(end_str, "%Y-%m-%d").replace(tzinfo=local_tz)
+        else:
+            start_dt = datetime.datetime.fromisoformat(start_str)
+            end_dt = datetime.datetime.fromisoformat(end_str)
+            
+        return start_dt, end_dt
+    except Exception as ex:
+        print(f"Error fetching event dates for {event_id}: {ex}")
+        return None, None
+
 def update_event_details(source_event_ids: list[str], details: dict):
     """
     Updates the details (summary, description, location, start, end) for multiple Google Calendar events.
