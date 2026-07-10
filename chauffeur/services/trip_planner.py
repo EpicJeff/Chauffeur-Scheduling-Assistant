@@ -88,6 +88,7 @@ The user's trip is {duration_days} days long.
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for and nothing more.
 If their request is open-ended, suggest approximately {num_pois} Points of Interest (POIs) to fill this trip that match their request and are located in or near the specified Trip Location.
 If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
+CRITICAL: Do NOT include accommodations (like hotels, resorts, or Airbnbs) in your suggestions. This is strictly for attractions, activities, and dining.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
@@ -767,6 +768,7 @@ The user will provide a prompt describing what they want to do on their trip.
 The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
 If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, 1 or more accommodations based on the trip length, and logical flights if applicable.
+CRITICAL: Do NOT put accommodations (like hotels, resorts, or Airbnbs) in the 'pois' array. They MUST go in the 'accommodations' array.
 
 You MUST respond with a single valid JSON object of the following exact structure:
 {{
