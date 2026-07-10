@@ -2821,22 +2821,25 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             starts_on_ts = tm['start'].timestamp()
             window_days = (tm['end'].date() - tm['start'].date()).days + 1
             
-            errands.append({
-                'id': f"{tm['id']}_poi_{poi['id']}",
-                'doc_id': -1,
-                'title': poi['name'],
-                'location': poi['location'],
-                'duration_mins': poi.get('duration_mins', 60),
-                'priority': 2,
-                'is_completed': False,
-                'status': 'pending',
-                'window_days': window_days,
-                'starts_on': starts_on_ts,
-                'tags': ['#trip_poi', tm['id']],
-                'group_id': tm['id'],
-                'trip_id': tm['id'],
-                'poi_id': poi['id']
-            })
+            occurrences = poi.get('occurrences', 1)
+            for i in range(occurrences):
+                errand_id = f"{tm['id']}_poi_{poi['id']}" if occurrences == 1 else f"{tm['id']}_poi_{poi['id']}_occ_{i}"
+                errands.append({
+                    'id': errand_id,
+                    'doc_id': -1,
+                    'title': poi['name'] if occurrences == 1 else f"{poi['name']} (Day {i+1})",
+                    'location': poi['location'],
+                    'duration_mins': poi.get('duration_mins', 60),
+                    'priority': 2,
+                    'is_completed': False,
+                    'status': 'pending',
+                    'window_days': window_days,
+                    'starts_on': starts_on_ts,
+                    'tags': ['#trip_poi', tm['id']],
+                    'group_id': tm['id'],
+                    'trip_id': tm['id'],
+                    'poi_id': poi['id']
+                })
 
     # Separate events with no location
     no_location_events = []
@@ -3519,7 +3522,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             for se in scheduled_errands:
                 if '_poi_' in se['id']:
                     trip_id = se['id'].split('_poi_')[0]
-                    poi_id = se['id'].split('_poi_')[1]
+                    poi_id = se['id'].split('_poi_')[1].split('_occ_')[0]
                     t_meta = storage.get_trip_metadata(trip_id)
                     if t_meta and 'pois' in t_meta:
                         for p in t_meta['pois']:

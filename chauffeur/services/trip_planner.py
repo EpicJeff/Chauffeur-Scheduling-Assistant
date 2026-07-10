@@ -106,11 +106,12 @@ You MUST respond with a single valid JSON object of the following exact structur
       "ideal_time_end": "12:00",
       "estimated_price_usd": 20.0,
       "is_background": false,
-      "valid_days_of_week": []
+      "valid_days_of_week": [],
+      "occurrences": 1
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost of entry/experience for the ENTIRE group. `is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). Otherwise default to 1.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -195,6 +196,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
             valid_days_of_week=s.get('valid_days_of_week', []),
+            occurrences=s.get('occurrences', 1),
             lat=enrichment['lat'],
             lng=enrichment['lng'],
             wikidata_id=enrichment['wikidata_id'],
@@ -902,11 +904,12 @@ You MUST respond with a single valid JSON object of the following exact structur
       "ideal_time_end": "12:00",
       "estimated_price_usd": 20.0,
       "is_background": false,
-      "valid_days_of_week": []
+      "valid_days_of_week": [],
+      "occurrences": 1
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost for all travelers and the entire stay/experience. `is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). Otherwise default to 1.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -1025,6 +1028,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
             valid_days_of_week=s.get('valid_days_of_week', []),
+            occurrences=s.get('occurrences', 1),
             image_url=enrichment['image_url'],
             link=enrichment['link'],
             estimated_price_usd=s.get('estimated_price_usd'),

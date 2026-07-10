@@ -263,6 +263,7 @@ class TripPOI(BaseModel):
     is_live_price: bool = False
     is_background: bool = False
     valid_days_of_week: List[int] = Field(default_factory=list)
+    occurrences: int = 1
 
 class TripAccommodation(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
