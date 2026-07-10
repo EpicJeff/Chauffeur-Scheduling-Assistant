@@ -338,6 +338,23 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                         datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc),
                         p.location
                     ))
+                    
+        for acc in getattr(trip, 'accommodations', []):
+            if acc.check_in_date and acc.check_out_date:
+                # If it's already on the calendar, we caught it in events loop.
+                # If it's not on the calendar yet (no event_id or draft), add it manually.
+                if not getattr(acc, 'event_id', None) or str(acc.event_id).startswith("draft_"):
+                    class MockAccEvent:
+                        def __init__(self, start, end, location):
+                            self.start = start
+                            self.end = end
+                            self.location = location
+                    try:
+                        start_dt = datetime.datetime.strptime(acc.check_in_date, "%Y-%m-%d").replace(hour=15, tzinfo=local_tz)
+                        end_dt = datetime.datetime.strptime(acc.check_out_date, "%Y-%m-%d").replace(hour=11, tzinfo=local_tz)
+                        accommodation_events.append(MockAccEvent(start_dt, end_dt, acc.location))
+                    except Exception:
+                        pass
                 
     overlapping_events.sort(key=lambda x: x.start)
     
@@ -435,9 +452,18 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     if poi_loc_clean == e_loc_clean:
                         travel_mins = 0
                     else:
-                        key = (e.location, poi.location)
+                        e_loc_for_routing = e.location
+                        poi_loc_for_routing = poi.location
+                        
+                        if trip.location:
+                            if trip.location.lower() not in e.location.lower() and len(e.location.split(',')) < 2:
+                                e_loc_for_routing = f"{e.location}, {trip.location}"
+                            if trip.location.lower() not in poi.location.lower() and len(poi.location.split(',')) < 2:
+                                poi_loc_for_routing = f"{poi.location}, {trip.location}"
+                                
+                        key = (e_loc_for_routing, poi_loc_for_routing)
                         if key not in location_travel_times:
-                            location_travel_times[key] = maps.get_travel_time_minutes(e.location, poi.location)
+                            location_travel_times[key] = maps.get_travel_time_minutes(e_loc_for_routing, poi_loc_for_routing)
                         travel_mins = location_travel_times[key]
                 
                 dynamic_buffer = datetime.timedelta(minutes=travel_mins)
@@ -488,9 +514,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     break
                     
             if poi.location and day_home_base:
-                key = (day_home_base, poi.location)
+                poi_loc_for_routing = poi.location
+                if trip.location and trip.location.lower() not in poi.location.lower():
+                    # If it's a short name like "Cinderella's Royal Table" without commas, append trip location
+                    if len(poi.location.split(',')) < 2:
+                        poi_loc_for_routing = f"{poi.location}, {trip.location}"
+                        
+                key = (day_home_base, poi_loc_for_routing)
                 if key not in location_travel_times:
-                    location_travel_times[key] = maps.get_travel_time_minutes(day_home_base, poi.location)
+                    location_travel_times[key] = maps.get_travel_time_minutes(day_home_base, poi_loc_for_routing)
                 travel_mins_from_base = location_travel_times[key]
                 
                 if travel_mins_from_base > 180:

@@ -1,0 +1,1 @@
+﻿import sys; sys.path.append('e:\\repositories\\Chauffeur\\chauffeur'); from services.maps import geocode_address; print('MK:', geocode_address('Magic Kingdom Park')); print('Orlando:', geocode_address('Orlando, FL'))

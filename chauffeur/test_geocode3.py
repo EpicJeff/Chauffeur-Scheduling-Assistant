@@ -1,0 +1,1 @@
+﻿import sys; sys.path.append('e:\\repositories\\Chauffeur\\chauffeur'); from services.maps import geocode_address; print('Cinderella+Orlando:', geocode_address('Cinderella\'s Royal Table, Orlando, FL'))
