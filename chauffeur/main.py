@@ -373,6 +373,8 @@ def create_trip_api(req: CreateTripRequest):
         "budget_min_usd": req.budget_min_usd,
         "budget_max_usd": req.budget_max_usd,
         "flight_preferences": req.flight_preferences,
+        "attendees": req.attendees,
+        "travelers": max(1, len(req.attendees)) if req.attendees else 1,
         "pois": [],
         "accommodations": [],
         "flights": [],
@@ -2752,12 +2754,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if getattr(e, 'event_type', '') == 'background_trip':
             applicable_entities = set()
             
-            # Use triaged passenger assignments
+            # Fetch explicitly configured attendees from trip metadata
+            tm_meta = storage.get_trip_metadata(e.id)
+            if tm_meta and tm_meta.get('attendees'):
+                for attendee in tm_meta['attendees']:
+                    applicable_entities.add(attendee)
+            
+            # Use triaged passenger assignments (legacy fallback)
             if hasattr(e, 'calendar_ids') and e.calendar_ids:
                 for cid in e.calendar_ids:
                     applicable_entities.add(f"passenger_{cid}")
                     
-            # Use triaged driver assignments
+            # Use triaged driver assignments (legacy fallback)
             for d_id, d_evs in driver_events_map.items():
                 if any(de.id == e.id for de in d_evs):
                     applicable_entities.add(f"driver_{d_id}")

@@ -316,6 +316,7 @@ class TripMetadata(BaseModel):
     budget_max_usd: Optional[float] = None
     flight_preferences: Optional[str] = None
     travelers: int = 1
+    attendees: List[str] = Field(default_factory=list)
     pois: List[TripPOI] = Field(default_factory=list)
     accommodations: List[TripAccommodation] = Field(default_factory=list)
     flights: List[TripFlight] = Field(default_factory=list)
@@ -330,5 +331,6 @@ class CreateTripRequest(BaseModel):
     calendar_id: Optional[str] = None
     budget_min_usd: Optional[float] = None
     budget_max_usd: Optional[float] = None
+    attendees: List[str] = Field(default_factory=list)
     flight_preferences: Optional[str] = None
     travelers: int = 1

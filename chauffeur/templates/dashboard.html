@@ -66,6 +66,7 @@
                     <button id="btn-prev-day" onclick="fetchPrevDay()"
                         class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">&larr;
                         Prev</button>
+                    <input type="date" id="nav-date-picker" onchange="jumpToDate(this.value)" class="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block h-10 px-2 cursor-pointer" />
                     <button id="btn-next-day" onclick="fetchNextDay()"
                         class="bg-gray-800 hover:bg-gray-700 text-white font-bold h-10 rounded-lg shadow-md border border-gray-700 transition-colors disabled:opacity-50 text-sm md:text-base flex-1 md:px-4 flex items-center justify-center whitespace-nowrap">Next
                         &rarr;</button>
@@ -555,6 +556,20 @@
             await fetchSchedule(true, true, false);
         }
 
+        async function jumpToDate(dateStr) {
+            if (!dateStr) return;
+            const parts = dateStr.split('-');
+            const startD = new Date(parts[0], parts[1] - 1, parts[2]);
+            startD.setHours(0, 0, 0, 0);
+            
+            const endD = new Date(startD);
+            endD.setHours(23, 59, 59, 999);
+            
+            currentStartDate = startD;
+            currentEndDate = endD;
+            await fetchSchedule(true, false, false);
+        }
+
         function toLocalIsoString(date) {
             const tzo = -date.getTimezoneOffset(),
                 dif = tzo >= 0 ? '+' : '-',
@@ -649,6 +664,11 @@
                 if (btnNext) {
                     btnNext.disabled = false;
                     btnNext.innerHTML = 'Next Day &rarr;';
+                }
+                
+                const datePicker = document.getElementById('nav-date-picker');
+                if (datePicker && currentStartDate) {
+                    datePicker.value = formatYMD(currentStartDate);
                 }
 
                 const syncBtn = document.getElementById('sync-btn');

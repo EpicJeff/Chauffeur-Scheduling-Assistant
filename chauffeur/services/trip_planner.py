@@ -490,7 +490,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                         if key not in location_travel_times:
                             location_travel_times[key] = maps.get_travel_time_minutes(e_loc_for_routing, poi_loc_for_routing)
                         travel_mins = location_travel_times[key]
-                        if travel_mins > 180:
+                        if travel_mins > 60:
                             travel_mins = 0  # Ignore travel time for distant personal events
                 
                 dynamic_buffer = datetime.timedelta(minutes=travel_mins)

@@ -822,8 +822,8 @@
                         <input type="text" id="settings-flight-prefs" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Delta airlines, aisle seat">
                     </div>
                     <div class="mt-4">
-                        <label class="block text-gray-400 mb-1 text-sm font-bold">Number of Travelers</label>
-                        <input type="number" id="settings-travelers" min="1" max="20" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="1">
+                        <label class="block text-gray-400 mb-2 text-sm font-bold">Attendees</label>
+                        <div id="settings-attendees-container" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
                 <div>
@@ -907,7 +907,9 @@
 
     <script>
         const EVENT_ID = '{{ event_id }}';
-        let tripData = { event: null, metadata: { pois: [], activities: [] }, activities: [] };
+        let tripData = { event: null, metadata: { pois: [], activities: [], attendees: [] }, activities: [] };
+        let sysDrivers = [];
+        let sysPassengers = [];
         
         // Globals for map routing and filtering
         let poiMap = null;
@@ -1033,11 +1035,21 @@
         }
         
         async function fetchTripData() {
-            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`);
-            if(res.ok) {
-                tripData = await res.json();
-                renderTrip();
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const [tripRes, driversRes, paxRes] = await Promise.all([
+                fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`),
+                fetch(`${apiBase}api/drivers`),
+                fetch(`${apiBase}api/passengers`)
+            ]);
+            
+            if(tripRes.ok) {
+                tripData = await tripRes.json();
+                if (!tripData.metadata.attendees) tripData.metadata.attendees = [];
             }
+            if(driversRes.ok) sysDrivers = await driversRes.json();
+            if(paxRes.ok) sysPassengers = await paxRes.json();
+            
+            if (tripRes.ok) renderTrip();
         }
 
 
@@ -1675,7 +1687,7 @@
                         <div id="bg-inner-${bgPoiAct.id}" class="flex flex-col gap-4 pl-3 border-l-2 border-indigo-500/30"></div>
                     `;
                     col.appendChild(bgContainer);
-                    container = bgContainer.querySelector(`#bg-inner-${bgPoiAct.id}`);
+                    container = bgContainer.lastElementChild;
                 }
 
                 grouped[dayKey].items.forEach((act, index) => {
@@ -2217,13 +2229,60 @@
             document.getElementById('settings-budget-max-display').textContent = maxVal >= 20000 ? '$20,000+' : '$' + maxVal.toLocaleString();
         }
 
+        function renderAttendeesPills() {
+            const container = document.getElementById('settings-attendees-container');
+            if (!container) return;
+            container.innerHTML = '';
+            
+            const allAttendees = [];
+            sysDrivers.forEach(d => allAttendees.push({ id: `driver_${d.id}`, name: d.name + ' (Driver)' }));
+            sysPassengers.forEach(p => allAttendees.push({ id: `passenger_${p.calendar_ids[0] || p.id}`, name: p.name }));
+            
+            const selected = tripData.metadata.attendees || [];
+            
+            allAttendees.forEach(att => {
+                const isSelected = selected.includes(att.id);
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `px-3 py-1 rounded-full text-sm font-semibold transition-colors border ${
+                    isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700'
+                }`;
+                btn.textContent = att.name;
+                btn.dataset.id = att.id;
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    if (btn.classList.contains('bg-blue-600')) {
+                        btn.classList.replace('bg-blue-600', 'bg-gray-800');
+                        btn.classList.replace('text-white', 'text-gray-300');
+                        btn.classList.replace('border-blue-600', 'border-gray-600');
+                    } else {
+                        btn.classList.replace('bg-gray-800', 'bg-blue-600');
+                        btn.classList.replace('text-gray-300', 'text-white');
+                        btn.classList.replace('border-gray-600', 'border-blue-600');
+                    }
+                };
+                container.appendChild(btn);
+            });
+        }
+        
+        function getSelectedAttendees() {
+            const container = document.getElementById('settings-attendees-container');
+            if (!container) return [];
+            const selected = [];
+            container.querySelectorAll('button.bg-blue-600').forEach(btn => {
+                selected.push(btn.dataset.id);
+            });
+            return selected;
+        }
+
         function openSettingsModal() {
             document.getElementById('settings-bg-query').value = tripData.metadata.background_url || '';
             document.getElementById('settings-notes').value = tripData.metadata.notes || '';
             document.getElementById('settings-budget-min').value = tripData.metadata.budget_min_usd || 0;
             document.getElementById('settings-budget-max').value = tripData.metadata.budget_max_usd || 20000;
             document.getElementById('settings-flight-prefs').value = tripData.metadata.flight_preferences || '';
-            document.getElementById('settings-travelers').value = tripData.metadata.travelers || 1;
+            
+            renderAttendeesPills();
             updateSettingsBudgetSlider();
             
             if (tripData.metadata.is_draft) {
@@ -2489,7 +2548,7 @@
             tripData.metadata.budget_min_usd = parseInt(document.getElementById('settings-budget-min').value) || 0;
             tripData.metadata.budget_max_usd = parseInt(document.getElementById('settings-budget-max').value) || 0;
             tripData.metadata.flight_preferences = document.getElementById('settings-flight-prefs').value;
-            tripData.metadata.travelers = parseInt(document.getElementById('settings-travelers').value) || 1;
+            tripData.metadata.attendees = getSelectedAttendees();
             
             if (tripData.metadata.is_draft) {
                 tripData.metadata.draft_start_day = parseInt(document.getElementById('settings-start-day').value);
