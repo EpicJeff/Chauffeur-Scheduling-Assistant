@@ -596,9 +596,20 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
                     center_lat, center_lon = clat, clon
             except (ValueError, TypeError):
                 pass
-    
+    address = address.strip(' ,;')
+    if not address:
+        return None
+        
     if mapbox_key and not disable_mapbox and check_usage_limits_and_spikes('geocode', 1):
-        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(address)}.json"
+        # Mapbox has a 256 char / 20 word limit. Truncate for Mapbox request.
+        mapbox_address = address
+        if len(mapbox_address) > 200:
+            mapbox_address = mapbox_address[:200]
+        words = mapbox_address.split()
+        if len(words) > 18:
+            mapbox_address = " ".join(words[:18])
+            
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{urllib.parse.quote(mapbox_address)}.json"
         params = {
             "access_token": mapbox_key,
             "limit": 1
@@ -624,7 +635,7 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
                     lon, lat = features[0]["center"]
                     display_name = features[0].get("place_name", "")
                     return float(lat), float(lon), display_name
-            else:
+            elif resp.status_code != 422:
                 print(f"Mapbox Geocoding API failed: {resp.status_code}")
         except Exception as ex:
             print(f"Mapbox Geocoding API exception: {ex}")
@@ -669,11 +680,11 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
     return None
 
 def extract_street_address(address: str) -> str:
-    if not address or not address.strip():
+    if not address or not address.strip(' ,;'):
         return ""
-    parts = [p.strip() for p in address.split(',')]
+    parts = [p.strip() for p in address.split(',') if p.strip()]
     if len(parts) <= 1:
-        return address
+        return address.strip(' ,;')
         
     import re
     first_digit_index = -1
