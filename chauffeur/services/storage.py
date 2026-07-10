@@ -12,6 +12,36 @@ else:
     DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'db.json')
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+from tinydb.storages import Storage, touch
+class AtomicJSONStorage(Storage):
+    def __init__(self, path: str, create_dirs=False, encoding=None, **kwargs):
+        super().__init__()
+        self.path = path
+        self.encoding = encoding
+        self.kwargs = kwargs
+        touch(path, create_dirs=create_dirs)
+
+    def read(self) -> Optional[dict]:
+        if not os.path.exists(self.path):
+            return None
+        size = os.path.getsize(self.path)
+        if not size:
+            return None
+        with open(self.path, 'r', encoding=self.encoding) as handle:
+            return json.load(handle)
+
+    def write(self, data: dict):
+        temp_path = self.path + '.tmp'
+        with open(temp_path, 'w', encoding=self.encoding) as handle:
+            json.dump(data, handle, **self.kwargs)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, self.path)
+
+    def close(self) -> None:
+        pass
+
+
 def fix_corrupted_db(path):
     if not os.path.exists(path):
         return
@@ -33,7 +63,7 @@ def fix_corrupted_db(path):
 
 with db_lock:
     fix_corrupted_db(DB_PATH)
-    db = TinyDB(DB_PATH)
+    db = TinyDB(DB_PATH, storage=AtomicJSONStorage)
     drivers_table = db.table('drivers')
     rules_table = db.table('rules')
     priority_rules_table = db.table('priority_rules')
@@ -62,7 +92,7 @@ with db_lock:
 
     ROUTES_DB_PATH = os.path.join(os.path.dirname(DB_PATH), 'routes_cache.json')
     fix_corrupted_db(ROUTES_DB_PATH)
-    routes_db = TinyDB(ROUTES_DB_PATH)
+    routes_db = TinyDB(ROUTES_DB_PATH, storage=AtomicJSONStorage)
     route_geometry_cache_table = routes_db.table('route_geometry')
 
 def migrate_passengers_from_settings():
