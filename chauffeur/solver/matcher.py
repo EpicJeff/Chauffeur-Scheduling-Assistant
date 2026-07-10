@@ -1980,6 +1980,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                         t2 = get_travel_time_minutes(loc, e2.location)
             
             ve = VirtualEvent(start_time, end_time, loc)
+            idx = int(idx)
             driver_schedules_by_date[date_str][d_id].insert(idx + 1, ve)
             
             scheduled_errands_by_date[date_str].append({
