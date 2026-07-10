@@ -1166,6 +1166,7 @@ def edit_trip_poi_api(event_id: str, poi_id: str, payload: dict):
         if "description" in payload: poi.description = payload["description"]
         if "notes" in payload: poi.notes = payload["notes"]
         if "is_background" in payload: poi.is_background = payload["is_background"]
+        if "valid_days_of_week" in payload: poi.valid_days_of_week = payload["valid_days_of_week"]
         
         meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
         storage.set_trip_metadata(event_id, meta)
