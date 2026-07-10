@@ -252,9 +252,9 @@ def get_calendar_metadata(calendar_ids: list[str]) -> dict:
         return {cal_id: _metadata_cache[cal_id] for cal_id in calendar_ids if cal_id in _metadata_cache}
 
 def get_event_dates(event_id: str):
-    \"\"\"
+    """
     Given a composite event_id 'cal_id::base_id', returns (start_dt, end_dt)
-    \"\"\"
+    """
     service = get_calendar_service()
     try:
         if '::' in event_id:
