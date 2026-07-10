@@ -105,7 +105,7 @@ You MUST respond with a single valid JSON object of the following exact structur
       "ideal_time_end": "12:00",
       "estimated_price_usd": 20.0,
       "is_background": false,
-      "valid_days_of_week": [0, 1]
+      "valid_days_of_week": []
     }}
   ]
 }}
@@ -773,7 +773,7 @@ You MUST respond with a single valid JSON object of the following exact structur
       "ideal_time_end": "12:00",
       "estimated_price_usd": 20.0,
       "is_background": false,
-      "valid_days_of_week": [0, 1]
+      "valid_days_of_week": []
     }}
   ]
 }}
@@ -788,9 +788,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
     
     if trip.is_draft:
-        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year ({trip_start_dt.year}) to avoid overlapping with current events. IMPORTANT: Estimate all prices using TODAY'S current prices (do not adjust for inflation). You must still assign check_in/check_out and flight dates between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')} so it plots correctly on the draft calendar."
+        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices. You must strictly use these exact mock dates for any flights or accommodations so it plots correctly on the draft calendar, even if the user asked for different relative days."
     else:
-        date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')}\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')}"
+        date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
     
     existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
     existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
