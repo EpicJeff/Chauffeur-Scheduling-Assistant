@@ -116,6 +116,22 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     existing_poi_names = [p.name for p in trip.pois] if trip.pois else []
     existing_pois_str = ", ".join(existing_poi_names) if existing_poi_names else "None"
     
+    import datetime
+    if trip.is_draft and trip.mock_start_date:
+        trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+    else:
+        from services.calendar import get_event_dates
+        trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
+        if not trip_start_dt or not trip_end_dt:
+            trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+            
+    if trip.is_draft:
+        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
+    else:
+        date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
+        
     budget_context = ""
     if getattr(trip, 'budget_max_usd', None) is not None:
         budget_min = getattr(trip, 'budget_min_usd', 0) or 0
@@ -128,6 +144,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
+        f"{date_bounds_str}\n"
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{budget_context}"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
@@ -651,12 +668,29 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     travelers = getattr(trip, 'travelers', 1)
     budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person) for the entire stay.\n"
         
+    if trip.is_draft and trip.mock_start_date:
+        trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_days', 1))
+    else:
+        from services.calendar import get_event_dates
+        trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
+        if not trip_start_dt or not trip_end_dt:
+            trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=1)
+            
+    if trip.is_draft:
+        date_bounds_str = f"Trip Duration: {getattr(trip, 'draft_duration_days', 1)} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
+    else:
+        date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
+
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"Trip Location: {trip.location or 'Unknown'}\n"
+        f"{date_bounds_str}\n"
         f"Existing Accommodations: {existing_accs_str}\n"
         f"{poi_context}\n"
         f"{budget_context}"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"User Request: {user_prompt}\n"
         f"Generate accommodation suggestions."
     )
