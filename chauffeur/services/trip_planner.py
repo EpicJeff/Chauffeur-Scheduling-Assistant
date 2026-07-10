@@ -418,10 +418,20 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
     def find_slots(enforce_ideal_times=True):
         slots = []
         curr = trip_start
+        
+        # Snap curr to the nearest 15-minute boundary
+        discard_mins = curr.minute % 15
+        if discard_mins > 0:
+            if discard_mins >= 8:
+                curr += datetime.timedelta(minutes=(15 - discard_mins))
+            else:
+                curr -= datetime.timedelta(minutes=discard_mins)
+        curr = curr.replace(second=0, microsecond=0)
+
         while curr + duration_delta <= trip_end:
             slot_start = curr
             slot_end = curr + duration_delta
-            curr += datetime.timedelta(minutes=30)
+            curr += datetime.timedelta(minutes=15)  # Step by 15 mins for finer granularity
             
             slot_local = slot_start.astimezone(local_tz)
             slot_time = slot_local.time()
@@ -435,11 +445,26 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     continue
                 
             if enforce_ideal_times:
-                if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
+                s_mins = ideal_start_time.hour * 60 + ideal_start_time.minute
+                e_mins = ideal_end_time.hour * 60 + ideal_end_time.minute
+                
+                slot_end_time = slot_end.astimezone(local_tz).time()
+                s_slot = slot_time.hour * 60 + slot_time.minute
+                e_slot = slot_end_time.hour * 60 + slot_end_time.minute
+                
+                # Add a 15-minute grace period to the ideal window
+                if s_slot < (s_mins - 15) or e_slot > (e_mins + 15):
                     continue
             
             if poi_hours_start and poi_hours_end:
-                if slot_time < poi_hours_start or slot_end.astimezone(local_tz).time() > poi_hours_end:
+                slot_end_time = slot_end.astimezone(local_tz).time()
+                s_poi_mins = poi_hours_start.hour * 60 + poi_hours_start.minute
+                e_poi_mins = poi_hours_end.hour * 60 + poi_hours_end.minute
+                
+                s_slot = slot_time.hour * 60 + slot_time.minute
+                e_slot = slot_end_time.hour * 60 + slot_end_time.minute
+                
+                if s_slot < s_poi_mins or e_slot > e_poi_mins:
                     continue
                 
             overlaps = False
@@ -515,14 +540,16 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                     
             if poi.location and day_home_base:
                 poi_loc_for_routing = poi.location
-                if trip.location and trip.location.lower() not in poi.location.lower():
-                    # If it's a short name like "Cinderella's Royal Table" without commas, append trip location
-                    if len(poi.location.split(',')) < 2:
+                base_loc_for_routing = day_home_base
+                if trip.location:
+                    if trip.location.lower() not in poi.location.lower() and len(poi.location.split(',')) < 2:
                         poi_loc_for_routing = f"{poi.location}, {trip.location}"
+                    if trip.location.lower() not in day_home_base.lower() and len(day_home_base.split(',')) < 2:
+                        base_loc_for_routing = f"{day_home_base}, {trip.location}"
                         
-                key = (day_home_base, poi_loc_for_routing)
+                key = (base_loc_for_routing, poi_loc_for_routing)
                 if key not in location_travel_times:
-                    location_travel_times[key] = maps.get_travel_time_minutes(day_home_base, poi_loc_for_routing)
+                    location_travel_times[key] = maps.get_travel_time_minutes(base_loc_for_routing, poi_loc_for_routing)
                 travel_mins_from_base = location_travel_times[key]
                 
                 if travel_mins_from_base > 180:
