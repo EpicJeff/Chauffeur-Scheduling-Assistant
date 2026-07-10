@@ -275,7 +275,66 @@
         </button>
     </div>
 
-    <!-- Modals (Add Attraction, Settings, Add Activity, Activity Details) -->
+    <!-- Modals (Add Attraction, Settings, Add Activity, Activity Details, Schedule Trip) -->
+    
+    <!-- Schedule Trip Modal -->
+    <div id="schedule-trip-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-3xl w-full max-w-lg border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-gray-700 relative">
+                <button onclick="closeScheduleModal()" class="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+                <h3 class="text-2xl font-bold text-white mb-2">Schedule Trip to Calendar</h3>
+                <p class="text-gray-400 text-sm">Lock in your dates and export this trip to Google Calendar.</p>
+            </div>
+            
+            <div class="p-6 overflow-y-auto">
+                <div id="schedule-modal-loading" class="flex flex-col items-center justify-center py-8">
+                    <svg class="w-10 h-10 text-indigo-500 animate-spin mb-4" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="text-indigo-300 font-bold animate-pulse">Finding the perfect dates for you...</p>
+                </div>
+                
+                <div id="schedule-modal-content" class="hidden space-y-6">
+                    <div id="schedule-ai-explanation-container" class="bg-indigo-900/30 border border-indigo-500/30 p-4 rounded-xl hidden">
+                        <div class="flex items-center mb-2 text-indigo-300">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            <span class="font-bold text-sm uppercase tracking-wider">AI Suggestion</span>
+                        </div>
+                        <p id="schedule-ai-explanation" class="text-indigo-100 text-sm leading-relaxed"></p>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-gray-300 text-sm font-bold mb-2">Start Date</label>
+                            <input type="date" id="schedule-start-date" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-gray-300 text-sm font-bold mb-2">End Date</label>
+                            <input type="date" id="schedule-end-date" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Target Google Calendar</label>
+                        <select id="schedule-calendar-select" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500">
+                            <!-- Calendars populated via JS -->
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-6 bg-gray-900 border-t border-gray-700 flex justify-end space-x-4 shrink-0">
+                <button onclick="closeScheduleModal()" class="px-5 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-white font-bold transition-colors">Cancel</button>
+                <button id="schedule-confirm-btn" onclick="submitScheduleTrip()" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg transition-colors hidden flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    Schedule to Calendar
+                </button>
+            </div>
+        </div>
+    </div>
     <div id="activity-details-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 rounded-3xl w-full max-w-2xl border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <!-- Header Image Area -->
@@ -564,6 +623,12 @@
                         <input type="time" id="edit-poi-end" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500">
                     </div>
                 </div>
+                <div class="mt-4">
+                    <label class="flex items-center space-x-2 cursor-pointer group">
+                        <input type="checkbox" id="edit-poi-background" class="w-5 h-5 rounded border-gray-600 text-indigo-600 focus:ring-indigo-500 bg-gray-900 transition-colors">
+                        <span class="text-sm font-bold text-gray-400 group-hover:text-gray-300">Treat as Background Event (Spans the whole day)</span>
+                    </label>
+                </div>
             </div>
             
             <div class="p-4 border-t border-gray-700 flex justify-end space-x-3">
@@ -619,6 +684,12 @@
                 <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">Duration (Mins)</label>
                     <input type="number" id="poi-duration" value="60" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="mt-2">
+                    <label class="flex items-center space-x-2 cursor-pointer group">
+                        <input type="checkbox" id="poi-background" class="w-5 h-5 rounded border-gray-600 text-blue-600 focus:ring-blue-500 bg-gray-900 transition-colors">
+                        <span class="text-sm font-bold text-gray-400 group-hover:text-gray-300">Treat as Background Event (Spans the whole day)</span>
+                    </label>
                 </div>
                 <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">Notes</label>
@@ -1369,9 +1440,14 @@
                 ${loc}
             `;
             
+            let hasDraftPois = false;
+            if (tripData.metadata.pois) {
+                hasDraftPois = tripData.metadata.pois.some(p => p.is_scheduled && p.event_id && p.event_id.startsWith('draft_poi_'));
+            }
+
             if (tripData.metadata.is_draft) {
                 document.getElementById('trip-dates').innerText = "Flexible Dates (Draft)";
-                document.getElementById('trip-countdown').innerHTML = `<button class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-md text-xs transition-colors shadow-md">Find Dates & Book</button>`;
+                document.getElementById('trip-countdown').innerHTML = `<button onclick="openScheduleModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-md text-xs transition-colors shadow-md">Find Dates & Commit</button>`;
             } else {
                 const start = new Date(tripData.event.start * 1000);
                 const end = new Date(tripData.event.end * 1000);
@@ -1386,7 +1462,12 @@
                 if(now > end) countdownText = "Trip Finished";
                 else if (now >= start && now <= end) countdownText = "Currently on Trip!";
                 else countdownText = `${diffDays} days away`;
-                document.getElementById('trip-countdown').innerText = countdownText;
+                
+                let buttonHtml = '';
+                if (hasDraftPois) {
+                    buttonHtml = `<button onclick="submitScheduleTrip()" class="ml-4 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-md text-xs transition-colors shadow-md">Commit POIs to Calendar</button>`;
+                }
+                document.getElementById('trip-countdown').innerHTML = countdownText + buttonHtml;
             }
 
             document.getElementById('trip-notes-display').innerText = tripData.metadata.notes || "No general notes.";
@@ -1530,7 +1611,38 @@
                     }
                 }
                 
+                let bgPoiAct = null;
+                for(let act of dayItems) {
+                    const p = (tripData.metadata.pois || []).find(x => x.event_id === act.id || (x.event_id && act.id.endsWith(x.event_id)));
+                    if (p && p.is_background) {
+                        bgPoiAct = act;
+                        break;
+                    }
+                }
+                
+                let container = col;
+                if (bgPoiAct) {
+                    const bgContainer = document.createElement('div');
+                    bgContainer.className = "bg-indigo-900/40 border border-indigo-500/30 rounded-xl p-3 shadow-lg relative flex flex-col gap-2 mb-2";
+                    bgContainer.innerHTML = `
+                        <div class="flex items-center justify-between mb-2 cursor-pointer group" onclick="openActivityDetails('${bgPoiAct.id}')">
+                            <div>
+                                <h3 class="font-bold text-indigo-300 text-sm group-hover:text-white transition">🌟 Day Theme: ${bgPoiAct.title}</h3>
+                                ${bgPoiAct.location ? `<p class="text-[11px] text-indigo-400 mt-0.5 truncate flex items-center"><svg class="w-3 h-3 mr-1 inline shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>${bgPoiAct.location}</p>` : ''}
+                            </div>
+                            <button onclick="event.stopPropagation(); deleteActivity('${bgPoiAct.id}')" class="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-gray-800 rounded-md z-10">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                        <div id="bg-inner-${bgPoiAct.id}" class="flex flex-col gap-4 pl-3 border-l-2 border-indigo-500/30"></div>
+                    `;
+                    col.appendChild(bgContainer);
+                    container = bgContainer.querySelector(`#bg-inner-${bgPoiAct.id}`);
+                }
+
                 grouped[dayKey].items.forEach((act, index) => {
+                    if (bgPoiAct && act.id === bgPoiAct.id) return;
+                    
                     const start = act.start ? new Date(act.start * 1000) : null;
                     const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                     const timeStr = start ? start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts}) : '';
@@ -1568,17 +1680,19 @@
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
                     `;
-                    col.appendChild(card);
+                    container.appendChild(card);
                     
                     if (index < grouped[dayKey].items.length - 1) {
                         const nextAct = grouped[dayKey].items[index+1];
-                        if (act.location && nextAct.location) {
+                        if (bgPoiAct && nextAct.id === bgPoiAct.id) {
+                            // Don't draw route pill to the background container itself if it's next
+                        } else if (act.location && nextAct.location) {
                             const pillId = `route-pill-${act.id}-${nextAct.id}`;
                             const pill = document.createElement('div');
                             pill.id = pillId;
                             pill.className = "self-center my-1 py-1 px-3 rounded-full bg-gray-800 border border-gray-700 text-xs text-gray-400 flex items-center gap-1 shadow-sm opacity-50";
                             pill.innerHTML = `<svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>Calculating...</span>`;
-                            col.appendChild(pill);
+                            container.appendChild(pill);
                             loadRouteBetween(act, nextAct, pill, dayKey);
                         }
                     } else if (dayAccAct) {
@@ -1974,6 +2088,7 @@
             document.getElementById('edit-poi-duration').value = poi.duration_mins || 60;
             document.getElementById('edit-poi-start').value = poi.ideal_time_start || '';
             document.getElementById('edit-poi-end').value = poi.ideal_time_end || '';
+            document.getElementById('edit-poi-background').checked = poi.is_background || false;
             
             document.getElementById('poi-edit-modal').classList.remove('hidden');
         }
@@ -1991,7 +2106,8 @@
                 priority: document.getElementById('edit-poi-priority').value,
                 duration_mins: parseInt(document.getElementById('edit-poi-duration').value) || 60,
                 ideal_time_start: document.getElementById('edit-poi-start').value || null,
-                ideal_time_end: document.getElementById('edit-poi-end').value || null
+                ideal_time_end: document.getElementById('edit-poi-end').value || null,
+                is_background: document.getElementById('edit-poi-background').checked
             };
             
             try {
@@ -2236,6 +2352,7 @@
                 priority: document.getElementById('poi-modal-priority').value,
                 duration_mins: parseInt(document.getElementById('poi-duration').value) || 60,
                 notes: document.getElementById('poi-notes').value,
+                is_background: document.getElementById('poi-background').checked,
                 is_scheduled: false
             };
             
@@ -2919,6 +3036,125 @@
                 }
             }
         });
+        function closeScheduleModal() {
+            document.getElementById('schedule-trip-modal').classList.add('hidden');
+        }
+
+        async function openScheduleModal() {
+            document.getElementById('schedule-trip-modal').classList.remove('hidden');
+            
+            // Check if it has dates
+            if (tripData.metadata.mock_start_date && !tripData.metadata.draft_duration_days) {
+                // Exact dates
+                document.getElementById('schedule-modal-loading').classList.add('hidden');
+                document.getElementById('schedule-modal-content').classList.remove('hidden');
+                document.getElementById('schedule-confirm-btn').classList.remove('hidden');
+                document.getElementById('schedule-ai-explanation-container').classList.add('hidden');
+                
+                const s = new Date(tripData.metadata.mock_start_date * 1000);
+                const e = new Date(tripData.metadata.mock_end_date * 1000);
+                document.getElementById('schedule-start-date').value = s.toISOString().split('T')[0];
+                document.getElementById('schedule-end-date').value = e.toISOString().split('T')[0];
+                loadCalendarsForSchedule();
+            } else {
+                // Flexible dates, ask AI
+                document.getElementById('schedule-modal-loading').classList.remove('hidden');
+                document.getElementById('schedule-modal-content').classList.add('hidden');
+                document.getElementById('schedule-confirm-btn').classList.add('hidden');
+                document.getElementById('schedule-ai-explanation-container').classList.add('hidden');
+                
+                try {
+                    const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/suggest_dates`, { method: 'POST' });
+                    const data = await res.json();
+                    
+                    document.getElementById('schedule-modal-loading').classList.add('hidden');
+                    document.getElementById('schedule-modal-content').classList.remove('hidden');
+                    document.getElementById('schedule-confirm-btn').classList.remove('hidden');
+                    
+                    if (data.error) {
+                        showGlobalAlert(data.error);
+                    } else if (data.suggestion) {
+                        document.getElementById('schedule-start-date').value = data.suggestion.suggested_start_date;
+                        document.getElementById('schedule-end-date').value = data.suggestion.suggested_end_date;
+                        if (data.suggestion.explanation) {
+                            document.getElementById('schedule-ai-explanation-container').classList.remove('hidden');
+                            document.getElementById('schedule-ai-explanation').innerText = data.suggestion.explanation;
+                        }
+                    }
+                    loadCalendarsForSchedule();
+                } catch (e) {
+                    showGlobalAlert("Error fetching AI suggestions");
+                    document.getElementById('schedule-modal-loading').classList.add('hidden');
+                    document.getElementById('schedule-modal-content').classList.remove('hidden');
+                    document.getElementById('schedule-confirm-btn').classList.remove('hidden');
+                    loadCalendarsForSchedule();
+                }
+            }
+        }
+        
+        async function loadCalendarsForSchedule() {
+            const select = document.getElementById('schedule-calendar-select');
+            if (select.children.length > 0) return; // already loaded
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/settings`);
+                const data = await res.json();
+                let html = '';
+                if (data.google_calendars) {
+                    for (const cal of data.google_calendars) {
+                        html += `<option value="${cal.id}">${cal.summary}</option>`;
+                    }
+                }
+                select.innerHTML = html || `<option value="primary">Primary</option>`;
+            } catch (e) {
+                select.innerHTML = `<option value="primary">Primary</option>`;
+            }
+        }
+
+        async function submitScheduleTrip() {
+            let start = document.getElementById('schedule-start-date').value;
+            let end = document.getElementById('schedule-end-date').value;
+            let calId = document.getElementById('schedule-calendar-select').value;
+            
+            if (tripData.metadata.is_draft && (!start || !end)) {
+                return showGlobalAlert("Dates are required.");
+            }
+            if (!tripData.metadata.is_draft) {
+                start = "";
+                end = "";
+                calId = tripData.event.id.split('::')[0];
+            }
+            
+            const btn = document.getElementById('schedule-confirm-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="w-5 h-5 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Scheduling...`;
+            }
+            
+            try {
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start_date: start, end_date: end, calendar_id: calId })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    showGlobalAlert(data.error);
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = `<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> Schedule to Calendar`;
+                    }
+                } else if (data.success || data.status === 'success') {
+                    window.location.href = `trip?event_id=${encodeURIComponent(data.new_event_id || data.event_id)}`;
+                }
+            } catch (e) {
+                showGlobalAlert("Failed to schedule trip.");
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> Schedule to Calendar`;
+                }
+            }
+        }
     </script>
     {% include 'components/control_center.html' %}
 </body>

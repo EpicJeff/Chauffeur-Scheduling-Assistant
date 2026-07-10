@@ -103,11 +103,13 @@ You MUST respond with a single valid JSON object of the following exact structur
       "duration_mins": 90,
       "ideal_time_start": "09:00",
       "ideal_time_end": "12:00",
-      "estimated_price_usd": 20.0
+      "estimated_price_usd": 20.0,
+      "is_background": false,
+      "valid_days_of_week": [0, 1]
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost of entry/experience for the ENTIRE group.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost of entry/experience for the ENTIRE group. `is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. Use ONLY if closed on certain days or if crowd levels dictate specific days.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -163,6 +165,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_start=s.get('ideal_time_start'),
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
+            valid_days_of_week=s.get('valid_days_of_week', []),
             lat=enrichment['lat'],
             lng=enrichment['lng'],
             wikidata_id=enrichment['wikidata_id'],
@@ -219,6 +222,12 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         overlapping_events = []
         for p in trip.pois:
             if p.is_scheduled and p.id != poi.id and p.scheduled_start and p.scheduled_end:
+                p_is_bg = getattr(p, 'is_background', False)
+                if getattr(poi, 'is_background', False):
+                    if not p_is_bg: continue
+                else:
+                    if p_is_bg: continue
+                
                 class MockEvent:
                     def __init__(self, start, end, location):
                         self.start = start
@@ -265,10 +274,16 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         for e in events:
             if e.id == trip_event.id:
                 continue
-            if getattr(e, 'event_type', 'standard') == 'trip_background':
+            is_e_bg = (getattr(e, 'event_type', 'standard') == 'trip_background')
+            
+            if is_e_bg:
                 if getattr(e, 'trip_id', None) == trip.id:
                     accommodation_events.append(e)
-                continue
+            
+            if getattr(poi, 'is_background', False):
+                if not is_e_bg: continue
+            else:
+                if is_e_bg: continue
                 
             if e.end > trip_start and e.start < trip_end:
                 if any(c in trip_cals for c in e.calendar_ids):
@@ -347,6 +362,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             
             if (slot_time < datetime.time(8, 0) or slot_time > hard_cap_start) and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
+                
+            if getattr(poi, 'valid_days_of_week', None):
+                if slot_local.weekday() not in poi.valid_days_of_week:
+                    continue
                 
             if enforce_ideal_times:
                 if slot_time < ideal_start_time or slot_end.astimezone(local_tz).time() > ideal_end_time:
@@ -502,40 +521,14 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         
     best_end = best_start + datetime.timedelta(minutes=poi.duration_mins)
     
-    if trip.is_draft:
-        # Save mock timestamps, bypass Google Calendar
-        event_id = f"draft_poi_{uuid.uuid4().hex}"
-        poi.is_scheduled = True
-        poi.scheduled_start = best_start.timestamp()
-        poi.scheduled_end = best_end.timestamp()
-        poi.event_id = event_id
-        return event_id, None, None
-    
-    target_cal = trip_cals[0] if trip_cals else cals[0]
-    
-    desc = poi.description or ""
-    if poi.notes:
-        desc += f"\n\nNotes: {poi.notes}"
-        
-    event_id = calendar.create_event(
-        calendar_id=target_cal,
-        title=f"Trip: {poi.name}",
-        start=best_start.isoformat(),
-        end=best_end.isoformat(),
-        location=poi.location,
-        description=desc,
-        trip_id=trip.id,
-        poi_id=poi.id
-    )
-    
-    if event_id:
-        poi.is_scheduled = True
-        poi.scheduled_start = best_start.timestamp()
-        poi.scheduled_end = best_end.timestamp()
-        poi.event_id = event_id
-        return event_id, None, None
-        
-    return None, "Failed to create the event in Google Calendar.", None
+    # Always save mock timestamps, bypassing Google Calendar during the planning phase.
+    # The actual calendar events will be created when the user clicks 'Commit to Calendar'
+    event_id = f"draft_poi_{uuid.uuid4().hex}"
+    poi.is_scheduled = True
+    poi.scheduled_start = best_start.timestamp()
+    poi.scheduled_end = best_end.timestamp()
+    poi.event_id = event_id
+    return event_id, None, None
 
 from typing import Iterator
 
@@ -778,11 +771,13 @@ You MUST respond with a single valid JSON object of the following exact structur
       "duration_mins": 90,
       "ideal_time_start": "09:00",
       "ideal_time_end": "12:00",
-      "estimated_price_usd": 20.0
+      "estimated_price_usd": 20.0,
+      "is_background": false,
+      "valid_days_of_week": [0, 1]
     }}
   ]
 }}
-Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost for all travelers and the entire stay/experience.
+Note: `ideal_time_start` and `ideal_time_end` MUST be 24-hour HH:MM strings. If flexible, use "09:00" and "21:00". `duration_mins` should be an integer in minutes based on how long a visit usually takes. `estimated_price_usd` is your best estimate of the TOTAL cost for all travelers and the entire stay/experience. `is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. Use ONLY if closed on certain days or if crowd levels dictate specific days.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -873,9 +868,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             ideal_time_start=s.get('ideal_time_start'),
             ideal_time_end=s.get('ideal_time_end'),
             duration_mins=s.get('duration_mins', 90),
+            valid_days_of_week=s.get('valid_days_of_week', []),
             image_url=enrichment['image_url'],
             link=enrichment['link'],
-            estimated_price_usd=s.get('estimated_price_usd')
+            estimated_price_usd=s.get('estimated_price_usd'),
+            is_background=s.get('is_background', False)
         )
         pois.append(poi)
 

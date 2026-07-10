@@ -1916,6 +1916,7 @@
                                     <option value="driver_assignment">Driver Assignment</option>
                                     <option value="passenger_assignment">Passenger Constraints</option>
                                     <option value="time_of_day">Time of Day</option>
+                                    <option value="day_of_week">Day of Week Restrictions</option>
                                     <option value="buffer_tolerance">Buffer & Tolerance</option>
                                     <option value="grouping">Group Errands</option>
                                 </select>
@@ -1978,6 +1979,19 @@
                                     <div>
                                         <label class="block text-gray-400 text-xs mb-1">Tolerance (mins)</label>
                                         <input type="number" x-model.number="newErrandRule.tolerance_mins" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                    </div>
+                                </div>
+
+                                <!-- Day of Week -->
+                                <div x-show="newErrandRule.constraint_type === 'day_of_week'" class="space-y-2" style="display: none;">
+                                    <label class="block text-gray-400 mb-1 text-sm font-bold">Valid Days</label>
+                                    <div class="flex flex-wrap gap-2">
+                                        <template x-for="(day, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']">
+                                            <button @click.prevent="toggleErrandRuleDay(idx)"
+                                                :class="newErrandRule.valid_days_of_week.includes(idx) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                class="border px-3 py-1.5 rounded-lg text-sm font-bold transition-colors"
+                                                x-text="day"></button>
+                                        </template>
                                     </div>
                                 </div>
 
@@ -2298,7 +2312,7 @@
                 newRuleKeywordInput: '',
                 newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
-                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, filter_sets: [] },
+                newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', valid_days_of_week: [], buffer_mins: 0, tolerance_mins: 0, filter_sets: [] },
                 newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
@@ -3109,7 +3123,7 @@
                     this.newErrandRuleKeywordInput = '';
                 },
                 cancelEditErrandRule() {
-                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', buffer_mins: 0, tolerance_mins: 0, filter_sets: [] };
+                    this.newErrandRule = { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', valid_days_of_week: [], buffer_mins: 0, tolerance_mins: 0, filter_sets: [] };
                     this.editErrandRuleId = null;
                 },
                 editErrandRule(rule) {
@@ -3128,6 +3142,7 @@
                         prohibited_passengers: [...(rule.prohibited_passengers || [])],
                         time_window_start: rule.time_window_start || '',
                         time_window_end: rule.time_window_end || '',
+                        valid_days_of_week: rule.valid_days_of_week ? [...rule.valid_days_of_week] : [],
                         buffer_mins: rule.buffer_mins || 0,
                         tolerance_mins: rule.tolerance_mins || 0,
                         filter_sets: rule.filter_sets ? JSON.parse(JSON.stringify(rule.filter_sets)) : []
@@ -3143,6 +3158,11 @@
                     } else {
                         this.newErrandRule.required_drivers.push(driverId);
                     }
+                },
+                toggleErrandRuleDay(day) {
+                    const idx = this.newErrandRule.valid_days_of_week.indexOf(day);
+                    if (idx === -1) this.newErrandRule.valid_days_of_week.push(day);
+                    else this.newErrandRule.valid_days_of_week.splice(idx, 1);
                 },
                 toggleErrandRulePassenger(passengerId) {
                     if (this.newErrandRule.required_passengers.includes(passengerId)) {

@@ -142,8 +142,8 @@
             <p class="text-gray-400 text-sm mb-6">Plan your next adventure.</p>
             
             <div class="mb-4 flex gap-2 p-1 bg-gray-900 rounded-lg">
-                <button id="tab-scheduled" onclick="setTripType('scheduled')" class="flex-1 py-1.5 rounded-md bg-gray-700 text-white font-bold text-sm transition-colors">Scheduled</button>
-                <button id="tab-draft" onclick="setTripType('draft')" class="flex-1 py-1.5 rounded-md text-gray-400 font-bold text-sm transition-colors">Flexible (Draft)</button>
+                <button id="tab-exact" onclick="setTripType('exact')" class="flex-1 py-1.5 rounded-md bg-gray-700 text-white font-bold text-sm transition-colors">Exact Dates</button>
+                <button id="tab-flexible" onclick="setTripType('flexible')" class="flex-1 py-1.5 rounded-md text-gray-400 font-bold text-sm transition-colors">Flexible Dates</button>
             </div>
             
             <div class="space-y-4">
@@ -322,21 +322,21 @@
             }
         });
 
-        let tripType = 'scheduled';
+        let tripType = 'exact';
         function setTripType(type) {
             tripType = type;
-            if (type === 'scheduled') {
-                document.getElementById('tab-scheduled').classList.replace('text-gray-400', 'text-white');
-                document.getElementById('tab-scheduled').classList.add('bg-gray-700');
-                document.getElementById('tab-draft').classList.replace('text-white', 'text-gray-400');
-                document.getElementById('tab-draft').classList.remove('bg-gray-700');
+            if (type === 'exact') {
+                document.getElementById('tab-exact').classList.replace('text-gray-400', 'text-white');
+                document.getElementById('tab-exact').classList.add('bg-gray-700');
+                document.getElementById('tab-flexible').classList.replace('text-white', 'text-gray-400');
+                document.getElementById('tab-flexible').classList.remove('bg-gray-700');
                 document.getElementById('dates-scheduled').classList.remove('hidden');
                 document.getElementById('dates-draft').classList.add('hidden');
             } else {
-                document.getElementById('tab-draft').classList.replace('text-gray-400', 'text-white');
-                document.getElementById('tab-draft').classList.add('bg-gray-700');
-                document.getElementById('tab-scheduled').classList.replace('text-white', 'text-gray-400');
-                document.getElementById('tab-scheduled').classList.remove('bg-gray-700');
+                document.getElementById('tab-flexible').classList.replace('text-gray-400', 'text-white');
+                document.getElementById('tab-flexible').classList.add('bg-gray-700');
+                document.getElementById('tab-exact').classList.replace('text-white', 'text-gray-400');
+                document.getElementById('tab-exact').classList.remove('bg-gray-700');
                 document.getElementById('dates-draft').classList.remove('hidden');
                 document.getElementById('dates-scheduled').classList.add('hidden');
             }
@@ -376,7 +376,7 @@
             document.getElementById('trip-flight-prefs').value = '';
             updateBudgetSlider();
             document.getElementById('create-trip-modal').classList.remove('hidden');
-            setTripType('scheduled');
+            setTripType('exact');
         }
         function closeCreateTripModal() {
             document.getElementById('create-trip-modal').classList.add('hidden');
@@ -397,10 +397,10 @@
                 budget_max_usd: budgetMax,
                 flight_preferences: flightPrefs
             };
-            if (tripType === 'scheduled') {
+            if (tripType === 'exact') {
                 const start = document.getElementById('trip-start').value;
                 const end = document.getElementById('trip-end').value;
-                if (!start || !end) return showGlobalAlert("Dates are required for a scheduled trip.");
+                if (!start || !end) return showGlobalAlert("Dates are required for exact dates.");
                 payload.start_date = start;
                 payload.end_date = end;
             } else {

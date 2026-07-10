@@ -266,6 +266,10 @@
                                       <input type="number" id="edit-tolerance-mins" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                                   </div>
                                   <div class="col-span-2">
+                                      <label class="block text-xs font-medium text-gray-400 mb-1">Valid Days of Week</label>
+                                      <div id="edit-day-of-week-toggles" class="flex flex-wrap gap-2"></div>
+                                  </div>
+                                  <div class="col-span-2">
                                       <label class="block text-xs font-medium text-gray-400 mb-1">Group ID (Group Errands together)</label>
                                       <input type="text" id="edit-group-id" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                                   </div>
@@ -765,6 +769,32 @@
                 };
                 pContainer.appendChild(btn);
             });
+            const dayContainer = document.getElementById('edit-day-of-week-toggles');
+            dayContainer.innerHTML = '';
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            days.forEach((day, idx) => {
+                const btn = document.createElement('button');
+                const isSelected = (currentEditErrand.valid_days_of_week || []).includes(idx);
+                
+                if (isSelected) {
+                    btn.className = "border bg-pink-600 border-pink-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center";
+                } else {
+                    btn.className = "border bg-gray-900 border-gray-600 text-gray-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center";
+                }
+                
+                btn.innerHTML = `<span>${day}</span>`;
+                btn.type = 'button';
+                btn.onclick = () => {
+                    if (!currentEditErrand.valid_days_of_week) currentEditErrand.valid_days_of_week = [];
+                    if (isSelected) {
+                        currentEditErrand.valid_days_of_week = currentEditErrand.valid_days_of_week.filter(d => d !== idx);
+                    } else {
+                        currentEditErrand.valid_days_of_week.push(idx);
+                    }
+                    renderToggles();
+                };
+                dayContainer.appendChild(btn);
+            });
         }
 
         function openEditModal(errand) {
@@ -828,6 +858,7 @@
             errand.allowed_passengers = currentEditErrand.allowed_passengers || [];
             errand.required_passengers = currentEditErrand.required_passengers || [];
             errand.prohibited_passengers = currentEditErrand.prohibited_passengers || [];
+            errand.valid_days_of_week = currentEditErrand.valid_days_of_week || [];
             errand.time_window_start = document.getElementById('edit-time-window-start').value || null;
             errand.time_window_end = document.getElementById('edit-time-window-end').value || null;
             errand.buffer_mins = parseInt(document.getElementById('edit-buffer-mins').value) || 0;

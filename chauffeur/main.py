@@ -329,17 +329,30 @@ from models.schemas import CreateTripRequest
 
 @app.post("/api/trips")
 def create_trip_api(req: CreateTripRequest):
-    settings = storage.get_settings()
+    import uuid
+    from datetime import datetime, timedelta, timezone
     
-    if not req.start_date or not req.end_date:
-        import uuid
-        from datetime import datetime, timedelta
-        
-        draft_id = f"draft_trip_{uuid.uuid4().hex}"
-        
-        # Calculate a mock date in 2030 aligning with req.start_day_of_week
+    draft_id = f"draft_trip_{uuid.uuid4().hex}"
+    
+    if req.start_date and req.end_date:
+        # Exact dates provided
+        # Parse start_date and end_date (could be YYYY-MM-DD or full ISO)
+        def parse_date(d_str):
+            if len(d_str) == 10:
+                return datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=timezone.utc, hour=9)
+            return datetime.fromisoformat(d_str.replace('Z', '+00:00'))
+            
+        try:
+            mock_start = parse_date(req.start_date)
+            mock_end = parse_date(req.end_date)
+        except Exception:
+            # Fallback if parsing fails
+            mock_start = datetime.now(timezone.utc)
+            mock_end = mock_start + timedelta(days=1)
+    else:
+        # Flexible dates: Calculate a mock date in 2030 aligning with req.start_day_of_week
         # Jan 1, 2030 is a Tuesday (weekday 1)
-        base = datetime(2030, 1, 1)
+        base = datetime(2030, 1, 1, tzinfo=timezone.utc)
         day_of_week = req.start_day_of_week if req.start_day_of_week is not None else 0 # default Monday
         offset = (day_of_week - base.weekday()) % 7
         if offset < 0:
@@ -348,60 +361,25 @@ def create_trip_api(req: CreateTripRequest):
         duration = req.duration_days or 1
         mock_end = mock_start + timedelta(days=duration)
         
-        metadata = {
-            "event_id": draft_id,
-            "is_draft": True,
-            "title": req.title,
-            "location": req.location,
-            "draft_start_day": req.start_day_of_week,
-            "draft_duration_days": req.duration_days,
-            "mock_start_date": mock_start.timestamp(),
-            "mock_end_date": mock_end.timestamp(),
-            "budget_min_usd": req.budget_min_usd,
-            "budget_max_usd": req.budget_max_usd,
-            "flight_preferences": req.flight_preferences,
-            "pois": [],
-            "accommodations": [],
-            "flights": [],
-            "activities": []
-        }
-        storage.set_trip_metadata(draft_id, metadata)
-        return {"success": True, "event_id": draft_id}
-
-    cal_id = req.calendar_id or (settings.get('calendar_ids', [])[0] if settings.get('calendar_ids') else "primary")
-    
-    event_body = {
-        "summary": req.title,
-        "description": "#trip",
-        "start": {"date": req.start_date} if len(req.start_date) == 10 else {"dateTime": req.start_date},
-        "end": {"date": req.end_date} if len(req.end_date) == 10 else {"dateTime": req.end_date},
+    metadata = {
+        "event_id": draft_id,
+        "is_draft": True,
+        "title": req.title,
+        "location": req.location,
+        "draft_start_day": req.start_day_of_week,
+        "draft_duration_days": req.duration_days,
+        "mock_start_date": mock_start.timestamp(),
+        "mock_end_date": mock_end.timestamp(),
+        "budget_min_usd": req.budget_min_usd,
+        "budget_max_usd": req.budget_max_usd,
+        "flight_preferences": req.flight_preferences,
+        "pois": [],
+        "accommodations": [],
+        "flights": [],
+        "activities": []
     }
-    if req.location:
-        event_body["location"] = req.location
-
-    try:
-        service = calendar.get_calendar_service()
-        created = service.events().insert(calendarId=cal_id, body=event_body).execute()
-        event_id = f"{cal_id}::{created['id']}"
-        
-        # Initialize empty metadata so it appears as a trip immediately
-        metadata = storage.get_trip_metadata(event_id)
-        if not metadata:
-            metadata = {
-                "event_id": event_id, 
-                "pois": [], 
-                "accommodations": [],
-                "flights": [],
-                "activities": [],
-                "budget_min_usd": req.budget_min_usd,
-                "budget_max_usd": req.budget_max_usd,
-                "flight_preferences": req.flight_preferences
-            }
-            storage.set_trip_metadata(event_id, metadata)
-            
-        return {"success": True, "event_id": event_id}
-    except Exception as e:
-        return {"error": str(e)}
+    storage.set_trip_metadata(draft_id, metadata)
+    return {"success": True, "event_id": draft_id}
 
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
@@ -577,6 +555,95 @@ def get_trip_api(event_id: str):
         "metadata": metadata,
         "activities": activities_details
     }
+
+@app.post("/api/trip/{event_id}/suggest_dates")
+def suggest_dates_api(event_id: str):
+    from models.schemas import TripMetadata
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found."}
+    trip = TripMetadata(**meta)
+    
+    from services.trip_planner import suggest_trip_dates
+    err, suggestion = suggest_trip_dates(trip)
+    if err:
+        return {"error": err}
+    return {"suggestion": suggestion}
+
+@app.post("/api/trip/{event_id}/schedule")
+def schedule_trip_api(event_id: str, payload: dict):
+    from models.schemas import TripMetadata
+    from services.calendar import get_calendar_service
+    import datetime
+    
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found."}
+        
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
+    cal_id = payload.get("calendar_id", "primary")
+    
+    if meta.get("is_draft") and (not start_date or not end_date):
+        return {"error": "start_date and end_date are required."}
+        
+    # Create the main trip event in Google Calendar if it's a draft
+    service = get_calendar_service()
+    if meta.get("is_draft"):
+        event_body = {
+            "summary": meta.get("title", "New Trip"),
+            "description": "#trip\n" + (meta.get("notes") or ""),
+            "start": {"date": start_date},
+            "end": {"date": end_date}
+        }
+        if meta.get("location"):
+            event_body["location"] = meta.get("location")
+            
+        try:
+            created = service.events().insert(calendarId=cal_id, body=event_body).execute()
+            new_event_id = f"{cal_id}::{created['id']}"
+            meta["event_id"] = new_event_id
+            meta["is_draft"] = False
+        except Exception as e:
+            return {"error": f"Failed to create Google Calendar event: {e}"}
+    else:
+        new_event_id = meta.get("event_id")
+        
+    # Schedule all previously drafted POIs to real calendar events
+    from services.calendar import create_event as cal_create_event
+    for poi in meta.get("pois", []):
+        if poi.get("is_scheduled") and poi.get("event_id", "").startswith("draft_poi_"):
+            try:
+                best_start_iso = datetime.datetime.fromtimestamp(poi["scheduled_start"], tz=datetime.timezone.utc).isoformat()
+                best_end_iso = datetime.datetime.fromtimestamp(poi["scheduled_end"], tz=datetime.timezone.utc).isoformat()
+                
+                desc = poi.get("description") or ""
+                if poi.get("notes"):
+                    desc += f"\n\nNotes: {poi.get('notes')}"
+                    
+                poi_cal_id = cal_create_event(
+                    calendar_id=cal_id,
+                    title=poi.get("name", "POI"),
+                    start=best_start_iso,
+                    end=best_end_iso,
+                    location=poi.get("location", ""),
+                    description=desc,
+                    trip_id=new_event_id,
+                    poi_id=poi.get("id"),
+                    event_type="trip_background" if poi.get("is_background") else "standard"
+                )
+                if poi_cal_id:
+                    poi["event_id"] = f"{cal_id}::{poi_cal_id}"
+            except Exception as e:
+                print(f"Failed to create calendar event for POI {poi.get('id')}: {e}")
+            
+    storage.set_trip_metadata(new_event_id, meta)
+    
+    # We must delete the old draft key if it was a draft
+    if event_id != new_event_id:
+        storage.delete_trip_metadata(event_id)
+        
+    return {"status": "success", "event_id": new_event_id}
 
 @app.post("/api/trip/{event_id}/activity")
 def add_activity_api(event_id: str, payload: dict):
@@ -983,6 +1050,17 @@ def schedule_poi_api(event_id: str, payload: dict):
             
         # Update POI in DB
         meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+        
+        if not event_id.startswith("draft_trip_"):
+            if "activities" not in meta:
+                meta["activities"] = []
+            trip_cals = trip_obj.calendar_ids if hasattr(trip_obj, 'calendar_ids') and trip_obj.calendar_ids else []
+            if not trip_cals:
+                trip_cals = [event_id.split("::", 1)[0] if "::" in event_id else "primary"]
+            full_id = f"{trip_cals[0]}::{event_calendar_id}"
+            if full_id not in meta["activities"]:
+                meta["activities"].append(full_id)
+                
         storage.set_trip_metadata(event_id, meta)
         
         return {"status": "ok", "event_id": event_calendar_id}
@@ -1013,6 +1091,21 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
                     if result.get("success"):
                         # Save the mutated trip POIs to DB incrementally
                         meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+                        
+                        if not event_id.startswith("draft_trip_"):
+                            if "activities" not in meta:
+                                meta["activities"] = []
+                            trip_cals = trip_obj.calendar_ids if hasattr(trip_obj, 'calendar_ids') and trip_obj.calendar_ids else []
+                            if not trip_cals:
+                                trip_cals = [event_id.split("::", 1)[0] if "::" in event_id else "primary"]
+                                
+                            # We need to find the event_calendar_id for this POI
+                            poi = next((p for p in trip_obj.pois if p.id == result.get("poi_id")), None)
+                            if poi and poi.event_id:
+                                full_id = f"{trip_cals[0]}::{poi.event_id}"
+                                if full_id not in meta["activities"]:
+                                    meta["activities"].append(full_id)
+                                    
                         storage.set_trip_metadata(event_id, meta)
                     yield json.dumps(result) + "\n"
             except Exception as ex:
@@ -1049,6 +1142,7 @@ def edit_trip_poi_api(event_id: str, poi_id: str, payload: dict):
         if "ideal_time_end" in payload: poi.ideal_time_end = payload["ideal_time_end"]
         if "description" in payload: poi.description = payload["description"]
         if "notes" in payload: poi.notes = payload["notes"]
+        if "is_background" in payload: poi.is_background = payload["is_background"]
         
         meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
         storage.set_trip_metadata(event_id, meta)
@@ -1412,6 +1506,8 @@ def create_errand(errand: Errand, background_tasks: BackgroundTasks):
             elif ctype == 'time_of_day':
                 if r.get('time_window_start') and not errand_dict.get('time_window_start'): errand_dict['time_window_start'] = r['time_window_start']
                 if r.get('time_window_end') and not errand_dict.get('time_window_end'): errand_dict['time_window_end'] = r['time_window_end']
+            elif ctype == 'day_of_week':
+                if r.get('valid_days_of_week') and not errand_dict.get('valid_days_of_week'): errand_dict['valid_days_of_week'] = r['valid_days_of_week']
             elif ctype == 'grouping':
                 if not errand_dict.get('group_id'): errand_dict['group_id'] = r.get('id')
 

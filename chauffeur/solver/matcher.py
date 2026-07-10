@@ -1735,6 +1735,8 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
         
         for offset in range(max_scan + 1):
             check_date = window_start + timedelta(days=offset)
+            if errand.get('valid_days_of_week') and check_date.weekday() not in errand.get('valid_days_of_week'):
+                continue
             d_str = str(check_date)
             # If we are solving this day currently, it will be handled by the loop below
             if d_str in driver_schedules_by_date:

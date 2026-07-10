@@ -204,6 +204,7 @@ class Errand(BaseModel):
     time_window_start: Optional[str] = None
     time_window_end: Optional[str] = None
     group_id: Optional[str] = None
+    valid_days_of_week: List[int] = Field(default_factory=list)
 
 class ErrandRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -226,6 +227,7 @@ class ErrandRule(BaseModel):
     time_window_end: Optional[str] = None
     group_keyword: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
+    valid_days_of_week: List[int] = Field(default_factory=list)
     is_enabled: bool = True
 
 class TripPOI(BaseModel):
@@ -259,6 +261,8 @@ class TripPOI(BaseModel):
     internet_access: Optional[str] = None
     estimated_price_usd: Optional[float] = None
     is_live_price: bool = False
+    is_background: bool = False
+    valid_days_of_week: List[int] = Field(default_factory=list)
 
 class TripAccommodation(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
