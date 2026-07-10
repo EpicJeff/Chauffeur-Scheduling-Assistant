@@ -181,33 +181,36 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
         enrichment = enrich_poi_data(name, query, trip.location)
         
-        poi = TripPOI(
-            id=uuid.uuid4().hex,
-            name=name,
-            location=enrichment['location'],
-            mapbox_id=enrichment['mapbox_id'],
-            category=s.get('category'),
-            description=s.get('description'),
-            why_picked=s.get('why_picked'),
-            experience=s.get('experience'),
-            image_url=enrichment['image_url'],
-            link=enrichment['link'],
-            ideal_time_start=s.get('ideal_time_start'),
-            ideal_time_end=s.get('ideal_time_end'),
-            duration_mins=s.get('duration_mins', 90),
-            valid_days_of_week=s.get('valid_days_of_week', []),
-            occurrences=s.get('occurrences', 1),
-            lat=enrichment['lat'],
-            lng=enrichment['lng'],
-            wikidata_id=enrichment['wikidata_id'],
-            opening_hours=enrichment['opening_hours'],
-            website=enrichment['website'],
-            phone_number=enrichment['phone_number'],
-            cuisine=enrichment['cuisine'],
-            internet_access=enrichment['internet_access'],
-            estimated_price_usd=s.get('estimated_price_usd')
-        )
-        pois.append(poi)
+        occurrences = s.get('occurrences', 1)
+        for i in range(occurrences):
+            name_label = s.get('name') if occurrences == 1 else f"{s.get('name')} (Day {i+1})"
+            poi = TripPOI(
+                id=uuid.uuid4().hex,
+                name=name_label,
+                location=enrichment['location'],
+                mapbox_id=enrichment['mapbox_id'],
+                category=s.get('category', 'other'),
+                description=s.get('description'),
+                why_picked=s.get('why_picked'),
+                experience=s.get('experience'),
+                image_url=enrichment['image_url'],
+                link=enrichment['link'],
+                ideal_time_start=s.get('ideal_time_start'),
+                ideal_time_end=s.get('ideal_time_end'),
+                duration_mins=s.get('duration_mins', 90),
+                valid_days_of_week=s.get('valid_days_of_week', []),
+                occurrences=1,
+                lat=enrichment['lat'],
+                lng=enrichment['lng'],
+                wikidata_id=enrichment['wikidata_id'],
+                opening_hours=enrichment['opening_hours'],
+                website=enrichment['website'],
+                phone_number=enrichment['phone_number'],
+                cuisine=enrichment['cuisine'],
+                internet_access=enrichment['internet_access'],
+                estimated_price_usd=s.get('estimated_price_usd')
+            )
+            pois.append(poi)
         
     if getattr(trip, 'budget_max_usd', None):
         total = sum((p.estimated_price_usd or 0) for p in pois)
@@ -668,7 +671,7 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
     
     # Priority grouping
     prio_map = {'must': 3, 'want': 2, 'stretch': 1}
-    target_pois.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
+    target_pois.sort(key=lambda x: (getattr(x, 'is_background', False), prio_map.get(x.priority or 'want', 2)), reverse=True)
     
     # Simple Greedy Clustering
     clusters = [] # list of lists of POIs
@@ -1007,34 +1010,37 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
         enrichment = enrich_poi_data(name, query, trip.location)
         
-        poi = TripPOI(
-            id=uuid.uuid4().hex,
-            name=name,
-            location=enrichment['location'],
-            mapbox_id=enrichment['mapbox_id'],
-            lat=enrichment['lat'],
-            lng=enrichment['lng'],
-            wikidata_id=enrichment['wikidata_id'],
-            opening_hours=enrichment['opening_hours'],
-            website=enrichment['website'],
-            phone_number=enrichment['phone_number'],
-            cuisine=enrichment['cuisine'],
-            internet_access=enrichment['internet_access'],
-            category=s.get('category', 'other'),
-            description=s.get('description'),
-            why_picked=s.get('why_picked'),
-            experience=s.get('experience'),
-            ideal_time_start=s.get('ideal_time_start'),
-            ideal_time_end=s.get('ideal_time_end'),
-            duration_mins=s.get('duration_mins', 90),
-            valid_days_of_week=s.get('valid_days_of_week', []),
-            occurrences=s.get('occurrences', 1),
-            image_url=enrichment['image_url'],
-            link=enrichment['link'],
-            estimated_price_usd=s.get('estimated_price_usd'),
-            is_background=s.get('is_background', False)
-        )
-        pois.append(poi)
+        occurrences = s.get('occurrences', 1)
+        for i in range(occurrences):
+            poi_name = name if occurrences == 1 else f"{name} (Day {i+1})"
+            poi = TripPOI(
+                id=uuid.uuid4().hex,
+                name=poi_name,
+                location=enrichment['location'],
+                mapbox_id=enrichment['mapbox_id'],
+                lat=enrichment['lat'],
+                lng=enrichment['lng'],
+                wikidata_id=enrichment['wikidata_id'],
+                opening_hours=enrichment['opening_hours'],
+                website=enrichment['website'],
+                phone_number=enrichment['phone_number'],
+                cuisine=enrichment['cuisine'],
+                internet_access=enrichment['internet_access'],
+                category=s.get('category', 'other'),
+                description=s.get('description'),
+                why_picked=s.get('why_picked'),
+                experience=s.get('experience'),
+                ideal_time_start=s.get('ideal_time_start'),
+                ideal_time_end=s.get('ideal_time_end'),
+                duration_mins=s.get('duration_mins', 90),
+                valid_days_of_week=s.get('valid_days_of_week', []),
+                occurrences=1,
+                image_url=enrichment['image_url'],
+                link=enrichment['link'],
+                estimated_price_usd=s.get('estimated_price_usd'),
+                is_background=s.get('is_background', False)
+            )
+            pois.append(poi)
 
     accs = []
     for s in sugg_accs:

@@ -1676,8 +1676,8 @@
                     bgContainer.className = "bg-indigo-900/40 border border-indigo-500/30 rounded-xl p-3 shadow-lg relative flex flex-col gap-2 mb-2";
                     bgContainer.innerHTML = `
                         <div class="flex items-center justify-between mb-2 cursor-pointer group" onclick="openActivityDetails('${bgPoiAct.id}')">
-                            <div>
-                                <h3 class="font-bold text-indigo-300 text-sm group-hover:text-white transition">🌟 Day Theme: ${bgPoiAct.title}</h3>
+                            <div class="min-w-0">
+                                <h3 class="font-bold text-indigo-300 text-sm group-hover:text-white transition truncate">🌟 Day Theme: ${bgPoiAct.title}</h3>
                                 ${bgPoiAct.location ? `<p class="text-[11px] text-indigo-400 mt-0.5 truncate flex items-center"><svg class="w-3 h-3 mr-1 inline shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>${bgPoiAct.location}</p>` : ''}
                             </div>
                             <button onclick="event.stopPropagation(); deleteActivity('${bgPoiAct.id}')" class="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-gray-800 rounded-md z-10">
