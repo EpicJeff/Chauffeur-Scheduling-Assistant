@@ -161,6 +161,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     budget_warning = response_json.get('budget_warning')
     suggestions = response_json.get('suggestions', [])
+    
+    # Keyword check: If a POI is obviously a hotel but the LLM placed it here, we should drop it.
+    acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
+    true_suggestions = []
+    for s in suggestions:
+        name_lower = s.get('name', '').lower()
+        if any(k in name_lower.split() or name_lower.startswith(f"{k} ") or name_lower.endswith(f" {k}") for k in acc_keywords):
+            continue
+        true_suggestions.append(s)
+    suggestions = true_suggestions
+
     pois = []
     
     for s in suggestions:
@@ -875,6 +886,23 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     sugg_pois = response_json.get('pois', [])
     sugg_accs = response_json.get('accommodations', [])
     sugg_flights = response_json.get('flights', [])
+    
+    # Keyword check: Move hotel POIs to accommodations
+    acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
+    true_pois = []
+    for s in sugg_pois:
+        name_lower = s.get('name', '').lower()
+        if any(k in name_lower.split() or name_lower.startswith(f"{k} ") or name_lower.endswith(f" {k}") for k in acc_keywords):
+            # Move it to sugg_accs if not already there
+            if not any(a.get('name') and (s.get('name').lower() in a.get('name').lower() or a.get('name').lower() in s.get('name').lower()) for a in sugg_accs):
+                sugg_accs.append({
+                    "name": s.get('name'),
+                    "location": s.get('location', s.get('name')),
+                    "notes": s.get('description', '')
+                })
+        else:
+            true_pois.append(s)
+    sugg_pois = true_pois
     
     pois = []
     for s in sugg_pois:
