@@ -519,6 +519,10 @@ def get_trip_api(event_id: str):
     for act_id in metadata["activities"]:
         if "::" not in act_id: continue
         act_cal_id, act_raw_id = act_id.split("::", 1)
+        
+        if act_raw_id.startswith("draft_poi_") or act_raw_id.startswith("draft_acc_"):
+            continue
+
         try:
             if service:
                 g_act = service.events().get(calendarId=act_cal_id, eventId=act_raw_id).execute()
@@ -546,6 +550,22 @@ def get_trip_api(event_id: str):
                 })
         except Exception as e:
             print(f"Error fetching activity {act_id}: {e}")
+            
+    # Inject Draft POIs that have been scheduled
+    for poi in metadata.get("pois", []):
+        if poi.get("is_scheduled") and poi.get("scheduled_start") and poi.get("event_id") and poi.get("event_id").startswith("draft_poi_"):
+            act_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
+            act_id = f"{act_cal_id}::{poi['event_id']}"
+            activities_details.append({
+                "id": act_id,
+                "title": poi.get("name", ""),
+                "location": poi.get("location", ""),
+                "description": poi.get("notes") or poi.get("description", ""),
+                "start": poi.get("scheduled_start"),
+                "end": poi.get("scheduled_end") or (poi.get("scheduled_start") + 3600),
+                "background_url": poi.get("image_url") or metadata.get("background_url"),
+                "poi_id": poi.get("id")
+            })
             
     # Sort activities by start time
     activities_details.sort(key=lambda x: x["start"] if x["start"] else 0)
@@ -1103,8 +1123,9 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
                             poi = next((p for p in trip_obj.pois if p.id == result.get("poi_id")), None)
                             if poi and poi.event_id:
                                 full_id = f"{trip_cals[0]}::{poi.event_id}"
-                                if full_id not in meta["activities"]:
-                                    meta["activities"].append(full_id)
+                                if not poi.event_id.startswith("draft_poi_") and not poi.event_id.startswith("draft_acc_"):
+                                    if full_id not in meta["activities"]:
+                                        meta["activities"].append(full_id)
                                     
                         storage.set_trip_metadata(event_id, meta)
                     yield json.dumps(result) + "\n"
