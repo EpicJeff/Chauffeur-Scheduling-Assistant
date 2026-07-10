@@ -199,6 +199,16 @@ class AddTripPoiTool(BaseModel):
     duration_mins: int = Field(default=60, description="Duration in minutes.")
     notes: Optional[str] = Field(default="", description="Any notes.")
 
+class AddTripAccommodationTool(BaseModel):
+    """
+    Adds an Accommodation to a specific Trip. Use this when a user says they are staying at a specific hotel, resort, or Airbnb.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    name: str = Field(..., description="The name of the Accommodation (e.g. 'Hyatt Place').")
+    location: str = Field(..., description="The address/location of the Accommodation.")
+    mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
+    notes: Optional[str] = Field(default="", description="Any notes.")
+
 class EditTripPoiTool(BaseModel):
     """
     Edits the properties of an existing Trip POI. Use this when the user asks you to update a POI's location, name, priority, or duration.
@@ -245,6 +255,7 @@ TOOL_SCHEMAS = {
     "search_places": SearchPlacesTool.model_json_schema(),
     "generate_trip_plan": GenerateTripPlanTool.model_json_schema(),
     "add_trip_poi": AddTripPoiTool.model_json_schema(),
+    "add_trip_accommodation": AddTripAccommodationTool.model_json_schema(),
     "edit_trip_poi": EditTripPoiTool.model_json_schema(),
 }
 
@@ -565,7 +576,62 @@ def handle_add_trip_poi(args: dict) -> dict:
         metadata['pois'] = []
     metadata['pois'].append(poi)
     storage.set_trip_metadata(event_id, metadata)
-    return {"status": "success", "message": f"Added POI {poi['name']} to Trip {event_id}."}
+    
+    return {
+        "status": "success",
+        "message": f"Added POI '{name}' to trip."
+    }
+
+def handle_add_trip_accommodation(args: dict) -> dict:
+    from services import storage
+    from services.trip_planner import enrich_poi_data
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "accommodations": []}
+    import uuid
+    
+    name = args.get('name')
+    location = args.get('location')
+    trip_location = metadata.get('location', '')
+    
+    enrichment = enrich_poi_data(name, location, trip_location)
+    
+    # Try to guess check-in/out dates from the trip bounds if they exist
+    import datetime
+    trip_start_dt, trip_end_dt = None, None
+    if metadata.get('is_draft') and metadata.get('mock_start_date'):
+        trip_start_dt = datetime.datetime.fromtimestamp(metadata.get('mock_start_date'), tz=datetime.timezone.utc)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=metadata.get('draft_duration_days', 1))
+    elif not metadata.get('is_draft'):
+        from services.calendar import get_event_dates
+        start, end = get_event_dates(event_id)
+        if start and end:
+            trip_start_dt, trip_end_dt = start, end
+            
+    check_in_date = trip_start_dt.strftime('%Y-%m-%d') if trip_start_dt else ""
+    check_out_date = trip_end_dt.strftime('%Y-%m-%d') if trip_end_dt else ""
+    
+    acc = {
+        "id": uuid.uuid4().hex,
+        "name": name,
+        "location": enrichment.get('location') or location,
+        "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
+        "lat": enrichment.get('lat'),
+        "lng": enrichment.get('lng'),
+        "check_in_date": check_in_date,
+        "check_out_date": check_out_date,
+        "notes": args.get('notes', '')
+    }
+    
+    if "accommodations" not in metadata:
+        metadata["accommodations"] = []
+    metadata["accommodations"].append(acc)
+    
+    storage.set_trip_metadata(event_id, metadata)
+    
+    return {
+        "status": "success",
+        "message": f"Added Accommodation '{name}' to trip."
+    }
 
 def handle_edit_trip_poi(args: dict) -> dict:
     from services import storage
@@ -641,6 +707,7 @@ TOOL_HANDLERS = {
     "search_places": handle_search_places,
     "generate_trip_plan": handle_generate_trip_plan,
     "add_trip_poi": handle_add_trip_poi,
+    "add_trip_accommodation": handle_add_trip_accommodation,
     "edit_trip_poi": handle_edit_trip_poi,
 }
 
