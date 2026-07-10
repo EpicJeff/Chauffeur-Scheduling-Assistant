@@ -691,7 +691,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Existing Accommodations: {existing_accs_str}\n"
         f"{poi_context}\n"
         f"{budget_context}"
-        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"User Request: {user_prompt}\n"
         f"Generate accommodation suggestions."
     )
@@ -858,7 +858,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{date_bounds_str}\n"
         f"{budget_context}"
-        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"User Request: {user_prompt}\n"
@@ -880,8 +880,14 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     for s in sugg_pois:
         name = s.get('name')
         
-        # Deduplication check
+        # Deduplication check against existing POIs
         if any(p.lower() == name.lower() for p in existing_poi_names):
+            continue
+            
+        # Deduplication check against accommodations
+        if any(a.get('name') and (name.lower() in a.get('name').lower() or a.get('name').lower() in name.lower()) for a in sugg_accs):
+            continue
+        if any(acc_name and (name.lower() in acc_name.lower() or acc_name.lower() in name.lower()) for acc_name in existing_accs):
             continue
             
         query = s.get('search_query', name)
