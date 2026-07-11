@@ -390,10 +390,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             poi_hours_end = datetime.time(23, 59)
         else:
             import re
-            match = re.search(r'(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})', oh)
+            match = re.search(r'(\d{1,2}):(\d{2})\s*(am|pm)?\s*-\s*(\d{1,2}):(\d{2})\s*(am|pm)?', oh)
             if match:
                 try:
-                    h1, m1, h2, m2 = map(int, match.groups())
+                    h1, m1, ap1, h2, m2, ap2 = match.groups()
+                    h1, m1, h2, m2 = int(h1), int(m1), int(h2), int(m2)
+                    if ap1 == 'pm' and h1 < 12: h1 += 12
+                    if ap1 == 'am' and h1 == 12: h1 = 0
+                    if ap2 == 'pm' and h2 < 12: h2 += 12
+                    if ap2 == 'am' and h2 == 12: h2 = 0
                     poi_hours_start = datetime.time(h1, m1)
                     poi_hours_end = datetime.time(h2, m2)
                 except ValueError:
