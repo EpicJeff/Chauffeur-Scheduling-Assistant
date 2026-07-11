@@ -226,7 +226,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             
     return budget_warning, pois
 
-def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
+def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[datetime.datetime, datetime.datetime]] = None) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
     """
     Finds the best open time slot during the trip and schedules the POI in Google Calendar (or isolated environment if draft).
     Returns a tuple of (event_id, error_reason, suggested_fixes). If successful, error_reason is None.
@@ -310,6 +310,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
         if not trip_cals:
             trip_cals = cals
             
+    if bounds:
+        bound_start, bound_end = bounds
+        trip_start = max(trip_start, bound_start)
+        trip_end = min(trip_end, bound_end)
+            
         overlapping_events = []
         accommodation_events = []
         for e in events:
@@ -348,13 +353,6 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                             
                     start_dt = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc)
                     end_dt = datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc)
-                    
-                    if p_is_bg and getattr(poi, 'is_background', False):
-                        # Force the overlapping event to span the entire day so another background event can't share it!
-                        # We use the local_tz to determine the day bounds correctly
-                        start_local = start_dt.astimezone(local_tz)
-                        start_dt = start_local.replace(hour=0, minute=0, second=0).astimezone(datetime.timezone.utc)
-                        end_dt = start_local.replace(hour=23, minute=59, second=59).astimezone(datetime.timezone.utc)
                         
                     overlapping_events.append(MockEvent(
                         start_dt,
@@ -696,6 +694,8 @@ from typing import Iterator
 def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[str, Any]]:
     """
     Schedules multiple POIs at once using a clustering algorithm based on distance and priority.
+    Background POIs act as anchors. Regular POIs are assigned to the nearest anchor if within 30 mins travel.
+    Standalone regular POIs are spatially clustered.
     Yields a dictionary for each POI: {"poi_id": str, "success": bool, "reason": str}.
     """
     settings = storage.get_settings()
@@ -714,40 +714,122 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
     locations = [p.location for p in target_pois if p.location]
     maps.prime_matrix_cache(locations, ignore_age=True)
     
-    # Priority grouping
+    # Priority sorting mapping
     prio_map = {'must': 3, 'want': 2, 'stretch': 1}
-    target_pois.sort(key=lambda x: (getattr(x, 'is_background', False), prio_map.get(x.priority or 'want', 2)), reverse=True)
     
-    # Simple Greedy Clustering
-    clusters = [] # list of lists of POIs
-    for p in target_pois:
+    # Separate into anchors (background) and regular
+    anchors = [p for p in target_pois if getattr(p, 'is_background', False)]
+    regular_pois = [p for p in target_pois if not getattr(p, 'is_background', False)]
+    
+    anchors.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
+    regular_pois.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
+    
+    # Map regular POIs to their closest anchor
+    anchor_clusters = {a.id: [] for a in anchors}
+    unassigned_pois = []
+    
+    for rp in regular_pois:
+        best_anchor = None
+        best_dist = float('inf')
+        for a in anchors:
+            if not rp.location or not a.location: continue
+            dist = maps.get_travel_time_minutes(a.location, rp.location)
+            if dist <= 30 and dist < best_dist:
+                best_dist = dist
+                best_anchor = a
+        if best_anchor:
+            anchor_clusters[best_anchor.id].append(rp)
+        else:
+            unassigned_pois.append(rp)
+            
+    # Process anchor clusters
+    for a in anchors:
+        # Schedule the anchor itself
+        event_id, reason, meta = schedule_poi(trip, a)
+        if event_id:
+            yield {"poi_id": a.id, "success": True, "reason": None}
+            # Now schedule its attached cluster within its time bounds!
+            a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
+            a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
+            
+            for rp in anchor_clusters[a.id]:
+                rp_event_id, rp_reason, rp_meta = schedule_poi(trip, rp, bounds=(a_start, a_end))
+                if rp_event_id:
+                    yield {"poi_id": rp.id, "success": True, "reason": None}
+                else:
+                    # Failed to schedule inside the anchor. Put it back in unassigned pool to try elsewhere.
+                    unassigned_pois.append(rp)
+        else:
+            # Anchor failed. Drop the cluster into unassigned.
+            res = {"poi_id": a.id, "success": False, "reason": reason}
+            if meta and "suggested_fixes" in meta: res["suggested_fixes"] = meta["suggested_fixes"]
+            yield res
+            unassigned_pois.extend(anchor_clusters[a.id])
+            
+    # Now process standalone clusters from the unassigned pool
+    standalone_clusters = []
+    for rp in unassigned_pois:
         added = False
-        for cluster in clusters:
-            # Check travel time to cluster centroid (just use the first item)
+        for cluster in standalone_clusters:
             centroid = cluster[0]
-            if not p.location or not centroid.location:
-                continue
-            travel_mins = maps.get_travel_time_minutes(centroid.location, p.location)
-            if travel_mins <= 20:
-                cluster.append(p)
+            if not rp.location or not centroid.location: continue
+            dist = maps.get_travel_time_minutes(centroid.location, rp.location)
+            if dist <= 20:
+                cluster.append(rp)
                 added = True
                 break
         if not added:
-            clusters.append([p])
+            standalone_clusters.append([rp])
             
-    # Schedule each cluster as a block
-    for cluster in clusters:
-        for poi in cluster:
-            # For now, just reuse the single scheduler but we can upgrade this to block scheduling
-            # since the single scheduler now correctly handles dynamic buffers!
-            event_id, reason, meta = schedule_poi(trip, poi)
-            if event_id:
-                yield {"poi_id": poi.id, "success": True, "reason": None}
-            else:
-                res = {"poi_id": poi.id, "success": False, "reason": reason}
-                if meta and "suggested_fixes" in meta:
-                    res["suggested_fixes"] = meta["suggested_fixes"]
-                yield res
+    for cluster in standalone_clusters:
+        if not cluster: continue
+        # Schedule the first item normally (no bounds)
+        first_poi = cluster[0]
+        event_id, reason, meta = schedule_poi(trip, first_poi)
+        if event_id:
+            yield {"poi_id": first_poi.id, "success": True, "reason": None}
+            # Now we know what DAY it landed on. Force the rest to land on the SAME DAY.
+            first_start = datetime.datetime.fromtimestamp(first_poi.scheduled_start, tz=datetime.timezone.utc)
+            
+            import zoneinfo
+            trip_tz_str = getattr(trip, 'timeZone', None)
+            local_tz = zoneinfo.ZoneInfo(trip_tz_str) if trip_tz_str and trip_tz_str != "UTC" else zoneinfo.ZoneInfo('America/New_York')
+            
+            first_local = first_start.astimezone(local_tz)
+            day_start_local = first_local.replace(hour=0, minute=0, second=0)
+            day_end_local = first_local.replace(hour=23, minute=59, second=59)
+            
+            day_start = day_start_local.astimezone(datetime.timezone.utc)
+            day_end = day_end_local.astimezone(datetime.timezone.utc)
+            
+            for rp in cluster[1:]:
+                rp_event_id, rp_reason, rp_meta = schedule_poi(trip, rp, bounds=(day_start, day_end))
+                if rp_event_id:
+                    yield {"poi_id": rp.id, "success": True, "reason": None}
+                else:
+                    # If it failed to fit on this day, as a last resort, just schedule it anywhere
+                    rp_event_id2, rp_reason2, rp_meta2 = schedule_poi(trip, rp)
+                    if rp_event_id2:
+                        yield {"poi_id": rp.id, "success": True, "reason": None}
+                    else:
+                        res = {"poi_id": rp.id, "success": False, "reason": rp_reason2}
+                        if rp_meta2 and "suggested_fixes" in rp_meta2: res["suggested_fixes"] = rp_meta2["suggested_fixes"]
+                        yield res
+        else:
+            # First item failed
+            res = {"poi_id": first_poi.id, "success": False, "reason": reason}
+            if meta and "suggested_fixes" in meta: res["suggested_fixes"] = meta["suggested_fixes"]
+            yield res
+            
+            # Since the first failed and we don't have a day, just schedule the rest normally anywhere
+            for rp in cluster[1:]:
+                rp_event_id2, rp_reason2, rp_meta2 = schedule_poi(trip, rp)
+                if rp_event_id2:
+                    yield {"poi_id": rp.id, "success": True, "reason": None}
+                else:
+                    res = {"poi_id": rp.id, "success": False, "reason": rp_reason2}
+                    if rp_meta2 and "suggested_fixes" in rp_meta2: res["suggested_fixes"] = rp_meta2["suggested_fixes"]
+                    yield res
 
     # Post-scheduling efficiency check for newly scheduled POIs
     import datetime
