@@ -198,6 +198,9 @@ class AddTripPoiTool(BaseModel):
     category: Optional[str] = Field(default="sightseeing", description="Category (sightseeing, food, activity, shopping, other).")
     duration_mins: int = Field(default=60, description="Duration in minutes.")
     notes: Optional[str] = Field(default="", description="Any notes.")
+    occurrences: Optional[int] = Field(default=1, description="Number of times to add this POI. Set > 1 if user wants multiple days.")
+    is_background: Optional[bool] = Field(default=False, description="Set to true if this is a full-day background event like a theme park.")
+    valid_days_of_week: Optional[List[int]] = Field(default_factory=list, description="List of valid days (0=Mon, 6=Sun) to schedule this POI.")
 
 class AddTripAccommodationTool(BaseModel):
     """
@@ -220,6 +223,7 @@ class EditTripPoiTool(BaseModel):
     category: Optional[str] = Field(default=None, description="Optional new category.")
     duration_mins: Optional[int] = Field(default=None, description="Optional new duration in minutes.")
     priority: Optional[str] = Field(default=None, description="Optional new priority (must, want, stretch).")
+    valid_days_of_week: Optional[List[int]] = Field(default=None, description="Optional list of integers representing valid days (0=Mon, 6=Sun).")
 
 class StartDriveTool(BaseModel):
     """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
@@ -556,30 +560,41 @@ def handle_add_trip_poi(args: dict) -> dict:
     
     enrichment = enrich_poi_data(name, location, trip_location)
     
-    poi = {
-        "id": uuid.uuid4().hex,
-        "name": name,
-        "location": enrichment.get('location') or location,
-        "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
-        "category": args.get('category', 'sightseeing'),
-        "duration_mins": args.get('duration_mins', 60),
-        "notes": args.get('notes', ''),
-        "is_scheduled": False,
-        "scheduled_start": None,
-        "scheduled_end": None
-    }
+    occurrences = args.get('occurrences', 1)
+    pois_to_add = []
     
-    for k, v in enrichment.items():
-        if k not in ['location', 'mapbox_id']:
-            poi[k] = v
+    for i in range(occurrences):
+        name_label = name if occurrences == 1 else f"{name} (Day {i+1})"
+        poi = {
+            "id": uuid.uuid4().hex,
+            "name": name_label,
+            "location": enrichment.get('location') or location,
+            "mapbox_id": enrichment.get('mapbox_id') or args.get('mapbox_id'),
+            "category": args.get('category', 'sightseeing'),
+            "duration_mins": args.get('duration_mins', 60),
+            "notes": args.get('notes', ''),
+            "is_scheduled": False,
+            "scheduled_start": None,
+            "scheduled_end": None,
+            "occurrences": 1,
+            "is_background": args.get('is_background', False),
+            "valid_days_of_week": args.get('valid_days_of_week', [])
+        }
+        
+        for k, v in enrichment.items():
+            if k not in ['location', 'mapbox_id'] and k not in poi:
+                poi[k] = v
+                
+        pois_to_add.append(poi)
+        
     if 'pois' not in metadata:
         metadata['pois'] = []
-    metadata['pois'].append(poi)
+    metadata['pois'].extend(pois_to_add)
     storage.set_trip_metadata(event_id, metadata)
     
     return {
         "status": "success",
-        "message": f"Added POI '{name}' to trip."
+        "message": f"Added {occurrences} POI(s) '{name}' to trip."
     }
 
 def handle_add_trip_accommodation(args: dict) -> dict:
@@ -648,6 +663,9 @@ def handle_edit_trip_poi(args: dict) -> dict:
     for field in ['name', 'location', 'category', 'duration_mins', 'priority']:
         if args.get(field) is not None:
             target_poi[field] = args.get(field)
+            
+    if args.get('valid_days_of_week') is not None:
+        target_poi['valid_days_of_week'] = args.get('valid_days_of_week')
             
     storage.set_trip_metadata(event_id, metadata)
     return {"status": "success", "message": f"Updated POI {target_poi['name']}."}

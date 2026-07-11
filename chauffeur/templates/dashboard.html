@@ -1479,10 +1479,15 @@
                 const endPickerHTML = generateTimePickerHTML(p.id, 'end', myTimes.end);
 
                 return `
-                    <div class="flex flex-col space-y-1 mb-2 bg-gray-800/40 p-2 rounded border border-gray-700/50">
-                        <label class="flex items-center space-x-2 text-sm ${isDisabled ? 'text-blue-300 opacity-80' : 'text-gray-300'}">
-                            <input type="checkbox" value="${p.id}" class="pax-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="togglePaxTimes(this, '${p.id}')">
-                            <span class="truncate ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}" title="${p.name}">${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}</span>
+                    <div class="flex flex-col space-y-1 mb-2">
+                        <label class="cursor-pointer inline-flex w-max">
+                            <input type="checkbox" value="${p.id}" class="pax-checkbox peer sr-only" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="togglePaxTimes(this, '${p.id}')">
+                            <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none 
+                                ${isDisabled 
+                                    ? 'bg-blue-900/50 text-blue-300 border-blue-500/30 cursor-not-allowed' 
+                                    : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500'}">
+                                ${p.name} ${isDisabled ? '<span class="text-[10px] text-blue-400 font-bold ml-1 uppercase">(On Calendar)</span>' : ''}
+                            </div>
                         </label>
                         <div id="pax-times-${p.id}" class="flex flex-col space-y-1 ml-6 transition-opacity duration-200 ${isChecked || isDisabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}">
                             ${startPickerHTML}
@@ -1507,9 +1512,11 @@
                 }
 
                 return `
-                    <label class="flex items-center space-x-2 text-sm text-gray-300">
-                        <input type="checkbox" value="${d.id}" class="drv-checkbox rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer" ${isChecked ? 'checked' : ''}>
-                        <span class="truncate cursor-pointer" title="${d.name}">${d.name}</span>
+                    <label class="cursor-pointer inline-flex w-max">
+                        <input type="checkbox" value="${d.id}" class="drv-checkbox peer sr-only" ${isChecked ? 'checked' : ''}>
+                        <div class="px-3 py-1.5 rounded-full text-sm font-semibold transition-colors border select-none bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 peer-checked:hover:bg-blue-500">
+                            ${d.name}
+                        </div>
                     </label>
                 `;
             }).join('');
