@@ -463,6 +463,9 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
+            if getattr(poi, 'is_background', False) and slot_time.hour > 12:
+                continue
+                
             if getattr(poi, 'valid_days_of_week', None):
                 if slot_local.weekday() not in poi.valid_days_of_week:
                     continue
