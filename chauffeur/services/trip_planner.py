@@ -831,8 +831,6 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     if rp_meta2 and "suggested_fixes" in rp_meta2: res["suggested_fixes"] = rp_meta2["suggested_fixes"]
                     yield res
 
-    # Post-scheduling efficiency check for newly scheduled POIs
-    import datetime
     all_scheduled = [p for p in trip.pois if p.is_scheduled and p.scheduled_start]
     by_day = {}
     for p in all_scheduled:
