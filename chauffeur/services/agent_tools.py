@@ -184,8 +184,8 @@ class GenerateTripPlanTool(BaseModel):
     Always use this when the user asks you to plan a trip, generate ideas for a trip, or suggests a list of things to do on a trip.
     """
     event_id: str = Field(..., description="The event ID of the Trip.")
-    prompt: str = Field(..., description="The user's preferences for the trip (e.g. 'Michelin star restaurants, bold red wines, sightseeing').")
-
+    prompt: str = Field(..., description="The user's original request.")
+    proposed_itinerary: str = Field(default="", description="If you proposed a specific day-by-day itinerary to the user in your response, provide the full text of that itinerary here so the background planner can align the scheduled days/times exactly with what you told the user.")
 
 class AddTripPoiTool(BaseModel):
     """
@@ -501,6 +501,7 @@ def handle_generate_trip_plan(args: dict) -> dict:
     
     event_id = args.get('event_id')
     user_prompt = args.get('prompt', '')
+    proposed_itinerary = args.get('proposed_itinerary', '')
     
     meta = storage.get_trip_metadata(event_id)
     if not meta:
@@ -516,7 +517,7 @@ def handle_generate_trip_plan(args: dict) -> dict:
             duration_days = 3
             
     trip_obj = TripMetadata(**meta)
-    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days, proposed_itinerary)
     
     if 'pois' not in meta:
         meta['pois'] = []

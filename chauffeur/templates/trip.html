@@ -1899,6 +1899,7 @@
                             const decoder = new TextDecoder("utf-8");
                             let buffer = "";
                             const failures = [];
+                            const insights = [];
                             let completed = 0;
                             
                             while (true) {
@@ -1913,14 +1914,18 @@
                                     if (line.trim()) {
                                         try {
                                             const result = JSON.parse(line);
-                                            completed++;
                                             
+                                            if (result.type === "insight") {
+                                                insights.push(result.message);
+                                                continue;
+                                            }
+
+                                            completed++;
                                             if (document.getElementById('schedule-progress-text')) {
                                                 document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${selected.length}...`;
                                             }
                                             
                                             if (result.success) {
-                                                // Fetch incremental trip data to show the schedule "popping in"
                                                 await fetchTripData();
                                             } else {
                                                 const poi = tripData.metadata.pois.find(p => p.id === result.poi_id);
@@ -1937,6 +1942,16 @@
                             
                             if (failures.length > 0) {
                                 openFailedPoisModal(failures);
+                            } else if (insights.length > 0) {
+                                // If there are no failures but there are insights, show a modal for the insights
+                                let msg = `<ul class="list-disc pl-5 text-left space-y-2 mt-4 text-indigo-200">`;
+                                for (const insight of insights) {
+                                    msg += `<li>${insight}</li>`;
+                                }
+                                msg += `</ul>`;
+                                openConfirmModal("Smart Scheduling Insights", `All selected Attractions were scheduled successfully! However, we noticed a few ways you might be able to optimize your trip:<br>${msg}`, [
+                                    { text: "Got it!", className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => {} }
+                                ]);
                             }
                             
                         } catch(e) {
@@ -2389,14 +2404,32 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ poi_ids: [poi.id] })
                 });
-                const data = await res.json();
                 
-                if (data.results && data.results[poi.id] && !data.results[poi.id].success) {
+                const text = await res.text();
+                const lines = text.trim().split("\n");
+                let success = false;
+                let reason = null;
+                let suggested_fixes = null;
+                
+                for (const line of lines) {
+                    if (line.trim()) {
+                        try {
+                            const result = JSON.parse(line);
+                            if (result.poi_id === poi.id) {
+                                success = result.success;
+                                reason = result.reason;
+                                suggested_fixes = result.suggested_fixes;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                if (!success) {
                     // Failed again, update the reason
                     const failIdx = window.currentFailedPois.findIndex(f => f.poi.id === poi.id);
                     if (failIdx >= 0) {
-                        window.currentFailedPois[failIdx].reason = data.results[poi.id].reason;
-                        window.currentFailedPois[failIdx].suggested_fixes = data.results[poi.id].suggested_fixes;
+                        window.currentFailedPois[failIdx].reason = reason;
+                        window.currentFailedPois[failIdx].suggested_fixes = suggested_fixes;
                     }
                 } else {
                     // Success! Remove from list

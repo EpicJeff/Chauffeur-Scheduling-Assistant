@@ -63,7 +63,7 @@ def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
         "link": link
     }
 
-def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1) -> Tuple[Optional[str], List[TripPOI]]:
+def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
     and grounds them to real-world locations via Mapbox.
@@ -111,7 +111,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
 CRITICAL: If the category is 'food', you MUST populate `ideal_time_start` and `ideal_time_end` with the typical meal window (e.g., '12:00' and '13:30' for lunch, or '18:00' and '20:00' for dinner) to prevent it from being scheduled at inappropriate times like 7:00 AM.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
@@ -143,6 +143,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     travelers = getattr(trip, 'travelers', 1)
     budget_context += f"This trip is for {travelers} traveler(s). Your estimated_price_usd MUST reflect the total cost for the ENTIRE group (not per person).\n"
+
+    proposed_str = ""
+    if proposed_itinerary:
+        proposed_str = f"CRITICAL INSTRUCTION: The assistant has already promised the user the following itinerary. You MUST align the POIs, their `valid_days_of_week`, and `ideal_time_start`/`ideal_time_end` exactly with this itinerary so the final schedule matches what the user expects.\nProposed Itinerary: {proposed_itinerary}\n"
         
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
@@ -151,6 +155,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{budget_context}"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
+        f"{proposed_str}"
         f"User Request: {user_prompt}\n"
         f"Generate suggestions."
     )
@@ -463,12 +468,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                 s_mins = ideal_start_time.hour * 60 + ideal_start_time.minute
                 e_mins = ideal_end_time.hour * 60 + ideal_end_time.minute
                 
-                slot_end_time = slot_end.astimezone(local_tz).time()
                 s_slot = slot_time.hour * 60 + slot_time.minute
-                e_slot = slot_end_time.hour * 60 + slot_end_time.minute
                 
                 # Add a 15-minute grace period to the ideal window
-                if s_slot < (s_mins - 15) or e_slot > (e_mins + 15):
+                if s_slot < (s_mins - 15) or s_slot > (e_mins + 15):
                     continue
             
             if poi_hours_start and poi_hours_end:
@@ -724,6 +727,38 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     res["suggested_fixes"] = meta["suggested_fixes"]
                 yield res
 
+    # Post-scheduling efficiency check for newly scheduled POIs
+    import datetime
+    all_scheduled = [p for p in trip.pois if p.is_scheduled and p.scheduled_start]
+    by_day = {}
+    for p in all_scheduled:
+        dt = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc)
+        day_str = dt.strftime("%A, %b %d")
+        if day_str not in by_day:
+            by_day[day_str] = []
+        by_day[day_str].append(p)
+
+    insights_yielded = 0
+    days = list(by_day.keys())
+    for i in range(len(days)):
+        if insights_yielded >= 2: break
+        for j in range(i+1, len(days)):
+            if insights_yielded >= 2: break
+            day_a = days[i]
+            day_b = days[j]
+            for poi_a in by_day[day_a]:
+                if poi_a not in target_pois: continue # Only flag if one of the targets is involved
+                for poi_b in by_day[day_b]:
+                    if not poi_a.location or not poi_b.location: continue
+                    travel_mins = maps.get_travel_time_minutes(poi_a.location, poi_b.location)
+                    if travel_mins <= 15:
+                        yield {
+                            "type": "insight",
+                            "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are very close together, but are scheduled on different days ({day_a} vs {day_b}). Doing them on the same day could save travel time! Would you like to adjust this?"
+                        }
+                        insights_yielded += 1
+                        break
+
 def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[Optional[str], List[TripAccommodation]]:
     """
     Generates suggested accommodations based on the user's prompt and currently scheduled POIs.
@@ -859,7 +894,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     return budget_warning, accs
 
 
-def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: int = 1):
+def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: int = 1, proposed_itinerary: str = ""):
     from services.llm import _call_llm_json
     import urllib.parse
     import datetime
@@ -932,7 +967,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). Otherwise default to 1.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -970,6 +1005,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
     home_location_str = f"User's Home Location: {settings.get('home_location')} (Use this as the origin for flights unless specified otherwise)\n" if settings.get('home_location') else ""
 
+    proposed_str = ""
+    if proposed_itinerary:
+        proposed_str = f"CRITICAL INSTRUCTION: The assistant has already promised the user the following itinerary. You MUST align the POIs, their `valid_days_of_week`, and `ideal_time_start`/`ideal_time_end` exactly with this itinerary so the final schedule matches what the user expects.\nProposed Itinerary: {proposed_itinerary}\n"
+
     user_req = (
         f"Trip Title: {trip.title or 'Unknown'}\n"
         f"{home_location_str}"
@@ -980,6 +1019,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
+        f"{proposed_str}"
         f"User Request: {user_prompt}\n"
         f"Generate the requested flights, accommodations and POIs, adhering strictly to any quantities specified by the user."
     )
