@@ -442,7 +442,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             slot_time = slot_local.time()
             slot_date = slot_local.strftime("%Y-%m-%d")
             
-            if (slot_time < datetime.time(8, 0) or slot_time > hard_cap_start) and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+            earliest_time = datetime.time(7, 0) if is_food else datetime.time(8, 0)
+            if slot_time < earliest_time:
+                continue
+            if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
             if getattr(poi, 'valid_days_of_week', None):
@@ -508,9 +511,6 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             if overlaps:
                 continue
                 
-            is_lunch_block = datetime.time(11, 0) <= slot_time < datetime.time(14, 0)
-            is_dinner_block = datetime.time(17, 0) <= slot_time < datetime.time(21, 0)
-            
             if is_food and not is_dessert:
                 conflict = False
                 scheduled_on_day = scheduled_pois_by_date.get(slot_date, [])
@@ -522,15 +522,20 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                         if not sp_is_dessert:
                             non_dessert_food.append(sp)
                             
-                if len(non_dessert_food) >= 2:
+                if len(non_dessert_food) >= 3:
                     conflict = True
-                elif len(non_dessert_food) == 1:
-                    sp = non_dessert_food[0]
-                    sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
-                    is_sp_lunch = sp_time < datetime.time(16, 0)
-                    is_slot_lunch = slot_time < datetime.time(16, 0)
-                    if is_sp_lunch == is_slot_lunch:
-                        conflict = True
+                else:
+                    def get_meal_type(t: datetime.time):
+                        if t < datetime.time(10, 30): return 'breakfast'
+                        elif t < datetime.time(15, 30): return 'lunch'
+                        else: return 'dinner'
+                        
+                    slot_meal = get_meal_type(slot_time)
+                    for sp in non_dessert_food:
+                        sp_time = datetime.datetime.fromtimestamp(sp.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).time()
+                        if get_meal_type(sp_time) == slot_meal:
+                            conflict = True
+                            break
                 
                 if conflict:
                     continue
@@ -538,6 +543,14 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             score = 0
             days_from_start = (slot_local.date() - trip_start.astimezone(local_tz).date()).days
             score += max(0, 100 - (days_from_start * 10))
+            
+            if is_food and not is_dessert:
+                if datetime.time(7, 30) <= slot_time <= datetime.time(9, 30):
+                    score += 2000
+                elif datetime.time(11, 30) <= slot_time <= datetime.time(13, 30):
+                    score += 2000
+                elif datetime.time(17, 30) <= slot_time <= datetime.time(19, 30):
+                    score += 2000
             
             day_home_base = trip.location
             for acc in accommodation_events:
