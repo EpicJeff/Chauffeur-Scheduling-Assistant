@@ -111,7 +111,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. CRITICAL: For ANY major Theme Park or National Park (e.g. Magic Kingdom, EPCOT, Universal Studios), you MUST set `is_background` to true! Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
 CRITICAL: If the category is 'food', you MUST populate `ideal_time_start` and `ideal_time_end` with the typical meal window (e.g., '12:00' and '13:30' for lunch, or '18:00' and '20:00' for dinner) to prevent it from being scheduled at inappropriate times like 7:00 AM.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
@@ -411,6 +411,9 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                 except ValueError:
                     pass
     
+    if getattr(poi, 'is_background', False):
+        poi.duration_mins = max(poi.duration_mins, 720)
+        
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
     
     is_food = poi.category == 'food'
@@ -750,6 +753,7 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 if poi_a not in target_pois: continue # Only flag if one of the targets is involved
                 for poi_b in by_day[day_b]:
                     if not poi_a.location or not poi_b.location: continue
+                    if getattr(poi_a, 'is_background', False) and getattr(poi_b, 'is_background', False): continue
                     travel_mins = maps.get_travel_time_minutes(poi_a.location, poi_b.location)
                     if travel_mins <= 15:
                         yield {
@@ -967,7 +971,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
+`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. CRITICAL: For ANY major Theme Park or National Park (e.g. Magic Kingdom, EPCOT, Universal Studios), you MUST set `is_background` to true! Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 

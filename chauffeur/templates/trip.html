@@ -2533,7 +2533,7 @@
 
         function openConfirmModal(title, message, buttons) {
             document.getElementById('confirm-modal-title').innerText = title;
-            document.getElementById('confirm-modal-message').innerText = message;
+            document.getElementById('confirm-modal-message').innerHTML = message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
             
             const actionsContainer = document.getElementById('confirm-modal-actions');
             actionsContainer.innerHTML = '';
