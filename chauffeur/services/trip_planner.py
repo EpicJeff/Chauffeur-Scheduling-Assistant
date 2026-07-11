@@ -345,9 +345,20 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                             self.start = start
                             self.end = end
                             self.location = location
+                            
+                    start_dt = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc)
+                    end_dt = datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc)
+                    
+                    if p_is_bg and getattr(poi, 'is_background', False):
+                        # Force the overlapping event to span the entire day so another background event can't share it!
+                        # We use the local_tz to determine the day bounds correctly
+                        start_local = start_dt.astimezone(local_tz)
+                        start_dt = start_local.replace(hour=0, minute=0, second=0).astimezone(datetime.timezone.utc)
+                        end_dt = start_local.replace(hour=23, minute=59, second=59).astimezone(datetime.timezone.utc)
+                        
                     overlapping_events.append(MockEvent(
-                        datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc),
-                        datetime.datetime.fromtimestamp(p.scheduled_end, tz=datetime.timezone.utc),
+                        start_dt,
+                        end_dt,
                         p.location
                     ))
                     
@@ -411,9 +422,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                 except ValueError:
                     pass
     
-    if getattr(poi, 'is_background', False):
-        poi.duration_mins = max(poi.duration_mins, 720)
-        
+
     duration_delta = datetime.timedelta(minutes=poi.duration_mins)
     
     is_food = poi.category == 'food'
@@ -463,7 +472,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
             if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
-            if getattr(poi, 'is_background', False) and slot_time.hour > 12:
+            slot_end_local = slot_end.astimezone(local_tz)
+            if slot_end_local.date() > slot_local.date() and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
             if getattr(poi, 'valid_days_of_week', None):
@@ -475,9 +485,15 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI) -> Tuple[Optional[str], Optio
                 e_mins = ideal_end_time.hour * 60 + ideal_end_time.minute
                 
                 s_slot = slot_time.hour * 60 + slot_time.minute
+                e_slot = slot_end_local.hour * 60 + slot_end_local.minute
+                if slot_end_local.date() > slot_local.date():
+                    e_slot += 1440
                 
                 # Add a 15-minute grace period to the ideal window
                 if s_slot < (s_mins - 15) or s_slot > (e_mins + 15):
+                    continue
+                # The end shouldn't be more than 2 hours past the ideal end time
+                if e_slot > (e_mins + 120):
                     continue
             
             if poi_hours_start and poi_hours_end:
