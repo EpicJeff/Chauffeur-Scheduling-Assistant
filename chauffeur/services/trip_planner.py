@@ -854,11 +854,20 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     if not poi_a.location or not poi_b.location: continue
                     if getattr(poi_a, 'is_background', False) and getattr(poi_b, 'is_background', False): continue
                     travel_mins = maps.get_travel_time_minutes(poi_a.location, poi_b.location)
-                    if travel_mins <= 15:
-                        yield {
-                            "type": "insight",
-                            "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are very close together, but are scheduled on different days ({day_a} vs {day_b}). Doing them on the same day could save travel time! Would you like to adjust this?"
-                        }
+                    if travel_mins <= 5:
+                        poi_a_constrained = bool(getattr(poi_a, 'valid_days_of_week', None)) or bool(getattr(poi_a, 'ideal_time_start', None))
+                        poi_b_constrained = bool(getattr(poi_b, 'valid_days_of_week', None)) or bool(getattr(poi_b, 'ideal_time_start', None))
+                        
+                        if poi_a_constrained or poi_b_constrained:
+                            yield {
+                                "type": "insight",
+                                "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are located very close together, but ended up on different days ({day_a} vs {day_b}). This might be due to your requested preferred times or valid days. If you have flexibility, you might consider adjusting them to save travel time!"
+                            }
+                        else:
+                            yield {
+                                "type": "insight",
+                                "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are located very close together, but were scheduled on different days ({day_a} vs {day_b}) because they couldn't fit into the same day. If you want to group them, you may need to increase your daily schedule limits or remove other activities."
+                            }
                         insights_yielded += 1
                         break
 
