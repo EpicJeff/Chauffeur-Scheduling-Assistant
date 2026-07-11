@@ -310,11 +310,6 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
         if not trip_cals:
             trip_cals = cals
             
-    if bounds:
-        bound_start, bound_end = bounds
-        trip_start = max(trip_start, bound_start)
-        trip_end = min(trip_end, bound_end)
-            
         overlapping_events = []
         accommodation_events = []
         for e in events:
@@ -377,6 +372,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                     except Exception:
                         pass
                 
+    if bounds:
+        bound_start, bound_end = bounds
+        trip_start = max(trip_start, bound_start)
+        trip_end = min(trip_end, bound_end)
+
     overlapping_events.sort(key=lambda x: x.start)
     
     current_time = trip_start
