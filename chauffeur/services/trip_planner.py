@@ -841,35 +841,60 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
         by_day[day_str].append(p)
 
     insights_yielded = 0
-    days = list(by_day.keys())
-    for i in range(len(days)):
+    # Pre-sort POIs per day by scheduled_start
+    for day_str in by_day:
+        by_day[day_str].sort(key=lambda x: x.scheduled_start)
+        
+    for p in target_pois:
+        if not p.is_scheduled or not p.scheduled_start or not p.location: continue
         if insights_yielded >= 2: break
-        for j in range(i+1, len(days)):
-            if insights_yielded >= 2: break
-            day_a = days[i]
-            day_b = days[j]
-            for poi_a in by_day[day_a]:
-                if poi_a not in target_pois: continue # Only flag if one of the targets is involved
-                for poi_b in by_day[day_b]:
-                    if not poi_a.location or not poi_b.location: continue
-                    if getattr(poi_a, 'is_background', False) and getattr(poi_b, 'is_background', False): continue
-                    travel_mins = maps.get_travel_time_minutes(poi_a.location, poi_b.location)
-                    if travel_mins <= 5:
-                        poi_a_constrained = bool(getattr(poi_a, 'valid_days_of_week', None)) or bool(getattr(poi_a, 'ideal_time_start', None))
-                        poi_b_constrained = bool(getattr(poi_b, 'valid_days_of_week', None)) or bool(getattr(poi_b, 'ideal_time_start', None))
-                        
-                        if poi_a_constrained or poi_b_constrained:
-                            yield {
-                                "type": "insight",
-                                "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are located very close together, but ended up on different days ({day_a} vs {day_b}). This might be due to your requested preferred times or valid days. If you have flexibility, you might consider adjusting them to save travel time!"
-                            }
-                        else:
-                            yield {
-                                "type": "insight",
-                                "message": f"I noticed **{poi_a.name}** and **{poi_b.name}** are located very close together, but were scheduled on different days ({day_a} vs {day_b}) because they couldn't fit into the same day. If you want to group them, you may need to increase your daily schedule limits or remove other activities."
-                            }
-                        insights_yielded += 1
-                        break
+        
+        # We only flag POIs that were heavily constrained by the user
+        is_constrained = bool(getattr(p, 'valid_days_of_week', None)) or bool(getattr(p, 'ideal_time_start', None))
+        if not is_constrained: continue
+        
+        p_dt = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc)
+        p_day_str = p_dt.strftime("%A, %b %d")
+        day_pois = by_day[p_day_str]
+        
+        idx = day_pois.index(p)
+        prev_p = day_pois[idx-1] if idx > 0 else None
+        next_p = day_pois[idx+1] if idx < len(day_pois)-1 else None
+        
+        current_penalty = 0
+        if prev_p and prev_p.location: current_penalty += maps.get_travel_time_minutes(prev_p.location, p.location)
+        if next_p and next_p.location: current_penalty += maps.get_travel_time_minutes(p.location, next_p.location)
+        
+        if current_penalty < 15: continue
+        
+        best_other = None
+        best_dist = float("inf")
+        for other in all_scheduled:
+            if other.id == p.id or not other.location: continue
+            other_dt = datetime.datetime.fromtimestamp(other.scheduled_start, tz=datetime.timezone.utc)
+            other_day_str = other_dt.strftime("%A, %b %d")
+            if other_day_str == p_day_str: continue # Must be a different day
+            
+            dist = maps.get_travel_time_minutes(other.location, p.location)
+            if dist < best_dist:
+                best_dist = dist
+                best_other = other
+                
+        if best_other:
+            simulated_cost = 2 * best_dist
+            savings = current_penalty - simulated_cost
+            if savings >= 10:
+                other_dt = datetime.datetime.fromtimestamp(best_other.scheduled_start, tz=datetime.timezone.utc)
+                other_day_str = other_dt.strftime("%A, %b %d")
+                
+                yield {
+                    "type": "insight",
+                    "actionable": True,
+                    "poi_id": p.id,
+                    "message": f"**{p.name}** was scheduled on {p_day_str} due to your preferences, adding ~{current_penalty} mins of travel. If you clear its constraints, it could be grouped on {other_day_str}, saving ~{savings} mins. Would you like to clear its preferences and reschedule it?",
+                    "action_button": "Clear Preferences & Move"
+                }
+                insights_yielded += 1
 
 def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[Optional[str], List[TripAccommodation]]:
     """

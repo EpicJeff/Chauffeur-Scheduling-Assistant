@@ -1944,13 +1944,22 @@
                                 openFailedPoisModal(failures);
                             } else if (insights.length > 0) {
                                 // If there are no failures but there are insights, show a modal for the insights
-                                let msg = `<ul class="list-disc pl-5 text-left space-y-2 mt-4 text-indigo-200">`;
+                                let msg = `<ul class="list-disc pl-5 text-left space-y-4 mt-4 text-indigo-200" id="insight-modal-list">`;
                                 for (const insight of insights) {
-                                    msg += `<li>${insight}</li>`;
+                                    if (insight.actionable) {
+                                        msg += `<li class="flex flex-col gap-2 p-3 bg-gray-800 rounded shadow border border-indigo-500/30" id="insight-${insight.poi_id}">
+                                            <span>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</span>
+                                            <button onclick="handleInsightAction(this, '${insight.poi_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm w-max transition-colors flex items-center justify-center gap-2">
+                                                ${insight.action_button}
+                                            </button>
+                                        </li>`;
+                                    } else {
+                                        msg += `<li>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</li>`;
+                                    }
                                 }
                                 msg += `</ul>`;
                                 openConfirmModal("Smart Scheduling Insights", `All selected Attractions were scheduled successfully! However, we noticed a few ways you might be able to optimize your trip:<br>${msg}`, [
-                                    { text: "Got it!", className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => {} }
+                                    { text: "Close", className: "px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => { fetchTripData(); updatePoiBulkActions(); } }
                                 ]);
                             }
                             
@@ -2555,6 +2564,49 @@
         function closeConfirmModal() {
             document.getElementById('confirm-modal').classList.add('hidden');
         }
+        
+        window.handleInsightAction = async function(btn, poiId) {
+            btn.innerHTML = `<svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Updating...`;
+            btn.disabled = true;
+            
+            try {
+                // 1. Clear constraints
+                const poi = tripData.pois.find(p => p.id === poiId);
+                if (poi) {
+                    poi.valid_days_of_week = [];
+                    poi.ideal_time_start = null;
+                    poi.ideal_time_end = null;
+                    await fetch(`/api/trip/${tripId}/poi/${poiId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(poi)
+                    });
+                    
+                    // 2. Reschedule it via bulk scheduler
+                    const res = await fetch(`/api/trip/${tripId}/schedule_pois_bulk`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ poi_ids: [poiId] })
+                    });
+                    await res.text();
+                    
+                    // Remove from list
+                    const li = document.getElementById(`insight-${poiId}`);
+                    if (li) li.remove();
+                    
+                    // If list is empty, close modal and reload
+                    const list = document.getElementById('insight-modal-list');
+                    if (list && list.children.length === 0) {
+                        closeConfirmModal();
+                        await fetchTripData();
+                        updatePoiBulkActions();
+                    }
+                }
+            } catch(e) {
+                btn.innerText = "Error";
+                btn.classList.add("bg-red-600");
+            }
+        };
 
         async function deletePoi(index) {
             openConfirmModal("Delete Attraction?", "Are you sure you want to remove this from your list? This cannot be undone.", [
