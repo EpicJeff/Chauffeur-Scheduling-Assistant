@@ -749,6 +749,14 @@
         
 
 
+        function formatYMD(date) {
+            const d = new Date(date);
+            const month = '' + (d.getMonth() + 1);
+            const day = '' + d.getDate();
+            const year = d.getFullYear();
+            return [year, month.padStart(2, '0'), day.padStart(2, '0')].join('-');
+        }
+
         function formatTime(dateStr) {
             const is24h = (window.currentData && window.currentData.settings && window.currentData.settings.time_format_24h) || false;
             return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !is24h });

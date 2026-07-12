@@ -175,6 +175,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     for s in suggestions:
         name_lower = s.get('name', '').lower()
         if any(k in name_lower.split() or name_lower.startswith(f"{k} ") or name_lower.endswith(f" {k}") for k in acc_keywords):
+            print("Failed continue #1 at", slot_time)
+
             continue
         true_suggestions.append(s)
     suggestions = true_suggestions
@@ -314,6 +316,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
         accommodation_events = []
         for e in events:
             if e.id == trip_event.id:
+                print("Failed continue #2 at", slot_time)
+
                 continue
             is_e_bg = (getattr(e, 'event_type', 'standard') == 'trip_background')
             
@@ -466,16 +470,24 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
             
             earliest_time = datetime.time(7, 0) if is_food else datetime.time(8, 0)
             if slot_time < earliest_time:
+                print("Failed continue #3 at", slot_time)
+
                 continue
             if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+                print("Failed continue #4 at", slot_time)
+
                 continue
                 
             slot_end_local = slot_end.astimezone(local_tz)
             if slot_end_local.date() > slot_local.date() and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+                print("Failed continue #5 at", slot_time)
+
                 continue
                 
             if getattr(poi, 'valid_days_of_week', None):
                 if slot_local.weekday() not in poi.valid_days_of_week:
+                    print("Failed continue #6 at", slot_time)
+
                     continue
                 
             if enforce_ideal_times:
@@ -489,9 +501,13 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                 
                 # Add a 15-minute grace period to the ideal window
                 if s_slot < (s_mins - 15) or s_slot > (e_mins + 15):
+                    print("Failed continue #7 at", slot_time)
+
                     continue
                 # The end shouldn't be more than 2 hours past the ideal end time
                 if e_slot > (e_mins + 120):
+                    print("Failed continue #8 at", slot_time)
+
                     continue
             
             if poi_hours_start and poi_hours_end:
@@ -503,6 +519,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                 e_slot = slot_end_time.hour * 60 + slot_end_time.minute
                 
                 if s_slot < s_poi_mins or e_slot > e_poi_mins:
+                    print("Failed continue #9 at", slot_time)
+
                     continue
                 
             overlaps = False
@@ -539,6 +557,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                     break
                     
             if overlaps:
+                print("Failed continue #10 at", slot_time)
+
                 continue
                 
             if is_food and not is_dessert:
@@ -568,6 +588,8 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                             break
                 
                 if conflict:
+                    print("Failed continue #11 at", slot_time)
+
                     continue
                     
             score = 0
@@ -758,10 +780,6 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
                         effective_dist += 0.1
-            else:
-                # Add a load balancing penalty for unconstrained POIs to evenly distribute them
-                # across identical background POIs (e.g. multiple Magic Kingdom days)
-                effective_dist += len(anchor_clusters[a.id]) * 0.01
                         
             if dist <= 30 and effective_dist < best_dist:
                 best_dist = effective_dist
@@ -782,14 +800,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
             a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
             
-            # Sort the cluster by priority and constraint score descending so we schedule Must See and constrained ones first
+            # Sort the cluster by constraint score descending so we schedule the most constrained ones first
             cluster_pois = sorted(
                 anchor_clusters[a.id], 
-                key=lambda p: (
-                    getattr(p, 'priority', '') == 'Must See',
-                    bool(getattr(p, 'ideal_time_start', None)), 
-                    bool(getattr(p, 'valid_days_of_week', None))
-                ), 
+                key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
                 reverse=True
             )
             for rp in cluster_pois:
@@ -819,6 +833,8 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             
             c_days = getattr(centroid, 'valid_days_of_week', None)
             if rp_days and c_days and not any(d in c_days for d in rp_days):
+                print("Failed continue #12 at", slot_time)
+
                 continue
                 
             dist = maps.get_travel_time_minutes(centroid.location, rp.location)
@@ -1258,12 +1274,18 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
         # Deduplication check against existing POIs
         if any(p.lower() == name.lower() for p in existing_poi_names):
+            print("Failed continue #13 at", slot_time)
+
             continue
             
         # Deduplication check against accommodations
         if any(a.get('name') and (name.lower() in a.get('name').lower() or a.get('name').lower() in name.lower()) for a in sugg_accs):
+            print("Failed continue #14 at", slot_time)
+
             continue
         if any(acc_name and (name.lower() in acc_name.lower() or acc_name.lower() in name.lower()) for acc_name in existing_accs):
+            print("Failed continue #15 at", slot_time)
+
             continue
             
         query = s.get('search_query', name)
@@ -1308,6 +1330,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
         # Deduplication check
         if any(a.lower() == name.lower() for a in existing_accs):
+            print("Failed continue #16 at", slot_time)
+
             continue
             
         query = s.get('location', name)

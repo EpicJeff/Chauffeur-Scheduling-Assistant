@@ -466,13 +466,24 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
             
             earliest_time = datetime.time(7, 0) if is_food else datetime.time(8, 0)
             if slot_time < earliest_time:
+                print("Failed: earliest_time")
+
+            if slot_time < earliest_time:
                 continue
+            if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
+                print("Failed: hard_cap")
+
             if slot_time > hard_cap_start and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
                 
             slot_end_local = slot_end.astimezone(local_tz)
             if slot_end_local.date() > slot_local.date() and not (poi.ideal_time_end and "23" in poi.ideal_time_end):
                 continue
+                
+            if getattr(poi, 'valid_days_of_week', None):
+                if slot_local.weekday() not in poi.valid_days_of_week:
+                    print("Failed: valid_days")
+
                 
             if getattr(poi, 'valid_days_of_week', None):
                 if slot_local.weekday() not in poi.valid_days_of_week:
@@ -489,7 +500,16 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                 
                 # Add a 15-minute grace period to the ideal window
                 if s_slot < (s_mins - 15) or s_slot > (e_mins + 15):
+                    print("Failed: ideal_times start (s_slot=", s_slot, " s_mins=", s_mins, " e_mins=", e_mins, " slot_time=", slot_time, ")")
+
+                
+                # Add a 15-minute grace period to the ideal window
+                if s_slot < (s_mins - 15) or s_slot > (e_mins + 15):
                     continue
+                # The end shouldn't be more than 2 hours past the ideal end time
+                if e_slot > (e_mins + 120):
+                    print("Failed: ideal_times end")
+
                 # The end shouldn't be more than 2 hours past the ideal end time
                 if e_slot > (e_mins + 120):
                     continue
@@ -539,6 +559,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                     break
                     
             if overlaps:
+                print("Failed: overlaps")
+
+                    
+            if overlaps:
                 continue
                 
             if is_food and not is_dessert:
@@ -566,6 +590,10 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                         if get_meal_type(sp_time) == slot_meal:
                             conflict = True
                             break
+                
+                if conflict:
+                    print("Failed: meal conflict")
+
                 
                 if conflict:
                     continue
@@ -758,10 +786,6 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
                         effective_dist += 0.1
-            else:
-                # Add a load balancing penalty for unconstrained POIs to evenly distribute them
-                # across identical background POIs (e.g. multiple Magic Kingdom days)
-                effective_dist += len(anchor_clusters[a.id]) * 0.01
                         
             if dist <= 30 and effective_dist < best_dist:
                 best_dist = effective_dist
@@ -782,14 +806,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
             a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
             
-            # Sort the cluster by priority and constraint score descending so we schedule Must See and constrained ones first
+            # Sort the cluster by constraint score descending so we schedule the most constrained ones first
             cluster_pois = sorted(
                 anchor_clusters[a.id], 
-                key=lambda p: (
-                    getattr(p, 'priority', '') == 'Must See',
-                    bool(getattr(p, 'ideal_time_start', None)), 
-                    bool(getattr(p, 'valid_days_of_week', None))
-                ), 
+                key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
                 reverse=True
             )
             for rp in cluster_pois:

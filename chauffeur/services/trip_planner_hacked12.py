@@ -656,13 +656,14 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
             slots.append((score, slot_start))
         return slots
         
-    valid_slots = find_slots(enforce_ideal_times=True)
+    valid_slots = []
         
     if not valid_slots:
         suggested_fixes = []
         if ideal_start_time != datetime.time(9, 0) or ideal_end_time != datetime.time(21, 0):
             # Try without ideal times
             alt_slots = find_slots(enforce_ideal_times=False)
+            print('ALT SLOTS:', alt_slots)
             if alt_slots:
                 alt_slots.sort(key=lambda x: (-x[0], x[1]))
                 best_alt_start = alt_slots[0][1]
@@ -758,10 +759,6 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
                         effective_dist += 0.1
-            else:
-                # Add a load balancing penalty for unconstrained POIs to evenly distribute them
-                # across identical background POIs (e.g. multiple Magic Kingdom days)
-                effective_dist += len(anchor_clusters[a.id]) * 0.01
                         
             if dist <= 30 and effective_dist < best_dist:
                 best_dist = effective_dist
@@ -782,14 +779,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
             a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
             
-            # Sort the cluster by priority and constraint score descending so we schedule Must See and constrained ones first
+            # Sort the cluster by constraint score descending so we schedule the most constrained ones first
             cluster_pois = sorted(
                 anchor_clusters[a.id], 
-                key=lambda p: (
-                    getattr(p, 'priority', '') == 'Must See',
-                    bool(getattr(p, 'ideal_time_start', None)), 
-                    bool(getattr(p, 'valid_days_of_week', None))
-                ), 
+                key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
                 reverse=True
             )
             for rp in cluster_pois:

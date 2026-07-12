@@ -758,10 +758,6 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
                         effective_dist += 0.1
-            else:
-                # Add a load balancing penalty for unconstrained POIs to evenly distribute them
-                # across identical background POIs (e.g. multiple Magic Kingdom days)
-                effective_dist += len(anchor_clusters[a.id]) * 0.01
                         
             if dist <= 30 and effective_dist < best_dist:
                 best_dist = effective_dist
@@ -782,14 +778,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
             a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
             
-            # Sort the cluster by priority and constraint score descending so we schedule Must See and constrained ones first
+            # Sort the cluster by constraint score descending so we schedule the most constrained ones first
             cluster_pois = sorted(
                 anchor_clusters[a.id], 
-                key=lambda p: (
-                    getattr(p, 'priority', '') == 'Must See',
-                    bool(getattr(p, 'ideal_time_start', None)), 
-                    bool(getattr(p, 'valid_days_of_week', None))
-                ), 
+                key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
                 reverse=True
             )
             for rp in cluster_pois:

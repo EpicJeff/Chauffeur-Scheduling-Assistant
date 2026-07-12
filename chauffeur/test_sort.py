@@ -1,24 +1,26 @@
-import json
-from models.schemas import TripMetadata
-db = json.load(open("data/db_copy.json", "r"))
-trip = TripMetadata(**db.get("trip_metadata", {}).get("14"))
+class DummyPOI:
+    def __init__(self, name, ideal_time_start=None, valid_days_of_week=None, priority='Normal'):
+        self.name = name
+        self.ideal_time_start = ideal_time_start
+        self.valid_days_of_week = valid_days_of_week
+        self.priority = priority
+        
+pois = [
+    DummyPOI("Akershus", ideal_time_start="17:30", valid_days_of_week=[0], priority="Must See"),
+    DummyPOI("Garden Grill", priority="Must See"),
+    DummyPOI("Unconstrained"),
+    DummyPOI("Columbia Harbour", ideal_time_start="17:30", priority="Must See")
+]
 
-pois = []
-for p in trip.pois:
-    if "Boma" in p.name or "Magic Kingdom" in p.name or "Be Our Guest" in p.name:
-        pois.append(p)
-    elif "Disney Springs" in p.name:
-        pois.append(p)
-
-print("Unsorted:")
-for p in pois:
-    print(f"{p.name} - ideal: {p.ideal_time_start}, valid: {p.valid_days_of_week}")
-
-pois_sorted = sorted(
+cluster_pois = sorted(
     pois, 
-    key=lambda p: (bool(getattr(p, "ideal_time_start", None)), bool(getattr(p, "valid_days_of_week", None))), 
+    key=lambda p: (
+        getattr(p, 'priority', '') == 'Must See',
+        bool(getattr(p, 'ideal_time_start', None)), 
+        bool(getattr(p, 'valid_days_of_week', None))
+    ), 
     reverse=True
 )
-print("\nSorted:")
-for p in pois_sorted:
-    print(f"{p.name} - ideal: {p.ideal_time_start}, valid: {p.valid_days_of_week}")
+
+for p in cluster_pois:
+    print(p.name, p.ideal_time_start, p.valid_days_of_week, p.priority)
