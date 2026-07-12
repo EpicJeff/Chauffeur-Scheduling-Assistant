@@ -722,7 +722,14 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
     regular_pois = [p for p in target_pois if not getattr(p, 'is_background', False)]
     
     anchors.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
-    regular_pois.sort(key=lambda x: prio_map.get(x.priority or 'want', 2), reverse=True)
+    regular_pois.sort(
+        key=lambda x: (
+            bool(getattr(x, 'ideal_time_start', None)),
+            bool(getattr(x, 'valid_days_of_week', None)),
+            prio_map.get(x.priority or 'want', 2)
+        ), 
+        reverse=True
+    )
     
     # Map regular POIs to their closest anchor
     anchor_clusters = {a.id: [] for a in anchors}
@@ -787,6 +794,13 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
         if not added:
             standalone_clusters.append([rp])
             
+    # Sort the list of clusters so that clusters containing highly constrained POIs are scheduled BEFORE unconstrained clusters!
+    standalone_clusters = sorted(
+        standalone_clusters,
+        key=lambda c: max((bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))) for p in c) if c else (False, False),
+        reverse=True
+    )
+    
     for cluster in standalone_clusters:
         if not cluster: continue
         
