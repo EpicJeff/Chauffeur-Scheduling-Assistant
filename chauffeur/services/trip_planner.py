@@ -738,12 +738,31 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
     for rp in regular_pois:
         best_anchor = None
         best_dist = float('inf')
+        rp_days = getattr(rp, 'valid_days_of_week', None)
+        
         for a in anchors:
             if not rp.location or not a.location: continue
             dist = maps.get_travel_time_minutes(a.location, rp.location)
-            if dist <= 30 and dist < best_dist:
-                best_dist = dist
+            
+            penalty = 0
+            if rp_days:
+                a_days = getattr(a, 'valid_days_of_week', None)
+                if a.scheduled_start:
+                    import zoneinfo
+                    trip_tz_str = getattr(trip, 'timeZone', None)
+                    local_tz = zoneinfo.ZoneInfo(trip_tz_str) if trip_tz_str and trip_tz_str != "UTC" else zoneinfo.ZoneInfo('America/New_York')
+                    a_day = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).weekday()
+                    if a_day not in rp_days:
+                        penalty = 1000
+                elif a_days:
+                    if not any(d in a_days for d in rp_days):
+                        penalty = 1000
+                        
+            effective_dist = dist + penalty
+            if effective_dist <= 30 + penalty and effective_dist < best_dist:
+                best_dist = effective_dist
                 best_anchor = a
+                
         if best_anchor:
             anchor_clusters[best_anchor.id].append(rp)
         else:
@@ -783,9 +802,15 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
     standalone_clusters = []
     for rp in unassigned_pois:
         added = False
+        rp_days = getattr(rp, 'valid_days_of_week', None)
         for cluster in standalone_clusters:
             centroid = cluster[0]
             if not rp.location or not centroid.location: continue
+            
+            c_days = getattr(centroid, 'valid_days_of_week', None)
+            if rp_days and c_days and not any(d in c_days for d in rp_days):
+                continue
+                
             dist = maps.get_travel_time_minutes(centroid.location, rp.location)
             if dist <= 20:
                 cluster.append(rp)
