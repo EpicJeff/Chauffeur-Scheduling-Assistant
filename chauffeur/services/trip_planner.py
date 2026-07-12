@@ -752,7 +752,13 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             a_start = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc)
             a_end = datetime.datetime.fromtimestamp(a.scheduled_end, tz=datetime.timezone.utc)
             
-            for rp in anchor_clusters[a.id]:
+            # Sort the cluster by constraint score descending so we schedule the most constrained ones first
+            cluster_pois = sorted(
+                anchor_clusters[a.id], 
+                key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
+                reverse=True
+            )
+            for rp in cluster_pois:
                 rp_event_id, rp_reason, rp_meta = schedule_poi(trip, rp, bounds=(a_start, a_end))
                 if rp_event_id:
                     yield {"poi_id": rp.id, "success": True, "reason": None}
@@ -783,6 +789,14 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             
     for cluster in standalone_clusters:
         if not cluster: continue
+        
+        # Sort the cluster by constraint score descending so the most constrained POI dictates the day of the cluster!
+        cluster = sorted(
+            cluster, 
+            key=lambda p: (bool(getattr(p, 'ideal_time_start', None)), bool(getattr(p, 'valid_days_of_week', None))), 
+            reverse=True
+        )
+        
         # Schedule the first item normally (no bounds)
         first_poi = cluster[0]
         event_id, reason, meta = schedule_poi(trip, first_poi)
