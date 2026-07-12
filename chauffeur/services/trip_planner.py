@@ -744,7 +744,8 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             if not rp.location or not a.location: continue
             dist = maps.get_travel_time_minutes(a.location, rp.location)
             
-            penalty = 0
+            # Use day match to break ties, but don't override distance
+            effective_dist = dist
             if rp_days:
                 a_days = getattr(a, 'valid_days_of_week', None)
                 if a.scheduled_start:
@@ -753,13 +754,12 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     local_tz = zoneinfo.ZoneInfo(trip_tz_str) if trip_tz_str and trip_tz_str != "UTC" else zoneinfo.ZoneInfo('America/New_York')
                     a_day = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).weekday()
                     if a_day not in rp_days:
-                        penalty = 1000
+                        effective_dist += 0.1 # Slight penalty to break ties
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
-                        penalty = 1000
+                        effective_dist += 0.1
                         
-            effective_dist = dist + penalty
-            if effective_dist <= 30 + penalty and effective_dist < best_dist:
+            if dist <= 30 and effective_dist < best_dist:
                 best_dist = effective_dist
                 best_anchor = a
                 
@@ -789,8 +789,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 if rp_event_id:
                     yield {"poi_id": rp.id, "success": True, "reason": None}
                 else:
-                    # Failed to schedule inside the anchor. Put it back in unassigned pool to try elsewhere.
-                    unassigned_pois.append(rp)
+                    # Failed to schedule inside the anchor. Yield as failure so user can resolve it.
+                    res = {"poi_id": rp.id, "success": False, "reason": rp_reason}
+                    if rp_meta and "suggested_fixes" in rp_meta: res["suggested_fixes"] = rp_meta["suggested_fixes"]
+                    yield res
         else:
             # Anchor failed. Drop the cluster into unassigned.
             res = {"poi_id": a.id, "success": False, "reason": reason}
