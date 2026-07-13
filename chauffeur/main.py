@@ -2989,12 +2989,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             curr += datetime.timedelta(days=1)
 
     # Group all fetched events by local date (for hashing)
+    original_trips_to_remove = set()
     for e in all_fetched_events:
         curr = e.start.astimezone()
         end = e.end.astimezone()
         
         # If it's a multi-day background trip, we will slice it into single-day chunks for the UI and solver
         if getattr(e, 'event_type', '') == 'background_trip':
+            original_trips_to_remove.add(e.id)
             while curr.date() <= end.date():
                 if curr.date() == end.date() and end.hour == 0 and end.minute == 0 and curr.date() != e.start.astimezone().date():
                     break
@@ -3022,6 +3024,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     if e not in fetched_by_date[date_str]:
                         fetched_by_date[date_str].append(e)
                 curr += datetime.timedelta(days=1)
+                
+    for tid in original_trips_to_remove:
+        all_events_for_ui.pop(tid, None)
 
     old_cache = storage.get_cached_schedule()
     previous_assignments = old_cache.get("assignments", {})
@@ -3337,7 +3342,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Identify which dates actually need solving
     dates_needing_solve = []
     for date_str, daily_fetched in fetched_by_date.items():
-        daily_hash = hash_events(daily_fetched)
+        daily_hash = hash_events(events_to_solve_by_date[date_str])
         daily_cache = storage.get_cached_daily_schedule(date_str)
         if not (daily_cache and daily_cache.get('events_hash') == daily_hash and not force_refresh):
             dates_needing_solve.append(date_str)
@@ -3365,7 +3370,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         # Check abort at the start of each daily iteration
         check_abort_refresh()
 
-        daily_hash = hash_events(daily_fetched)
+        daily_hash = hash_events(events_to_solve_by_date[date_str])
         daily_events_to_solve = events_to_solve_by_date[date_str]
 
         # Check cache
@@ -3464,7 +3469,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Pass 3: Route Edges and Caching
     from models.schemas import Event
     for date_str, daily_fetched in fetched_by_date.items():
-        daily_hash = hash_events(daily_fetched)
+        daily_hash = hash_events(events_to_solve_by_date[date_str])
         daily_events_to_solve = events_to_solve_by_date[date_str]
         base = base_schedules[date_str]
 
@@ -3783,7 +3788,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "no_location": combined_events_to_solve and [e.get('id') for e in combined_events_to_solve if not e.get('location')] or []
                             }
                             # Hash the combined events list to use as events_hash
-                            combined_hash = storage.hash_events(combined_events_to_solve)
+                            combined_hash = hash_events(combined_events_to_solve)
                             storage.save_custom_schedule(start_date, end_date, cached, combined_hash)
                     except Exception as ex:
                         logger.error(f"Failed to combine daily caches: {ex}")

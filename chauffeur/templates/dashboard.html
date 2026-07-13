@@ -2197,6 +2197,13 @@
                         }
                     }
                 }
+                
+                if (ev.event_type === 'background_trip') {
+                    sysDrivers.forEach(d => {
+                        if (!targetCols.includes(d.id)) targetCols.push(d.id);
+                    });
+                    if (!targetCols.includes('unassigned')) targetCols.push('unassigned');
+                }
 
                 if (targetCols.length === 0) return;
 
@@ -2642,7 +2649,10 @@
                             badgeHtml = '<div class="absolute -top-2 -right-2 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg uppercase tracking-wider z-10">No Driver</div>';
                         }
 
-                        const isAssignedToThisColumn = (localAssignments && localAssignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
+                        let isAssignedToThisColumn = (localAssignments && localAssignments[ev.id] === c_id) || (ghost_assignments && ghost_assignments[ev.id] === c_id) || (c_id === 'unassigned' && unassigned && unassigned.includes(ev.id)) || (c_id === 'no_location' && no_location && no_location.includes(ev.id));
+                        if (data.driver_events && data.driver_events[c_id] && data.driver_events[c_id].includes(ev.id)) {
+                            isAssignedToThisColumn = true;
+                        }
                         const isDriverOnly = !isAssignedToThisColumn;
 
                         let leftStyle = '28px';

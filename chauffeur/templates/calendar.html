@@ -457,20 +457,35 @@
                         if (data.events && data.events.length > 0) {
                             data.events.forEach(ev => {
                                 if (ev.event_type === 'background_trip') {
-                                    eventsMap.set(ev.id, {
-                                        id: ev.id,
-                                        title: '✈️ ' + ev.title,
-                                        start: ev.start,
-                                        end: ev.end,
-                                        allDay: true,
-                                        backgroundColor: '#1e3a8a',
-                                        borderColor: '#3b82f6',
-                                        extendedProps: {
-                                            isTrip: true,
-                                            tripUrl: 'trip?event_id=' + ev.id,
-                                            rawColor: '#1e3a8a'
+                                    let baseId = ev.id;
+                                    if (baseId.includes('_slice_')) {
+                                        baseId = baseId.split('_slice_')[0];
+                                    }
+                                    
+                                    if (eventsMap.has(baseId)) {
+                                        let existing = eventsMap.get(baseId);
+                                        if (new Date(ev.end) > new Date(existing.end)) {
+                                            existing.end = ev.end;
                                         }
-                                    });
+                                        if (new Date(ev.start) < new Date(existing.start)) {
+                                            existing.start = ev.start;
+                                        }
+                                    } else {
+                                        eventsMap.set(baseId, {
+                                            id: baseId,
+                                            title: '✈️ ' + ev.title,
+                                            start: ev.start,
+                                            end: ev.end,
+                                            allDay: true,
+                                            backgroundColor: '#1e3a8a',
+                                            borderColor: '#3b82f6',
+                                            extendedProps: {
+                                                isTrip: true,
+                                                tripUrl: 'trip?event_id=' + baseId,
+                                                rawColor: '#1e3a8a'
+                                            }
+                                        });
+                                    }
                                     return;
                                 }
                                 if (ev.event_type !== 'background_trip') {
