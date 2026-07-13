@@ -2628,6 +2628,9 @@
         }
 
         async function saveSettings() {
+            document.getElementById('settings-modal').classList.add('hidden');
+            document.getElementById('schedule-loading-overlay').classList.remove('hidden');
+
             tripData.metadata.background_url = document.getElementById('settings-bg-query').value;
             tripData.metadata.notes = document.getElementById('settings-notes').value;
             tripData.metadata.budget_min_usd = parseInt(document.getElementById('settings-budget-min').value) || 0;
@@ -2645,7 +2648,6 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(tripData.metadata)
             });
-            closeSettingsModal();
             renderTrip();
         }
 
