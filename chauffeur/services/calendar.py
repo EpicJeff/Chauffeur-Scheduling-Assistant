@@ -75,7 +75,7 @@ def _fetch_single_calendar(cal_id, time_min, time_max):
         return cal_id, events
     except Exception as ex:
         print(f"Error fetching from calendar {cal_id}: {ex}")
-        return cal_id, []
+        return cal_id, None
 
 def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, end_date_str=None) -> list[Event]:
     if start_date_str and end_date_str:
@@ -105,6 +105,8 @@ def fetch_upcoming_events(calendar_ids: list[str], days=7, start_date_str=None, 
         futures = [executor.submit(_fetch_single_calendar, cal_id, time_min, time_max) for cal_id in calendar_ids]
         for future in concurrent.futures.as_completed(futures):
             cal_id, events = future.result()
+            if events is None:
+                raise Exception(f"Failed to fetch events for calendar {cal_id}. Aborting to prevent cache poisoning.")
             for e in events:
                 # Handle all-day events vs timed events
                 start_str = e['start'].get('dateTime', e['start'].get('date'))

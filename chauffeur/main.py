@@ -3702,6 +3702,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             d_str = str(current)
                             daily_cache = storage.get_cached_daily_schedule(d_str)
                             if not daily_cache or 'schedule' not in daily_cache:
+                                all_cached = False
                                 current += timedelta(days=1)
                                 continue
                                 
