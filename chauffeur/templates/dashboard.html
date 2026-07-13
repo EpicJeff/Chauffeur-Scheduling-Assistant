@@ -2379,7 +2379,7 @@
                                 !(data.unassigned && data.unassigned.includes(e.id)) &&
                                 !(data.no_location && data.no_location.includes(e.id));
                             const durationMins = (new Date(e.end) - new Date(e.start)) / 60000;
-                            if (e.event_type !== 'background_trip' && !isDriverOnlyEv && !e.all_day && durationMins < 1430) {
+                            if (e.event_type !== 'background_trip' && !e.all_day && durationMins < 1430) {
                                 allEventsForDate.push(e);
                             }
                         });
