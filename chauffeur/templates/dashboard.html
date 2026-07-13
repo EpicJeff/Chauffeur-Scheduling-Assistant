@@ -469,6 +469,24 @@
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isReadOnly = urlParams.get('readonly') === 'true' || isKiosk;
 
+        function formatYMD(date) {
+            const d = new Date(date);
+            const month = '' + (d.getMonth() + 1);
+            const day = '' + d.getDate();
+            const year = d.getFullYear();
+            return [year, month.padStart(2, '0'), day.padStart(2, '0')].join('-');
+        }
+
+        function formatTime(dateStr) {
+            const is24h = (window.currentData && window.currentData.settings && window.currentData.settings.time_format_24h) || false;
+            return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !is24h });
+        }
+
+        function formatDateStr(dateStr) {
+            if (dateStr.length === 10) dateStr += 'T00:00:00';
+            return new Date(dateStr).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+        }
+
         // Kiosk Chat functionality
         function toggleKioskChat() {
             const popup = document.getElementById('kiosk-chat-popup');
@@ -748,24 +766,6 @@
 
         
 
-
-        function formatYMD(date) {
-            const d = new Date(date);
-            const month = '' + (d.getMonth() + 1);
-            const day = '' + d.getDate();
-            const year = d.getFullYear();
-            return [year, month.padStart(2, '0'), day.padStart(2, '0')].join('-');
-        }
-
-        function formatTime(dateStr) {
-            const is24h = (window.currentData && window.currentData.settings && window.currentData.settings.time_format_24h) || false;
-            return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !is24h });
-        }
-
-        function formatDateStr(dateStr) {
-            if (dateStr.length === 10) dateStr += 'T00:00:00';
-            return new Date(dateStr).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-        }
 
         let currentEventsMap = {};
         let activeEventId = null;
