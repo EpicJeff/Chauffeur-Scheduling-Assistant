@@ -3707,17 +3707,14 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 continue
                                 
                             sched = daily_cache['schedule']
-                            for d_id, evs in sched.get('assignments', {}).items():
-                                if d_id not in combined_assignments:
-                                    combined_assignments[d_id] = []
-                                combined_assignments[d_id].extend(evs)
+                            for e_id, d_id in sched.get('assignments', {}).items():
+                                combined_assignments[e_id] = d_id
+                                
                             combined_unassigned.extend(sched.get('unassigned', []))
                             combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
                             
-                            for d_id, evs in sched.get('ghost_assignments', {}).items():
-                                if d_id not in combined_ghost_assignments:
-                                    combined_ghost_assignments[d_id] = []
-                                combined_ghost_assignments[d_id].extend(evs)
+                            for e_id, d_id in sched.get('ghost_assignments', {}).items():
+                                combined_ghost_assignments[e_id] = d_id
                             
                             existing_ghost_ids = {g['id'] for g in combined_ghost_drivers}
                             for g in sched.get('ghost_drivers', []):
@@ -3761,7 +3758,9 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "passengers": storage.get_all_passengers(),
                                 "no_location": combined_events_to_solve and [e.get('id') for e in combined_events_to_solve if not e.get('location')] or []
                             }
-                            storage.save_custom_schedule(start_date, end_date, cached)
+                            # Hash the combined events list to use as events_hash
+                            combined_hash = storage.hash_events(combined_events_to_solve)
+                            storage.save_custom_schedule(start_date, end_date, cached, combined_hash)
                     except Exception as ex:
                         logger.error(f"Failed to combine daily caches: {ex}")
                         pass
