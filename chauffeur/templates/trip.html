@@ -835,7 +835,7 @@
                 <button onclick="deleteTrip()" class="px-5 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-bold transition-colors">Delete Trip</button>
                 <div class="flex space-x-4">
                     <button onclick="closeSettingsModal()" class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                    <button onclick="saveSettings()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save</button>
+                    <button id="save-settings-btn" onclick="saveSettings()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save</button>
                 </div>
             </div>
         </div>
@@ -2627,6 +2627,65 @@
             ]);
         }
 
+        async function doSaveSettings(newMetadata, rebuild) {
+            const btn = document.getElementById('save-settings-btn');
+            const originalText = btn ? btn.innerHTML : 'Save';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="animate-spin h-5 w-5 mr-2 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving...`;
+            }
+
+            try {
+                if (rebuild) {
+                    closeSettingsModal();
+                }
+
+                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(newMetadata)
+                });
+                
+                // Update local js state
+                Object.assign(tripData.metadata, newMetadata);
+                
+                if (rebuild) {
+                    await rebuildSchedule(); // This will auto-fetch and renderTrip inside it
+                } else {
+                    // Soft-update visuals
+                    const banner = document.getElementById('bg-img');
+                    if (banner) {
+                        const coreTitle = tripData.event.title ? tripData.event.title.split(/[:-]/)[0].trim() : '';
+                        const loc = tripData.event.location || 'Unknown Location';
+                        const searchQuery = newMetadata.background_url || coreTitle || loc.split(',')[0] || 'nature';
+                        
+                        if (searchQuery.startsWith('http')) {
+                            banner.src = searchQuery;
+                        } else {
+                            banner.src = `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
+                        }
+                    }
+                    
+                    document.getElementById('trip-notes-display').innerText = newMetadata.notes || "No general notes.";
+                    renderAttendeesPills();
+                    updateBudgetTracker();
+                    
+                    // If dates changed but we didn't rebuild, just render Trip to show new columns
+                    if (newMetadata.is_draft && 
+                        (newMetadata.draft_start_day !== tripData.metadata.draft_start_day || 
+                         newMetadata.draft_duration_days !== tripData.metadata.draft_duration_days)) {
+                        renderTrip(); 
+                    }
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+                closeSettingsModal();
+            }
+        }
+
         async function saveSettings() {
             const newBgUrl = document.getElementById('settings-bg-query').value;
             const newNotes = document.getElementById('settings-notes').value;
@@ -2652,6 +2711,10 @@
                 return true;
             };
             
+            const datesChanged = (tripData.metadata.is_draft && 
+                ((tripData.metadata.draft_start_day || 0) !== newDraftStartDay || 
+                 (tripData.metadata.draft_duration_days || 1) !== newDraftDuration));
+                 
             const hasChanged = 
                 (tripData.metadata.background_url || '') !== newBgUrl ||
                 (tripData.metadata.notes || '') !== newNotes ||
@@ -2659,34 +2722,55 @@
                 (tripData.metadata.budget_max_usd || 0) !== newBudgetMax ||
                 (tripData.metadata.flight_preferences || '') !== newFlightPrefs ||
                 !arrEq(tripData.metadata.attendees || [], newAttendees) ||
-                (tripData.metadata.is_draft && (tripData.metadata.draft_start_day || 0) !== newDraftStartDay) ||
-                (tripData.metadata.is_draft && (tripData.metadata.draft_duration_days || 1) !== newDraftDuration);
+                datesChanged;
                 
             if (!hasChanged) {
                 closeSettingsModal();
                 return;
             }
-
-            document.getElementById('settings-modal').classList.add('hidden');
-            document.getElementById('schedule-loading-overlay').classList.remove('hidden');
-
-            tripData.metadata.background_url = newBgUrl;
-            tripData.metadata.notes = newNotes;
-            tripData.metadata.budget_min_usd = newBudgetMin;
-            tripData.metadata.budget_max_usd = newBudgetMax;
-            tripData.metadata.flight_preferences = newFlightPrefs;
-            tripData.metadata.attendees = newAttendees;
-            if (tripData.metadata.is_draft) {
-                tripData.metadata.draft_start_day = newDraftStartDay;
-                tripData.metadata.draft_duration_days = newDraftDuration;
-            }
             
-            await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(tripData.metadata)
-            });
-            renderTrip();
+            const newMetadata = {
+                ...tripData.metadata,
+                background_url: newBgUrl,
+                notes: newNotes,
+                budget_min_usd: newBudgetMin,
+                budget_max_usd: newBudgetMax,
+                flight_preferences: newFlightPrefs,
+                attendees: newAttendees
+            };
+            
+            if (tripData.metadata.is_draft) {
+                newMetadata.draft_start_day = newDraftStartDay;
+                newMetadata.draft_duration_days = newDraftDuration;
+            }
+
+            if (datesChanged) {
+                openConfirmModal("Dates Changed", "You've changed the start day or duration of your trip. This will shift your timeline bounds. Would you like to automatically rebuild the itinerary to fit the new dates, or just update the dates?", [
+                    {
+                        text: "Cancel",
+                        className: "px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium",
+                        onClick: () => closeConfirmModal()
+                    },
+                    {
+                        text: "Just Update Dates",
+                        className: "px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-sm font-medium",
+                        onClick: () => {
+                            closeConfirmModal();
+                            doSaveSettings(newMetadata, false);
+                        }
+                    },
+                    {
+                        text: "Rebuild Itinerary",
+                        className: "px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium",
+                        onClick: () => {
+                            closeConfirmModal();
+                            doSaveSettings(newMetadata, true);
+                        }
+                    }
+                ]);
+            } else {
+                doSaveSettings(newMetadata, false);
+            }
         }
 
         function deleteTrip() {
