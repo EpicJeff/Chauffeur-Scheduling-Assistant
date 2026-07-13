@@ -3759,7 +3759,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             global_cache = storage.get_cached_schedule() or {}
                             cached = {
                                 "assignments": combined_assignments,
-                                "unassigned": combined_unassigned,
+                                "unassigned": combined_true_unassigned,
                                 "lateness_warnings": combined_lateness_warnings,
                                 "ghost_assignments": combined_ghost_assignments,
                                 "ghost_drivers": combined_ghost_drivers,
@@ -3771,6 +3771,13 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "conflicts": combined_conflicts,
                                 "scheduled_errands": combined_scheduled_errands,
                                 "calendar_metadata": global_cache.get("calendar_metadata", {}),
+                                "diagnostics": global_cache.get("diagnostics", {}),
+                                "matched_rules": global_cache.get("matched_rules", {}),
+                                "driver_events": global_cache.get("driver_events", {}),
+                                "home_location": global_cache.get("home_location", ""),
+                                "overridden_events": global_cache.get("overridden_events", []),
+                                "passenger_calendar_ids": global_cache.get("passenger_calendar_ids", []),
+                                "ai_metadata": global_cache.get("ai_metadata", {}),
                                 "drivers": [d.dict() if hasattr(d, 'dict') else d for d in storage.get_all_drivers() if not d.get('is_disabled')],
                                 "passengers": storage.get_all_passengers(),
                                 "no_location": combined_events_to_solve and [e.get('id') for e in combined_events_to_solve if not e.get('location')] or []
