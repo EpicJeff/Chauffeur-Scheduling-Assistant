@@ -1487,10 +1487,10 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             if not reason:
                 e_pax_ids = get_event_passenger_ids(e, passengers)
                 for ae in events:
-                    if getattr(ae, 'all_day', False): continue
+                    if getattr(ae, 'all_day', False) and getattr(ae, 'event_type', '') != 'background_trip': continue
                     if not getattr(ae, 'location', '') or not str(ae.location).strip(): continue
                     if ae.id == e.id: continue
-                    if ae.start.date() != e.start.date(): continue
+                    if e.start.date() < ae.start.date() or e.start.date() > ae.end.date(): continue
                     needs_driver = getattr(ae, 'event_type', '') != 'background_trip'
                     if needs_driver and ae.id not in assignments: continue
                     
@@ -1538,7 +1538,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if assigned_d_id == d.id and ae_id != e.id:
                         ae = event_map.get(ae_id)
                         if not ae: continue
-                        if ae.start.date() != e.start.date(): continue
+                        if e.start.date() < ae.start.date() or e.start.date() > ae.end.date(): continue
                         
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
                         needed_secs = (travel) * 60

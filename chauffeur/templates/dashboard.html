@@ -602,16 +602,18 @@
                 ':' + pad(Math.abs(tzo) % 60);
         }
 
-        async function fetchSchedule(isPagination = false, isLoadingNext = false, isLoadingPrev = false) {
+        async function fetchSchedule(isPagination = false, isLoadingNext = false, isLoadingPrev = false, isBackground = false) {
             const btnPrev = document.getElementById('btn-prev-day');
             const btnNext = document.getElementById('btn-next-day');
-            if (btnPrev) {
-                btnPrev.disabled = true;
-                if (isLoadingPrev) btnPrev.innerHTML = '<span class="animate-pulse">Loading...</span>';
-            }
-            if (btnNext) {
-                btnNext.disabled = true;
-                if (isLoadingNext) btnNext.innerHTML = '<span class="animate-pulse">Loading...</span>';
+            if (!isBackground) {
+                if (btnPrev) {
+                    btnPrev.disabled = true;
+                    if (isLoadingPrev) btnPrev.innerHTML = '<span class="animate-pulse">Loading...</span>';
+                }
+                if (btnNext) {
+                    btnNext.disabled = true;
+                    if (isLoadingNext) btnNext.innerHTML = '<span class="animate-pulse">Loading...</span>';
+                }
             }
 
             try {
@@ -675,13 +677,15 @@
                 console.error(err);
                 showError("Error: " + err.message + "\n" + err.stack);
             } finally {
-                if (btnPrev) {
-                    btnPrev.disabled = false;
-                    btnPrev.innerHTML = '&larr; Prev Day';
-                }
-                if (btnNext) {
-                    btnNext.disabled = false;
-                    btnNext.innerHTML = 'Next Day &rarr;';
+                if (!isBackground) {
+                    if (btnPrev) {
+                        btnPrev.disabled = false;
+                        btnPrev.innerHTML = '&larr; Prev Day';
+                    }
+                    if (btnNext) {
+                        btnNext.disabled = false;
+                        btnNext.innerHTML = 'Next Day &rarr;';
+                    }
                 }
                 
                 const datePicker = document.getElementById('nav-date-picker');
@@ -3176,9 +3180,9 @@
         evtSource.onmessage = function (event) {
             if (event.data === "update") {
                 if (currentStartDate && currentEndDate) {
-                    fetchSchedule(true);
+                    fetchSchedule(true, false, false, true);
                 } else {
-                    fetchSchedule();
+                    fetchSchedule(false, false, false, true);
                 }
             }
         };
