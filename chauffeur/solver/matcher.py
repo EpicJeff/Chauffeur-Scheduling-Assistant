@@ -358,7 +358,12 @@ def solve_schedule(
                     
                     if e.start < trip['end'] and e.end > trip['start']:
                         driver_on_trip = (f"driver_{d.id}" in trip_ents) or is_global
-                        pax_on_trip = bool(e_ents.intersection(trip_ents)) or is_global
+                        
+                        pax_on_trip = False
+                        if is_global:
+                            pax_on_trip = True
+                        elif e_ents:
+                            pax_on_trip = e_ents.issubset(trip_ents)
                         
                         if driver_on_trip:
                             # Driver on trip CANNOT take events that are far away from the trip location
@@ -1501,13 +1506,27 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                             if lateness_mins > min(60, e_duration * 0.75):
                                 lateness_mins = 0
-                            reason = {
-                                "text": f"Passenger cannot travel from/to '{ae.title}' in time.",
-                                "type": "conflict",
-                                "conflict_event_title": ae.title,
-                                "lateness_mins": lateness_mins if lateness_mins > 0 else None,
-                                "suggested_tolerance_type": "departure" if e.start <= ae.start else "arrival"
-                            }
+                            shared_cals = e_cals.intersection(ae.calendar_ids)
+                            if len(e_cals) > 1 and not e_cals.issubset(ae.calendar_ids):
+                                conflicting_cid = list(shared_cals)[0]
+                                conflicting_pax = next((p for p in passengers if str(p.id) == conflicting_cid or (p.calendar_ids and conflicting_cid in p.calendar_ids)), None)
+                                pax_name = getattr(conflicting_pax, 'name', f"Passenger {conflicting_cid}") if conflicting_pax else f"Passenger {conflicting_cid}"
+                                reason = {
+                                    "text": f"Passenger '{pax_name}' is double-booked with '{ae.title}'.",
+                                    "type": "passenger_conflict",
+                                    "conflict_event_title": ae.title,
+                                    "conflicting_passenger_id": conflicting_cid,
+                                    "conflicting_passenger_name": pax_name,
+                                    "action": "prompt_drop_passenger"
+                                }
+                            else:
+                                reason = {
+                                    "text": f"Passenger cannot travel from/to '{ae.title}' in time.",
+                                    "type": "conflict",
+                                    "conflict_event_title": ae.title,
+                                    "lateness_mins": lateness_mins if lateness_mins > 0 else None,
+                                    "suggested_tolerance_type": "departure" if e.start <= ae.start else "arrival"
+                                }
                             break
                             
             # 2.6 Driver Schedule Transit Check (Already Assigned Events)
