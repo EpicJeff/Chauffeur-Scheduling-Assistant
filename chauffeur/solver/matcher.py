@@ -1485,7 +1485,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                         
             # 2.5 Passenger Transit Check
             if not reason:
-                e_cals = set(e.calendar_ids)
+                e_pax_ids = get_event_passenger_ids(e, passengers)
                 for ae in events:
                     if getattr(ae, 'all_day', False): continue
                     if not getattr(ae, 'location', '') or not str(ae.location).strip(): continue
@@ -1493,7 +1493,10 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     if ae.start.date() != e.start.date(): continue
                     needs_driver = getattr(ae, 'event_type', '') != 'background_trip'
                     if needs_driver and ae.id not in assignments: continue
-                    if e_cals.intersection(ae.calendar_ids):
+                    
+                    ae_pax_ids = get_event_passenger_ids(ae, passengers)
+                    shared_pax_ids = e_pax_ids.intersection(ae_pax_ids)
+                    if shared_pax_ids:
                         travel = get_travel_time_minutes(e.location, ae.location) if e.location and ae.location else 20
                         needed_secs = (travel) * 60
                         if e.start <= ae.start:
@@ -1506,16 +1509,16 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             lateness_mins = math.ceil((needed_secs - gap) / 60.0)
                             if lateness_mins > min(60, e_duration * 0.75):
                                 lateness_mins = 0
-                            shared_cals = e_cals.intersection(ae.calendar_ids)
-                            if len(e_cals) > 1 and not e_cals.issubset(ae.calendar_ids):
-                                conflicting_cid = list(shared_cals)[0]
-                                conflicting_pax = next((p for p in passengers if str(p.id) == conflicting_cid or (p.calendar_ids and conflicting_cid in p.calendar_ids)), None)
-                                pax_name = getattr(conflicting_pax, 'name', f"Passenger {conflicting_cid}") if conflicting_pax else f"Passenger {conflicting_cid}"
+                                
+                            if len(e_pax_ids) > 1 and not e_pax_ids.issubset(ae_pax_ids):
+                                conflicting_pid = list(shared_pax_ids)[0]
+                                conflicting_pax = next((p for p in passengers if str(p.id) == conflicting_pid), None)
+                                pax_name = getattr(conflicting_pax, 'name', f"Passenger {conflicting_pid}") if conflicting_pax else f"Passenger {conflicting_pid}"
                                 reason = {
                                     "text": f"Passenger '{pax_name}' is double-booked with '{ae.title}'.",
                                     "type": "passenger_conflict",
                                     "conflict_event_title": ae.title,
-                                    "conflicting_passenger_id": conflicting_cid,
+                                    "conflicting_passenger_id": conflicting_pid,
                                     "conflicting_passenger_name": pax_name,
                                     "action": "prompt_drop_passenger"
                                 }
