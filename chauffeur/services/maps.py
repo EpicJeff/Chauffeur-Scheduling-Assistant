@@ -153,6 +153,8 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     # 1. Check cache first
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
+        if cached == -1:
+            return (900, 0) if return_traffic else 900
         return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
         
     # 2. If not in cache, fallback to priming the cache for just this pair
@@ -161,6 +163,8 @@ def get_travel_time_minutes(origin: Optional[str], destination: Optional[str], d
     # 3. Check cache again
     cached = storage.get_cached_travel_time(origin.lower(), destination.lower(), max_age_mins=cache_duration, ignore_age=not return_traffic)
     if cached is not None:
+        if cached == -1:
+            return (900, 0) if return_traffic else 900
         return (max(cached, min_time_mins), 0) if return_traffic else max(cached, min_time_mins)
         
     # 4. Return fallback if API fails (do not cache so it retries later)
@@ -358,7 +362,7 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                 if dur_sec is not None:
                                     mins = int(round(dur_sec / 60.0))
                                 else:
-                                    mins = 900
+                                    mins = -1
                                 storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                     return True
                 else:
@@ -430,10 +434,13 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                 data = resp.json()
                                 routes = data.get("routes", [])
                                 if routes:
-                                    dur_sec = routes[0].get("duration", 900)
-                                    mins = int(round(dur_sec / 60.0))
+                                    dur_sec = routes[0].get("duration", -1)
+                                    if dur_sec == -1:
+                                        mins = -1
+                                    else:
+                                        mins = int(round(dur_sec / 60.0))
                                 else:
-                                    mins = 900
+                                    mins = -1
                                 storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
                                 success_count += 1
                             else:
@@ -495,7 +502,7 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                             if dur_sec is not None:
                                 mins = int(round(dur_sec / 60.0))
                             else:
-                                mins = 900
+                                mins = -1
                             storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                 return True
             else:
