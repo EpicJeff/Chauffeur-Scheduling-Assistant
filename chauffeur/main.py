@@ -3710,8 +3710,13 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             for e_id, d_id in sched.get('assignments', {}).items():
                                 combined_assignments[e_id] = d_id
                                 
-                            combined_unassigned.extend(sched.get('unassigned', []))
-                            combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
+                            for e_id in sched.get('unassigned', []):
+                                if e_id not in combined_unassigned:
+                                    combined_unassigned.append(e_id)
+                            
+                            for lw in sched.get('lateness_warnings', []):
+                                if lw not in combined_lateness_warnings:
+                                    combined_lateness_warnings.append(lw)
                             
                             for e_id, d_id in sched.get('ghost_assignments', {}).items():
                                 combined_ghost_assignments[e_id] = d_id
@@ -3722,13 +3727,25 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                     combined_ghost_drivers.append(g)
                                     existing_ghost_ids.add(g['id'])
                                     
-                            combined_events_to_solve.extend(sched.get('events', []))
+                            existing_event_ids = {e['id'] if isinstance(e, dict) else getattr(e, 'id', None) for e in combined_events_to_solve}
+                            for ev in sched.get('events', []):
+                                ev_id = ev['id'] if isinstance(ev, dict) else getattr(ev, 'id', None)
+                                if ev_id and ev_id not in existing_event_ids:
+                                    combined_events_to_solve.append(ev)
+                                    existing_event_ids.add(ev_id)
                             merge_edges(combined_route_edges, sched.get('route_edges', {}))
                             merge_edges(combined_initial_edges, sched.get('initial_edges', {}))
                             merge_edges(combined_final_edges, sched.get('final_edges', {}))
                             
-                            combined_true_unassigned.extend(sched.get('true_unassigned', []))
-                            combined_conflicts.extend(sched.get('conflicts', []))
+                            for e_id in sched.get('true_unassigned', []):
+                                if e_id not in combined_true_unassigned:
+                                    combined_true_unassigned.append(e_id)
+                                    
+                            existing_conflict_strs = {str(c) for c in combined_conflicts}
+                            for c in sched.get('conflicts', []):
+                                if str(c) not in existing_conflict_strs:
+                                    combined_conflicts.append(c)
+                                    existing_conflict_strs.add(str(c))
                             
                             existing_errand_ids = {er['id'] for er in combined_scheduled_errands}
                             for er in sched.get('scheduled_errands', []):
