@@ -353,9 +353,12 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                             if src_idx == dest_idx:
                                 continue
                             
-                            if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
+                            if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]):
                                 dur_sec = durations[s_i][d_i]
-                                mins = int(round(dur_sec / 60.0))
+                                if dur_sec is not None:
+                                    mins = int(round(dur_sec / 60.0))
+                                else:
+                                    mins = 900
                                 storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                     return True
                 else:
@@ -429,8 +432,10 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                 if routes:
                                     dur_sec = routes[0].get("duration", 900)
                                     mins = int(round(dur_sec / 60.0))
-                                    storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
-                                    success_count += 1
+                                else:
+                                    mins = 900
+                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), mins)
+                                success_count += 1
                             else:
                                 print(f"Mapbox Directions API failed: {resp.status_code}")
                         except Exception as ex:
@@ -485,9 +490,12 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                         if src_idx == dest_idx:
                             continue
                         
-                        if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]) and durations[s_i][d_i] is not None:
+                        if s_i < len(durations) and durations[s_i] and d_i < len(durations[s_i]):
                             dur_sec = durations[s_i][d_i]
-                            mins = int(round(dur_sec / 60.0))
+                            if dur_sec is not None:
+                                mins = int(round(dur_sec / 60.0))
+                            else:
+                                mins = 900
                             storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
                 return True
             else:
