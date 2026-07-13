@@ -2427,6 +2427,20 @@
 
                 activePeriods.sort((a, b) => a.start - b.start);
 
+                let hasBgTrip = false;
+                colIds.forEach(c_id => {
+                    if (colsObj[c_id] && colsObj[c_id].some(e => e.event_type === 'background_trip')) {
+                        hasBgTrip = true;
+                    }
+                });
+
+                if (hasBgTrip && activePeriods.length > 0) {
+                    activePeriods.unshift({
+                        start: activePeriods[0].start - 3600000,
+                        end: activePeriods[0].start
+                    });
+                }
+
                 let blocks = [];
                 if (activePeriods.length > 0) {
                     let currentBlock = activePeriods[0];
