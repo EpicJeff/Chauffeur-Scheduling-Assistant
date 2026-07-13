@@ -25,6 +25,17 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 
 ---
 
+## Rule Attributes & Filters
+Every rule (Routing Rule or Priority Rule) can filter events using any combination of the following criteria. The solver evaluates these using AND logic across different criteria types.
+- **Keywords**: Match substrings in the event title or description. (Match Any or Match All).
+- **Passengers**: Match specific passengers who are attending the event. (Match Any or Match All).
+- **Days of Week**: Restrict rules to specific days (0=Monday, 6=Sunday).
+- **Date Window (`start_date`, `end_date`)**: Restrict a rule to only apply on or after a specific start date (YYYY-MM-DD), and/or on or before an end date. Useful for driver vacations, summer schedules, or holiday-specific rules.
+- **Time Window (`time_start`, `time_end`)**: Restrict a rule to a specific time of day window.
+- **Location**: Match a substring in the event location.
+
+---
+
 ## Supported Constraints (`constraint_type`)
 
 When generating JSON for the frontend to digest, use the following `constraint_type` mappings.

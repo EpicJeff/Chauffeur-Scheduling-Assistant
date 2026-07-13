@@ -1163,14 +1163,26 @@
                                                 </template>
                                             </div>
                                         </div>
-                                        <div class="flex flex-col md:flex-row gap-4">
+                                        <div class="flex flex-col md:flex-row gap-4 mt-4">
                                             <div class="flex-1">
-                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After</label>
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Start Date</label>
+                                                <input type="date" x-model="newRule.start_date"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">End Date</label>
+                                                <input type="date" x-model="newRule.end_date"
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After (Time)</label>
                                                 <input type="time" x-model="newRule.time_start"
                                                     class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                             </div>
                                             <div class="flex-1">
-                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before</label>
+                                                <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before (Time)</label>
                                                 <input type="time" x-model="newRule.time_end"
                                                     class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                             </div>
@@ -1278,14 +1290,26 @@
                                                             </template>
                                                         </div>
                                                     </div>
-                                                    <div class="flex flex-col md:flex-row gap-2">
+                                                    <div class="flex flex-col md:flex-row gap-2 mt-4">
                                                         <div class="flex-1">
-                                                            <label class="block text-gray-400 mb-1 text-xs">Starts After</label>
+                                                            <label class="block text-gray-400 mb-1 text-xs">Start Date</label>
+                                                            <input type="date" x-model="fs.start_date"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">End Date</label>
+                                                            <input type="date" x-model="fs.end_date"
+                                                                class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                        </div>
+                                                    </div>
+                                                    <div class="flex flex-col md:flex-row gap-2 mt-4">
+                                                        <div class="flex-1">
+                                                            <label class="block text-gray-400 mb-1 text-xs">Starts After (Time)</label>
                                                             <input type="time" x-model="fs.time_start"
                                                                 class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
                                                         </div>
                                                         <div class="flex-1">
-                                                            <label class="block text-gray-400 mb-1 text-xs">Ends Before</label>
+                                                            <label class="block text-gray-400 mb-1 text-xs">Ends Before (Time)</label>
                                                             <input type="time" x-model="fs.time_end"
                                                                 class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
                                                         </div>
@@ -1368,6 +1392,9 @@
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
                             </template>
                             <template x-if="rule.time_start || rule.time_end">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -1470,6 +1497,9 @@
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
                             </template>
                             <template x-if="rule.time_start || rule.time_end">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -1633,14 +1663,26 @@
                                             </template>
                                         </div>
                                     </div>
-                                    <div class="flex flex-col md:flex-row gap-4">
+                                    <div class="flex flex-col md:flex-row gap-4 mt-4">
                                         <div class="flex-1">
-                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After</label>
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Start Date</label>
+                                            <input type="date" x-model="newPriorityRule.start_date"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">End Date</label>
+                                            <input type="date" x-model="newPriorityRule.end_date"
+                                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col md:flex-row gap-4 mt-4">
+                                        <div class="flex-1">
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Starts After (Time)</label>
                                             <input type="time" x-model="newPriorityRule.time_start"
                                                 class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                         </div>
                                         <div class="flex-1">
-                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before</label>
+                                            <label class="block text-gray-400 mb-1 text-sm font-bold">Ends Before (Time)</label>
                                             <input type="time" x-model="newPriorityRule.time_end"
                                                 class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                         </div>
@@ -1722,6 +1764,9 @@
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
                             </template>
                             <template x-if="rule.time_start || rule.time_end">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -1821,6 +1866,9 @@
                             </template>
                             <template x-if="rule.days_of_week && rule.days_of_week.length > 0">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-pink-300" x-text="'Days: ' + (Array.isArray(rule.days_of_week) ? rule.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ') : '')"></span>
+                            </template>
+                            <template x-if="rule.start_date || rule.end_date">
+                                <span class="bg-gray-800 px-2 py-1 rounded text-teal-300" x-text="'Dates: ' + (rule.start_date || 'Any') + ' to ' + (rule.end_date || 'Any')"></span>
                             </template>
                             <template x-if="rule.time_start || rule.time_end">
                                 <span class="bg-gray-800 px-2 py-1 rounded text-cyan-300" x-text="'Time: ' + (rule.time_start || 'Any') + ' to ' + (rule.time_end || 'Any')"></span>
@@ -2308,9 +2356,9 @@
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
-                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
+                newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
                 newRuleKeywordInput: '',
-                newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], time_start: '', time_end: '', location: '' },
+                newPriorityRule: { weight_modifier: 100, keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '' },
                 newPriorityRuleKeywordInput: '',
                 newErrandRule: { title: '', constraint_type: 'driver_assignment', location: '', keywords: [], keywords_match_all: false, allowed_drivers: [], required_drivers: [], prohibited_drivers: [], allowed_passengers: [], required_passengers: [], prohibited_passengers: [], time_window_start: '', time_window_end: '', valid_days_of_week: [], buffer_mins: 0, tolerance_mins: 0, filter_sets: [] },
                 newErrandRuleKeywordInput: '',
@@ -2981,6 +3029,8 @@
                         passenger_ids: [...(rule.passenger_ids || [])],
                         passengers_match_all: rule.passengers_match_all || false,
                         days_of_week: [...(rule.days_of_week || [])],
+                        start_date: rule.start_date || '',
+                        end_date: rule.end_date || '',
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || '',
                         location: rule.location || '',
@@ -2996,7 +3046,7 @@
                 resetRuleForm() {
                     this.editRuleId = null;
                     this.newRuleKeywordInput = '';
-                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], time_start: '', time_end: '', location: '', filter_sets: [] };
+                    this.newRule = { driver_id: '', constraint_type: 'required', duplicate_action: 'schedule_one', attendance_action: 'stay', tolerance_mins: 0, tolerance_type: 'both', buffer_before_mins: 0, buffer_after_mins: 0, grouping_period: 'daily', keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [] };
                 },
                 cancelEditRule() {
                     this.resetRuleForm();
@@ -3019,10 +3069,10 @@
                             if (this.newRule.filter_sets.length < 2) return showGlobalAlert('You must specify at least two filter sets to group');
                             for (let i = 0; i < this.newRule.filter_sets.length; i++) {
                                 let fs = this.newRule.filter_sets[i];
-                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.time_start && !fs.time_end && !fs.location) return showGlobalAlert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, time, etc)');
+                                if (fs.keywords.length === 0 && fs.passenger_ids.length === 0 && !fs.days_of_week.length && !fs.start_date && !fs.end_date && !fs.time_start && !fs.time_end && !fs.location) return showGlobalAlert('Event Filter ' + (i + 1) + ' must have at least one constraint (keyword, passenger, date, time, etc)');
                             }
                         } else {
-                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, time, etc)');
+                            if (this.newRule.keywords.length === 0 && this.newRule.passenger_ids.length === 0 && !this.newRule.days_of_week.length && !this.newRule.start_date && !this.newRule.end_date && !this.newRule.time_start && !this.newRule.time_end && !this.newRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, date, time, etc)');
                         }
 
                         const payload = JSON.parse(JSON.stringify(this.newRule));
@@ -3071,6 +3121,8 @@
                         passenger_ids: [...(rule.passenger_ids || [])],
                         passengers_match_all: rule.passengers_match_all || false,
                         days_of_week: [...(rule.days_of_week || [])],
+                        start_date: rule.start_date || '',
+                        end_date: rule.end_date || '',
                         time_start: rule.time_start || '',
                         time_end: rule.time_end || '',
                         location: rule.location || ''
@@ -3085,7 +3137,7 @@
                 cancelEditPriorityRule() {
                     this.editPriorityRuleId = null;
                     this.newPriorityRuleKeywordInput = '';
-                    this.newPriorityRule = { weight_modifier: 100, keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], time_start: '', time_end: '', location: '' };
+                    this.newPriorityRule = { weight_modifier: 100, keywords: [], keywords_match_all: false, passenger_ids: [], passengers_match_all: false, days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '' };
                 },
                 async submitPriorityRule() {
                     this.saving = true;
@@ -3096,7 +3148,7 @@
                         }
                         this.newPriorityRuleKeywordInput = '';
 
-                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, time, etc)');
+                        if (this.newPriorityRule.keywords.length === 0 && this.newPriorityRule.passenger_ids.length === 0 && !this.newPriorityRule.days_of_week.length && !this.newPriorityRule.start_date && !this.newPriorityRule.end_date && !this.newPriorityRule.time_start && !this.newPriorityRule.time_end && !this.newPriorityRule.location) return showGlobalAlert('You must specify at least one constraint (keyword, passenger, date, time, etc)');
                         this.newPriorityRule.weight_modifier = parseInt(this.newPriorityRule.weight_modifier);
 
                         const payload = JSON.parse(JSON.stringify(this.newPriorityRule));

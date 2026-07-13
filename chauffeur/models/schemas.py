@@ -74,6 +74,8 @@ class EventFilter(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     location: Optional[str] = None
 
 class Rule(BaseModel):
@@ -97,6 +99,8 @@ class Rule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     location: Optional[str] = None
     filter_sets: List[EventFilter] = Field(default_factory=list)
     is_ai_generated: bool = False
@@ -116,6 +120,8 @@ class PriorityRule(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)
     time_start: Optional[str] = None
     time_end: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     location: Optional[str] = None
     is_ai_generated: bool = False
     is_enabled: bool = True

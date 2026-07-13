@@ -163,6 +163,21 @@ def does_event_match_rule(event, rule, passengers=None) -> bool:
             if event.end.hour * 60 + event.end.minute > h * 60 + m: top_matches = False
         except: pass
 
+    # 4.5 Date Window
+    if top_matches and hasattr(rule, 'start_date') and rule.start_date:
+        has_top_criteria = True
+        try:
+            start_dt = datetime.strptime(rule.start_date, '%Y-%m-%d').date()
+            if event.start.date() < start_dt: top_matches = False
+        except: pass
+        
+    if top_matches and hasattr(rule, 'end_date') and rule.end_date:
+        has_top_criteria = True
+        try:
+            end_dt = datetime.strptime(rule.end_date, '%Y-%m-%d').date()
+            if event.end.date() > end_dt: top_matches = False
+        except: pass
+
     # 5. Location
     if top_matches and hasattr(rule, 'location') and rule.location:
         has_top_criteria = True
