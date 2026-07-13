@@ -2628,19 +2628,57 @@
         }
 
         async function saveSettings() {
+            const newBgUrl = document.getElementById('settings-bg-query').value;
+            const newNotes = document.getElementById('settings-notes').value;
+            const newBudgetMin = parseInt(document.getElementById('settings-budget-min').value) || 0;
+            const newBudgetMax = parseInt(document.getElementById('settings-budget-max').value) || 0;
+            const newFlightPrefs = document.getElementById('settings-flight-prefs').value;
+            const newAttendees = getSelectedAttendees();
+            
+            let newDraftStartDay = tripData.metadata.draft_start_day;
+            let newDraftDuration = tripData.metadata.draft_duration_days;
+            
+            if (tripData.metadata.is_draft) {
+                newDraftStartDay = parseInt(document.getElementById('settings-start-day').value) || 0;
+                newDraftDuration = parseInt(document.getElementById('settings-duration').value) || 1;
+            }
+            
+            // Check if anything actually changed
+            const arrEq = (a, b) => {
+                if (!a && !b) return true;
+                if (!a || !b) return false;
+                if (a.length !== b.length) return false;
+                for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+                return true;
+            };
+            
+            const hasChanged = 
+                (tripData.metadata.background_url || '') !== newBgUrl ||
+                (tripData.metadata.notes || '') !== newNotes ||
+                (tripData.metadata.budget_min_usd || 0) !== newBudgetMin ||
+                (tripData.metadata.budget_max_usd || 0) !== newBudgetMax ||
+                (tripData.metadata.flight_preferences || '') !== newFlightPrefs ||
+                !arrEq(tripData.metadata.attendees || [], newAttendees) ||
+                (tripData.metadata.is_draft && (tripData.metadata.draft_start_day || 0) !== newDraftStartDay) ||
+                (tripData.metadata.is_draft && (tripData.metadata.draft_duration_days || 1) !== newDraftDuration);
+                
+            if (!hasChanged) {
+                closeSettingsModal();
+                return;
+            }
+
             document.getElementById('settings-modal').classList.add('hidden');
             document.getElementById('schedule-loading-overlay').classList.remove('hidden');
 
-            tripData.metadata.background_url = document.getElementById('settings-bg-query').value;
-            tripData.metadata.notes = document.getElementById('settings-notes').value;
-            tripData.metadata.budget_min_usd = parseInt(document.getElementById('settings-budget-min').value) || 0;
-            tripData.metadata.budget_max_usd = parseInt(document.getElementById('settings-budget-max').value) || 0;
-            tripData.metadata.flight_preferences = document.getElementById('settings-flight-prefs').value;
-            tripData.metadata.attendees = getSelectedAttendees();
-            
+            tripData.metadata.background_url = newBgUrl;
+            tripData.metadata.notes = newNotes;
+            tripData.metadata.budget_min_usd = newBudgetMin;
+            tripData.metadata.budget_max_usd = newBudgetMax;
+            tripData.metadata.flight_preferences = newFlightPrefs;
+            tripData.metadata.attendees = newAttendees;
             if (tripData.metadata.is_draft) {
-                tripData.metadata.draft_start_day = parseInt(document.getElementById('settings-start-day').value);
-                tripData.metadata.draft_duration_days = parseInt(document.getElementById('settings-duration').value);
+                tripData.metadata.draft_start_day = newDraftStartDay;
+                tripData.metadata.draft_duration_days = newDraftDuration;
             }
             
             await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
