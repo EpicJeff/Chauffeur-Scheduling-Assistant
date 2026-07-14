@@ -642,10 +642,10 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
         raise ValueError(f"Unknown provider: {provider}")
         
     try:
-        if raw_response.startswith('```json'):
-            raw_response = raw_response.split('```json')[1]
-            if raw_response.endswith('```'):
-                raw_response = raw_response[:-3]
+        import re
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)```', raw_response)
+        if match:
+            raw_response = match.group(1)
         return json.loads(raw_response.strip())
     except json.JSONDecodeError as e:
         import traceback
