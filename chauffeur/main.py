@@ -2111,15 +2111,25 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
             
         if res.get("ui_action") == "generate_massive_trip":
             trip_id = None
-            if payload.context and "pathname" in payload.context and "/trip/" in payload.context["pathname"]:
-                trip_id = payload.context["pathname"].split("/trip/")[-1].split("/")[0]
+            if payload.context:
+                import urllib.parse
+                if "search" in payload.context and "event_id=" in payload.context["search"]:
+                    qs = urllib.parse.parse_qs(payload.context["search"].lstrip("?"))
+                    if "event_id" in qs:
+                        trip_id = qs["event_id"][0]
+                elif "pathname" in payload.context and "/trip/" in payload.context["pathname"]:
+                    trip_id = payload.context["pathname"].split("/trip/")[-1].split("/")[0]
+                    
             if trip_id:
                 def _bg_generate(t_id, user_prompt, conv_id):
                     try:
                         from models.schemas import TripMetadata
                         from services.trip_planner import generate_trip_plan
                         meta_dict = storage.get_trip_metadata(t_id)
-                        if not meta_dict: return
+                        if not meta_dict:
+                            logger.error(f"Could not find trip {t_id}")
+                            raise Exception("Trip not found")
+                            
                         trip = TripMetadata(**meta_dict)
                         duration = trip.draft_duration_nights or 7
                         
@@ -2155,6 +2165,10 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                         LAST_UPDATE_TIME = time.time()
                     except Exception as e:
                         logger.error(f"Background trip gen error: {e}")
+                        CHAT_EVENTS.append({
+                            "reply": f"⚠️ An error occurred while generating your trip: {str(e)}",
+                            "ui_action": "reload"
+                        })
                         
                 background_tasks.add_task(_bg_generate, trip_id, payload.message, payload.conversation_id)
             
