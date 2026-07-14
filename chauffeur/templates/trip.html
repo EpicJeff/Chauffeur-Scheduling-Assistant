@@ -642,17 +642,7 @@
         </div>
     </div>
     
-    <!-- Confirm Modal -->
-    <div id="confirm-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[80] p-4">
-        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm border border-gray-600 shadow-2xl">
-            <h3 id="confirm-modal-title" class="text-xl font-bold text-white mb-2">Confirm Action</h3>
-            <p id="confirm-modal-message" class="text-gray-400 text-sm mb-6 whitespace-pre-wrap">Are you sure you want to do this?</p>
-            <div id="confirm-modal-actions" class="flex justify-end space-x-3">
-                <!-- Buttons injected via JS -->
-            </div>
-        </div>
-    </div>
-    
+
     <div id="poi-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
             <h3 class="text-2xl font-bold text-white mb-6">Add Point of Interest</h3>
@@ -2541,28 +2531,11 @@
         }
 
         function openConfirmModal(title, message, buttons) {
-            document.getElementById('confirm-modal-title').innerText = title;
-            document.getElementById('confirm-modal-message').innerHTML = message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            
-            const actionsContainer = document.getElementById('confirm-modal-actions');
-            actionsContainer.innerHTML = '';
-            
-            buttons.forEach(opt => {
-                const btn = document.createElement('button');
-                btn.className = opt.className || "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm";
-                btn.innerText = opt.text;
-                btn.onclick = () => {
-                    closeConfirmModal();
-                    if (opt.onClick) opt.onClick();
-                };
-                actionsContainer.appendChild(btn);
-            });
-            
-            document.getElementById('confirm-modal').classList.remove('hidden');
+            window.openCCConfirmModal(message, null, buttons, null, title);
         }
         
         function closeConfirmModal() {
-            document.getElementById('confirm-modal').classList.add('hidden');
+            window.closeCCConfirmModal();
         }
         
         window.handleInsightAction = async function(btn, poiId) {

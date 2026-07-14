@@ -1631,7 +1631,7 @@
             const googleIdParts = ev.source_event_ids[0].split('::');
             let googleId = googleIdParts[googleIdParts.length - 1];
             if (ev.recurring_event_id) {
-                const applyToSeries = confirm("This is a recurring event. Do you want to apply this configuration to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                const applyToSeries = await promptConfirm("Recurring Event", "This is a recurring event. Do you want to apply this configuration to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
                 if (applyToSeries) {
                     googleId = ev.recurring_event_id;
                 }
@@ -1823,7 +1823,7 @@
                 localSolvingDates.add(dateStr);
             }
             if (ev && ev.recurring_event_id) {
-                const applyToSeries = confirm("This is a recurring event. Do you want to apply this override to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                const applyToSeries = await promptConfirm("Recurring Event", "This is a recurring event. Do you want to apply this override to ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
                 if (applyToSeries) {
                     targetEventId = ev.recurring_event_id;
                 }
@@ -1872,7 +1872,7 @@
                 localSolvingDates.add(dateStr);
             }
             if (ev && ev.recurring_event_id) {
-                const applyToSeries = confirm("This is a recurring event. Do you want to remove the override for ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
+                const applyToSeries = await promptConfirm("Recurring Event", "This is a recurring event. Do you want to remove the override for ALL instances in the series?\n\nClick OK for the entire series.\nClick Cancel for only this instance.");
                 if (applyToSeries) {
                     targetEventId = ev.recurring_event_id;
                 }
