@@ -744,7 +744,7 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             if not rp.location or not a.location: continue
             dist = maps.get_travel_time_minutes(a.location, rp.location)
             
-            # Use day match to break ties, but don't override distance
+            # Hard-filter day-incompatible anchors, then use distance for ranking
             effective_dist = dist
             if rp_days:
                 a_days = getattr(a, 'valid_days_of_week', None)
@@ -754,10 +754,13 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                     local_tz = zoneinfo.ZoneInfo(trip_tz_str) if trip_tz_str and trip_tz_str != "UTC" else zoneinfo.ZoneInfo('America/New_York')
                     a_day = datetime.datetime.fromtimestamp(a.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz).weekday()
                     if a_day not in rp_days:
-                        effective_dist += 0.1 # Slight penalty to break ties
+                        continue  # Hard skip: anchor's scheduled day doesn't match POI's constraint
                 elif a_days:
                     if not any(d in a_days for d in rp_days):
-                        effective_dist += 0.1
+                        continue  # Hard skip: no overlapping valid days between anchor and POI
+                # else: anchor has no day info — allow it but add a penalty to prefer day-compatible anchors
+                else:
+                    effective_dist += 5
             else:
                 # Add a load balancing penalty for unconstrained POIs to evenly distribute them
                 # across identical background POIs (e.g. multiple Magic Kingdom days)
@@ -820,6 +823,14 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             c_days = getattr(centroid, 'valid_days_of_week', None)
             if rp_days and c_days and not any(d in c_days for d in rp_days):
                 continue
+            # Also check if the centroid is already scheduled on a day incompatible with this POI
+            if rp_days and centroid.is_scheduled and centroid.scheduled_start:
+                import zoneinfo
+                trip_tz_str = getattr(trip, 'timeZone', None)
+                _local_tz = zoneinfo.ZoneInfo(trip_tz_str) if trip_tz_str and trip_tz_str != "UTC" else zoneinfo.ZoneInfo('America/New_York')
+                c_sched_day = datetime.datetime.fromtimestamp(centroid.scheduled_start, tz=datetime.timezone.utc).astimezone(_local_tz).weekday()
+                if c_sched_day not in rp_days:
+                    continue
                 
             dist = maps.get_travel_time_minutes(centroid.location, rp.location)
             if dist <= 20:
