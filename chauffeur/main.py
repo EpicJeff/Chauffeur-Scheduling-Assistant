@@ -2109,7 +2109,51 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
         if payload.conversation_id:
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})
             
-        return {"reply": reply, "target_element_id": target_id}
+        if res.get("ui_action") == "generate_massive_trip":
+            trip_id = None
+            if payload.context and "pathname" in payload.context and "/trip/" in payload.context["pathname"]:
+                trip_id = payload.context["pathname"].split("/trip/")[-1].split("/")[0]
+            if trip_id:
+                def _bg_generate(t_id, user_prompt, conv_id):
+                    try:
+                        from models.schemas import TripMetadata
+                        from services.trip_planner import generate_trip_plan
+                        meta_dict = storage.get_trip_metadata(t_id)
+                        if not meta_dict: return
+                        trip = TripMetadata(**meta_dict)
+                        duration = trip.draft_duration_nights or 7
+                        
+                        warning, pois, accs, flights = generate_trip_plan(trip, user_prompt, duration)
+                        
+                        if 'pois' not in meta_dict: meta_dict['pois'] = []
+                        if 'accommodations' not in meta_dict: meta_dict['accommodations'] = []
+                        
+                        existing_poi_names = {p.get('name', '').lower() for p in meta_dict['pois']}
+                        for poi in pois:
+                            if poi.name.lower() not in existing_poi_names:
+                                meta_dict['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
+                                existing_poi_names.add(poi.name.lower())
+                                
+                        existing_acc_names = {a.get('name', '').lower() for a in meta_dict['accommodations']}
+                        for acc in accs:
+                            if acc.name.lower() not in existing_acc_names:
+                                meta_dict['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
+                                existing_acc_names.add(acc.name.lower())
+                                
+                        storage.save_trip_metadata(t_id, meta_dict)
+                        
+                        msg = f"I've finished planning your trip! I generated {len(pois)} points of interest and {len(accs)} accommodations. {warning or ''}"
+                        if conv_id:
+                            storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': msg, 'timestamp': time.time()})
+                        
+                        global LAST_UPDATE_TIME
+                        LAST_UPDATE_TIME = time.time()
+                    except Exception as e:
+                        logger.error(f"Background trip gen error: {e}")
+                        
+                background_tasks.add_task(_bg_generate, trip_id, payload.message, payload.conversation_id)
+            
+        return {"reply": reply, "target_element_id": target_id, "ui_action": res.get("ui_action")}
     except Exception as e:
         import traceback
         logger.error(f"Error in chat loop: {traceback.format_exc()}")

@@ -91,7 +91,11 @@ If you need to generate a massive 10-day trip, output {"delegate_to_gemini": tru
     if llm_response.get("delegate_to_gemini"):
         # Hand off to Gemini for massive trip planning
         logger.info("Delegating massive task to Gemini 3.1 Flash Lite")
-        return {"status": "delegated", "message": "I'm delegating this massive trip to my heavy lifter module. One moment!"}
+        return {
+            "status": "delegated", 
+            "message": "I'm delegating this massive trip to my heavy lifter module. I'll get to work generating accommodations and points of interest. One moment!",
+            "ui_action": "generate_massive_trip"
+        }
         
     # 3. Process Tool Calls from Gemma
     tool_calls = llm_response.get("tool_calls", [])
