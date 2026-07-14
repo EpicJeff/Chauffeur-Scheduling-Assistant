@@ -777,4 +777,76 @@
     if (!_isReadOnly && window === window.top) {
         initChatStream();
     }
+    
+    // --- Global Confirm Modal ---
+    let pendingCCConfirmCallback = null;
+    
+    function openCCConfirmModal(message, callback, buttonTextOrArray="Delete", buttonClass="bg-red-600 hover:bg-red-500 shadow-red-900/50", title="Confirm Action", cancelText="Cancel") {
+        document.getElementById('cc-confirm-title').textContent = title;
+        document.getElementById('cc-confirm-message').innerHTML = message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        
+        const actionsContainer = document.getElementById('cc-confirm-actions');
+        
+        if (Array.isArray(buttonTextOrArray)) {
+            // Advanced mode: Custom array of buttons
+            actionsContainer.innerHTML = '';
+            buttonTextOrArray.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = opt.className || opt.class || "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm font-bold shadow-md";
+                btn.innerHTML = opt.text;
+                btn.onclick = () => {
+                    closeCCConfirmModal();
+                    if (opt.onClick) opt.onClick();
+                };
+                actionsContainer.appendChild(btn);
+            });
+            pendingCCConfirmCallback = null;
+        } else {
+            // Legacy mode: 2-button setup
+            actionsContainer.innerHTML = `
+                <button id="cc-confirm-cancel-btn" onclick="closeCCConfirmModal()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm transition-colors font-bold">${cancelText}</button>
+                <button id="cc-confirm-execute-btn" onclick="executeCCConfirm()" class="px-4 py-2 text-white font-bold rounded text-sm transition-colors shadow-lg ${buttonClass}">${buttonTextOrArray}</button>
+            `;
+            pendingCCConfirmCallback = callback;
+        }
+        
+        document.getElementById('cc-confirm-modal').classList.remove('hidden');
+        document.getElementById('cc-confirm-modal').classList.add('flex');
+    }
+    window.openCCConfirmModal = openCCConfirmModal;
+
+    function executeCCConfirm() {
+        if (pendingCCConfirmCallback) pendingCCConfirmCallback();
+        closeCCConfirmModal();
+    }
+    
+    function closeCCConfirmModal() {
+        document.getElementById('cc-confirm-modal').classList.add('hidden');
+        document.getElementById('cc-confirm-modal').classList.remove('flex');
+        pendingCCConfirmCallback = null;
+    }
+    window.closeCCConfirmModal = closeCCConfirmModal;
+
+    window.promptConfirm = function(title, message, trueText="OK", falseText="Cancel") {
+        return new Promise(resolve => {
+            let resolved = false;
+            
+            const originalClose = window.closeCCConfirmModal;
+            window.closeCCConfirmModal = function() {
+                if (!resolved) {
+                    resolved = true;
+                    resolve(false);
+                }
+                originalClose();
+                window.closeCCConfirmModal = originalClose; // Restore original
+            };
+            
+            openCCConfirmModal(message, () => {
+                if (!resolved) {
+                    resolved = true;
+                    resolve(true);
+                }
+            }, trueText, "bg-blue-600 hover:bg-blue-500 shadow-blue-900/50", title, falseText);
+        });
+    }
 </script>
