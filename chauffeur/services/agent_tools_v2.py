@@ -103,6 +103,25 @@ def add_trip_poi(trip_id: str, title: str, start_time: str, duration_mins: int, 
         "target_element_id": target_dom_id
     }
 
+def clear_trip_itinerary(trip_id: str) -> Dict[str, Any]:
+    """
+    Clears all Points of Interest (POIs) from a trip's itinerary.
+    Returns a success message with no target_element_id since the list is cleared.
+    """
+    from services.storage import get_trip_metadata, set_trip_metadata
+    
+    meta = get_trip_metadata(trip_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {trip_id} not found."}
+        
+    meta["pois"] = []
+    set_trip_metadata(trip_id, meta)
+    
+    return {
+        "status": "success",
+        "message": f"Cleared all items from the trip itinerary."
+    }
+
 # ==============================================================================
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
@@ -150,6 +169,17 @@ def get_available_tools() -> List[Dict]:
                     "location": {"type": "string"}
                 },
                 "required": ["trip_id", "title", "start_time", "duration_mins", "location"]
+            }
+        },
+        {
+            "name": "clear_trip_itinerary",
+            "description": "Clears all Points of Interest from a trip itinerary.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"}
+                },
+                "required": ["trip_id"]
             }
         }
     ]

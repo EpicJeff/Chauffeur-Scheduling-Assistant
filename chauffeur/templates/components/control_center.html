@@ -569,8 +569,8 @@
                     if (data.target_element_id) {
                         window.showAnchoredChatBubble(data.target_element_id, data.reply);
                     } else {
-                        // Fallback to anchoring on the chat input box itself
-                        window.showAnchoredChatBubble('chat-overlay-container', data.reply);
+                        // Fallback to top right float
+                        window.showAnchoredChatBubble(null, data.reply);
                     }
                 }
                 

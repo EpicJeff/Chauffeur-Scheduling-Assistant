@@ -6,7 +6,8 @@ from services.agent_tools_v2 import (
     get_available_tools,
     get_calendar_events,
     schedule_calendar_override,
-    add_trip_poi
+    add_trip_poi,
+    clear_trip_itinerary
 )
 from services.llm import _call_llm_json
 
@@ -84,6 +85,11 @@ If you need to generate a massive 10-day trip, output {"delegate_to_gemini": tru
                 
         elif func_name == "add_trip_poi":
             res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
+            if res.get("target_element_id"):
+                target_id = res["target_element_id"]
+                
+        elif func_name == "clear_trip_itinerary":
+            res = clear_trip_itinerary(args.get("trip_id"))
             if res.get("target_element_id"):
                 target_id = res["target_element_id"]
                 
