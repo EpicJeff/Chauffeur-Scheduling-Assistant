@@ -1937,9 +1937,9 @@
                                 let msg = `<ul class="list-disc pl-5 text-left space-y-4 mt-4 text-indigo-200" id="insight-modal-list">`;
                                 for (const insight of insights) {
                                     if (insight.actionable) {
-                                        msg += `<li class="flex flex-col gap-2 p-3 bg-gray-800 rounded shadow border border-indigo-500/30" id="insight-${insight.poi_id}">
+                                        msg += `<li class="flex flex-col gap-3 p-3 bg-gray-800 rounded shadow border border-indigo-500/30" id="insight-${insight.poi_id}">
                                             <span>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</span>
-                                            <button onclick="handleInsightAction(this, '${insight.poi_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm w-max transition-colors flex items-center justify-center gap-2">
+                                            <button onclick="handleInsightAction(this, '${insight.poi_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm transition-colors flex items-center justify-center gap-2 self-start">
                                                 ${insight.action_button}
                                             </button>
                                         </li>`;
@@ -2302,7 +2302,7 @@
             if (tripData.metadata.is_draft) {
                 document.getElementById('settings-draft-fields').classList.remove('hidden');
                 document.getElementById('settings-start-day').value = tripData.metadata.draft_start_day || 0;
-                document.getElementById('settings-duration').value = tripData.metadata.draft_duration_days || 1;
+                document.getElementById('settings-duration').value = tripData.metadata.draft_duration_nights || 1;
             } else {
                 document.getElementById('settings-draft-fields').classList.add('hidden');
             }
@@ -2646,7 +2646,7 @@
                     // If dates changed but we didn't rebuild, just render Trip to show new columns
                     if (newMetadata.is_draft && 
                         (newMetadata.draft_start_day !== tripData.metadata.draft_start_day || 
-                         newMetadata.draft_duration_days !== tripData.metadata.draft_duration_days)) {
+                         newMetadata.draft_duration_nights !== tripData.metadata.draft_duration_nights)) {
                         renderTrip(); 
                     }
                 }
@@ -2668,7 +2668,7 @@
             const newAttendees = getSelectedAttendees();
             
             let newDraftStartDay = tripData.metadata.draft_start_day;
-            let newDraftDuration = tripData.metadata.draft_duration_days;
+            let newDraftDuration = tripData.metadata.draft_duration_nights;
             
             if (tripData.metadata.is_draft) {
                 newDraftStartDay = parseInt(document.getElementById('settings-start-day').value) || 0;
@@ -2686,7 +2686,7 @@
             
             const datesChanged = (tripData.metadata.is_draft && 
                 ((tripData.metadata.draft_start_day || 0) !== newDraftStartDay || 
-                 (tripData.metadata.draft_duration_days || 1) !== newDraftDuration));
+                 (tripData.metadata.draft_duration_nights || 1) !== newDraftDuration));
                  
             const hasChanged = 
                 (tripData.metadata.background_url || '') !== newBgUrl ||
@@ -2714,7 +2714,7 @@
             
             if (tripData.metadata.is_draft) {
                 newMetadata.draft_start_day = newDraftStartDay;
-                newMetadata.draft_duration_days = newDraftDuration;
+                newMetadata.draft_duration_nights = newDraftDuration;
             }
 
             if (datesChanged) {
@@ -3331,7 +3331,7 @@
             document.getElementById('schedule-trip-modal').classList.remove('hidden');
             
             // Check if it has dates
-            if (tripData.metadata.mock_start_date && !tripData.metadata.draft_duration_days) {
+            if (tripData.metadata.mock_start_date && !tripData.metadata.draft_duration_nights) {
                 // Exact dates
                 document.getElementById('schedule-modal-loading').classList.add('hidden');
                 document.getElementById('schedule-modal-content').classList.remove('hidden');

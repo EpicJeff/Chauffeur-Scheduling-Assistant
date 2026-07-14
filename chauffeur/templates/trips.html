@@ -179,7 +179,7 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-gray-300 text-sm font-bold mb-2">Duration (Days)</label>
+                        <label class="block text-gray-300 text-sm font-bold mb-2">Trip Length (Nights)</label>
                         <input type="number" id="trip-duration" value="3" min="1" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
                     </div>
                 </div>
@@ -405,7 +405,7 @@
                 payload.end_date = end;
             } else {
                 payload.start_day_of_week = parseInt(document.getElementById('trip-start-day').value);
-                payload.duration_days = parseInt(document.getElementById('trip-duration').value);
+                payload.duration_nights = parseInt(document.getElementById('trip-duration').value);
             }
             
             try {

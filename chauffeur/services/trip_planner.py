@@ -63,7 +63,7 @@ def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
         "link": link
     }
 
-def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
+def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
     and grounds them to real-world locations via Mapbox.
@@ -81,10 +81,10 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_days: int 
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
         api_key = settings.get('llm_gemini_api_key')
         
-    num_pois = max(1, duration_days * 4)
+    num_pois = max(1, duration_nights * 4)
     system_prompt = f"""You are an expert travel agent. 
 The user will provide a prompt describing what they want to do on their trip.
-The user's trip is {duration_days} days long. 
+The user's trip is {duration_nights} nights long. 
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for and nothing more.
 If their request is open-ended, suggest approximately {num_pois} Points of Interest (POIs) to fill this trip that match their request and are located in or near the specified Trip Location.
 If the user already has POIs on their itinerary, try to suggest new places that complement them (e.g. suggesting a nice restaurant near a planned museum, or an evening activity that fits the vibe).
@@ -122,16 +122,16 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     import datetime
     if trip.is_draft and trip.mock_start_date:
         trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_nights)
     else:
         from services.calendar import get_event_dates
         trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
         if not trip_start_dt or not trip_end_dt:
             trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
-            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_nights)
             
     if trip.is_draft:
-        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
+        date_bounds_str = f"Trip Duration: {duration_nights} nights\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
     else:
         date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
         
@@ -322,6 +322,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                     if not getattr(e, 'poi_id', None):
                         accommodation_events.append(e)
             
+            # The user explicitly requested: "Nothing about our regular daily calendar should be taken into account when planning a trip."
+            # So if this event is NOT a trip POI and NOT a background trip event, ignore it.
+            if not is_e_bg and not getattr(e, 'poi_id', None):
+                continue
+                
             if getattr(poi, 'is_background', False):
                 if not is_e_bg: continue
             else:
@@ -446,11 +451,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
         slots = []
         curr = trip_start
         
-        # Snap curr to the nearest 15-minute boundary
-        discard_mins = curr.minute % 15
+        # Snap curr to the nearest 5-minute boundary
+        discard_mins = curr.minute % 5
         if discard_mins > 0:
-            if discard_mins >= 8:
-                curr += datetime.timedelta(minutes=(15 - discard_mins))
+            if discard_mins >= 3:
+                curr += datetime.timedelta(minutes=(5 - discard_mins))
             else:
                 curr -= datetime.timedelta(minutes=discard_mins)
         curr = curr.replace(second=0, microsecond=0)
@@ -458,7 +463,7 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
         while curr + duration_delta <= trip_end:
             slot_start = curr
             slot_end = curr + duration_delta
-            curr += datetime.timedelta(minutes=15)  # Step by 15 mins for finer granularity
+            curr += datetime.timedelta(minutes=5)  # Step by 5 mins for finer granularity
             
             slot_local = slot_start.astimezone(local_tz)
             slot_time = slot_local.time()
@@ -576,11 +581,11 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
             
             if is_food and not is_dessert:
                 if datetime.time(7, 30) <= slot_time <= datetime.time(9, 30):
-                    score += 2000
+                    score += 1000  # Breakfast: Lowest priority
                 elif datetime.time(11, 30) <= slot_time <= datetime.time(13, 30):
-                    score += 2000
+                    score += 1500  # Lunch: Medium priority
                 elif datetime.time(17, 30) <= slot_time <= datetime.time(19, 30):
-                    score += 2000
+                    score += 2000  # Dinner: Highest priority
             
             day_home_base = trip.location
             for acc in accommodation_events:
@@ -652,8 +657,28 @@ def schedule_poi(trip: TripMetadata, poi: TripPOI, bounds: Optional[Tuple[dateti
                     sp_end = datetime.datetime.fromtimestamp(sp.scheduled_end, tz=datetime.timezone.utc)
                     if sp_end <= slot_start <= sp_end + datetime.timedelta(hours=2):
                         score += 2000
+            
+            if getattr(poi, 'ideal_time_start', None):
+                try:
+                    explicit_ideal = datetime.datetime.strptime(poi.ideal_time_start, "%H:%M").time()
+                    e_mins = explicit_ideal.hour * 60 + explicit_ideal.minute
+                    s_mins = slot_time.hour * 60 + slot_time.minute
+                    diff = abs(e_mins - s_mins)
+                    if diff == 0:
+                        score += 10000  # Massive bonus for exact match
+                    elif diff <= 5:
+                        score += 5000
+                    elif diff <= 15:
+                        score += 2000
+                except ValueError:
+                    pass
+                        
                         
             slots.append((score, slot_start))
+            
+        print(f"[{poi.name}] Enforce ideal={enforce_ideal_times}: Found {len(slots)} slots. Overlapping events: {len(overlapping_events)}")
+        for e in overlapping_events:
+            print(f"  Overlap: {e.title if hasattr(e, 'title') else getattr(e, 'location', 'Unknown')} at {e.start} to {e.end}")
         return slots
         
     valid_slots = find_slots(enforce_ideal_times=True)
@@ -915,9 +940,19 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
         by_day[day_str].append(p)
 
     insights_yielded = 0
+    day_durations = {}
+    day_travel_times = {}
     # Pre-sort POIs per day by scheduled_start
     for day_str in by_day:
         by_day[day_str].sort(key=lambda x: x.scheduled_start)
+        duration = 0
+        travel = 0
+        for i, p in enumerate(by_day[day_str]):
+            duration += getattr(p, 'duration_mins', 0)
+            if i > 0 and p.location and by_day[day_str][i-1].location:
+                travel += maps.get_travel_time_minutes(by_day[day_str][i-1].location, p.location)
+        day_durations[day_str] = duration
+        day_travel_times[day_str] = travel
         
     for p in target_pois:
         if not p.is_scheduled or not p.scheduled_start or not p.location: continue
@@ -950,6 +985,14 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             if other_day_str == p_day_str: continue # Must be a different day
             
             dist = maps.get_travel_time_minutes(other.location, p.location)
+            
+            # The rule: We do not allow scheduling more than 16 hours (960 mins) of stuff in one day, including travel.
+            current_day_total = day_durations.get(other_day_str, 0) + day_travel_times.get(other_day_str, 0)
+            p_duration = getattr(p, 'duration_mins', 0)
+            estimated_added_travel = 2 * dist
+            
+            if (current_day_total + p_duration + estimated_added_travel) > 960:
+                continue
             if dist < best_dist:
                 best_dist = dist
                 best_other = other
@@ -1035,7 +1078,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     if trip.is_draft and trip.mock_start_date:
         trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_days', 1))
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_nights', 1))
     else:
         from services.calendar import get_event_dates
         trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
@@ -1044,7 +1087,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             trip_end_dt = trip_start_dt + datetime.timedelta(days=1)
             
     if trip.is_draft:
-        date_bounds_str = f"Trip Duration: {getattr(trip, 'draft_duration_days', 1)} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
+        date_bounds_str = f"Trip Duration: {getattr(trip, 'draft_duration_nights', 1)} nights\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices."
     else:
         date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
 
@@ -1105,7 +1148,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     return budget_warning, accs
 
 
-def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: int = 1, proposed_itinerary: str = ""):
+def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = ""):
     from services.llm import _call_llm_json
     import urllib.parse
     import datetime
@@ -1125,11 +1168,10 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_days: in
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
         api_key = settings.get('llm_gemini_api_key')
         
-    num_pois = max(1, duration_days * 4)
+    num_pois = max(1, duration_nights * 4)
     
     system_prompt = f"""You are an expert travel agent. 
-The user will provide a prompt describing what they want to do on their trip.
-The user's trip is {duration_days} days long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
+The user's trip is {duration_nights} nights long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
 If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, 1 or more accommodations based on the trip length, and logical flights if applicable.
 CRITICAL: Do NOT put accommodations (like hotels, resorts, or Airbnbs) in the 'pois' array. They MUST go in the 'accommodations' array.
@@ -1184,16 +1226,16 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
     if trip.is_draft and trip.mock_start_date:
         trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_nights)
     else:
         from services.calendar import get_event_dates
         trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
         if not trip_start_dt or not trip_end_dt:
             trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
-            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_days)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=duration_nights)
     
     if trip.is_draft:
-        date_bounds_str = f"Trip Duration: {duration_days} days\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices. You must strictly use these exact mock dates for any flights or accommodations so it plots correctly on the draft calendar, even if the user asked for different relative days."
+        date_bounds_str = f"Trip Duration: {duration_nights} nights\nNOTE: This is a draft trip being plotted on a mock future calendar year to avoid overlapping with current events.\nThe assigned mock start date is {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')}) and the end date is {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')}).\nIMPORTANT: Estimate all prices using TODAY'S current prices. You must strictly use these exact mock dates for any flights or accommodations so it plots correctly on the draft calendar, even if the user asked for different relative days."
     else:
         date_bounds_str = f"Trip Start Date: {trip_start_dt.strftime('%Y-%m-%d')} ({trip_start_dt.strftime('%A')})\nTrip End Date: {trip_end_dt.strftime('%Y-%m-%d')} ({trip_end_dt.strftime('%A')})"
     
@@ -1408,7 +1450,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
     if not api_key:
         return f"API key not configured for {provider}.", None
         
-    duration = trip.draft_duration_days or 3
+    duration = trip.draft_duration_nights or 3
     start_day = trip.draft_start_day if trip.draft_start_day is not None else 5 # Default Saturday
     days_map = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
     

@@ -336,16 +336,18 @@ def get_all_trips_api():
 
 from models.schemas import CreateTripRequest
 
-@app.post("/api/trips")
+@app.post("/api/trip")
 def create_trip_api(req: CreateTripRequest):
     import uuid
     from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    from services import maps
+    from services.travel_api import get_live_flight_schedule
     
     draft_id = f"draft_trip_{uuid.uuid4().hex}"
     
     if req.start_date and req.end_date:
         # Exact dates provided
-        # Parse start_date and end_date (could be YYYY-MM-DD or full ISO)
         def parse_date(d_str):
             if len(d_str) == 10:
                 return datetime.strptime(d_str, "%Y-%m-%d").replace(tzinfo=timezone.utc, hour=9)
@@ -355,19 +357,61 @@ def create_trip_api(req: CreateTripRequest):
             mock_start = parse_date(req.start_date)
             mock_end = parse_date(req.end_date)
         except Exception:
-            # Fallback if parsing fails
             mock_start = datetime.now(timezone.utc)
             mock_end = mock_start + timedelta(days=1)
     else:
-        # Flexible dates: Calculate a mock date in 2030 aligning with req.start_day_of_week
-        # Jan 1, 2030 is a Tuesday (weekday 1)
+        # Flexible dates: Calculate mock start
         base = datetime(2030, 1, 1, tzinfo=timezone.utc)
         day_of_week = req.start_day_of_week if req.start_day_of_week is not None else 0 # default Monday
         offset = (day_of_week - base.weekday()) % 7
         if offset < 0:
             offset += 7
-        mock_start = base + timedelta(days=offset, hours=9) # Start at 9 AM
-        duration = req.duration_days or 1
+            
+        # 1. Determine Home Location and travel time
+        home_loc = maps.get_home_location()
+        dest_loc = req.location or "Unknown"
+        travel_time_mins = maps.get_travel_time_minutes(home_loc, dest_loc) if home_loc else -1
+        
+        arrival_utc = None
+        
+        # 2. Determine Departure date string for flight searches
+        mock_departure_base = base + timedelta(days=offset)
+        dep_date_str = mock_departure_base.strftime("%Y-%m-%d")
+        
+        # 3. If driving is impossible (> 15 hrs approx) or failed (-1)
+        if home_loc and (travel_time_mins == -1 or travel_time_mins >= 900):
+            flight_schedule = get_live_flight_schedule(home_loc, dest_loc, dep_date_str)
+            if flight_schedule and "arrival_time" in flight_schedule:
+                try:
+                    # arrival_time is '2030-01-05 14:40'
+                    arr_dt = datetime.strptime(flight_schedule["arrival_time"], "%Y-%m-%d %H:%M")
+                    # It's local to destination. Convert to UTC properly.
+                    dest_tz_str = maps.get_timezone(dest_loc)
+                    dest_tz = ZoneInfo(dest_tz_str)
+                    arr_dt_local = arr_dt.replace(tzinfo=dest_tz)
+                    # Add 1 hour buffer for airport overhead
+                    arrival_utc = arr_dt_local.astimezone(timezone.utc) + timedelta(hours=1)
+                except Exception as e:
+                    print(f"Failed to parse flight schedule arrival time: {e}")
+                    
+        # 4. Fallback to driving or generic fallback
+        if not arrival_utc:
+            if home_loc and travel_time_mins > 0:
+                try:
+                    home_tz_str = maps.get_timezone(home_loc)
+                    home_tz = ZoneInfo(home_tz_str)
+                    # Assume 8 AM departure
+                    leave_time = datetime(mock_departure_base.year, mock_departure_base.month, mock_departure_base.day, 8, 0, 0, tzinfo=home_tz)
+                    arrival_utc = leave_time.astimezone(timezone.utc) + timedelta(minutes=travel_time_mins + 60)
+                except Exception as e:
+                    print(f"Failed to calculate driving arrival time: {e}")
+                    
+            if not arrival_utc:
+                # Absolute fallback: 9 AM UTC
+                arrival_utc = mock_departure_base + timedelta(hours=9)
+                
+        mock_start = arrival_utc
+        duration = req.duration_nights or 1
         mock_end = mock_start + timedelta(days=duration)
         
     metadata = {
@@ -376,7 +420,7 @@ def create_trip_api(req: CreateTripRequest):
         "title": req.title,
         "location": req.location,
         "draft_start_day": req.start_day_of_week,
-        "draft_duration_days": req.duration_days,
+        "draft_duration_nights": req.duration_nights,
         "mock_start_date": mock_start.timestamp(),
         "mock_end_date": mock_end.timestamp(),
         "budget_min_usd": req.budget_min_usd,
@@ -827,7 +871,7 @@ def save_trip_api(event_id: str, payload: dict):
         if offset < 0:
             offset += 7
         mock_start = base + timedelta(days=offset, hours=9)
-        duration = payload.get("draft_duration_days", 1)
+        duration = payload.get("draft_duration_nights", 1)
         mock_end = mock_start + timedelta(days=duration)
         
         payload["mock_start_date"] = mock_start.timestamp()
@@ -850,7 +894,7 @@ def delete_trip(event_id: str):
 @app.post("/api/trip/{event_id}/generate_plan")
 def generate_trip_plan_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")
-    duration_days = payload.get("duration_days", 1)
+    duration_nights = payload.get("duration_nights", 1)
     
     if not user_prompt:
         return {"error": "Prompt is required"}
@@ -859,11 +903,25 @@ def generate_trip_plan_api(event_id: str, payload: dict):
     if not meta:
         return {"error": "Trip not found"}
         
-    from models.schemas import TripMetadata
-    trip_obj = TripMetadata(**meta)
+    from datetime import datetime, timezone
+    from models.schemas import TripPlan
+    
+    trip_obj = TripPlan(
+        id=payload.get("event_id"),
+        mock_start_date=datetime.fromtimestamp(payload.get("mock_start_date"), tz=timezone.utc),
+        mock_end_date=datetime.fromtimestamp(payload.get("mock_end_date"), tz=timezone.utc),
+        duration_days=duration_nights,
+        location=payload.get("location"),
+        timeZone=payload.get("timeZone", "UTC"),
+        budget_min_usd=payload.get("budget_min_usd"),
+        budget_max_usd=payload.get("budget_max_usd"),
+        flight_preferences=payload.get("flight_preferences"),
+        attendees=payload.get("attendees", []),
+        travelers=payload.get("travelers", 1)
+    )
     
     from services.trip_planner import generate_trip_plan
-    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_nights)
     
     # Save back to trip metadata
     if 'pois' not in meta:
@@ -1026,7 +1084,7 @@ def delete_accommodation_api(event_id: str, item_id: str):
 @app.post("/api/trip/{event_id}/generate_pois")
 def generate_pois_api(event_id: str, payload: dict):
     user_prompt = payload.get("prompt", "")
-    duration_days = payload.get("duration_days", 1)
+    duration_nights = payload.get("duration_nights", 1)
     
     if not user_prompt:
         return {"error": "Prompt is required"}
@@ -1035,11 +1093,25 @@ def generate_pois_api(event_id: str, payload: dict):
     if not meta:
         return {"error": "Trip not found"}
         
-    from models.schemas import TripMetadata
-    trip_obj = TripMetadata(**meta)
+    from datetime import datetime, timezone
+    from models.schemas import TripPlan
+    
+    trip_obj = TripPlan(
+        id=payload.get("event_id"),
+        mock_start_date=datetime.fromtimestamp(payload.get("mock_start_date"), tz=timezone.utc),
+        mock_end_date=datetime.fromtimestamp(payload.get("mock_end_date"), tz=timezone.utc),
+        duration_days=duration_nights,
+        location=payload.get("location"),
+        timeZone=payload.get("timeZone", "UTC"),
+        budget_min_usd=payload.get("budget_min_usd"),
+        budget_max_usd=payload.get("budget_max_usd"),
+        flight_preferences=payload.get("flight_preferences"),
+        attendees=payload.get("attendees", []),
+        travelers=payload.get("travelers", 1)
+    )
     
     from services.trip_planner import generate_trip_pois
-    warning, pois = generate_trip_pois(trip_obj, user_prompt, duration_days)
+    warning, pois = generate_trip_pois(trip_obj, user_prompt, duration_nights)
     
     # Save back to trip metadata
     if 'pois' not in meta:

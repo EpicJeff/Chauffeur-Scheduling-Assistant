@@ -152,3 +152,61 @@ def get_live_hotel_price(location: str, check_in_date: str, check_out_date: str,
         print(f"Error fetching hotel price via SerpApi: {e}")
         
     return None
+
+def get_live_flight_schedule(origin: str, destination: str, departure_date: str, travelers: int = 1) -> Optional[dict]:
+    """
+    Fetches the best outbound flight schedule from Google Flights via SerpApi.
+    Returns: {"departure_time": "YYYY-MM-DD HH:MM", "arrival_time": "YYYY-MM-DD HH:MM", "duration_mins": int}
+    """
+    api_key = get_serpapi_key()
+    if not api_key:
+        return None
+        
+    origin_iata = extract_iata_code(origin)
+    dest_iata = extract_iata_code(destination)
+    
+    if not origin_iata or not dest_iata:
+        print(f"Could not extract IATA codes from '{origin}' to '{destination}'")
+        return None
+        
+    params = {
+      "engine": "google_flights",
+      "departure_id": origin_iata,
+      "arrival_id": dest_iata,
+      "outbound_date": departure_date,
+      "type": "2", # One way
+      "adults": str(travelers),
+      "currency": "USD",
+      "hl": "en",
+      "api_key": api_key
+    }
+    
+    try:
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        check_for_quota_error(results)
+        
+        best_flights = results.get('best_flights', [])
+        if best_flights:
+            flight = best_flights[0]
+            legs = flight.get('flights', [])
+            if legs:
+                first_leg = legs[0]
+                last_leg = legs[-1]
+                
+                dep_time = first_leg.get('departure_airport', {}).get('time')
+                arr_time = last_leg.get('arrival_airport', {}).get('time')
+                duration = flight.get('total_duration')
+                
+                if dep_time and arr_time:
+                    return {
+                        "departure_time": dep_time,
+                        "arrival_time": arr_time,
+                        "duration_mins": duration
+                    }
+    except QuotaExceededError:
+        raise
+    except Exception as e:
+        print(f"Error fetching flight schedule via SerpApi: {e}")
+        
+    return None

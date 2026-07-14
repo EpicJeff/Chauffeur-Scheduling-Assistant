@@ -922,7 +922,7 @@
                 const start = window.tripData.event.start;
                 const end = window.tripData.event.end;
                 if (start && end) {
-                    pageContext.duration_days = Math.max(1, Math.ceil((end - start) / 86400));
+                    pageContext.duration_nights = Math.max(1, Math.ceil((end - start) / 86400));
                 }
             }
             const res = await fetch(`${apiBase}api/chat`, {

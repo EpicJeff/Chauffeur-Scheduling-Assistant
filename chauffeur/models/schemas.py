@@ -313,7 +313,7 @@ class TripMetadata(BaseModel):
     title: Optional[str] = None
     location: Optional[str] = None
     draft_start_day: Optional[int] = None # 0 = Monday, 6 = Sunday
-    draft_duration_days: Optional[int] = None
+    draft_duration_nights: Optional[int] = None
     mock_start_date: Optional[float] = None
     mock_end_date: Optional[float] = None
     background_url: Optional[str] = None
@@ -334,7 +334,7 @@ class CreateTripRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     start_day_of_week: Optional[int] = None
-    duration_days: Optional[int] = None
+    duration_nights: Optional[int] = None
     calendar_id: Optional[str] = None
     budget_min_usd: Optional[float] = None
     budget_max_usd: Optional[float] = None

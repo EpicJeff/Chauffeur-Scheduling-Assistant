@@ -507,17 +507,17 @@ def handle_generate_trip_plan(args: dict) -> dict:
     if not meta:
         return {"status": "error", "message": f"Trip {event_id} not found."}
         
-    duration_days = meta.get('draft_duration_days')
-    if duration_days is None:
+    duration_nights = meta.get('draft_duration_nights')
+    if duration_nights is None:
         start_ts = meta.get('mock_start_date')
         end_ts = meta.get('mock_end_date')
         if start_ts and end_ts:
-            duration_days = max(1, int((end_ts - start_ts) / 86400) + 1)
+            duration_nights = max(1, int((end_ts - start_ts) / 86400) + 1)
         else:
-            duration_days = 3
+            duration_nights = 3
             
     trip_obj = TripMetadata(**meta)
-    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_days, proposed_itinerary)
+    warning, pois, accs, flights = generate_trip_plan(trip_obj, user_prompt, duration_nights, proposed_itinerary)
     
     if 'pois' not in meta:
         meta['pois'] = []
@@ -616,7 +616,7 @@ def handle_add_trip_accommodation(args: dict) -> dict:
     trip_start_dt, trip_end_dt = None, None
     if metadata.get('is_draft') and metadata.get('mock_start_date'):
         trip_start_dt = datetime.datetime.fromtimestamp(metadata.get('mock_start_date'), tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=metadata.get('draft_duration_days', 1))
+        trip_end_dt = trip_start_dt + datetime.timedelta(days=metadata.get('draft_duration_nights', 1))
     elif not metadata.get('is_draft'):
         from services.calendar import get_event_dates
         start, end = get_event_dates(event_id)
