@@ -1825,30 +1825,51 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
             event_type="errand"
         )
         
+        assignment_rules = []
         for r_data in all_rules:
             try:
                 r = Rule(**r_data)
             except Exception:
                 continue
+            
+            r_type = getattr(r, 'constraint_type', '')
+            a_type = getattr(r, 'assignment_type', '')
+            
+            if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
+                a_type = r_type
+                r_type = 'assignment'
+                
+            if r_type == 'assignment':
+                assignment_rules.append((r, a_type))
+            
             if does_event_match_rule(dummy_event, r):
-                r_type = getattr(r, 'constraint_type', '')
-                a_type = getattr(r, 'assignment_type', '')
-                if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
-                    a_type = r_type
-                    r_type = 'assignment'
-                    
-                if r_type == 'assignment':
-                    if a_type == 'required' or a_type == 'preferred':
-                        if r.driver_id not in required_drivers:
-                            required_drivers.append(r.driver_id)
-                    elif a_type == 'unavailable' or a_type == 'avoid':
-                        if r.driver_id not in prohibited_drivers:
-                            prohibited_drivers.append(r.driver_id)
-                elif r_type == 'group':
+                if r_type == 'group':
                     if not group_id:
                         group_id = r.id
+                        
             if getattr(r, 'window_days', None) and r.window_days < window_days:
                 window_days = r.window_days
+
+        def is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
+            if not assignment_rules: return True
+            test_ev = Event(
+                id=errand.get('id', 'temp'),
+                title=errand.get('title', ''),
+                start=start_time,
+                end=end_time,
+                location=loc,
+                calendar_ids=[],
+                source_event_ids=[],
+                event_type="errand"
+            )
+            for r, a_type in assignment_rules:
+                if r.driver_id != d_id and a_type in ['required', 'preferred']:
+                    if does_event_match_rule(test_ev, r):
+                        return False
+                elif r.driver_id == d_id and a_type in ['unavailable', 'avoid']:
+                    if does_event_match_rule(test_ev, r):
+                        return False
+            return True
         # -----------------------------------------
         
         from datetime import timezone
@@ -1898,7 +1919,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                     start_time = datetime.combine(current_date, time(9, 0)).astimezone() # default 9 AM
                     end_time = start_time + timedelta(minutes=duration)
                     
-                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now and is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
                         if detour < best_detour:
                             best_detour = detour
                             best_gap = (date_str, d_id, start_time, -1)
@@ -1915,7 +1936,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 end_time = start_time + timedelta(minutes=duration)
                 
                 if start_time.hour >= 9:
-                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
+                    if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now and is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
                         if detour < best_detour:
                             best_detour = detour
                             best_gap = (date_str, d_id, start_time, -1)
@@ -1933,7 +1954,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                             end_time = start_time + timedelta(minutes=duration)
                             
                             # Passengers are NOT in the car during an event (they are at the event)
-                            if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
+                            if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now and is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
                                 detour = t_event_to_errand + t_errand_to_event - group_bonus
                                 if detour < best_detour:
                                     best_detour = detour
@@ -1958,7 +1979,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                         if req_pax and not req_pax.issubset(in_car): pax_valid = False
                         if proh_pax and not proh_pax.isdisjoint(in_car): pax_valid = False
                         
-                        if pax_valid and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
+                        if pax_valid and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now and is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
                             if detour < best_detour:
                                 best_detour = detour
                                 best_gap = (date_str, d_id, start_time, i)
@@ -1973,7 +1994,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 start_time = last_event.end + timedelta(minutes=t_last_to_loc)
                 end_time = start_time + timedelta(minutes=duration)
                 
-                if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now:
+                if (not req_pax) and is_valid_time_window(start_time, end_time, tw_start, tw_end) and start_time >= now and is_driver_allowed_for_slot(d_id, start_time, end_time, loc):
                     if detour < best_detour:
                         best_detour = detour
                         best_gap = (date_str, d_id, start_time, len(schedule)-1)
