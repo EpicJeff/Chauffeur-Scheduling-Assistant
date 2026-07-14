@@ -573,15 +573,20 @@
                         window.showAnchoredChatBubble('chat-overlay-container', data.reply);
                     }
                 }
-                
-                if (typeof window.forceSync === 'function') {
-                    window.forceSync();
-                } else if (typeof window.fetchTripData === 'function') {
-                    window.fetchTripData();
-                } else if (typeof window.renderConfig === 'function') {
-                    window.location.reload();
+                if (data.ui_action) {
+                    if (data.ui_action === 'clear_itinerary' && typeof window.clearItinerary === 'function') {
+                        window.clearItinerary();
+                    }
                 } else {
-                    window.location.reload();
+                    if (typeof window.forceSync === 'function') {
+                        window.forceSync();
+                    } else if (typeof window.fetchTripData === 'function') {
+                        window.fetchTripData();
+                    } else if (typeof window.renderConfig === 'function') {
+                        window.location.reload();
+                    } else {
+                        window.location.reload();
+                    }
                 }
             }
         } catch (err) {

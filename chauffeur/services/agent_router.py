@@ -91,6 +91,7 @@ If you need to generate a massive 10-day trip, output {"delegate_to_gemini": tru
     tool_calls = llm_response.get("tool_calls", [])
     agent_message = llm_response.get("message", "I have processed your request.")
     target_id = None
+    ui_action = None
     
     for tool_call in tool_calls:
         func_name = tool_call.get("name")
@@ -114,9 +115,14 @@ If you need to generate a massive 10-day trip, output {"delegate_to_gemini": tru
             res = clear_trip_itinerary(args.get("trip_id"))
             if res.get("target_element_id"):
                 target_id = res["target_element_id"]
+            if res.get("ui_action"):
+                ui_action = res["ui_action"]
+            if res.get("message"):
+                agent_message = res["message"]
                 
     return {
         "status": "success",
         "message": agent_message,
-        "target_element_id": target_id
+        "target_element_id": target_id,
+        "ui_action": ui_action
     }

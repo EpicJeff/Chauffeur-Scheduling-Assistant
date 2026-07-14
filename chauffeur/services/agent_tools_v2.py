@@ -110,24 +110,10 @@ def clear_trip_itinerary(trip_id: str) -> Dict[str, Any]:
     """
     from services.storage import get_trip_metadata, set_trip_metadata
     
-    meta = get_trip_metadata(trip_id)
-    if not meta:
-        return {"status": "error", "message": f"Trip {trip_id} not found."}
-        
-    cleared_count = 0
-    for poi in meta.get("pois", []):
-        if poi.get("is_scheduled"):
-            poi["is_scheduled"] = False
-            poi["scheduled_start"] = None
-            poi["scheduled_end"] = None
-            poi["event_id"] = None
-            cleared_count += 1
-            
-    set_trip_metadata(trip_id, meta)
-    
     return {
         "status": "success",
-        "message": f"Cleared schedule for {cleared_count} items from the trip itinerary."
+        "message": "I've pulled up the options for clearing your itinerary. Please select how you'd like to proceed.",
+        "ui_action": "clear_itinerary"
     }
 
 # ==============================================================================
