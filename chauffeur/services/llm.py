@@ -535,7 +535,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return 0, "Failed to parse LLM evaluation."
 
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None) -> dict:
     import json
     import urllib.request
     
@@ -553,6 +553,8 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 "format": "json",
                 "options": {"temperature": temperature}
             }
+            if tools:
+                payload["tools"] = [{"type": "function", "function": t} for t in tools]
             req = urllib.request.Request(
                 req_url,
                 data=json.dumps(payload).encode('utf-8'),
@@ -561,7 +563,20 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             )
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                raw_response = data.get('message', {}).get('content', '')
+                
+                # Check if it returned a tool call
+                message = data.get('message', {})
+                if 'tool_calls' in message:
+                    tool_calls = []
+                    for tc in message['tool_calls']:
+                        if 'function' in tc:
+                            tool_calls.append({
+                                'name': tc['function']['name'],
+                                'arguments': tc['function']['arguments']
+                            })
+                    return {"tool_calls": tool_calls, "message": ""}
+                
+                raw_response = message.get('content', '')
         except Exception as e:
             raise RuntimeError(f"Ollama request failed: {str(e)}")
             
@@ -582,6 +597,10 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                     "temperature": temperature
                 }
             }
+            
+            if tools:
+                payload["tools"] = [{"functionDeclarations": tools}]
+                
             req = urllib.request.Request(
                 req_url,
                 data=json.dumps(payload).encode('utf-8'),
@@ -591,11 +610,31 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 try:
-                    raw_response = data['candidates'][0]['content']['parts'][0]['text']
+                    parts = data['candidates'][0]['content']['parts']
+                    
+                    # Check for tool call
+                    tool_calls = []
+                    text_resp = ""
+                    for part in parts:
+                        if 'functionCall' in part:
+                            fc = part['functionCall']
+                            tool_calls.append({
+                                'name': fc['name'],
+                                'arguments': fc['args']
+                            })
+                        if 'text' in part:
+                            text_resp += part['text']
+                            
+                    if tool_calls:
+                        return {"tool_calls": tool_calls, "message": text_resp}
+                        
+                    raw_response = text_resp
                 except (KeyError, IndexError):
                     raise RuntimeError("Unexpected response format from Gemini API")
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
+            if e.code == 429:
+                return {"error": f"429 Too Many Requests: {error_body}"}
             raise RuntimeError(f"Gemini API request failed: {str(e)}\nDetails: {error_body}")
         except Exception as e:
             raise RuntimeError(f"Gemini request failed: {str(e)}")

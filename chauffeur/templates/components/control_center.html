@@ -214,127 +214,127 @@
             </div>
         </div>
 
-        <!-- Chat Container (Flex-1 so it takes remaining space, Default Expanded) -->
-        <div class="flex-1 flex flex-col min-h-[300px]">
-            <button onclick="toggleAccordion('chat-content', 'chat-chevron')"
-                class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none shrink-0 border-b border-gray-700">
-                <span class="font-bold text-blue-300 flex items-center">
-                    <svg class="w-4 h-4 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
-                        </path>
-                    </svg>
-                    Argyle
-                </span>
-                <svg id="chat-chevron"
-                    class="w-4 h-4 text-gray-400 transform transition-transform duration-200 rotate-180" fill="none"
-                    stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+    </div>
+</div>
+
+<!-- Chat Container Overlay (Fixed at bottom center) -->
+<div id="chat-overlay-container" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-full max-w-2xl bg-gray-900 rounded-2xl shadow-2xl border border-gray-700 z-[80] flex flex-col overflow-hidden transition-all duration-300 max-h-[80vh]">
+    <button onclick="toggleAccordion('chat-content', 'chat-chevron')"
+        class="flex justify-between items-center p-3 bg-gray-800 hover:bg-gray-700 transition-colors w-full focus:outline-none shrink-0 border-b border-gray-700">
+        <span class="font-bold text-blue-300 flex items-center">
+            <svg class="w-5 h-5 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z">
+                </path>
+            </svg>
+            Ask Argyle
+        </span>
+        <svg id="chat-chevron"
+            class="w-4 h-4 text-gray-400 transform transition-transform duration-200 rotate-180" fill="none"
+            stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+        </svg>
+    </button>
+    <div id="chat-content" class="flex flex-col bg-gray-900 overflow-hidden">
+        <div class="p-2 border-b border-gray-700 bg-gray-800 flex gap-2">
+            <select id="chat-conversation-select" onchange="switchConversation()"
+                class="flex-1 bg-gray-900 text-white text-xs border border-gray-600 rounded p-1 focus:outline-none focus:border-blue-500">
+                <option value="">Loading...</option>
+            </select>
+            <button onclick="deleteCurrentConversation()" title="Delete Conversation"
+                class="px-2 py-1 bg-gray-700 hover:bg-red-600 text-white rounded flex items-center justify-center border border-gray-600">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                 </svg>
             </button>
-            <div id="chat-content" class="flex-1 flex flex-col bg-gray-900 overflow-hidden">
-                <div class="p-2 border-b border-gray-700 bg-gray-800 flex gap-2">
-                    <select id="chat-conversation-select" onchange="switchConversation()"
-                        class="flex-1 bg-gray-900 text-white text-xs border border-gray-600 rounded p-1 focus:outline-none focus:border-blue-500">
-                        <option value="">Loading...</option>
-                    </select>
-                    <button onclick="deleteCurrentConversation()" title="Delete Conversation"
-                        class="px-2 py-1 bg-gray-700 hover:bg-red-600 text-white rounded flex items-center justify-center border border-gray-600">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            <button onclick="createNewConversation()" title="New Chat"
+                class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded font-bold text-xs border border-gray-600"
+                title="New Conversation">+</button>
+        </div>
+        <div id="chat-messages" class="p-4 overflow-y-auto flex flex-col gap-3 min-h-[150px] max-h-[350px]">
+            <div class="text-center text-gray-500 text-sm mt-4">Loading chat history...</div>
+        </div>
+
+        <div class="p-4 bg-gray-800 border-t border-gray-700 shrink-0 relative flex flex-col gap-2">
+            <!-- Mode Pill Container -->
+            <div id="chat-mode-container"
+                class="hidden flex items-center justify-between bg-blue-900/50 border border-blue-500/30 text-blue-300 px-3 py-1.5 rounded-full text-xs font-bold self-start w-fit">
+                <span class="flex items-center gap-1.5">
+                    <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7">
+                        </path>
+                    </svg>
+                    <span id="active-mode-name">Smart Planner Mode</span>
+                </span>
+                <button type="button" onclick="setChatMode('standard')"
+                    class="ml-2 text-blue-400 hover:text-white focus:outline-none">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Main Input Box Container -->
+            <div
+                class="flex items-end bg-gray-900 border border-gray-600 rounded-2xl p-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
+                <!-- Plus Button for Modes -->
+                <div class="relative group">
+                    <button type="button"
+                        onclick="document.getElementById('mode-menu').classList.toggle('hidden')"
+                        class="p-2 text-gray-400 hover:text-indigo-400 transition-colors focus:outline-none rounded-full hover:bg-gray-800 shrink-0 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 4v16m8-8H4"></path>
                         </svg>
                     </button>
-                    <button onclick="createNewConversation()" title="New Chat"
-                        class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded font-bold text-xs border border-gray-600"
-                        title="New Conversation">+</button>
-                </div>
-                <div id="chat-messages" class="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-                    <div class="text-center text-gray-500 text-sm mt-4">Loading chat history...</div>
-                </div>
 
-                <div class="p-4 bg-gray-800 border-t border-gray-700 shrink-0 relative flex flex-col gap-2">
-                    <!-- Mode Pill Container -->
-                    <div id="chat-mode-container"
-                        class="hidden flex items-center justify-between bg-blue-900/50 border border-blue-500/30 text-blue-300 px-3 py-1.5 rounded-full text-xs font-bold self-start w-fit">
-                        <span class="flex items-center gap-1.5">
-                            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <!-- Mode Popover Menu -->
+                    <div id="mode-menu"
+                        class="hidden absolute bottom-full left-0 mb-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden z-50">
+                        <button type="button"
+                            onclick="setChatMode('planner'); document.getElementById('mode-menu').classList.add('hidden')"
+                            class="w-full text-left px-4 py-3 hover:bg-gray-700 text-gray-200 text-sm font-medium transition-colors flex items-center gap-2">
+                            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7">
                                 </path>
                             </svg>
-                            <span id="active-mode-name">Smart Planner Mode</span>
-                        </span>
-                        <button type="button" onclick="setChatMode('standard')"
-                            class="ml-2 text-blue-400 hover:text-white focus:outline-none">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M6 18L18 6M6 6l12 12"></path>
-                            </svg>
+                            Smart Planner
                         </button>
                     </div>
+                </div>
 
-                    <!-- Main Input Box Container -->
-                    <div
-                        class="flex items-end bg-gray-900 border border-gray-600 rounded-2xl p-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
-                        <!-- Plus Button for Modes -->
-                        <div class="relative group">
-                            <button type="button"
-                                onclick="document.getElementById('mode-menu').classList.toggle('hidden')"
-                                class="p-2 text-gray-400 hover:text-indigo-400 transition-colors focus:outline-none rounded-full hover:bg-gray-800 shrink-0 flex items-center justify-center">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M12 4v16m8-8H4"></path>
-                                </svg>
-                            </button>
+                <!-- Text Input -->
+                <textarea id="chat-input" rows="1" placeholder="Ask Argyle... (e.g. 'What is my driving schedule today?')"
+                    class="flex-1 bg-transparent border-none px-3 py-2 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-0 resize-none max-h-32 min-h-[44px] leading-relaxed self-center"
+                    style="scrollbar-width: thin;"
+                    oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"
+                    onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitChat(event); }"></textarea>
 
-                            <!-- Mode Popover Menu -->
-                            <div id="mode-menu"
-                                class="hidden absolute bottom-full left-0 mb-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden z-50">
-                                <button type="button"
-                                    onclick="setChatMode('planner'); document.getElementById('mode-menu').classList.add('hidden')"
-                                    class="w-full text-left px-4 py-3 hover:bg-gray-700 text-gray-200 text-sm font-medium transition-colors flex items-center gap-2">
-                                    <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor"
-                                        viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7">
-                                        </path>
-                                    </svg>
-                                    Smart Planner
-                                </button>
-                            </div>
-                        </div>
+                <!-- Right Side Controls -->
+                <div class="flex items-center gap-1 shrink-0 pb-1">
+                    <select id="chat-model-select"
+                        class="bg-transparent text-gray-400 hover:text-gray-300 text-xs cursor-pointer border-none focus:outline-none focus:ring-0 py-2 pl-2 pr-6 appearance-none hidden">
+                        <option value="gemini" selected>Gemini</option>
+                        <option value="local">Local AI</option>
+                    </select>
 
-                        <!-- Text Input -->
-                        <textarea id="chat-input" rows="1" placeholder="Ask Argyle..."
-                            class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-0 resize-none max-h-32 min-h-[40px] leading-relaxed self-center"
-                            style="scrollbar-width: thin;"
-                            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"
-                            onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitChat(event); }"></textarea>
-
-                        <!-- Right Side Controls -->
-                        <div class="flex items-center gap-1 shrink-0 pb-1">
-                            <select id="chat-model-select"
-                                class="bg-transparent text-gray-400 hover:text-gray-300 text-xs cursor-pointer border-none focus:outline-none focus:ring-0 py-2 pl-2 pr-6 appearance-none">
-                                <option value="gemini" selected>Gemini</option>
-                                <option value="local">Local AI</option>
-                            </select>
-
-                            <!-- Submit Button -->
-                            <button type="button" id="chat-submit-btn" onclick="submitChat(event)"
-                                class="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-9 w-9">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M5 10l7-7m0 0l7 7m-7-7v18"></path>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
+                    <!-- Submit Button -->
+                    <button type="button" id="chat-submit-btn" onclick="submitChat(event)"
+                        class="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M5 10l7-7m0 0l7 7m-7-7v18"></path>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
-
     </div>
-</div>
+
 <script>
     const _isReadOnly = typeof isReadOnly !== 'undefined' ? isReadOnly : false;
     const _isKiosk = typeof isKiosk !== 'undefined' ? isKiosk : false;
@@ -793,6 +793,71 @@
     }
     window.closeGlobalAlert = closeGlobalAlert;
 
+    // --- Anchored Chat Bubble ---
+    window.showAnchoredChatBubble = function(targetId, message) {
+        const targetEl = document.getElementById(targetId);
+        if (!targetEl) {
+            console.warn(`Target element ${targetId} not found for chat bubble.`);
+            return;
+        }
+
+        const bubble = document.createElement('div');
+        bubble.className = 'absolute z-[9999] bg-indigo-600 text-white p-3 rounded-lg shadow-2xl text-sm max-w-xs transition-opacity duration-300 opacity-0 pointer-events-none transform translate-y-2';
+        // Simple markdown rendering
+        let formatted = message.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        bubble.innerHTML = formatted;
+        
+        // Add a small tail
+        const tail = document.createElement('div');
+        tail.className = 'absolute w-3 h-3 bg-indigo-600 transform rotate-45';
+        
+        // Positioning
+        document.body.appendChild(bubble);
+        bubble.appendChild(tail);
+        
+        const rect = targetEl.getBoundingClientRect();
+        
+        // Try placing above first
+        let top = rect.top + window.scrollY - bubble.offsetHeight - 10;
+        let left = rect.left + window.scrollX + (rect.width / 2) - (bubble.offsetWidth / 2);
+        
+        // Tail position for 'above'
+        tail.style.bottom = '-6px';
+        tail.style.left = '50%';
+        tail.style.marginLeft = '-6px';
+
+        // Check if it goes off top of screen, if so, place below
+        if (top < window.scrollY + 10) {
+            top = rect.bottom + window.scrollY + 10;
+            tail.style.bottom = 'auto';
+            tail.style.top = '-6px';
+        }
+        
+        // Check left/right bounds
+        if (left < 10) left = 10;
+        if (left + bubble.offsetWidth > window.innerWidth - 10) {
+            left = window.innerWidth - bubble.offsetWidth - 10;
+        }
+
+        bubble.style.top = top + 'px';
+        bubble.style.left = left + 'px';
+
+        // Animate in
+        requestAnimationFrame(() => {
+            bubble.classList.remove('opacity-0', 'translate-y-2');
+            bubble.classList.add('opacity-100', 'translate-y-0');
+        });
+
+        // Remove after 6 seconds
+        setTimeout(() => {
+            bubble.classList.remove('opacity-100', 'translate-y-0');
+            bubble.classList.add('opacity-0', 'translate-y-2');
+            setTimeout(() => {
+                if(bubble.parentNode) bubble.parentNode.removeChild(bubble);
+            }, 300);
+        }, 6000);
+    };
+
     async function deleteCurrentConversation() {
         if (!activeConversationId) return;
         
@@ -943,6 +1008,12 @@
                 appendMessage('assistant', `⚠️ Error: ${data.error}`);
             } else {
                 appendMessage('assistant', data.reply);
+                
+                // Show anchored bubble if the agent targeted a specific UI element
+                if (data.target_element_id && typeof window.showAnchoredChatBubble === 'function') {
+                    window.showAnchoredChatBubble(data.target_element_id, data.reply);
+                }
+                
                 if (typeof window.forceSync === 'function') {
                     window.forceSync();
                 } else if (typeof window.fetchTripData === 'function') {
@@ -1025,4 +1096,30 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (!_isReadOnly || _isKiosk) loadConversations();
     });
+    // Initialize Chat Stream SSE Listener
+    function initChatStream() {
+        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        const source = new EventSource(`${apiBase}api/v2/chat/stream`);
+        source.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.target_element_id && data.reply) {
+                    if (typeof window.showAnchoredChatBubble === 'function') {
+                        window.showAnchoredChatBubble(data.target_element_id, data.reply);
+                    }
+                }
+            } catch(e) {
+                // Ignore ping or malformed data
+            }
+        };
+        source.onerror = function() {
+            source.close();
+            setTimeout(initChatStream, 5000);
+        };
+    }
+    
+    // Start listening if not in an iframe or readonly
+    if (!_isReadOnly && window === window.top) {
+        initChatStream();
+    }
 </script>

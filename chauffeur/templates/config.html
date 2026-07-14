@@ -393,56 +393,10 @@
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                             <div>
                                 <label
-                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">LLM
-                                    Provider</label>
-                                <select x-model="llmProvider" @change="saveSettings()"
-                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white appearance-none">
-                                    <option value="">Disabled / None</option>
-                                    <option value="ollama">Ollama (Local)</option>
-                                    <option value="gemini">Gemini API (Cloud)</option>
-                                </select>
-                            </div>
-
-                            <!-- Gemini settings -->
-                            <div x-show="llmProvider === 'gemini'"
-                                class="grid grid-cols-1 sm:grid-cols-2 gap-4 col-span-1 md:col-span-2" x-transition>
-                                <div>
-                                    <label
-                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini
-                                        API Key</label>
-                                    <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()"
-                                        placeholder="Enter Gemini API Key"
-                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
-                                </div>
-                                <div>
-                                    <label
-                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini
-                                        Model</label>
-                                    <input type="text" x-model="llmGeminiModel" @change="saveSettings()"
-                                        placeholder="gemini-3.5-flash"
-                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
-                                </div>
-                            </div>
-
-                            <!-- Ollama settings -->
-                            <div x-show="llmProvider === 'ollama'"
-                                class="grid grid-cols-1 sm:grid-cols-2 gap-4 col-span-1 md:col-span-2" x-transition>
-                                <div>
-                                    <label
-                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama
-                                        URL</label>
-                                    <input type="text" x-model="llmOllamaUrl" @change="saveSettings()"
-                                        placeholder="http://localhost:11434"
-                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
-                                </div>
-                                <div>
-                                    <label
-                                        class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Ollama
-                                        Model</label>
-                                    <input type="text" x-model="llmOllamaModel" @change="saveSettings()"
-                                        placeholder="qwen2.5:7b"
-                                        class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
-                                </div>
+                                    class="block text-gray-400 mb-2 font-semibold text-sm uppercase tracking-wider">Gemini API Key</label>
+                                <input type="password" x-model="llmGeminiApiKey" @change="saveSettings()"
+                                    placeholder="Enter Gemini API Key"
+                                    class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded-lg p-3 text-white font-mono">
                             </div>
                         </div>
 

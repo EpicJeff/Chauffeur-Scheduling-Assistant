@@ -1418,8 +1418,91 @@ async def stream_events():
                     last_ping = now
         except asyncio.CancelledError:
             pass
+            
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+# --- V2 Agentic Core API ---
+
+CHAT_EVENTS = []
+
+class ConverseRequest(BaseModel):
+    text: str
+    language: str = "en"
+
+@app.post("/api/v2/converse")
+def converse_ha_assist(req: ConverseRequest):
+    """
+    Endpoint for Home Assistant Assist Pipeline to send transcribed text.
+    Acts as a Custom Conversation Agent webhook.
+    """
+    from services.agent_router import process_agent_request
+    
+    try:
+        res = process_agent_request(req.text)
+        
+        # Trigger global dashboard update event if a target was modified
+        if res.get("target_element_id"):
+            global LAST_UPDATE_TIME
+            LAST_UPDATE_TIME = time.time()
+            
+        # Push to SSE stream for frontend
+        import json
+        event_data = {
+            "target_element_id": res.get("target_element_id"),
+            "reply": res.get("message", "Done.")
+        }
+        CHAT_EVENTS.append(event_data)
+            
+        # Return format expected by Home Assistant Conversation integration
+        return {
+            "response": {
+                "speech": {
+                    "plain": {
+                        "speech": res.get("message", "I did not understand that."),
+                        "extra_data": None
+                    }
+                },
+                "card": {},
+                "language": req.language,
+                "response_type": "action_done",
+                "data": {
+                    "targets": [],
+                    "success": [],
+                    "failed": []
+                }
+            }
+        }
+    except Exception as e:
+        import traceback
+        logger.error(f"Error in converse API: {traceback.format_exc()}")
+        return {"error": str(e)}
+
+@app.get("/api/v2/chat/stream")
+async def stream_agent_chat():
+    """
+    Websocket/SSE endpoint for the Frontend to receive agent chat bubbles
+    and DOM target coordinates for rendering context-anchored chat bubbles.
+    """
+    import json
+    async def chat_event_generator():
+        last_index = len(CHAT_EVENTS)
+        last_ping = time.time()
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                now = time.time()
+                if len(CHAT_EVENTS) > last_index:
+                    for i in range(last_index, len(CHAT_EVENTS)):
+                        yield f"data: {json.dumps(CHAT_EVENTS[i])}\n\n"
+                    last_index = len(CHAT_EVENTS)
+                    last_ping = now
+                elif now - last_ping > 15:
+                    yield ": ping\n\n"
+                    last_ping = now
+        except asyncio.CancelledError:
+            pass
+            
+    return StreamingResponse(chat_event_generator(), media_type="text/event-stream")
 # --- Passengers API ---
 @app.get("/api/passengers")
 def get_passengers():
@@ -1992,7 +2075,10 @@ class ChatMessagePayload(BaseModel):
 
 @app.post("/api/chat")
 def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
-    from services.llm import agentic_chat_loop, auto_name_conversation
+    from services.agent_router import process_agent_request
+    from services.llm import auto_name_conversation
+    import time
+    
     try:
         is_first = False
         if payload.conversation_id:
@@ -2004,16 +2090,24 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
         if is_first and payload.conversation_id:
             threading.Thread(target=auto_name_conversation, args=(payload.conversation_id, payload.message)).start()
 
-        reply = agentic_chat_loop(
-            payload.message, 
-            source=payload.source, 
-            driver_id=payload.driver_id, 
-            context=payload.context,
-            conversation_id=payload.conversation_id
-        )
-        return {"reply": reply}
+        if payload.conversation_id:
+            storage.add_message_to_conversation(payload.conversation_id, {'role': 'user', 'content': payload.message, 'timestamp': time.time()})
+
+        res = process_agent_request(payload.message, context=payload.context)
+        reply = res.get("message", "I did not understand that.")
+        target_id = res.get("target_element_id")
+        
+        if target_id:
+            global LAST_UPDATE_TIME
+            LAST_UPDATE_TIME = time.time()
+            
+        if payload.conversation_id:
+            storage.add_message_to_conversation(payload.conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})
+            
+        return {"reply": reply, "target_element_id": target_id}
     except Exception as e:
         import traceback
+        logger.error(f"Error in chat loop: {traceback.format_exc()}")
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/api/chat/history")
