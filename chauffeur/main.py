@@ -2090,10 +2090,15 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
         if is_first and payload.conversation_id:
             threading.Thread(target=auto_name_conversation, args=(payload.conversation_id, payload.message)).start()
 
+        conv_history = []
         if payload.conversation_id:
+            conv = storage.get_conversation(payload.conversation_id)
+            if conv:
+                conv_history = conv.get("messages", [])
+                
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'user', 'content': payload.message, 'timestamp': time.time()})
 
-        res = process_agent_request(payload.message, context=payload.context)
+        res = process_agent_request(payload.message, context=payload.context, history=conv_history)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")
         

@@ -58,7 +58,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         logger.error(f"Error calling Gemma: {e}")
         return {"error": str(e)}
 
-def process_agent_request(user_prompt: str, context: Optional[Dict] = None) -> Dict[str, Any]:
+def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
@@ -70,6 +70,12 @@ Respond with a concise, helpful message about what you did.
 If you need to generate a massive 10-day trip, output {"delegate_to_gemini": true}.
 """
     
+    if history:
+        system_prompt += "\n\nCONVERSATION HISTORY:\n"
+        # Take last 5 turns to keep context window small
+        for msg in history[-5:]:
+            system_prompt += f"{msg.get('role').upper()}: {msg.get('content')}\n"
+            
     if context:
         system_prompt += f"\n\nUSER CONTEXT:\n{json.dumps(context)}\n"
         if "pathname" in context and "/trip/" in context["pathname"]:
