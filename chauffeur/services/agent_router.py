@@ -54,6 +54,12 @@ Respond with a concise, helpful message about what you did.
 If you need to generate a massive 10-day trip, output {"delegate_to_gemini": true}.
 """
     
+    if context:
+        system_prompt += f"\n\nUSER CONTEXT:\n{json.dumps(context)}\n"
+        if "pathname" in context and "/trip/" in context["pathname"]:
+            trip_id = context["pathname"].split("/trip/")[-1].split("/")[0]
+            system_prompt += f"The current active trip_id is: {trip_id}\n"
+        
     tools = get_available_tools()
     
     # 1. Call Gemma Router
