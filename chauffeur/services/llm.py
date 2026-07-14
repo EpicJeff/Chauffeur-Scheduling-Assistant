@@ -645,12 +645,21 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
         import re
         match = re.search(r'```(?:json)?\s*([\s\S]*?)```', raw_response)
         if match:
-            raw_response = match.group(1)
-        else:
-            # Fallback: try to find the outermost JSON object or array
-            fallback_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw_response)
-            if fallback_match:
-                raw_response = fallback_match.group(1)
+            return json.loads(match.group(1).strip())
+            
+        decoder = json.JSONDecoder()
+        valid_objs = []
+        for i, char in enumerate(raw_response):
+            if char in ('{', '['):
+                try:
+                    obj, _ = decoder.raw_decode(raw_response[i:])
+                    valid_objs.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                    
+        if valid_objs:
+            return valid_objs[-1]
+            
         return json.loads(raw_response.strip())
     except json.JSONDecodeError as e:
         import traceback
