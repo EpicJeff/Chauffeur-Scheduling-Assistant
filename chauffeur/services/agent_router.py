@@ -30,14 +30,30 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
     provider = 'gemini'
     url = ''
     
+    import json
+    # Inject tools into system prompt because Gemma on Gemini API doesn't support native tool calling payload
+    system_prompt += "\n\nYou MUST respond ONLY in valid JSON. Your JSON must match this exact structure:\n"
+    system_prompt += "{\n"
+    system_prompt += '  "message": "A concise, helpful message about what you did.",\n'
+    system_prompt += '  "tool_calls": [\n'
+    system_prompt += '    {\n'
+    system_prompt += '      "name": "tool_name",\n'
+    system_prompt += '      "arguments": {"arg1": "value"}\n'
+    system_prompt += '    }\n'
+    system_prompt += '  ]\n'
+    system_prompt += "}\n\n"
+    system_prompt += "AVAILABLE TOOLS:\n"
+    system_prompt += json.dumps(tools, indent=2)
+    system_prompt += "\n\nIf you do not need to call a tool, return an empty list for tool_calls."
+    
     try:
-        res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=tools)
+        res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None)
         if res.get("error") and "429" in str(res.get("error")):
             raise RateLimitException("429 Too Many Requests")
         return res
     except RateLimitException:
         logger.warning(f"{primary_model} rate limited, falling back to {fallback_model}...")
-        return _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=tools)
+        return _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None)
     except Exception as e:
         logger.error(f"Error calling Gemma: {e}")
         return {"error": str(e)}
