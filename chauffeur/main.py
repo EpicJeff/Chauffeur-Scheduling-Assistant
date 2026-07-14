@@ -2146,6 +2146,11 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                         if conv_id:
                             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': msg, 'timestamp': time.time()})
                         
+                        CHAT_EVENTS.append({
+                            "reply": msg,
+                            "ui_action": "reload"
+                        })
+                        
                         global LAST_UPDATE_TIME
                         LAST_UPDATE_TIME = time.time()
                     except Exception as e:
