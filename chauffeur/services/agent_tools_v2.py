@@ -114,12 +114,20 @@ def clear_trip_itinerary(trip_id: str) -> Dict[str, Any]:
     if not meta:
         return {"status": "error", "message": f"Trip {trip_id} not found."}
         
-    meta["pois"] = []
+    cleared_count = 0
+    for poi in meta.get("pois", []):
+        if poi.get("is_scheduled"):
+            poi["is_scheduled"] = False
+            poi["scheduled_start"] = None
+            poi["scheduled_end"] = None
+            poi["event_id"] = None
+            cleared_count += 1
+            
     set_trip_metadata(trip_id, meta)
     
     return {
         "status": "success",
-        "message": f"Cleared all items from the trip itinerary."
+        "message": f"Cleared schedule for {cleared_count} items from the trip itinerary."
     }
 
 # ==============================================================================
