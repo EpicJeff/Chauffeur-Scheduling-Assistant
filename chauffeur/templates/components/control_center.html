@@ -569,8 +569,8 @@
                     if (data.target_element_id) {
                         window.showAnchoredChatBubble(data.target_element_id, data.reply);
                     } else {
-                        // Fallback to top right float
-                        window.showAnchoredChatBubble(null, data.reply);
+                        // Fallback to anchoring on the chat input box itself
+                        window.showAnchoredChatBubble('chat-overlay-container', data.reply);
                     }
                 }
                 
@@ -755,7 +755,7 @@
                 // Even if target_element_id is missing, we still show the reply using the fallback
                 if (data.reply) {
                     if (typeof window.showAnchoredChatBubble === 'function') {
-                        window.showAnchoredChatBubble(data.target_element_id || null, data.reply);
+                        window.showAnchoredChatBubble(data.target_element_id || 'chat-overlay-container', data.reply);
                     }
                 }
             } catch(e) {
