@@ -19,33 +19,25 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
     start_date and end_date must be in YYYY-MM-DD format.
     """
-    from services.calendar import fetch_upcoming_events
-    from services.storage import get_passengers, get_all_drivers
-    import datetime
+    from services.storage import get_cached_schedule
     
-    calendar_ids = set()
-    from services.storage import get_settings
-    settings = get_settings()
-    for cid in settings.get("calendar_ids", []):
-        calendar_ids.add(cid)
-    for p in get_passengers():
-        for cid in p.get("calendar_ids", []):
-            calendar_ids.add(cid)
-    for d in get_all_drivers():
-        for cid in d.get("calendar_ids", []):
-            calendar_ids.add(cid)
-            
-    events = fetch_upcoming_events(list(calendar_ids), start_date_str=start_date, end_date_str=end_date)
+    sched = get_cached_schedule()
+    events = sched.get("events", [])
     
     slim_events = []
     for ev in events:
-        slim_events.append({
-            "id": ev.id,
-            "title": ev.title,
-            "location": ev.location,
-            "start": ev.start.isoformat() if hasattr(ev.start, 'isoformat') else str(ev.start),
-            "end": ev.end.isoformat() if hasattr(ev.end, 'isoformat') else str(ev.end)
-        })
+        ev_start = ev.get("start", "")
+        # Filter by date substring since start is in ISO format
+        if len(ev_start) >= 10:
+            ev_date = ev_start[:10]
+            if start_date <= ev_date <= end_date:
+                slim_events.append({
+                    "id": ev.get("id"),
+                    "title": ev.get("title"),
+                    "location": ev.get("location"),
+                    "start": ev.get("start"),
+                    "end": ev.get("end")
+                })
         
     return {"status": "success", "events": slim_events}
 
@@ -55,33 +47,24 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     Finds an event by name on a specific date and assigns a driver to it via a manual override.
     target_date must be YYYY-MM-DD.
     """
-    from services.calendar import fetch_upcoming_events
-    from services.storage import set_manual_override, get_all_drivers, get_passengers
+    from services.storage import add_override, get_all_drivers, get_cached_schedule
     import datetime
     
-    # Get all calendars to search
-    calendar_ids = set()
-    from services.storage import get_settings
-    settings = get_settings()
-    for cid in settings.get("calendar_ids", []):
-        calendar_ids.add(cid)
-        
-    for p in get_passengers():
-        for cid in p.get("calendar_ids", []):
-            calendar_ids.add(cid)
-    for d in get_all_drivers():
-        for cid in d.get("calendar_ids", []):
-            calendar_ids.add(cid)
-            
-    events = fetch_upcoming_events(list(calendar_ids), start_date_str=target_date, end_date_str=target_date)
+    sched = get_cached_schedule()
+    events = sched.get("events", [])
     
     # Fuzzy match event
     target_event = None
     event_name_lower = event_name.lower().strip()
     for ev in events:
-        if event_name_lower in ev.title.lower():
-            target_event = ev
-            break
+        ev_start = ev.get("start", "")
+        if len(ev_start) >= 10:
+            ev_date = ev_start[:10]
+            if ev_date == target_date:
+                title = ev.get("title", "").lower()
+                if event_name_lower in title:
+                    target_event = ev
+                    break
             
     if not target_event:
         return {"status": "error", "message": f"Could not find any event containing '{event_name}' on {target_date}."}
@@ -99,13 +82,18 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
         return {"status": "error", "message": f"Could not find a driver matching '{driver_name}'."}
         
     # Set the override
-    set_manual_override(target_event.id, target_driver["id"])
+    override_data = {
+        "event_id": target_event["id"],
+        "override_type": "driver",
+        "driver_id": target_driver["id"]
+    }
+    add_override(override_data)
     
-    target_dom_id = _get_target_element_id("event", target_event.id)
+    target_dom_id = _get_target_element_id("event", target_event["id"])
     
     return {
         "status": "success", 
-        "message": f"Successfully assigned {target_driver.get('name')} to drive for '{target_event.title}'.",
+        "message": f"Successfully assigned {target_driver.get('name')} to drive for '{target_event['title']}'.",
         "target_element_id": target_dom_id
     }
 
