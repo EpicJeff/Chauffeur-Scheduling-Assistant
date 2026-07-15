@@ -649,13 +649,17 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             
         decoder = json.JSONDecoder()
         valid_objs = []
-        for i, char in enumerate(raw_response):
-            if char in ('{', '['):
+        i = 0
+        while i < len(raw_response):
+            if raw_response[i] in ('{', '['):
                 try:
-                    obj, _ = decoder.raw_decode(raw_response[i:])
+                    obj, length = decoder.raw_decode(raw_response[i:])
                     valid_objs.append(obj)
+                    i += length
+                    continue
                 except json.JSONDecodeError:
                     pass
+            i += 1
                     
         if valid_objs:
             return valid_objs[-1]
