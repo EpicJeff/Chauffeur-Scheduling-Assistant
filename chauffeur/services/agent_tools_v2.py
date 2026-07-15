@@ -53,6 +53,11 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     sched = get_cached_schedule()
     events = sched.get("events", [])
     
+    # Check if target_date is a weekday name
+    target_date_lower = target_date.lower().strip()
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    target_weekday = weekdays.index(target_date_lower) if target_date_lower in weekdays else None
+    
     # Fuzzy match event
     target_event = None
     event_name_lower = event_name.lower().strip()
@@ -60,7 +65,21 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
         ev_start = ev.get("start", "")
         if len(ev_start) >= 10:
             ev_date = ev_start[:10]
-            if ev_date == target_date:
+            
+            match_date = False
+            if target_weekday is not None:
+                try:
+                    # ISO format is YYYY-MM-DD
+                    ev_dt = datetime.datetime.strptime(ev_date, "%Y-%m-%d")
+                    if ev_dt.weekday() == target_weekday:
+                        match_date = True
+                except ValueError:
+                    pass
+            else:
+                if ev_date == target_date:
+                    match_date = True
+                    
+            if match_date:
                 title = ev.get("title", "").lower()
                 if event_name_lower in title:
                     target_event = ev
