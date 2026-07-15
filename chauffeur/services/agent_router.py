@@ -78,10 +78,31 @@ If you need to generate a massive 10-day trip, output {"delegate_to_gemini": tru
             
     if context:
         system_prompt += f"\n\nUSER CONTEXT:\n{json.dumps(context)}\n"
-        if "pathname" in context and "/trip/" in context["pathname"]:
+        trip_id = None
+        import urllib.parse
+        if "search" in context and "event_id=" in context["search"]:
+            qs = urllib.parse.parse_qs(context["search"].lstrip("?"))
+            if "event_id" in qs:
+                trip_id = qs["event_id"][0]
+        elif "pathname" in context and "/trip/" in context["pathname"]:
             trip_id = context["pathname"].split("/trip/")[-1].split("/")[0]
+            
+        if trip_id:
             system_prompt += f"The current active trip_id is: {trip_id}\n"
-        
+            from services.storage import get_trip_metadata
+            meta = get_trip_metadata(trip_id)
+            if meta:
+                pois = meta.get("pois", [])
+                accs = meta.get("accommodations", [])
+                if pois:
+                    system_prompt += "Currently Saved Attractions/POIs for this trip:\n"
+                    for p in pois:
+                        system_prompt += f"- {p.get('name')} (Duration: {p.get('duration_mins')}m, Valid Days: {p.get('valid_days_of_week')})\n"
+                if accs:
+                    system_prompt += "Currently Saved Accommodations for this trip:\n"
+                    for a in accs:
+                        system_prompt += f"- {a.get('name')} (Check in: {a.get('check_in_date')})\n"
+                        
     tools = get_available_tools()
     
     # 1. Call Gemma Router
