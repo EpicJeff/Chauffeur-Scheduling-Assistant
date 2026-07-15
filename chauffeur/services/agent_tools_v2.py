@@ -17,27 +17,40 @@ def _get_target_element_id(entity_type: str, entity_id: str) -> str:
 def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     """
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
-    start_date and end_date must be in YYYY-MM-DD format.
     """
     from services.storage import get_cached_schedule
+    import re
+    from dateutil.parser import parse
+    import datetime
     
     sched = get_cached_schedule()
     events = sched.get("events", [])
     
+    # Parse dates robustly
+    try:
+        sd_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', start_date).strip()
+        ed_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', end_date).strip()
+        sd = parse(sd_clean, default=datetime.datetime.now()).date()
+        ed = parse(ed_clean, default=datetime.datetime.now()).date()
+    except Exception:
+        return {"status": "error", "message": f"Could not parse dates: {start_date}, {end_date}"}
+    
     slim_events = []
     for ev in events:
         ev_start = ev.get("start", "")
-        # Filter by date substring since start is in ISO format
         if len(ev_start) >= 10:
-            ev_date = ev_start[:10]
-            if start_date <= ev_date <= end_date:
-                slim_events.append({
-                    "id": ev.get("id"),
-                    "title": ev.get("title"),
-                    "location": ev.get("location"),
-                    "start": ev.get("start"),
-                    "end": ev.get("end")
-                })
+            try:
+                ev_dt = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00')).date()
+                if sd <= ev_dt <= ed:
+                    slim_events.append({
+                        "id": ev.get("id"),
+                        "title": ev.get("title"),
+                        "location": ev.get("location"),
+                        "start": ev.get("start"),
+                        "end": ev.get("end")
+                    })
+            except ValueError:
+                pass
         
     return {"status": "success", "events": slim_events}
 
@@ -223,8 +236,8 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-                    "end_date": {"type": "string", "description": "YYYY-MM-DD"}
+                    "start_date": {"type": "string", "description": "The start date, e.g. 'Monday' or 'July 15'"},
+                    "end_date": {"type": "string", "description": "The end date, e.g. 'Friday' or 'July 20'"}
                 },
                 "required": ["start_date", "end_date"]
             }
@@ -235,9 +248,9 @@ def get_available_tools() -> List[Dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_name": {"type": "string", "description": "The name or partial name of the event to assign a driver to."},
-                    "driver_name": {"type": "string", "description": "The name or hashtag of the driver to assign."},
-                    "target_date": {"type": "string", "description": "The date the event occurs in YYYY-MM-DD format."}
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "driver_name": {"type": "string", "description": "The name or role of the driver to assign."},
+                    "target_date": {"type": "string", "description": "The date the event occurs, e.g. 'Wednesday' or 'July 15'."}
                 },
                 "required": ["event_name", "driver_name", "target_date"]
             }
