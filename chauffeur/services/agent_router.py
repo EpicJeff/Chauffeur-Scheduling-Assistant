@@ -114,6 +114,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
     
     target_id = None
     ui_action = None
+    target_driver_id = None
     agent_message = "I have processed your request."
     
     for iteration in range(max_iterations):
@@ -159,6 +160,8 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
                     if res.get("message"): agent_message = res["message"]
+                    if res.get("ui_action"): ui_action = res["ui_action"]
+                    if res.get("target_driver_id"): target_driver_id = res["target_driver_id"]
                 elif func_name == "add_trip_poi":
                     res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
@@ -181,5 +184,6 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
         "status": "success",
         "message": agent_message,
         "target_element_id": target_id,
-        "ui_action": ui_action
+        "ui_action": ui_action,
+        "target_driver_id": target_driver_id
     }
