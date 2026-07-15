@@ -886,14 +886,14 @@ function closeChatHelpModal() {
             bubble.classList.add('opacity-100', 'translate-y-0');
         });
 
-        // Remove after 6 seconds
+        // Remove after 12 seconds
         setTimeout(() => {
             bubble.classList.remove('opacity-100', 'translate-y-0');
             bubble.classList.add('opacity-0', 'translate-y-2');
             setTimeout(() => {
                 if(bubble.parentNode) bubble.parentNode.removeChild(bubble);
             }, 300);
-        }, 6000);
+        }, 12000);
     };
 
     // Initialize chat
