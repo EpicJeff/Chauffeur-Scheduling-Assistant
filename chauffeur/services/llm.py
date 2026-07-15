@@ -643,7 +643,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
         
     try:
         import re
-        match = re.search(r'```(?:json)?\s*([\s\S]*?)```', raw_response)
+        match = re.search(r'```+(?:json)?\s*\n?([\s\S]*?)\n?\s*```+', raw_response)
         if match:
             return json.loads(match.group(1).strip())
             

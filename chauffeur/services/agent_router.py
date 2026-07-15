@@ -71,7 +71,7 @@ Respond with a concise, helpful message about what you did.
 
 CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
 1. If the user asks you to *generate* or *plan* a massive 10-day trip (e.g. "plan my trip to France"), you must output `{"delegate_to_gemini": true}` so the heavy lifter can generate the initial ideas.
-2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST loop through the "Currently Saved Attractions/POIs" list from your context and call the `add_trip_poi` tool for EACH attraction to add them to the schedule.
+2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST use the `auto_schedule_trip_itinerary` tool to instantly bulk-schedule all of them into the timeline based on their distances and opening hours.
 """
     
     if history:
