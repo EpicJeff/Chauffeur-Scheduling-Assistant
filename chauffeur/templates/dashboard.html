@@ -714,7 +714,10 @@
             }
         }
 
+        let isSyncing = false;
         async function forceSync(force = true, draft = false) {
+            if (isSyncing) return;
+            isSyncing = true;
             const btn = document.getElementById('sync-btn');
             const icon = document.getElementById('sync-icon');
             const text = document.getElementById('sync-text');
@@ -753,6 +756,8 @@
                 }
                 if (icon) icon.classList.remove('animate-spin');
                 if (text) text.textContent = 'Sync Now';
+            } finally {
+                isSyncing = false;
             }
         }
 

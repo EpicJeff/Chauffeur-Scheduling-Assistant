@@ -85,6 +85,13 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     # Fuzzy match event
     target_event = None
     event_name_lower = event_name.lower().strip()
+    
+    # Split search name into words, removing common stop words
+    stop_words = {"to", "for", "the", "a", "at", "on", "in", "and"}
+    search_words = set(w for w in re.findall(r'\w+', event_name_lower) if w not in stop_words)
+    
+    best_score = 0
+    
     for ev in events:
         ev_start = ev.get("start", "")
         if len(ev_start) >= 10:
@@ -102,9 +109,19 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
                     
             if match_date:
                 title = ev.get("title", "").lower()
-                if event_name_lower in title:
+                # Exact or simple substring match gets highest priority
+                if event_name_lower in title or title in event_name_lower and len(title) > 3:
                     target_event = ev
+                    best_score = 999
                     break
+                
+                # Word intersection score
+                title_words = set(w for w in re.findall(r'\w+', title) if w not in stop_words)
+                if search_words and title_words:
+                    overlap = len(search_words.intersection(title_words))
+                    if overlap > best_score:
+                        best_score = overlap
+                        target_event = ev
             
     if not target_event:
         return {"status": "error", "message": f"Could not find any event containing '{event_name}' on {target_date}."}
