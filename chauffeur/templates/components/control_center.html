@@ -635,13 +635,13 @@
                     } else if (data.ui_action === 'generate_massive_trip') {
                         keepLoading = true;
                     } else if (data.ui_action === 'auto_schedule_trip') {
-                        if (typeof window.tripData !== 'undefined' && window.tripData.metadata && window.tripData.metadata.pois) {
-                            const unscheduled = window.tripData.metadata.pois.filter(p => !p.is_scheduled).map(p => p.id);
+                        if (typeof tripData !== 'undefined' && tripData.metadata && tripData.metadata.pois) {
+                            const unscheduled = tripData.metadata.pois.filter(p => !p.is_scheduled).map(p => p.id);
                             if (unscheduled.length > 0) {
                                 if (typeof window.executeBulkSchedule === 'function') {
                                     window.executeBulkSchedule(unscheduled);
                                 } else {
-                                    fetch(`${apiBase}api/trip/${encodeURIComponent(window.tripData.event.id)}/schedule_pois_bulk`, {
+                                    fetch(`${apiBase}api/trip/${encodeURIComponent(tripData.event.id)}/schedule_pois_bulk`, {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({ poi_ids: unscheduled })
