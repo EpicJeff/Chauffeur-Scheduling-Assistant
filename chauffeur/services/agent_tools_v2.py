@@ -24,6 +24,10 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     import datetime
     
     calendar_ids = set()
+    from services.storage import get_settings
+    settings = get_settings()
+    for cid in settings.get("calendar_ids", []):
+        calendar_ids.add(cid)
     for p in get_passengers():
         for cid in p.get("calendar_ids", []):
             calendar_ids.add(cid)
@@ -57,6 +61,11 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     
     # Get all calendars to search
     calendar_ids = set()
+    from services.storage import get_settings
+    settings = get_settings()
+    for cid in settings.get("calendar_ids", []):
+        calendar_ids.add(cid)
+        
     for p in get_passengers():
         for cid in p.get("calendar_ids", []):
             calendar_ids.add(cid)
