@@ -1847,6 +1847,113 @@
             }
         }
 
+        window.executeBulkSchedule = async function(selected) {
+            const schedLoading = document.getElementById('schedule-loading-overlay');
+            if (schedLoading) {
+                schedLoading.classList.remove('hidden');
+                // Add a progress text element if it doesn't exist
+                if (!document.getElementById('schedule-progress-text')) {
+                    const spinnerContainer = schedLoading.querySelector('.flex.flex-col.items-center');
+                    if (spinnerContainer) {
+                        const progress = document.createElement('div');
+                        progress.id = 'schedule-progress-text';
+                        progress.className = 'mt-4 text-indigo-300 font-medium text-lg';
+                        progress.innerText = `Scheduling 0 of ${selected.length}...`;
+                        spinnerContainer.appendChild(progress);
+                    }
+                } else {
+                    document.getElementById('schedule-progress-text').innerText = `Scheduling 0 of ${selected.length}...`;
+                }
+            }
+            
+            try {
+                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ poi_ids: selected })
+                });
+                
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+                const failures = [];
+                const insights = [];
+                let completed = 0;
+                
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, {stream: true});
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop(); // keep incomplete line
+                    
+                    for (const line of lines) {
+                        if (line.trim()) {
+                            try {
+                                const result = JSON.parse(line);
+                                
+                                if (result.type === "insight") {
+                                    insights.push(result);
+                                    continue;
+                                }
+
+                                completed++;
+                                if (document.getElementById('schedule-progress-text')) {
+                                    document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${selected.length}...`;
+                                }
+                                
+                                if (result.success) {
+                                    await fetchTripData();
+                                } else {
+                                    const poi = tripData.metadata.pois.find(p => p.id === result.poi_id);
+                                    if (poi) {
+                                        failures.push({ poi, reason: result.reason, suggested_fixes: result.suggested_fixes });
+                                    }
+                                }
+                            } catch (e) {
+                                console.error("Error parsing NDJSON chunk", line, e);
+                            }
+                        }
+                    }
+                }
+                
+                if (failures.length > 0) {
+                    openFailedPoisModal(failures);
+                } else if (insights.length > 0) {
+                    // If there are no failures but there are insights, show a modal for the insights
+                    let msg = `<ul class="list-disc pl-5 text-left space-y-4 mt-4 text-indigo-200" id="insight-modal-list">`;
+                    for (const insight of insights) {
+                        if (insight.actionable) {
+                            msg += `<li class="flex flex-col gap-3 p-3 bg-gray-800 rounded shadow border border-indigo-500/30" id="insight-${insight.poi_id}">
+                                <span>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</span>
+                                <button onclick="handleInsightAction(this, '${insight.poi_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm transition-colors flex items-center justify-center gap-2 self-start">
+                                    ${insight.action_button}
+                                </button>
+                            </li>`;
+                        } else {
+                            msg += `<li>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</li>`;
+                        }
+                    }
+                    msg += `</ul>`;
+                    openConfirmModal("Smart Scheduling Insights", `All selected Attractions were scheduled successfully! However, we noticed a few ways you might be able to optimize your trip:<br>${msg}`, [
+                        { text: "Close", className: "px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => { fetchTripData(); updatePoiBulkActions(); } }
+                    ]);
+                }
+                
+            } catch(e) {
+                showGlobalAlert("Error in bulk schedule");
+            } finally {
+                if (schedLoading) {
+                    schedLoading.classList.add('hidden');
+                }
+            }
+            
+            await fetchTripData();
+            updatePoiBulkActions();
+            if (schedLoading) schedLoading.classList.add('hidden');
+        };
+
         async function bulkSchedulePois() {
             const selected = Array.from(document.querySelectorAll('.poi-checkbox:checked'))
                 .map(cb => cb.dataset.id)
@@ -1860,110 +1967,8 @@
                     text: "Schedule", 
                     className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
-                        const schedLoading = document.getElementById('schedule-loading-overlay');
-                        if (schedLoading) {
-                            schedLoading.classList.remove('hidden');
-                            // Add a progress text element if it doesn't exist
-                            if (!document.getElementById('schedule-progress-text')) {
-                                const spinnerContainer = schedLoading.querySelector('.flex.flex-col.items-center');
-                                if (spinnerContainer) {
-                                    const progress = document.createElement('div');
-                                    progress.id = 'schedule-progress-text';
-                                    progress.className = 'mt-4 text-indigo-300 font-medium text-lg';
-                                    progress.innerText = `Scheduling 0 of ${selected.length}...`;
-                                    spinnerContainer.appendChild(progress);
-                                }
-                            } else {
-                                document.getElementById('schedule-progress-text').innerText = `Scheduling 0 of ${selected.length}...`;
-                            }
-                        }
-                        
-                        try {
-                            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({ poi_ids: selected })
-                            });
-                            
-                            const reader = res.body.getReader();
-                            const decoder = new TextDecoder("utf-8");
-                            let buffer = "";
-                            const failures = [];
-                            const insights = [];
-                            let completed = 0;
-                            
-                            while (true) {
-                                const {done, value} = await reader.read();
-                                if (done) break;
-                                
-                                buffer += decoder.decode(value, {stream: true});
-                                const lines = buffer.split("\n");
-                                buffer = lines.pop(); // keep incomplete line
-                                
-                                for (const line of lines) {
-                                    if (line.trim()) {
-                                        try {
-                                            const result = JSON.parse(line);
-                                            
-                                            if (result.type === "insight") {
-                                                insights.push(result);
-                                                continue;
-                                            }
-
-                                            completed++;
-                                            if (document.getElementById('schedule-progress-text')) {
-                                                document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${selected.length}...`;
-                                            }
-                                            
-                                            if (result.success) {
-                                                await fetchTripData();
-                                            } else {
-                                                const poi = tripData.metadata.pois.find(p => p.id === result.poi_id);
-                                                if (poi) {
-                                                    failures.push({ poi, reason: result.reason, suggested_fixes: result.suggested_fixes });
-                                                }
-                                            }
-                                        } catch (e) {
-                                            console.error("Error parsing NDJSON chunk", line, e);
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if (failures.length > 0) {
-                                openFailedPoisModal(failures);
-                            } else if (insights.length > 0) {
-                                // If there are no failures but there are insights, show a modal for the insights
-                                let msg = `<ul class="list-disc pl-5 text-left space-y-4 mt-4 text-indigo-200" id="insight-modal-list">`;
-                                for (const insight of insights) {
-                                    if (insight.actionable) {
-                                        msg += `<li class="flex flex-col gap-3 p-3 bg-gray-800 rounded shadow border border-indigo-500/30" id="insight-${insight.poi_id}">
-                                            <span>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</span>
-                                            <button onclick="handleInsightAction(this, '${insight.poi_id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded text-sm transition-colors flex items-center justify-center gap-2 self-start">
-                                                ${insight.action_button}
-                                            </button>
-                                        </li>`;
-                                    } else {
-                                        msg += `<li>${insight.message.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</li>`;
-                                    }
-                                }
-                                msg += `</ul>`;
-                                openConfirmModal("Smart Scheduling Insights", `All selected Attractions were scheduled successfully! However, we noticed a few ways you might be able to optimize your trip:<br>${msg}`, [
-                                    { text: "Close", className: "px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => { fetchTripData(); updatePoiBulkActions(); } }
-                                ]);
-                            }
-                            
-                        } catch(e) {
-                            showGlobalAlert("Error in bulk schedule");
-                        } finally {
-                            if (schedLoading) {
-                                schedLoading.classList.add('hidden');
-                            }
-                        }
-                        
-                        await fetchTripData();
-                        updatePoiBulkActions();
-                        if (schedLoading) schedLoading.classList.add('hidden');
+                        closeConfirmModal();
+                        await window.executeBulkSchedule(selected);
                     }
                 }
             ]);
