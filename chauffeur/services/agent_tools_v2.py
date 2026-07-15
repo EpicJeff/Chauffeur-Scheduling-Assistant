@@ -73,7 +73,12 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     target_date_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', target_date).strip()
     target_dt = None
     try:
-        target_dt = parse(target_date_clean, default=datetime.datetime.now())
+        if target_date_clean.lower() == 'today':
+            target_dt = datetime.datetime.now()
+        elif target_date_clean.lower() == 'tomorrow':
+            target_dt = datetime.datetime.now() + datetime.timedelta(days=1)
+        else:
+            target_dt = parse(target_date_clean, default=datetime.datetime.now())
     except:
         pass
     
