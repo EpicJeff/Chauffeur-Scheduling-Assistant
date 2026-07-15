@@ -352,6 +352,7 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                     data = resp.json()
                     durations = data.get("durations", [])
                     
+                    bulk_entries = []
                     for s_i, src_idx in enumerate(src_indices):
                         for d_i, dest_idx in enumerate(dest_indices):
                             if src_idx == dest_idx:
@@ -363,7 +364,12 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                     mins = int(round(dur_sec / 60.0))
                                 else:
                                     mins = -1
-                                storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                                bulk_entries.append({
+                                    "origin": all_locs[src_idx].lower(), 
+                                    "destination": all_locs[dest_idx].lower(), 
+                                    "duration_mins": mins
+                                })
+                    storage.set_cached_travel_times_bulk(bulk_entries)
                     return True
                 else:
                     print(f"Mapbox Matrix API failed: {resp.status_code} {resp.text}")
@@ -492,6 +498,7 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
             if resp and resp.status_code == 200:
                 data = resp.json()
                 durations = data.get("durations", [])
+                bulk_entries = []
                 for s_i, src_idx in enumerate(src_indices):
                     for d_i, dest_idx in enumerate(dest_indices):
                         if src_idx == dest_idx:
@@ -503,7 +510,12 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                 mins = int(round(dur_sec / 60.0))
                             else:
                                 mins = -1
-                            storage.set_cached_travel_time(all_locs[src_idx].lower(), all_locs[dest_idx].lower(), mins)
+                            bulk_entries.append({
+                                "origin": all_locs[src_idx].lower(), 
+                                "destination": all_locs[dest_idx].lower(), 
+                                "duration_mins": mins
+                            })
+                storage.set_cached_travel_times_bulk(bulk_entries)
                 return True
             else:
                 print(f"OSRM Matrix API failed: {resp.status_code} {resp.text}")

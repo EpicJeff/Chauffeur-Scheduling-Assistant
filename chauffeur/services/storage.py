@@ -36,7 +36,15 @@ class AtomicJSONStorage(Storage):
             json.dump(data, handle, **self.kwargs)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_path, self.path)
+        import time
+        for i in range(20):
+            try:
+                os.replace(temp_path, self.path)
+                break
+            except PermissionError:
+                if i == 19:
+                    raise
+                time.sleep(0.05)
 
     def close(self) -> None:
         pass
@@ -275,6 +283,36 @@ def set_cached_travel_time(origin: str, destination: str, duration_mins: int):
         }
         _distance_mem_cache[(orig_clean, dest_clean)] = row
         distance_cache_table.upsert(row, (QueryObj.origin == orig_clean) & (QueryObj.destination == dest_clean))
+
+def set_cached_travel_times_bulk(entries: List[dict]):
+    if not entries: return
+    import time
+    with db_lock:
+        _init_distance_mem_cache()
+        rows_to_insert = []
+        for entry in entries:
+            origin = entry.get('origin')
+            destination = entry.get('destination')
+            duration_mins = entry.get('duration_mins')
+            if not origin or not destination: continue
+            
+            orig_clean = origin.strip().lower()
+            dest_clean = destination.strip().lower()
+            
+            row = {
+                'origin': orig_clean,
+                'destination': dest_clean,
+                'duration_mins': duration_mins,
+                'timestamp': time.time()
+            }
+            _distance_mem_cache[(orig_clean, dest_clean)] = row
+            rows_to_insert.append(row)
+            
+        if rows_to_insert:
+            # Note: For simplicity and speed in bulk caching, we just append (insert). 
+            # We don't upsert because finding and updating thousands of rows individually in TinyDB is slow.
+            # The mem cache will use the latest inserted row automatically because it's populated sequentially on init.
+            distance_cache_table.insert_multiple(rows_to_insert)
 
 def get_cached_route_geometry(origin: str, destination: str, profile: str, max_age_mins: int = 10080) -> Optional[dict]:
     # Cache for 1 week by default (10080 mins)
