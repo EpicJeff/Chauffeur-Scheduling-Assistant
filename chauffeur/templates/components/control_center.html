@@ -30,6 +30,72 @@
     </div>
 </div>
 
+<!-- Chat Help Modal -->
+<div id="chat-help-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4" onclick="if(event.target === this) closeChatHelpModal()">
+    <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 flex flex-col max-h-[80vh]">
+        <div class="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-2xl shrink-0">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                What can Argyle do?
+            </h3>
+            <button onclick="closeChatHelpModal()" class="text-gray-400 hover:text-white transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <div class="p-6 overflow-y-auto flex-1 space-y-6">
+            <p class="text-sm text-gray-300">Argyle is your AI travel assistant! You can use natural language to interact with your itinerary. Try asking:</p>
+            
+            <div class="space-y-4">
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🌍 Plan an entire trip from scratch</h4>
+                    <p class="text-xs text-gray-400 italic">"Plan a 5-day trip to Tokyo with lots of food, temples, and shopping."</p>
+                </div>
+                
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🤖 Auto-Schedule your Attractions</h4>
+                    <p class="text-xs text-gray-400 italic">"Smart schedule all my unscheduled attractions to the itinerary."</p>
+                </div>
+
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1">📍 Add specific places</h4>
+                    <p class="text-xs text-gray-400 italic">"Add the Eiffel Tower and the Louvre to my trip."</p>
+                </div>
+
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🕒 Rearrange your schedule</h4>
+                    <p class="text-xs text-gray-400 italic">"Move my dinner reservation to 8:30 PM."</p>
+                </div>
+
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🗑️ Clear or delete items</h4>
+                    <p class="text-xs text-gray-400 italic">"Remove the museum from my itinerary, and clear my Tuesday schedule."</p>
+                </div>
+            </div>
+        </div>
+        <div class="p-4 border-t border-gray-800 flex justify-end shrink-0 bg-gray-800/50 rounded-b-2xl">
+            <button onclick="closeChatHelpModal()" class="px-5 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg text-sm transition-colors">Got it</button>
+        </div>
+    </div>
+</div>
+<script>
+function openChatHelpModal() {
+    const modal = document.getElementById('chat-help-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+function closeChatHelpModal() {
+    const modal = document.getElementById('chat-help-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+</script>
+
 <div id="operations-sidebar"
     class="fixed top-0 right-0 h-full w-full md:w-[640px] max-w-full bg-gray-900 shadow-2xl z-[70] transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col border-l border-gray-700">
 
@@ -237,6 +303,14 @@
             class="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10 ml-2 flex-shrink-0">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path>
+            </svg>
+        </button>
+
+        <!-- Help Button -->
+        <button type="button" onclick="openChatHelpModal()" title="What can Argyle do?"
+            class="text-gray-400 hover:text-indigo-400 hover:bg-gray-800 p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10 ml-1 flex-shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
         </button>
     </div>
