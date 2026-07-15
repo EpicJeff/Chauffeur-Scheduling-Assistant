@@ -67,7 +67,10 @@ def process_agent_request(user_prompt: str, context: Optional[Dict] = None, hist
 You help manage schedules, trips, and errands. 
 You MUST use your provided tools to fetch data or perform actions.
 Respond with a concise, helpful message about what you did.
-If you need to generate a massive 10-day trip, output {"delegate_to_gemini": true}.
+
+CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
+1. If the user asks you to *generate* or *plan* a massive 10-day trip (e.g. "plan my trip to France"), you must output `{"delegate_to_gemini": true}` so the heavy lifter can generate the initial ideas.
+2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST loop through the "Currently Saved Attractions/POIs" list from your context and call the `add_trip_poi` tool for EACH attraction to add them to the schedule.
 """
     
     if history:
