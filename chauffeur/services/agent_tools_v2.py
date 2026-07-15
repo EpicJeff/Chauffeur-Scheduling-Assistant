@@ -19,22 +19,28 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
     start_date and end_date must be in YYYY-MM-DD format.
     """
-    from services.calendar import get_events_for_date_range
+    from services.calendar import fetch_upcoming_events
+    from services.storage import get_passengers, get_all_drivers
     import datetime
     
-    start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d") + datetime.timedelta(days=1)
-    
-    events = get_events_for_date_range(start_dt.timestamp(), end_dt.timestamp())
+    calendar_ids = set()
+    for p in get_passengers():
+        for cid in p.get("calendar_ids", []):
+            calendar_ids.add(cid)
+    for d in get_all_drivers():
+        for cid in d.get("calendar_ids", []):
+            calendar_ids.add(cid)
+            
+    events = fetch_upcoming_events(list(calendar_ids), start_date_str=start_date, end_date_str=end_date)
     
     slim_events = []
     for ev in events:
         slim_events.append({
-            "id": ev["id"],
-            "title": ev["title"],
-            "driver_id": ev.get("assigned_driver_id"),
-            "start": ev["start"],
-            "end": ev["end"]
+            "id": ev.id,
+            "title": ev.title,
+            "location": ev.location,
+            "start": ev.start.isoformat() if hasattr(ev.start, 'isoformat') else str(ev.start),
+            "end": ev.end.isoformat() if hasattr(ev.end, 'isoformat') else str(ev.end)
         })
         
     return {"status": "success", "events": slim_events}
