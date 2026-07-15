@@ -165,6 +165,7 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                 elif func_name == "add_trip_poi":
                     res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("status") == "success": ui_action = "sync"
                 elif func_name == "clear_trip_itinerary":
                     res = clear_trip_itinerary(args.get("trip_id"), args.get("action", "unlink"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]

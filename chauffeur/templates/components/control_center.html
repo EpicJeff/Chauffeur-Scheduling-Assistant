@@ -738,18 +738,40 @@ function closeChatHelpModal() {
                                 }
                             }
                         }
-                    }
-                } else {
-                    if (typeof window.forceSync === 'function') {
-                        window.forceSync();
-                    } else if (typeof window.fetchTripData === 'function') {
-                        window.fetchTripData();
-                    } else if (typeof window.renderConfig === 'function') {
-                        window.location.reload();
-                    } else {
-                        window.location.reload();
+                    } else if (data.ui_action === 'jump_and_reload') {
+                        if (data.target_element_id && data.target_driver_id) {
+                            const evEl = document.getElementById(data.target_element_id);
+                            const destCol = document.getElementById(`driver-col-${data.target_driver_id}`) || document.getElementById(`driver-header-${data.target_driver_id}`);
+                            if (evEl && destCol) {
+                                evEl.style.transition = 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+                                const destRect = destCol.getBoundingClientRect();
+                                const evRect = evEl.getBoundingClientRect();
+                                const xDiff = destRect.left - evRect.left;
+                                evEl.style.transform = `translateX(${xDiff}px) scale(0.95)`;
+                                evEl.style.opacity = '0.5';
+                                evEl.style.zIndex = '9999';
+                            }
+                        }
+                        setTimeout(() => {
+                            if (typeof window.forceSync === 'function') {
+                                window.forceSync(false, typeof isDraftMode !== 'undefined' ? isDraftMode : false);
+                            } else {
+                                window.location.reload();
+                            }
+                        }, 500);
+                    } else if (data.ui_action === 'sync') {
+                        if (typeof window.forceSync === 'function') {
+                            window.forceSync(false, typeof isDraftMode !== 'undefined' ? isDraftMode : false);
+                        } else if (typeof window.fetchTripData === 'function') {
+                            window.fetchTripData();
+                        } else if (typeof window.renderConfig === 'function') {
+                            window.location.reload();
+                        } else {
+                            window.location.reload();
+                        }
                     }
                 }
+                // If data.ui_action is null/undefined, do nothing (just display the chat bubble).
             }
         } catch (err) {
             if (typeof window.showAnchoredChatBubble === 'function') {
