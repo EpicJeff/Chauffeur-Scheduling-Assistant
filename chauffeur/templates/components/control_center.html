@@ -228,9 +228,9 @@
 
         <!-- Text Input -->
         <textarea id="chat-input" rows="1" placeholder="Ask Argyle... (e.g. 'What is my driving schedule today?')"
-            class="flex-1 bg-transparent border-none py-2 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-0 resize-none max-h-32 min-h-[44px] leading-relaxed self-center"
+            class="flex-1 bg-transparent border-none py-2 text-base text-white placeholder-gray-500 focus:outline-none focus:ring-0 resize-none max-h-32 min-h-[44px] leading-relaxed self-center transition-all"
             style="scrollbar-width: none;"
-            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"></textarea>
+            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'; const wrapper = this.parentElement; if(this.scrollHeight > 50) { wrapper.classList.remove('rounded-3xl'); wrapper.classList.add('rounded-2xl'); } else { wrapper.classList.add('rounded-3xl'); wrapper.classList.remove('rounded-2xl'); }"></textarea>
 
         <!-- Submit Button -->
         <button type="button" id="chat-submit-btn" onclick="submitChat(event)"
