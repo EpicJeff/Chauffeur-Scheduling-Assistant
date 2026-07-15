@@ -635,8 +635,8 @@
                     } else if (data.ui_action === 'generate_massive_trip') {
                         keepLoading = true;
                     } else if (data.ui_action === 'auto_schedule_trip') {
-                        if (typeof window.tripData !== 'undefined' && window.tripData.pois) {
-                            const unscheduled = window.tripData.pois.filter(p => !p.is_scheduled).map(p => p.id);
+                        if (typeof window.tripData !== 'undefined' && window.tripData.metadata && window.tripData.metadata.pois) {
+                            const unscheduled = window.tripData.metadata.pois.filter(p => !p.is_scheduled).map(p => p.id);
                             if (unscheduled.length > 0) {
                                 if (typeof window.executeBulkSchedule === 'function') {
                                     window.executeBulkSchedule(unscheduled);
