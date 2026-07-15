@@ -2729,7 +2729,7 @@
                             const drawHeight = height + (startY - drawStartY);
 
                             colEventsHtml += `
-                                <div title="${ev.title}" onclick="window.location.href='trip?event_id=${ev.id}'"
+                                <div id="event-${ev.id}" title="${ev.title}" onclick="window.location.href=\'trip?event_id=${ev.id}\'"
                                      class="absolute right-1 rounded-md overflow-hidden bg-blue-900/20 border border-blue-500/30 hover:bg-blue-900/40 hover:border-blue-500/50 cursor-pointer transition-colors flex flex-col z-0"
                                      style="top: ${drawStartY}px; height: ${drawHeight}px; left: 28px;">
                                     <div class="px-2 py-1 flex-1 overflow-hidden pointer-events-none flex flex-col">
@@ -2741,7 +2741,7 @@
                             `;
                         } else if (ev.event_type === 'errand') {
                             colEventsHtml += `
-                                <div title="${ev.title}"
+                                <div id="event-${ev.id}" title="${ev.title}"
                                      class="absolute rounded-lg overflow-hidden bg-amber-900/40 border border-amber-500/60 shadow-md transition-colors flex flex-col z-10"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; min-height: 48px;">
                                     <div class="px-2 py-1 flex-1 overflow-hidden flex flex-col justify-start relative">
@@ -2770,7 +2770,7 @@
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             const zIndex = 'z-10';
                             colEventsHtml += `
-                                <div ${dragAttr} ${clickAttr} title="${ev.title}"
+                                <div id="event-${ev.id}" ${dragAttr} ${clickAttr} title="${ev.title}"
                                      class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex ${zIndex} ${cursorClass} ${opacityClass} border ${borderClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; border-left-color: ${evColor} !important; min-height: 24px;">
                                     ${badgeHtml}
