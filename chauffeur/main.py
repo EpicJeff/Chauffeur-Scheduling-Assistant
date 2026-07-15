@@ -2150,7 +2150,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                                 meta_dict['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
                                 existing_acc_names.add(acc.name.lower())
                                 
-                        storage.save_trip_metadata(t_id, meta_dict)
+                        storage.set_trip_metadata(t_id, meta_dict)
                         
                         msg = f"I've finished planning your trip! I generated {len(pois)} points of interest and {len(accs)} accommodations. {warning or ''}"
                         if conv_id:
