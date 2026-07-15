@@ -705,15 +705,6 @@ function closeChatHelpModal() {
                     window.showAnchoredChatBubble('chat-overlay-container', `⚠️ Error: ${data.error}`);
                 }
             } else {
-                // Show anchored bubble if the agent targeted a specific UI element
-                if (typeof window.showAnchoredChatBubble === 'function') {
-                    if (data.target_element_id) {
-                        window.showAnchoredChatBubble(data.target_element_id, data.reply);
-                    } else {
-                        // Fallback to anchoring on the chat input box itself
-                        window.showAnchoredChatBubble('chat-overlay-container', data.reply);
-                    }
-                }
                 if (data.ui_action) {
                     if (data.ui_action === 'clear_itinerary' && typeof window.clearItinerary === 'function') {
                         window.clearItinerary();
@@ -744,7 +735,12 @@ function closeChatHelpModal() {
                             const destCol = document.getElementById(`col-${data.target_driver_id}`);
                             if (evEl && destCol) {
                                 // Instantly move the event card to the new driver's column
-                                destCol.appendChild(evEl);
+                                const innerContainer = destCol.querySelector('.relative.w-full.overflow-hidden');
+                                if (innerContainer) {
+                                    innerContainer.appendChild(evEl);
+                                } else {
+                                    destCol.appendChild(evEl);
+                                }
                                 // Optional visual flash to show it moved
                                 evEl.style.transition = 'background-color 0.5s';
                                 evEl.style.backgroundColor = 'rgba(79, 70, 229, 0.3)';
@@ -770,7 +766,19 @@ function closeChatHelpModal() {
                         }
                     }
                 }
-                // If data.ui_action is null/undefined, do nothing (just display the chat bubble).
+
+                // Show anchored bubble AFTER ui_action has rearranged elements if needed
+                if (typeof window.showAnchoredChatBubble === 'function') {
+                    if (data.target_element_id) {
+                        // Small delay to ensure browser paints the DOM move before calculating rect
+                        setTimeout(() => {
+                            window.showAnchoredChatBubble(data.target_element_id, data.reply);
+                        }, 10);
+                    } else {
+                        // Fallback to anchoring on the chat input box itself
+                        window.showAnchoredChatBubble('chat-overlay-container', data.reply);
+                    }
+                }
             }
         } catch (err) {
             if (typeof window.showAnchoredChatBubble === 'function') {
