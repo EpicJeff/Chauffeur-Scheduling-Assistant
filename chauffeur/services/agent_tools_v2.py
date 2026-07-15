@@ -53,10 +53,16 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     sched = get_cached_schedule()
     events = sched.get("events", [])
     
-    # Check if target_date is a weekday name
-    target_date_lower = target_date.lower().strip()
-    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-    target_weekday = weekdays.index(target_date_lower) if target_date_lower in weekdays else None
+    # Clean and parse the target date robustly
+    import re
+    from dateutil.parser import parse
+    
+    target_date_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', target_date).strip()
+    target_dt = None
+    try:
+        target_dt = parse(target_date_clean, default=datetime.datetime.now())
+    except:
+        pass
     
     # Fuzzy match event
     target_event = None
@@ -64,20 +70,17 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     for ev in events:
         ev_start = ev.get("start", "")
         if len(ev_start) >= 10:
-            ev_date = ev_start[:10]
-            
             match_date = False
-            if target_weekday is not None:
-                try:
-                    # ISO format is YYYY-MM-DD
-                    ev_dt = datetime.datetime.strptime(ev_date, "%Y-%m-%d")
-                    if ev_dt.weekday() == target_weekday:
+            try:
+                ev_dt = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00'))
+                if target_dt:
+                    if ev_dt.date() == target_dt.date():
                         match_date = True
-                except ValueError:
-                    pass
-            else:
-                if ev_date == target_date:
-                    match_date = True
+                else:
+                    if ev_start[:10] == target_date.strip():
+                        match_date = True
+            except ValueError:
+                pass
                     
             if match_date:
                 title = ev.get("title", "").lower()

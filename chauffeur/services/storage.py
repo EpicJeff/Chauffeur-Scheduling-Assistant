@@ -173,10 +173,13 @@ def migrate_duplicate_rules():
 migrate_duplicate_rules()
 
 def cleanup_corrupted_travel_times():
-    with db_lock:
-        QueryObj = Query()
-        # Remove any cached travel time >= 120 minutes (like the corrupted 999 values)
-        distance_cache_table.remove(QueryObj.minutes >= 120)
+    try:
+        with db_lock:
+            QueryObj = Query()
+            # Remove any cached travel time >= 120 minutes (like the corrupted 999 values)
+            distance_cache_table.remove(QueryObj.minutes >= 120)
+    except Exception as e:
+        print(f"Skipping travel time cleanup due to db lock/file contention: {e}")
 
 cleanup_corrupted_travel_times()
 
@@ -199,11 +202,14 @@ def clear_schedule_caches():
 
 def purge_poisoned_caches():
     # Remove only poisoned entries to avoid wiping thousands of legitimate caches on startup
-    with db_lock:
-        distance_cache_table.remove(Query().minutes == 15)
-        geocode_cache_table.remove(Query().lat == 0.0)
-        global _distance_mem_cache
-        _distance_mem_cache = None
+    try:
+        with db_lock:
+            distance_cache_table.remove(Query().minutes == 15)
+            geocode_cache_table.remove(Query().lat == 0.0)
+            global _distance_mem_cache
+            _distance_mem_cache = None
+    except Exception as e:
+        print(f"Skipping poisoned caches cleanup due to db lock/file contention: {e}")
 
 purge_poisoned_caches()
 
