@@ -32,7 +32,7 @@
 
 <!-- Chat Help Modal -->
 <div id="chat-help-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4" onclick="if(event.target === this) closeChatHelpModal()">
-    <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 flex flex-col max-h-[80vh]">
+    <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 flex flex-col max-h-[85vh]">
         <div class="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-2xl shrink-0">
             <h3 class="text-lg font-bold text-white flex items-center gap-2">
                 <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -44,33 +44,44 @@
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
-        <div class="p-6 overflow-y-auto flex-1 space-y-6">
-            <p class="text-sm text-gray-300">Argyle is your AI travel assistant! You can use natural language to interact with your itinerary. Try asking:</p>
+        <div class="p-6 overflow-y-auto flex-1 space-y-6" style="scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;">
+            <p class="text-sm text-gray-300">Argyle is your AI scheduling assistant! You can use natural language to control almost any aspect of Chauffeur. Try asking:</p>
             
             <div class="space-y-4">
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🌍 Plan an entire trip from scratch</h4>
-                    <p class="text-xs text-gray-400 italic">"Plan a 5-day trip to Tokyo with lots of food, temples, and shopping."</p>
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> Trip Planning</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
+                        <li>"Plan a 5-day trip to Tokyo with lots of food."</li>
+                        <li>"Smart schedule all my unscheduled attractions."</li>
+                        <li>"Move my dinner reservation to 8:30 PM."</li>
+                    </ul>
                 </div>
                 
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🤖 Auto-Schedule your Attractions</h4>
-                    <p class="text-xs text-gray-400 italic">"Smart schedule all my unscheduled attractions to the itinerary."</p>
+                    <h4 class="text-green-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg> Passenger Management</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
+                        <li>"Change Jeff's hashtag from #jeff to #j."</li>
+                        <li>"Link Sarah's calendar to her passenger profile."</li>
+                        <li>"Who is currently riding with me today?"</li>
+                    </ul>
                 </div>
 
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1">📍 Add specific places</h4>
-                    <p class="text-xs text-gray-400 italic">"Add the Eiffel Tower and the Louvre to my trip."</p>
+                    <h4 class="text-blue-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg> Daily Driving & Vehicles</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
+                        <li>"Change the Highlander's home location to my house."</li>
+                        <li>"Set a custom schedule for Friday from 9 AM to 5 PM."</li>
+                        <li>"What is my driving schedule looking like for tomorrow?"</li>
+                    </ul>
                 </div>
 
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🕒 Rearrange your schedule</h4>
-                    <p class="text-xs text-gray-400 italic">"Move my dinner reservation to 8:30 PM."</p>
-                </div>
-
-                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1">🗑️ Clear or delete items</h4>
-                    <p class="text-xs text-gray-400 italic">"Remove the museum from my itinerary, and clear my Tuesday schedule."</p>
+                    <h4 class="text-purple-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg> Smart Rules & Constraints</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
+                        <li>"Set a rule to merge duplicate events if they are close."</li>
+                        <li>"Limit my maximum driving distance today to 100 miles."</li>
+                        <li>"Add a mutually exclusive rule between work and personal tasks."</li>
+                    </ul>
                 </div>
             </div>
         </div>
