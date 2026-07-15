@@ -109,57 +109,74 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                         
     tools = get_available_tools()
     
-    # 1. Call Gemma Router
-    llm_response = call_gemma_with_fallback(user_prompt, tools, system_prompt)
+    agent_scratchpad = ""
+    max_iterations = 3
     
-    # 2. Check for Delegation to Gemini
-    if llm_response.get("delegate_to_gemini"):
-        # Hand off to Gemini for massive trip planning
-        logger.info("Delegating massive task to Gemini 3.1 Flash Lite")
-        return {
-            "status": "delegated", 
-            "message": "I'm delegating this massive trip to my heavy lifter module. I'll get to work generating accommodations and points of interest. One moment!",
-            "ui_action": "generate_massive_trip"
-        }
-        
-    # 3. Process Tool Calls from Gemma
-    tool_calls = llm_response.get("tool_calls", [])
-    agent_message = llm_response.get("message", "I have processed your request.")
     target_id = None
     ui_action = None
+    agent_message = "I have processed your request."
     
-    for tool_call in tool_calls:
-        func_name = tool_call.get("name")
-        args = tool_call.get("arguments", {})
+    for iteration in range(max_iterations):
+        current_system_prompt = system_prompt
+        if agent_scratchpad:
+            current_system_prompt += "\n\nTOOL EXECUTION SCRATCHPAD:\n" + agent_scratchpad
+            
+        llm_response = call_gemma_with_fallback(user_prompt, tools, current_system_prompt)
         
-        if func_name == "get_calendar_events":
-            res = get_calendar_events(args.get("start_date"), args.get("end_date"))
-            # In a real loop, we would pass this back to Gemma. For now, just return it.
+        # Check for Delegation to Gemini
+        if llm_response.get("delegate_to_gemini"):
+            logger.info("Delegating massive task to Gemini 3.1 Flash Lite")
+            return {
+                "status": "delegated", 
+                "message": "I'm delegating this massive trip to my heavy lifter module. I'll get to work generating accommodations and points of interest. One moment!",
+                "ui_action": "generate_massive_trip"
+            }
             
-        elif func_name == "assign_driver_to_event_fuzzy":
-            from services.agent_tools_v2 import assign_driver_to_event_fuzzy
-            res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
-            if res.get("target_element_id"):
-                target_id = res["target_element_id"]
-            if res.get("message"): agent_message = res["message"]
-                
-        elif func_name == "add_trip_poi":
-            res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
-            if res.get("target_element_id"):
-                target_id = res["target_element_id"]
-                
-        elif func_name == "clear_trip_itinerary":
-            res = clear_trip_itinerary(args.get("trip_id"), args.get("action", "unlink"))
-            if res.get("target_element_id"): target_id = res["target_element_id"]
-            if res.get("ui_action"): ui_action = res["ui_action"]
-            if res.get("message"): agent_message = res["message"]
+        tool_calls = llm_response.get("tool_calls", [])
+        
+        # If no tools were called, we are done
+        if not tool_calls:
+            if llm_response.get("message"):
+                agent_message = llm_response["message"]
+            break
             
-        elif func_name == "auto_schedule_trip_itinerary":
-            res = auto_schedule_trip_itinerary(args.get("trip_id"))
-            if res.get("target_element_id"): target_id = res["target_element_id"]
-            if res.get("ui_action"): ui_action = res["ui_action"]
-            if res.get("message"): agent_message = res["message"]
+        # We have tool calls, execute them and append to scratchpad
+        if llm_response.get("message"):
+            agent_scratchpad += f"\nAssistant Message: {llm_response['message']}\n"
+            
+        for tool_call in tool_calls:
+            func_name = tool_call.get("name")
+            args = tool_call.get("arguments", {})
+            agent_scratchpad += f"\nTool Call: {func_name}({json.dumps(args)})"
+            
+            res = {"error": f"Unknown tool: {func_name}"}
+            
+            try:
+                if func_name == "get_calendar_events":
+                    res = get_calendar_events(args.get("start_date"), args.get("end_date"))
+                elif func_name == "assign_driver_to_event_fuzzy":
+                    from services.agent_tools_v2 import assign_driver_to_event_fuzzy
+                    res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
+                    if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "add_trip_poi":
+                    res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
+                    if res.get("target_element_id"): target_id = res["target_element_id"]
+                elif func_name == "clear_trip_itinerary":
+                    res = clear_trip_itinerary(args.get("trip_id"), args.get("action", "unlink"))
+                    if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("ui_action"): ui_action = res["ui_action"]
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "auto_schedule_trip_itinerary":
+                    res = auto_schedule_trip_itinerary(args.get("trip_id"))
+                    if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("ui_action"): ui_action = res["ui_action"]
+                    if res.get("message"): agent_message = res["message"]
+            except Exception as e:
+                res = {"error": str(e)}
                 
+            agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
+            
     return {
         "status": "success",
         "message": agent_message,
