@@ -129,7 +129,9 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     return {
         "status": "success", 
         "message": f"Successfully assigned {target_driver.get('name')} to drive for '{target_event['title']}'.",
-        "target_element_id": target_dom_id
+        "target_element_id": target_dom_id,
+        "ui_action": "jump_and_reload",
+        "target_driver_id": target_driver["id"]
     }
 
 # ==============================================================================

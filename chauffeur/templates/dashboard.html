@@ -2081,7 +2081,7 @@
                         const seriesBadge = ev.is_series_grouped && ev.series_count > 1 ? `<span class="bg-indigo-900/50 text-indigo-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded ml-2 border border-indigo-700/50 shrink-0">Series (${ev.series_count})</span>` : '';
 
                         return `
-                        <div onclick="openEventModal('${ev.id}')" class="bg-gray-800 border border-red-500/50 rounded-xl p-4 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group">
+                        <div id="event-${ev.id}" onclick="openEventModal('${ev.id}')" class="bg-gray-800 border border-red-500/50 rounded-xl p-4 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group">
                             <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color: ${evColor}"></div>
                             <div class="pl-2">
                                 <h3 class="font-bold text-white text-lg truncate group-hover:text-blue-300 transition flex items-center">
@@ -3079,7 +3079,7 @@
 
                     const dropAttr = isReadOnly ? '' : `${isReadOnly ? '' : `ondragover="allowDrop(event)" ondrop="drop(event, '${c_id}')"`}`;
                     const driverHtml = `
-                        <div class="flex-1 min-w-[200px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700 flex flex-col" ${dropAttr}>
+                        <div id="col-${c_id}" class="flex-1 min-w-[200px] bg-gray-900 rounded-lg overflow-hidden shadow-xl border border-gray-700 flex flex-col" ${dropAttr}>
                             <div class="px-2 py-1.5 font-black text-sm text-white shadow-md flex justify-center items-center bg-gray-800 border-b-4" style="border-bottom-color: ${colInfo.color_code}">
                                 <div class="w-2.5 h-2.5 rounded-full mr-2 shadow-[0_0_8px_currentColor]" style="background-color: ${colInfo.color_code}; color: ${colInfo.color_code}"></div>
                                 ${colInfo.name}
@@ -3123,7 +3123,7 @@
                             const summaries = calMetas.map(m => m.summary).join(' + ');
 
                             colEventsHtml += `
-                                <div draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
+                                <div id="event-${ev.id}" draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
                                      class="px-2 py-1.5 border-l-4 rounded bg-gray-900 hover:bg-gray-800 transition-colors cursor-pointer group shadow-sm flex items-center justify-between"
                                      style="border-color: ${evColor} !important;">
                                     <div class="flex items-center gap-2 overflow-hidden flex-1">
