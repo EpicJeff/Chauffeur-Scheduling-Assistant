@@ -212,5 +212,26 @@ def get_available_tools() -> List[Dict]:
                 },
                 "required": ["trip_id", "action"]
             }
+        },
+        {
+            "name": "auto_schedule_trip_itinerary",
+            "description": "Automatically bulk-schedules all unscheduled attractions/POIs in the trip. Use this if the user asks you to schedule all their attractions into the itinerary.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"}
+                },
+                "required": ["trip_id"]
+            }
         }
     ]
+
+def auto_schedule_trip_itinerary(trip_id: str) -> Dict[str, Any]:
+    """
+    Returns a UI action instructing the frontend to auto schedule all unscheduled POIs.
+    """
+    return {
+        "status": "success",
+        "message": "I'm starting the auto-scheduler for your itinerary now! It might take a moment to plot everything based on distances and opening hours.",
+        "ui_action": "auto_schedule_trip"
+    }

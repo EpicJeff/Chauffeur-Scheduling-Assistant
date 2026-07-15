@@ -7,7 +7,8 @@ from services.agent_tools_v2 import (
     get_calendar_events,
     schedule_calendar_override,
     add_trip_poi,
-    clear_trip_itinerary
+    clear_trip_itinerary,
+    auto_schedule_trip_itinerary
 )
 from services.llm import _call_llm_json
 
@@ -146,13 +147,16 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                 target_id = res["target_element_id"]
                 
         elif func_name == "clear_trip_itinerary":
-            res = clear_trip_itinerary(args.get("trip_id"))
-            if res.get("target_element_id"):
-                target_id = res["target_element_id"]
-            if res.get("ui_action"):
-                ui_action = res["ui_action"]
-            if res.get("message"):
-                agent_message = res["message"]
+            res = clear_trip_itinerary(args.get("trip_id"), args.get("action", "unlink"))
+            if res.get("target_element_id"): target_id = res["target_element_id"]
+            if res.get("ui_action"): ui_action = res["ui_action"]
+            if res.get("message"): agent_message = res["message"]
+            
+        elif func_name == "auto_schedule_trip_itinerary":
+            res = auto_schedule_trip_itinerary(args.get("trip_id"))
+            if res.get("target_element_id"): target_id = res["target_element_id"]
+            if res.get("ui_action"): ui_action = res["ui_action"]
+            if res.get("message"): agent_message = res["message"]
                 
     return {
         "status": "success",

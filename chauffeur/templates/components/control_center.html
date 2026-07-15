@@ -634,6 +634,23 @@
                         window.clearItinerary();
                     } else if (data.ui_action === 'generate_massive_trip') {
                         keepLoading = true;
+                    } else if (data.ui_action === 'auto_schedule_trip') {
+                        keepLoading = true;
+                        if (typeof window.tripData !== 'undefined' && window.tripData.pois) {
+                            const unscheduled = window.tripData.pois.filter(p => !p.is_scheduled).map(p => p.id);
+                            if (unscheduled.length > 0) {
+                                fetch(`${apiBase}api/trip/${encodeURIComponent(window.tripData.event.id)}/schedule_pois_bulk`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ poi_ids: unscheduled })
+                                }).then(res => res.text()).then(() => window.location.reload());
+                            } else {
+                                keepLoading = false;
+                                if (typeof window.showAnchoredChatBubble === 'function') {
+                                    window.showAnchoredChatBubble('chat-overlay-container', "You don't have any unscheduled attractions!");
+                                }
+                            }
+                        }
                     }
                 } else {
                     if (typeof window.forceSync === 'function') {
