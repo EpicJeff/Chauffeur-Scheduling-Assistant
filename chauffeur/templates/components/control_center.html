@@ -936,7 +936,7 @@ function closeChatHelpModal() {
                         const targetCol = document.getElementById('col-' + data.target_driver_id);
                         if (el && targetCol) {
                             // Find the container inside the column to append to
-                            const targetContainer = targetCol.querySelector('.relative.flex-1');
+                            const targetContainer = targetCol.querySelector('.relative.w-full.overflow-hidden');
                             if (targetContainer) {
                                 // Animate jump
                                 el.style.transition = 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
