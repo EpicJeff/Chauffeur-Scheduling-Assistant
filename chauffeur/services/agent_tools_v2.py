@@ -46,26 +46,57 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     return {"status": "success", "events": slim_events}
 
 
-def schedule_calendar_override(event_id: str, driver_id: str, reason: str = "") -> Dict[str, Any]:
+def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date: str) -> Dict[str, Any]:
     """
-    Overrides the scheduled driver for a specific event in the calendar.
-    Returns a target_element_id for the UI to anchor a chat bubble.
+    Finds an event by name on a specific date and assigns a driver to it via a manual override.
+    target_date must be YYYY-MM-DD.
     """
-    from services.calendar import get_event, update_event
-    from services.storage import set_manual_override
+    from services.calendar import fetch_upcoming_events
+    from services.storage import set_manual_override, get_all_drivers, get_passengers
+    import datetime
     
-    event = get_event(event_id)
-    if not event:
-        return {"status": "error", "message": f"Event {event_id} not found."}
+    # Get all calendars to search
+    calendar_ids = set()
+    for p in get_passengers():
+        for cid in p.get("calendar_ids", []):
+            calendar_ids.add(cid)
+    for d in get_all_drivers():
+        for cid in d.get("calendar_ids", []):
+            calendar_ids.add(cid)
+            
+    events = fetch_upcoming_events(list(calendar_ids), start_date_str=target_date, end_date_str=target_date)
+    
+    # Fuzzy match event
+    target_event = None
+    event_name_lower = event_name.lower().strip()
+    for ev in events:
+        if event_name_lower in ev.title.lower():
+            target_event = ev
+            break
+            
+    if not target_event:
+        return {"status": "error", "message": f"Could not find any event containing '{event_name}' on {target_date}."}
         
-    # Update DB
-    set_manual_override(event_id, driver_id)
+    # Fuzzy match driver
+    target_driver = None
+    driver_name_lower = driver_name.lower().strip()
+    drivers = get_all_drivers()
+    for d in drivers:
+        if driver_name_lower in d.get("name", "").lower() or driver_name_lower == d.get("hashtag", "").lower().replace("#", ""):
+            target_driver = d
+            break
+            
+    if not target_driver:
+        return {"status": "error", "message": f"Could not find a driver matching '{driver_name}'."}
+        
+    # Set the override
+    set_manual_override(target_event.id, target_driver["id"])
     
-    target_dom_id = _get_target_element_id("event", event_id)
+    target_dom_id = _get_target_element_id("event", target_event.id)
     
     return {
         "status": "success", 
-        "message": f"Successfully assigned driver {driver_id}.",
+        "message": f"Successfully assigned {target_driver.get('name')} to drive for '{target_event.title}'.",
         "target_element_id": target_dom_id
     }
 
@@ -180,16 +211,16 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
-            "name": "schedule_calendar_override",
-            "description": "Overrides the assigned driver for an event.",
+            "name": "assign_driver_to_event_fuzzy",
+            "description": "Overrides the assigned driver for a specific event by finding it based on a fuzzy name match on a specific date. This is the CORRECT way to assign a driver or override an assignment.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "string"},
-                    "driver_id": {"type": "string"},
-                    "reason": {"type": "string"}
+                    "event_name": {"type": "string", "description": "The name or partial name of the event to assign a driver to."},
+                    "driver_name": {"type": "string", "description": "The name or hashtag of the driver to assign."},
+                    "target_date": {"type": "string", "description": "The date the event occurs in YYYY-MM-DD format."}
                 },
-                "required": ["event_id", "driver_id"]
+                "required": ["event_name", "driver_name", "target_date"]
             }
         },
         {

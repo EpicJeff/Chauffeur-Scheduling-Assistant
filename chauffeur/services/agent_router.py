@@ -1,11 +1,11 @@
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from services.agent_tools_v2 import (
     get_available_tools,
     get_calendar_events,
-    schedule_calendar_override,
+    assign_driver_to_event_fuzzy,
     add_trip_poi,
     clear_trip_itinerary,
     auto_schedule_trip_itinerary
@@ -136,10 +136,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             res = get_calendar_events(args.get("start_date"), args.get("end_date"))
             # In a real loop, we would pass this back to Gemma. For now, just return it.
             
-        elif func_name == "schedule_calendar_override":
-            res = schedule_calendar_override(args.get("event_id"), args.get("driver_id"), args.get("reason"))
+        elif func_name == "assign_driver_to_event_fuzzy":
+            from services.agent_tools_v2 import assign_driver_to_event_fuzzy
+            res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
             if res.get("target_element_id"):
                 target_id = res["target_element_id"]
+            if res.get("message"): agent_message = res["message"]
                 
         elif func_name == "add_trip_poi":
             res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
