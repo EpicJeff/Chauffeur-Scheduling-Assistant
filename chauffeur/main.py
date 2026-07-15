@@ -2172,7 +2172,7 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                         
                 background_tasks.add_task(_bg_generate, trip_id, payload.message, payload.conversation_id)
             
-        return {"reply": reply, "target_element_id": target_id, "ui_action": res.get("ui_action")}
+        return {"reply": reply, "target_element_id": target_id, "ui_action": res.get("ui_action"), "target_driver_id": res.get("target_driver_id")}
     except Exception as e:
         import traceback
         logger.error(f"Error in chat loop: {traceback.format_exc()}")

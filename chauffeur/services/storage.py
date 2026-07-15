@@ -31,7 +31,8 @@ class AtomicJSONStorage(Storage):
             return json.load(handle)
 
     def write(self, data: dict):
-        temp_path = self.path + '.tmp'
+        import uuid
+        temp_path = self.path + '.' + str(uuid.uuid4()) + '.tmp'
         with open(temp_path, 'w', encoding=self.encoding) as handle:
             json.dump(data, handle, **self.kwargs)
             handle.flush()
