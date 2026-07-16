@@ -8,20 +8,31 @@ The solver formulates the schedule by assigning drivers to events in a way that 
 
 ### Baseline Event Weights & Penalties
 When evaluating whether to assign an event to a driver or leave it unassigned:
-- **Base Assignment Reward:** `100` (modified by `unassigned_penalty_multiplier` in Theme settings).
-  - *If a driver's total score drops below 0 for an event, the solver will refuse to assign them and leave the event unassigned instead.*
+- **Base Assignment Reward:** `1,000,000` (modified by `unassigned_penalty_multiplier` in Theme settings).
+  - *Leaving an event unassigned scores `0`. If a driver's total score drops below 0 for an event, the solver will refuse to assign them and leave the event unassigned instead.*
+  - *This value is deliberately large so that assigning an event at all outweighs routing preferences. Compare bonuses against each other, not against this base — it is identical for every driver on the same event and therefore cancels out when choosing between drivers.*
 - **Priority Scaling Bonus:** `+150` points per rank. (e.g., Priority 1 driver gets `+1350`, Priority 10 gets `+0`).
-- **Driver in Event (Attendee):** `+5000` (Massive bonus if the driver is also attending the event).
+- **Driver in Event (Attendee):** `+50,000,000` (Massive bonus if the driver is also attending the event. This is the largest term in the model apart from manual overrides, and in practice it decides the assignment on its own.)
 - **Primary Driver Bonus:** `+2000` (modified by `primary_driver_bonus_multiplier`).
+- **Manual Override:** `+100,000,000` (plus the override's `created_at` epoch seconds, so newer overrides win). Dominates every other term.
+- **Group Bonus:** `+1000` when both events of a `group` rule go to the same driver.
 - **Stickiness Bonus:** `+5` points if they drove the same event in the previous run.
 - **Passenger Continuity:** Up to `+50,000` points if a driver handles consecutive events back-to-back with the same passenger. This decays linearly to `0` dynamically based on the specific travel gap threshold where a driver would typically have enough time to go home for a layover (e.g., 75+ minutes).
 - **Location Continuity:** Up to `+5,000` points if a driver handles consecutive events at the exact same location, decaying linearly to `0` at a 3-hour gap.
 
 **Penalties:**
 - **Travel Time:** Scaled heavy penalty (approx `-600` points per 10 minutes) of driving from the previous event's location to the next. This penalty *only* applies if the gap between events is 1 hour or less, to avoid unfairly penalizing drivers for taking completely independent trips separated by long layovers at home.
-- **Tolerance Overlap:** Heavy dynamic penalty (`-50,000`) if an event relies on a tolerance rule to be feasible for a primary driver. The penalty overcomes the primary driver bonus and group bonus combined, ensuring the solver will always prefer a clean secondary driver over a primary driver who has to be late.
-- **Preferred Hours Violation:** `-2,000,000` points if an event falls outside the driver's preferred working hours, which causes the event score to drop below 0 and remain unassigned.
+- **Tolerance Overlap:** Heavy dynamic penalty (`-50,000`) if an event relies on a tolerance rule to be feasible for a primary driver. The penalty comfortably overcomes the primary driver bonus (`+2000`) and group bonus (`+1000`) combined, so the solver prefers a clean secondary driver over a primary driver who has to be late. It does **not** overcome the attendee bonus or a manual override, and it exactly ties the maximum passenger-continuity bonus (`+50,000`) — so at a near-zero travel gap, continuity can cancel it out.
+- **Preferred Hours Violation:** `-2,000,000` points if an event falls outside the driver's preferred working hours. At default settings this drives the score below 0 (`1,000,000 - 2,000,000`) so the event stays unassigned. It does **not** hold if the driver is an attendee (`+50,000,000` swamps it) or if `unassigned_penalty_multiplier >= 2.0`.
 - **Soft Buffer Violation:** `-2,000` points if an event slightly overlaps a buffer zone.
+
+---
+
+## Travel Time Data & Caching
+Travel times come from Mapbox's Matrix API using the free-flow `driving` profile (no traffic-aware profile is requested anywhere, and cached reads always report a traffic delay of `0`). Durations are therefore treated as **static**: a cached value for a pair of fixed addresses does not go stale, and the solver reads them without an age check.
+- **Priming**: each schedule refresh primes only the location pairs it does not already have. Stale-but-valid pairs are never re-purchased — doing so previously exceeded the 100,000 element/month Matrix allowance.
+- **`route_cache_duration_mins`**: defaults to `43200` (30 days). It only needs shortening if a traffic-aware profile is introduced.
+- **Unroutable pairs**: when a location cannot be geocoded or the routing APIs fail, the pair is cached as `-1` and reported to the solver as `900` minutes (effectively unreachable). This suppresses retry storms against the API quota, but expires after **24 hours** so that a transient outage cannot permanently poison the cache.
 
 ---
 
@@ -40,17 +51,19 @@ Every rule (Routing Rule or Priority Rule) can filter events using any combinati
 
 When generating JSON for the frontend to digest, use the following `constraint_type` mappings.
 
-### 1. Driver Assignment (`constraint_type: "assignment"`)
-Controls how the solver treats specific drivers for an event. Requires the `assignment_type` property.
+### 1. Driver Assignment
+Controls how the solver treats a specific driver for an event. Each of these is its own top-level `constraint_type` value — there is **no** `"assignment"` constraint_type and **no** `assignment_type` property. `Rule` has no such field, so a rule shaped that way is silently discarded by the schema and does nothing.
 
-* `assignment_type: "required"` (Hard Constraint)
-  * The selected driver MUST be assigned. All other drivers are strictly prohibited.
-* `assignment_type: "preferred"` (Weight Bonus)
+All four require `driver_id` to name the driver the rule applies to.
+
+* `constraint_type: "required"` (Hard Constraint)
+  * The selected driver MUST be assigned. All other drivers are strictly prohibited. The named driver also receives a `+500` weight bonus.
+* `constraint_type: "preferred"` (Weight Bonus)
   * Grants a massive `+10000` weight bonus to the selected driver. They will almost certainly get the assignment unless physically impossible.
-* `assignment_type: "unavailable"` (Hard Constraint)
+* `constraint_type: "unavailable"` (Hard Constraint)
   * The selected driver is strictly forbidden from taking the event.
-* `assignment_type: "avoid"` (Soft Penalty)
-  * Subjects the driver to a massive penalty but establishes a "score floor" of `1`. This means the driver will be pushed to the absolute bottom of the priority list, but will still be chosen as a "last resort" rather than leaving the event unassigned.
+* `constraint_type: "avoid"` (Soft Penalty)
+  * Caps the driver's score at `1` — above `0` (the score of leaving the event unassigned) but below every viable driver. The driver is pushed to the absolute bottom of the priority list yet is still chosen as a "last resort" rather than leaving the event unassigned. A driver already excluded for another reason (e.g. a preferred-hours violation, which yields a negative score) stays excluded; `avoid` never resurrects them.
 
 ### 2. Duplicate Event Handling (`constraint_type: "duplicate"`)
 For recurring events or overlapping schedules.
@@ -78,8 +91,9 @@ Enforces artificial padding around an event for a driver.
 ---
 
 ## Priority Rules (`PriorityRule` objects)
-Distinct from standard rules, priority rules allow dynamic modification of the `Base Assignment Reward` (`100`) on an event-by-event basis.
-- **Why use this?** If the user says "Doctor appointments are the most important thing to schedule," you create a Priority Rule with `keywords: ["Doctor"]` and `weight_modifier: 10000`. This ensures the solver prioritizes finding *any* driver for the doctor appointment before solving other low-priority events.
+Distinct from standard rules, priority rules allow dynamic modification of the `Base Assignment Reward` (`1,000,000`) on an event-by-event basis. The `weight_modifier` is added to that base verbatim — there is no rescaling or remapping.
+- **Why use this?** If the user says "Doctor appointments are the most important thing to schedule," you create a Priority Rule with `keywords: ["Doctor"]` and `weight_modifier: 100000`. This ensures the solver prioritizes finding *any* driver for the doctor appointment before solving other low-priority events.
+- **Choosing a magnitude.** The modifier only matters relative to the *other* terms it competes with, since the base is identical across events. Useful reference points: `1000` is a mild nudge (enough to break a tie, roughly 17 minutes of travel penalty); `100,000` outranks the maximum passenger-continuity bonus (`+50,000`); `500,000` is effectively "schedule this before anything else." Negative values deprioritize. Nothing outranks the attendee bonus or a manual override.
 
 ## Matching Logic
 - **AND vs OR:** Across different criteria types in a single rule (e.g., Keywords AND Passengers AND Days), the solver uses `AND` logic. An event must meet all configured criteria types.

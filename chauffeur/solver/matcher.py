@@ -604,14 +604,8 @@ def solve_schedule(
         # Calculate dynamic base weight for the event
         base_event_weight = int(1000000 * unassigned_penalty_mult)
         for pr in priority_rules:
-            mod = pr.weight_modifier
-            if mod == 500 or mod == 200: mod = 500000
-            elif mod == 100: mod = 100000
-            elif mod == -100: mod = -100000
-            elif mod == -500: mod = -500000
-            
             if does_event_match_rule(e, pr, passengers):
-                base_event_weight += mod
+                base_event_weight += pr.weight_modifier
                 
         for d in drivers:
             weight = base_event_weight
@@ -659,10 +653,10 @@ def solve_schedule(
                 weight += int(5 * stickiness_bonus_mult)
                 
             # Apply Driver Rules
-            avoid_penalty = 0
+            is_avoided = False
             for r in rules:
                 r_type = getattr(r, 'constraint_type', '')
-                a_type = getattr(r, 'assignment_type', '')
+                a_type = ''
                 if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
                     a_type = r_type
                     r_type = 'assignment'
@@ -683,10 +677,14 @@ def solve_schedule(
                             if (e.id, d.id) not in overridden_pairs:
                                 model.Add(assign_vars[(e.id, d.id)] == 0)
                         elif a_type == 'avoid':
-                            avoid_penalty = 100000
-                            
-            if avoid_penalty > 0:
-                weight = min(weight - avoid_penalty, 1)
+                            is_avoided = True
+
+            if is_avoided:
+                # Last resort: cap below every viable driver but still above 0,
+                # the score of leaving the event unassigned. Capping (rather than
+                # subtracting a penalty) keeps an already-negative weight negative,
+                # so exclusions like preferred-hours still win over "avoid".
+                weight = min(weight, 1)
 
             objective_terms.append(assign_vars[(e.id, d.id)] * weight)
             
@@ -1580,7 +1578,7 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
             if not reason:
                 for r in rules:
                     r_type = getattr(r, 'constraint_type', '')
-                    a_type = getattr(r, 'assignment_type', '')
+                    a_type = ''
                     if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
                         a_type = r_type
                         r_type = 'assignment'
@@ -1698,7 +1696,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
 
     scheduled_errands_by_date = {date_str: [] for date_str in base_schedules.keys()}
     
-    active_errands = [e for e in errands if not e.get('is_completed')]
+    active_errands = [e for e in errands if not e.get('is_completed') and e.get('status') != 'past_due']
     if not active_errands:
         return scheduled_errands_by_date
         
@@ -1833,7 +1831,7 @@ def insert_errands_globally(base_schedules: Dict[str, dict], errands: List[dict]
                 continue
             
             r_type = getattr(r, 'constraint_type', '')
-            a_type = getattr(r, 'assignment_type', '')
+            a_type = ''
             
             if r_type in ['required', 'preferred', 'unavailable', 'avoid']:
                 a_type = r_type
