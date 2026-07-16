@@ -728,6 +728,18 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
                         if delta:
                             obj_terms.append(-W_BASE_DIST * delta * db)
 
+    # anchors themselves are pulled toward the accommodation covering each
+    # candidate day, so on multi-leg trips a claim lands inside the leg the
+    # anchor belongs to (a Riviera anchor must not claim Paris-hotel nights)
+    for b in backgrounds:
+        for d in days:
+            cl = claim.get((b.id, d.index))
+            if cl is None:
+                continue
+            dist = _dist_mins(d.accommodation, b) if d.accommodation is not None else None
+            if dist:
+                obj_terms.append(-W_BASE_DIST * dist * cl)
+
     # same-day pair distance (one aux var per pair)
     free_with_coords = [p for p in regulars if p.id in scheduled and p.lat is not None and p.lng is not None]
     for i in range(len(free_with_coords)):

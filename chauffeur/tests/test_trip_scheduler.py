@@ -21,6 +21,34 @@ def all_ids(pois):
     return [p.id for p in pois]
 
 
+def scenario_anchor_respects_legs():
+    """Regression: on a multi-leg trip (per-leg accommodations), an anchor must
+    claim days inside the leg whose accommodation it is near — not float to
+    arbitrary days (Riviera anchor was landing on Paris-hotel nights)."""
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    trip = mk_trip(days=4)
+    trip.accommodations = [
+        mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=2)),
+        mk_acc("Nice Hotel", *NICE, MONDAY + datetime.timedelta(days=2),
+               MONDAY + datetime.timedelta(days=4)),
+    ]
+    # deliberately listed in the "wrong" order relative to the legs
+    nice_anchor = mk_poi("Promenade des Anglais", *NICE, is_background=True,
+                         days_claimed=1, priority="must")
+    paris_anchor = mk_poi("Louvre District", *PARIS, is_background=True,
+                          days_claimed=1, priority="must")
+    trip.pois = [nice_anchor, paris_anchor]
+    results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
+    paris_days = set(paris_anchor.claimed_dates)
+    nice_days = set(nice_anchor.claimed_dates)
+    check(paris_days and paris_days <= {"2026-09-07", "2026-09-08"},
+          f"Paris anchor must claim a Paris-hotel night, got {paris_days}")
+    check(nice_days and nice_days <= {"2026-09-09", "2026-09-10"},
+          f"Nice anchor must claim a Nice-hotel night, got {nice_days}")
+
+
 def scenario_disney_containers():
     mk = mk_poi("Magic Kingdom", *MK, is_background=True, days_claimed=2, priority="must")
     epcot = mk_poi("Epcot", *EPCOT, is_background=True, days_claimed=1, priority="must")
@@ -262,6 +290,7 @@ def scenario_multiday_bg_day_spans():
 
 
 SCENARIOS = [
+    scenario_anchor_respects_legs,
     scenario_multiday_bg_day_spans,
     scenario_disney_containers,
     scenario_valid_day_claims,
