@@ -20,7 +20,10 @@ options:
   mapbox_api_key: ""
   unsplash_api_key: ""
   serpapi_api_key: ""
-  route_cache_duration_mins: 10
+  # Cached durations are Mapbox free-flow 'driving' times between fixed
+  # addresses; they do not go stale. A short TTL only re-buys identical
+  # numbers - at 10 minutes this blew past the 100k/month Matrix allowance.
+  route_cache_duration_mins: 43200
 schema:
   google_service_account_json: str
   mapbox_api_key: str?
