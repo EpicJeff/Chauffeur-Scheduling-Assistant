@@ -1,0 +1,318 @@
+"""SQLite document-store backend exposing the TinyDB table API surface.
+
+Drop-in replacement for the TinyDB objects used by services/storage.py and
+main.py: each table is `(doc_id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT)`
+holding one JSON document per row, so every read path returns the same dicts
+TinyDB returned. See docs/sqlite_migration_design.md.
+
+Query handling: callers keep passing tinydb Query objects. Simple queries
+(==/!=/</<=/>/>= on scalar values, AND/OR combinations) are translated to SQL
+so hot lookups hit expression indexes; anything else (test() predicates, None
+or list values) falls back to evaluating the Query as a Python predicate over
+a full table scan — which is exactly what TinyDB did for every query.
+
+Concurrency: WAL + busy_timeout, one connection per thread. The coarse
+storage.db_lock in services/storage.py stays in place for v1; it is cheap now
+because writes are single-row UPDATEs instead of whole-file rewrites.
+"""
+import json
+import os
+import re
+import sqlite3
+import threading
+from contextlib import contextmanager
+
+_VALID_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Expression indexes for hot lookups (design doc §3.1). The WHERE clauses
+# produced by _translate() use the identical expression text, which is what
+# lets SQLite match them to these indexes.
+INDEX_SPEC = {
+    "distance_cache": [["origin", "destination"]],
+    "geocode_cache": [["address"]],
+    "event_configs": [["google_id"]],
+    "trip_metadata": [["event_id"]],
+    "daily_schedules": [["date_str"]],
+    "route_geometry": [["origin", "destination", "profile"]],
+}
+
+# '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,
+# but SQL NULL != x is NULL (no match), and json_extract cannot distinguish a
+# stored null from a missing field. != queries take the Python fallback.
+_SQL_OPS = {"==": "=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}
+
+
+class Document(dict):
+    """A dict that also exposes .doc_id, mirroring tinydb.table.Document."""
+
+    def __init__(self, value, doc_id):
+        super().__init__(value)
+        self.doc_id = doc_id
+
+
+def _json_field(path):
+    return "json_extract(data, '$." + ".".join(path) + "')"
+
+
+def _translate_hash(h):
+    """TinyDB QueryInstance._hash tuple -> (sql, params), or None if the query
+    is not safely expressible in SQL with identical semantics."""
+    if not isinstance(h, tuple) or not h:
+        return None
+    op = h[0]
+    if op in _SQL_OPS and len(h) == 3:
+        path, value = h[1], h[2]
+        if not (isinstance(path, tuple) and path
+                and all(isinstance(k, str) and _VALID_NAME.match(k) for k in path)):
+            return None
+        # None must fall back: SQL NULL comparisons can't distinguish a stored
+        # null from a missing field the way TinyDB does. Lists/tuples/dicts
+        # fall back too. bool is fine (JSON true/false -> 1/0 in json_extract).
+        if value is None or not isinstance(value, (str, int, float)):
+            return None
+        if isinstance(value, bool):
+            value = int(value)
+        return f"{_json_field(path)} {_SQL_OPS[op]} ?", [value]
+    if op in ("and", "or") and len(h) == 2 and isinstance(h[1], frozenset):
+        parts, params = [], []
+        for sub in h[1]:
+            t = _translate_hash(sub)
+            if t is None:
+                return None
+            parts.append(f"({t[0]})")
+            params.extend(t[1])
+        return (" AND " if op == "and" else " OR ").join(parts), params
+    return None
+
+
+def _translate(cond):
+    try:
+        return _translate_hash(getattr(cond, "_hash", None))
+    except Exception:
+        return None
+
+
+class SqliteTable:
+    """Implements the TinyDB Table methods storage.py and main.py use:
+    all, search, get, insert, insert_multiple, upsert, update, remove, truncate.
+    """
+
+    def __init__(self, storage, name):
+        self._storage = storage
+        self.name = name
+
+    def _conn(self):
+        return self._storage.connection()
+
+    def _rows_to_docs(self, rows):
+        return [Document(json.loads(data), doc_id) for doc_id, data in rows]
+
+    def all(self):
+        rows = self._conn().execute(
+            f'SELECT doc_id, data FROM "{self.name}" ORDER BY doc_id').fetchall()
+        return self._rows_to_docs(rows)
+
+    def search(self, cond):
+        t = _translate(cond)
+        if t is not None:
+            sql, params = t
+            rows = self._conn().execute(
+                f'SELECT doc_id, data FROM "{self.name}" WHERE {sql} ORDER BY doc_id',
+                params).fetchall()
+            return self._rows_to_docs(rows)
+        return [doc for doc in self.all() if cond(doc)]
+
+    def get(self, cond=None, doc_id=None):
+        if doc_id is not None:
+            row = self._conn().execute(
+                f'SELECT doc_id, data FROM "{self.name}" WHERE doc_id = ?',
+                (doc_id,)).fetchone()
+            return Document(json.loads(row[1]), row[0]) if row else None
+        if cond is None:
+            raise RuntimeError("You have to pass either cond or doc_id")
+        res = self.search(cond)
+        return res[0] if res else None
+
+    def insert(self, document):
+        with self._storage.transaction() as conn:
+            if isinstance(document, Document):
+                # explicit doc_id (parity with TinyDB inserting a Document;
+                # also used by the migration to preserve ids)
+                conn.execute(
+                    f'INSERT INTO "{self.name}" (doc_id, data) VALUES (?, ?)',
+                    (document.doc_id, json.dumps(dict(document))))
+                return document.doc_id
+            cur = conn.execute(
+                f'INSERT INTO "{self.name}" (data) VALUES (?)',
+                (json.dumps(document),))
+            return cur.lastrowid
+
+    def insert_multiple(self, documents):
+        ids = []
+        with self._storage.transaction() as conn:
+            for document in documents:
+                cur = conn.execute(
+                    f'INSERT INTO "{self.name}" (data) VALUES (?)',
+                    (json.dumps(document),))
+                ids.append(cur.lastrowid)
+        return ids
+
+    def _matching_ids(self, conn, cond):
+        t = _translate(cond)
+        if t is not None:
+            sql, params = t
+            rows = conn.execute(
+                f'SELECT doc_id FROM "{self.name}" WHERE {sql} ORDER BY doc_id',
+                params).fetchall()
+            return [r[0] for r in rows]
+        rows = conn.execute(
+            f'SELECT doc_id, data FROM "{self.name}" ORDER BY doc_id').fetchall()
+        return [doc_id for doc_id, data in rows if cond(json.loads(data))]
+
+    def update(self, fields, cond=None, doc_ids=None):
+        updated = []
+        with self._storage.transaction() as conn:
+            if doc_ids is not None:
+                target_ids = list(doc_ids)
+                for doc_id in target_ids:
+                    if conn.execute(
+                            f'SELECT 1 FROM "{self.name}" WHERE doc_id = ?',
+                            (doc_id,)).fetchone() is None:
+                        raise KeyError(doc_id)
+            elif cond is not None:
+                target_ids = self._matching_ids(conn, cond)
+            else:
+                target_ids = [r[0] for r in conn.execute(
+                    f'SELECT doc_id FROM "{self.name}" ORDER BY doc_id').fetchall()]
+            for doc_id in target_ids:
+                row = conn.execute(
+                    f'SELECT data FROM "{self.name}" WHERE doc_id = ?',
+                    (doc_id,)).fetchone()
+                if row is None:
+                    raise KeyError(doc_id)
+                doc = json.loads(row[0])
+                if callable(fields):
+                    fields(doc)  # tinydb.operations style mutator
+                else:
+                    doc.update(fields)  # TinyDB merge semantics
+                conn.execute(
+                    f'UPDATE "{self.name}" SET data = ? WHERE doc_id = ?',
+                    (json.dumps(doc), doc_id))
+                updated.append(doc_id)
+        return updated
+
+    def upsert(self, document, cond):
+        updated = self.update(document, cond)
+        if updated:
+            return updated
+        return [self.insert(document)]
+
+    def remove(self, cond=None, doc_ids=None):
+        with self._storage.transaction() as conn:
+            if doc_ids is not None:
+                target_ids = list(doc_ids)
+                for doc_id in target_ids:
+                    if conn.execute(
+                            f'SELECT 1 FROM "{self.name}" WHERE doc_id = ?',
+                            (doc_id,)).fetchone() is None:
+                        raise KeyError(doc_id)
+            elif cond is not None:
+                target_ids = self._matching_ids(conn, cond)
+            else:
+                raise RuntimeError("Use truncate() to remove all documents")
+            for doc_id in target_ids:
+                conn.execute(
+                    f'DELETE FROM "{self.name}" WHERE doc_id = ?', (doc_id,))
+        return target_ids
+
+    def truncate(self):
+        with self._storage.transaction() as conn:
+            conn.execute(f'DELETE FROM "{self.name}"')
+            # reset the AUTOINCREMENT counter: TinyDB restarts doc_ids at 1
+            # after truncate, and the characterization suite pins that
+            conn.execute('DELETE FROM sqlite_sequence WHERE name = ?', (self.name,))
+
+    def __len__(self):
+        return self._conn().execute(
+            f'SELECT COUNT(*) FROM "{self.name}"').fetchone()[0]
+
+
+class SqliteStorage:
+    """One SQLite file holding every table; TinyDB-like .table() accessor."""
+
+    def __init__(self, path):
+        self.path = path
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._local = threading.local()
+        self._tables = {}
+        self._tables_lock = threading.Lock()
+        self.connection()  # create file + WAL mode eagerly
+
+    def connection(self):
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, timeout=5.0)
+            conn.isolation_level = None  # autocommit; explicit txns below
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = conn
+            self._local.txn_depth = 0
+        return conn
+
+    @contextmanager
+    def transaction(self):
+        """Reentrant per-thread write transaction (BEGIN IMMEDIATE)."""
+        conn = self.connection()
+        depth = getattr(self._local, "txn_depth", 0)
+        if depth > 0:
+            self._local.txn_depth = depth + 1
+            try:
+                yield conn
+            finally:
+                self._local.txn_depth -= 1
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        self._local.txn_depth = 1
+        try:
+            yield conn
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._local.txn_depth = 0
+
+    def table(self, name):
+        if not _VALID_NAME.match(name):
+            raise ValueError(f"invalid table name: {name!r}")
+        with self._tables_lock:
+            if name not in self._tables:
+                self._ensure_schema(name)
+                self._tables[name] = SqliteTable(self, name)
+            return self._tables[name]
+
+    def _ensure_schema(self, name):
+        conn = self.connection()
+        conn.execute(
+            f'CREATE TABLE IF NOT EXISTS "{name}" '
+            "(doc_id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)")
+        for fields in INDEX_SPEC.get(name, []):
+            idx_name = f"idx_{name}_" + "_".join(fields)
+            exprs = ", ".join(_json_field((f,)) for f in fields)
+            conn.execute(
+                f'CREATE INDEX IF NOT EXISTS "{idx_name}" ON "{name}" ({exprs})')
+
+    def tables(self):
+        rows = self.connection().execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'").fetchall()
+        return {r[0] for r in rows}
+
+    def close(self):
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
