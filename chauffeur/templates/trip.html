@@ -1919,7 +1919,19 @@
                 const failures = [];
                 const insights = [];
                 let completed = 0;
-                
+
+                // Refresh the board without blocking line processing: at most one
+                // fetch in flight, with a trailing refresh if lines arrived meanwhile.
+                let refreshInFlight = false, refreshPending = false;
+                const throttledRefresh = async () => {
+                    if (refreshInFlight) { refreshPending = true; return; }
+                    refreshInFlight = true;
+                    try { await fetchTripData(); } catch (e) {} finally {
+                        refreshInFlight = false;
+                        if (refreshPending) { refreshPending = false; throttledRefresh(); }
+                    }
+                };
+
                 while (true) {
                     const {done, value} = await reader.read();
                     if (done) break;
@@ -1944,7 +1956,7 @@
                                 }
                                 
                                 if (result.success) {
-                                    await fetchTripData();
+                                    throttledRefresh(); // deliberately not awaited — keeps the counter live
                                 } else {
                                     const poi = tripData.metadata.pois.find(p => p.id === result.poi_id);
                                     if (poi) {

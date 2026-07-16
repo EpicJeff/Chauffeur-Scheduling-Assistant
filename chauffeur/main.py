@@ -1223,31 +1223,45 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
         import json
         
         def stream_generator():
+            import time as _time
+            last_save = 0.0
+            dirty = False
+
+            def _sync_meta():
+                meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
+                if not event_id.startswith("draft_trip_"):
+                    if "activities" not in meta:
+                        meta["activities"] = []
+                    trip_cals = trip_obj.calendar_ids if hasattr(trip_obj, 'calendar_ids') and trip_obj.calendar_ids else []
+                    if not trip_cals:
+                        trip_cals = [event_id.split("::", 1)[0] if "::" in event_id else "primary"]
+                    for poi in trip_obj.pois:
+                        if poi.event_id and poi.is_scheduled:
+                            if not poi.event_id.startswith("draft_poi_") and not poi.event_id.startswith("draft_acc_"):
+                                full_id = f"{trip_cals[0]}::{poi.event_id}"
+                                if full_id not in meta["activities"]:
+                                    meta["activities"].append(full_id)
+
             try:
                 for result in schedule_pois_bulk(trip_obj, poi_ids):
                     if result.get("success"):
-                        # Save the mutated trip POIs to DB incrementally
-                        meta['pois'] = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in trip_obj.pois]
-                        
-                        if not event_id.startswith("draft_trip_"):
-                            if "activities" not in meta:
-                                meta["activities"] = []
-                            trip_cals = trip_obj.calendar_ids if hasattr(trip_obj, 'calendar_ids') and trip_obj.calendar_ids else []
-                            if not trip_cals:
-                                trip_cals = [event_id.split("::", 1)[0] if "::" in event_id else "primary"]
-                                
-                            # We need to find the event_calendar_id for this POI
-                            poi = next((p for p in trip_obj.pois if p.id == result.get("poi_id")), None)
-                            if poi and poi.event_id:
-                                full_id = f"{trip_cals[0]}::{poi.event_id}"
-                                if not poi.event_id.startswith("draft_poi_") and not poi.event_id.startswith("draft_acc_"):
-                                    if full_id not in meta["activities"]:
-                                        meta["activities"].append(full_id)
-                                    
-                        storage.set_trip_metadata(event_id, meta)
+                        dirty = True
+                        # TinyDB rewrites the whole file per save (~hundreds of ms on a
+                        # big trip) — throttle to 1/s; the finally below saves the rest.
+                        now = _time.monotonic()
+                        if now - last_save >= 1.0:
+                            _sync_meta()
+                            storage.set_trip_metadata(event_id, meta)
+                            last_save = now
+                            dirty = False
                     yield json.dumps(result) + "\n"
             except Exception as ex:
                 yield json.dumps({"poi_id": None, "success": False, "reason": f"Internal Error: {str(ex)}"}) + "\n"
+            finally:
+                # Persist everything on completion AND on client cancel (GeneratorExit)
+                if dirty:
+                    _sync_meta()
+                    storage.set_trip_metadata(event_id, meta)
 
         from fastapi.responses import StreamingResponse
         return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
