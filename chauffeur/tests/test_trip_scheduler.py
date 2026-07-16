@@ -240,7 +240,29 @@ def scenario_end_to_end_timing():
     check(fine.event_id and fine.event_id.startswith("draft_poi_"), "draft event id missing")
 
 
+def scenario_multiday_bg_day_spans():
+    """Regression: a days_claimed=3 anchor must yield one day-view span per claimed date."""
+    from services.trip_scheduler import claimed_day_spans
+    bg = mk_poi("Magic Kingdom", *MK, is_background=True, days_claimed=3, priority="must")
+    child = mk_poi("Character Dining", 28.4187, -81.5790, category="food", meal_type="dinner",
+                   parent_container=bg.id, duration_mins=90)
+    trip = mk_trip(days=5)
+    trip.pois = [bg, child]
+    results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check(all(r["success"] for r in results), f"bulk failed: {results}")
+    check(len(bg.claimed_dates) == 3, f"expected 3 claimed_dates, got {bg.claimed_dates}")
+
+    spans = claimed_day_spans(bg.model_dump(), trip.timeZone)
+    check(spans is not None and len(spans) == 3, f"expected 3 day spans, got {spans}")
+    span_dates = {local(s).date() for (_, _, s, _) in spans}
+    claimed = {datetime.datetime.strptime(d, "%Y-%m-%d").date() for d in bg.claimed_dates}
+    check(span_dates == claimed, f"span dates {span_dates} != claimed {claimed}")
+    # single-day anchors and regular POIs don't expand
+    check(claimed_day_spans(child.model_dump(), trip.timeZone) is None, "child must not expand")
+
+
 SCENARIOS = [
+    scenario_multiday_bg_day_spans,
     scenario_disney_containers,
     scenario_valid_day_claims,
     scenario_eiffel_anchor,

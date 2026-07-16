@@ -497,7 +497,24 @@ def get_trip_api(event_id: str):
                     query = poi.get("name") or poi.get("location", "travel")
                     encoded_query = urllib.parse.quote(query)
                     background_url = f"api/unsplash/background?query={encoded_query}"
-                    
+
+                from services.trip_scheduler import claimed_day_spans
+                spans = claimed_day_spans(poi, tz_str)
+                if spans:
+                    # Multi-day anchor: one day-view card per claimed date
+                    for i, n, day_start, day_end in spans:
+                        activities_details.append({
+                            # suffix keeps UI POI-matching (act.id.endsWith(poi.event_id)) working
+                            "id": f"day{i+1}_{poi.get('event_id')}",
+                            "title": f"{poi.get('name', '')} (Day {i+1} of {n})",
+                            "location": poi.get("location", ""),
+                            "description": poi.get("description", ""),
+                            "start": day_start,
+                            "end": day_end,
+                            "background_url": background_url
+                        })
+                    continue
+
                 activities_details.append({
                     "id": poi.get("event_id"),
                     "title": poi.get("name", ""),
@@ -610,25 +627,15 @@ def get_trip_api(event_id: str):
     for poi in metadata.get("pois", []):
         if poi.get("is_scheduled") and poi.get("scheduled_start") and poi.get("event_id") and poi.get("event_id").startswith("draft_poi_"):
             act_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
-            claimed = poi.get("claimed_dates") or []
-            if poi.get("is_background") and len(claimed) > 1:
+            from services.trip_scheduler import claimed_day_spans
+            spans = claimed_day_spans(poi, metadata.get("timeZone"))
+            if spans:
                 # Multi-day anchor: one day-view card per claimed date (possibly non-consecutive)
-                import zoneinfo as _zi
-                try:
-                    _tz = _zi.ZoneInfo(metadata.get("timeZone") or "America/New_York")
-                except Exception:
-                    _tz = _zi.ZoneInfo("America/New_York")
-                for i, ds in enumerate(claimed):
-                    try:
-                        d = datetime.strptime(ds, "%Y-%m-%d")
-                    except (ValueError, TypeError):
-                        continue
-                    day_start = d.replace(hour=9, minute=0, tzinfo=_tz).timestamp()
-                    day_end = d.replace(hour=21, minute=0, tzinfo=_tz).timestamp()
+                for i, n, day_start, day_end in spans:
                     activities_details.append({
                         # suffix keeps UI POI-matching (act.id.endsWith(poi.event_id)) working
                         "id": f"{act_cal_id}::day{i+1}_{poi['event_id']}",
-                        "title": f"{poi.get('name', '')} (Day {i+1} of {len(claimed)})",
+                        "title": f"{poi.get('name', '')} (Day {i+1} of {n})",
                         "location": poi.get("location", ""),
                         "description": poi.get("notes") or poi.get("description", ""),
                         "start": day_start,

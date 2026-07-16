@@ -965,6 +965,31 @@ def layout_days(trip: TripMetadata, res: SolveResult, affected_pids: List[str]) 
             anchor.scheduled_end = prev_end.timestamp()
 
 
+def claimed_day_spans(poi: Dict[str, Any], tz_str: Optional[str]) -> Optional[List[Tuple[int, int, float, float]]]:
+    """
+    For a multi-day background POI (dict form, as stored), return one (index, total,
+    start_ts, end_ts) span per claimed date so the UI can render a card on every claimed
+    day — including non-consecutive claims. Returns None for anything else.
+    """
+    claimed = poi.get("claimed_dates") or []
+    if not (poi.get("is_background") and len(claimed) > 1):
+        return None
+    try:
+        tz = zoneinfo.ZoneInfo(tz_str) if tz_str else zoneinfo.ZoneInfo("America/New_York")
+    except Exception:
+        tz = zoneinfo.ZoneInfo("America/New_York")
+    spans = []
+    for i, ds in enumerate(claimed):
+        try:
+            d = datetime.datetime.strptime(ds, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        start = d.replace(hour=9, minute=0, tzinfo=tz)
+        end = d.replace(hour=21, minute=0, tzinfo=tz)
+        spans.append((i, len(claimed), start.timestamp(), end.timestamp()))
+    return spans or None
+
+
 # ---------------------------------------------------------------------------
 # Public API (contract-compatible with the old trip_planner scheduler)
 # ---------------------------------------------------------------------------
