@@ -62,7 +62,11 @@ BALANCE_DEADBAND_MINS = 60  # imbalance this small is free — geography should 
 W_IDEAL_TIME_SOFT = 20_000
 HAVERSINE_MINS_PER_KM = 1.4
 
-SOLVER_TIME_LIMIT_S = 5.0
+# Wall-time cap for the solve. CP-SAT finds the best plan in milliseconds at our sizes;
+# extra time only goes to *proving* optimality, so a short cap returns the same schedule.
+# A relative gap limit is NOT safe here: shaping terms (clustering, balance) are tiny
+# next to placement rewards by design, so any percentage gap ignores them entirely.
+SOLVER_TIME_LIMIT_S = 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -842,29 +846,34 @@ def _competition_reason(p, pois_by_id, x, days, res: SolveResult, locked_at) -> 
 # ---------------------------------------------------------------------------
 
 def _real_travel_mins(loc_a: Optional[str], loc_b: Optional[str], a=None, b=None) -> int:
+    """
+    Travel estimate for Level 2 spacing. Haversine-first: with stored coords this is
+    instant and zero-API. maps.get_travel_time_minutes is only a fallback for
+    coordinate-less locations — it can geocode (Nominatim ~1.1s/lookup) and hit the
+    Matrix API, which is exactly the latency the old scheduler drowned in.
+    """
     if not loc_a or not loc_b:
         return 15
     if loc_a.strip().lower() == loc_b.strip().lower():
         return 0
+    hv = _dist_mins(a, b) if a is not None and b is not None else None
+    if hv is not None:
+        return hv
     try:
         from services import maps
         mins = maps.get_travel_time_minutes(loc_a, loc_b)
     except Exception:
         mins = None
-    if mins is None or mins >= 600:  # unroutable sentinel → haversine fallback
-        hv = _dist_mins(a, b) if a is not None and b is not None else None
-        return hv if hv is not None else 20
+    if mins is None or mins >= 600:  # unroutable sentinel
+        return 20
     return int(mins)
 
 
-def layout_days(trip: TripMetadata, res: SolveResult, affected_pids: List[str]) -> None:
-    """Write concrete scheduled_start/end (UTC ts) onto affected POIs, re-timing each affected day."""
+def _apply_claims(trip: TripMetadata, res: SolveResult) -> None:
+    """Backgrounds: claims → claimed_dates + spanning timestamps."""
     local_tz = res.local_tz
     pois_by_id = {p.id: p for p in trip.pois}
     day_by_idx = {d.index: d for d in res.days}
-    date_to_idx = {d.date: d.index for d in res.days}
-
-    # backgrounds first: claims → claimed_dates + spanning timestamps
     for bid, day_idxs in res.claims.items():
         b = pois_by_id[bid]
         dates = [day_by_idx[di].date for di in day_idxs]
@@ -880,10 +889,11 @@ def layout_days(trip: TripMetadata, res: SolveResult, affected_pids: List[str]) 
         if not b.event_id:
             b.event_id = f"draft_poi_{uuid.uuid4().hex}"
 
-    # which days need (re-)timing?
-    affected_days = {res.assigned[pid][0] for pid in affected_pids if pid in res.assigned}
 
-    # anchor per day (target claims + locked backgrounds)
+def _anchor_map(trip: TripMetadata, res: SolveResult) -> Dict[int, TripPOI]:
+    """Anchor POI per day index (freshly claimed + locked backgrounds)."""
+    pois_by_id = {p.id: p for p in trip.pois}
+    date_to_idx = {d.date: d.index for d in res.days}
     anchor_by_day: Dict[int, TripPOI] = {}
     for bid, day_idxs in res.claims.items():
         for di in day_idxs:
@@ -897,72 +907,86 @@ def layout_days(trip: TripMetadata, res: SolveResult, affected_pids: List[str]) 
                     di = None
                 if di is not None:
                     anchor_by_day.setdefault(di, p)
+    return anchor_by_day
 
+
+def layout_days(trip: TripMetadata, res: SolveResult, affected_pids: List[str]) -> None:
+    """Write concrete scheduled_start/end (UTC ts) onto affected POIs, re-timing each affected day."""
+    _apply_claims(trip, res)
+    anchor_by_day = _anchor_map(trip, res)
+    affected_days = {res.assigned[pid][0] for pid in affected_pids if pid in res.assigned}
     for di in sorted(affected_days):
-        day = day_by_idx[di]
-        # everything on this day: newly assigned + previously scheduled regulars
-        entries: Dict[str, str] = {}  # pid -> block
-        for pid in res.assigned:
-            if res.assigned[pid][0] == di:
-                entries[pid] = res.assigned[pid][1]
-        for p in trip.pois:
-            if p.id in entries or getattr(p, 'is_background', False):
-                continue
-            if p.is_scheduled and p.scheduled_start and p.id not in res.assigned:
-                p_local = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz)
-                if p_local.date() == day.date:
-                    blk = next((b.name for b in day.blocks if b.start <= p_local.time() < b.end), None)
-                    entries[p.id] = blk or day.blocks[0].name
+        _layout_one_day(trip, res, di, anchor_by_day)
 
-        base = anchor_by_day.get(di) or day.accommodation
-        prev_loc = getattr(base, 'location', None) or trip.location
-        prev_obj = base
-        prev_end: Optional[datetime.datetime] = None
 
-        for b in day.blocks:
-            block_pois = [pois_by_id[pid] for pid, blk in entries.items() if blk == b.name]
-            if not block_pois:
-                continue
-            # nearest-neighbor order within the block
-            ordered: List[TripPOI] = []
-            remaining = list(block_pois)
-            while remaining:
-                nxt = min(remaining, key=lambda q: (_dist_mins(prev_obj, q) if _dist_mins(prev_obj, q) is not None else 30))
-                ordered.append(nxt)
-                remaining.remove(nxt)
-                prev_obj = nxt
+def _layout_one_day(trip: TripMetadata, res: SolveResult, di: int, anchor_by_day: Dict[int, TripPOI]) -> None:
+    local_tz = res.local_tz
+    pois_by_id = {p.id: p for p in trip.pois}
+    day = {d.index: d for d in res.days}[di]
 
-            window_start = datetime.datetime.combine(day.date, b.start, tzinfo=local_tz)
-            window_end = datetime.datetime.combine(day.date, b.end, tzinfo=local_tz)
-            prev_for_travel = None
-            for p in ordered:
-                travel = _real_travel_mins(prev_loc, p.location, a=prev_for_travel, b=p)
-                start = window_start
-                if prev_end is not None:
-                    start = max(start, prev_end + datetime.timedelta(minutes=travel))
-                if b.kind == 'meal' and b.name in MEAL_ANCHOR:
-                    anchor_t = datetime.datetime.combine(day.date, MEAL_ANCHOR[b.name], tzinfo=local_tz)
-                    latest_ok = window_end - datetime.timedelta(minutes=(p.duration_mins or 60))
-                    start = min(max(start, anchor_t), max(window_start, latest_ok))
-                # snap to 5 minutes
-                start -= datetime.timedelta(minutes=start.minute % 5, seconds=start.second,
-                                            microseconds=start.microsecond)
-                end = start + datetime.timedelta(minutes=p.duration_mins or 60)
-                p.is_scheduled = True
-                p.scheduled_start = start.timestamp()
-                p.scheduled_end = end.timestamp()
-                if not p.event_id:
-                    p.event_id = f"draft_poi_{uuid.uuid4().hex}"
-                prev_end = end
-                prev_loc = p.location or prev_loc
-                prev_for_travel = p
+    # everything on this day: newly assigned + previously scheduled regulars
+    entries: Dict[str, str] = {}  # pid -> block
+    for pid in res.assigned:
+        if res.assigned[pid][0] == di:
+            entries[pid] = res.assigned[pid][1]
+    for p in trip.pois:
+        if p.id in entries or getattr(p, 'is_background', False):
+            continue
+        if p.is_scheduled and p.scheduled_start and p.id not in res.assigned:
+            p_local = datetime.datetime.fromtimestamp(p.scheduled_start, tz=datetime.timezone.utc).astimezone(local_tz)
+            if p_local.date() == day.date:
+                blk = next((b.name for b in day.blocks if b.start <= p_local.time() < b.end), None)
+                entries[p.id] = blk or day.blocks[0].name
 
-        # extend the day's background span to cover late children on its final claimed day
-        anchor = anchor_by_day.get(di)
-        if (anchor is not None and prev_end is not None and anchor.scheduled_end
-                and prev_end.timestamp() > anchor.scheduled_end
-                and (anchor.claimed_dates or [None])[-1] == day.date.strftime("%Y-%m-%d")):
-            anchor.scheduled_end = prev_end.timestamp()
+    base = anchor_by_day.get(di) or day.accommodation
+    prev = base  # previous stop (carries across blocks so travel chains correctly)
+    prev_loc = getattr(base, 'location', None) or trip.location
+    prev_end: Optional[datetime.datetime] = None
+
+    for b in day.blocks:
+        block_pois = [pois_by_id[pid] for pid, blk in entries.items() if blk == b.name]
+        if not block_pois:
+            continue
+        # nearest-neighbor order within the block, starting from the previous stop
+        ordered: List[TripPOI] = []
+        cursor = prev
+        remaining = list(block_pois)
+        while remaining:
+            nxt = min(remaining, key=lambda q: (_dist_mins(cursor, q) if _dist_mins(cursor, q) is not None else 30))
+            ordered.append(nxt)
+            remaining.remove(nxt)
+            cursor = nxt
+
+        window_start = datetime.datetime.combine(day.date, b.start, tzinfo=local_tz)
+        window_end = datetime.datetime.combine(day.date, b.end, tzinfo=local_tz)
+        for p in ordered:
+            travel = _real_travel_mins(prev_loc, p.location, a=prev, b=p)
+            start = window_start
+            if prev_end is not None:
+                start = max(start, prev_end + datetime.timedelta(minutes=travel))
+            if b.kind == 'meal' and b.name in MEAL_ANCHOR:
+                anchor_t = datetime.datetime.combine(day.date, MEAL_ANCHOR[b.name], tzinfo=local_tz)
+                latest_ok = window_end - datetime.timedelta(minutes=(p.duration_mins or 60))
+                start = min(max(start, anchor_t), max(window_start, latest_ok))
+            # snap to 5 minutes
+            start -= datetime.timedelta(minutes=start.minute % 5, seconds=start.second,
+                                        microseconds=start.microsecond)
+            end = start + datetime.timedelta(minutes=p.duration_mins or 60)
+            p.is_scheduled = True
+            p.scheduled_start = start.timestamp()
+            p.scheduled_end = end.timestamp()
+            if not p.event_id:
+                p.event_id = f"draft_poi_{uuid.uuid4().hex}"
+            prev_end = end
+            prev_loc = p.location or prev_loc
+            prev = p
+
+    # extend the day's background span to cover late children on its final claimed day
+    anchor = anchor_by_day.get(di)
+    if (anchor is not None and prev_end is not None and anchor.scheduled_end
+            and prev_end.timestamp() > anchor.scheduled_end
+            and (anchor.claimed_dates or [None])[-1] == day.date.strftime("%Y-%m-%d")):
+        anchor.scheduled_end = prev_end.timestamp()
 
 
 def claimed_day_spans(poi: Dict[str, Any], tz_str: Optional[str]) -> Optional[List[Tuple[int, int, float, float]]]:
@@ -1012,17 +1036,29 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
             yield {"poi_id": pid, "success": False, "reason": res.error}
         return
 
-    layout_days(trip, res, target_ids)
-
+    # Stream incrementally: failures first, then anchors, then day by day as each is
+    # laid out — the UI refreshes on every success line, so results pop in as they land.
+    # A client cancel (disconnect) stops the generator at the next yield.
     for pid in target_ids:
-        if pid in res.assigned or pid in res.claims:
-            yield {"poi_id": pid, "success": True, "reason": None}
-        else:
+        if pid not in res.assigned and pid not in res.claims:
             out = {"poi_id": pid, "success": False,
                    "reason": res.failures.get(pid, "could not be scheduled")}
             if pid in res.fixes:
                 out["suggested_fixes"] = res.fixes[pid]
             yield out
+
+    _apply_claims(trip, res)
+    for pid in target_ids:
+        if pid in res.claims:
+            yield {"poi_id": pid, "success": True, "reason": None}
+
+    anchor_by_day = _anchor_map(trip, res)
+    affected_days = sorted({res.assigned[pid][0] for pid in target_ids if pid in res.assigned})
+    for di in affected_days:
+        _layout_one_day(trip, res, di, anchor_by_day)
+        for pid in target_ids:
+            if pid in res.assigned and res.assigned[pid][0] == di:
+                yield {"poi_id": pid, "success": True, "reason": None}
 
 
 def schedule_poi(trip: TripMetadata, poi: TripPOI,

@@ -1865,6 +1865,8 @@
 
         window.executeBulkSchedule = async function(selected) {
             const schedLoading = document.getElementById('schedule-loading-overlay');
+            const scheduleAbort = new AbortController();
+            window.currentScheduleAbort = scheduleAbort;
             if (schedLoading) {
                 schedLoading.classList.remove('hidden');
                 // Add a progress text element if it doesn't exist
@@ -1880,13 +1882,35 @@
                 } else {
                     document.getElementById('schedule-progress-text').innerText = `Scheduling 0 of ${selected.length}...`;
                 }
+                // Cancel button (created once, rewired per run)
+                let cancelBtn = document.getElementById('schedule-cancel-btn');
+                if (!cancelBtn) {
+                    const spinnerContainer = schedLoading.querySelector('.flex.flex-col.items-center');
+                    if (spinnerContainer) {
+                        cancelBtn = document.createElement('button');
+                        cancelBtn.id = 'schedule-cancel-btn';
+                        cancelBtn.className = 'mt-4 bg-red-600/80 hover:bg-red-500 text-white font-bold py-2 px-6 rounded-xl transition shadow-lg text-sm';
+                        cancelBtn.innerText = 'Cancel';
+                        spinnerContainer.appendChild(cancelBtn);
+                    }
+                }
+                if (cancelBtn) {
+                    cancelBtn.disabled = false;
+                    cancelBtn.innerText = 'Cancel';
+                    cancelBtn.onclick = () => {
+                        cancelBtn.disabled = true;
+                        cancelBtn.innerText = 'Cancelling...';
+                        scheduleAbort.abort();
+                    };
+                }
             }
-            
+
             try {
                 const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/schedule_pois_bulk`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ poi_ids: selected })
+                    body: JSON.stringify({ poi_ids: selected }),
+                    signal: scheduleAbort.signal
                 });
                 
                 const reader = res.body.getReader();
@@ -1958,13 +1982,18 @@
                 }
                 
             } catch(e) {
-                showGlobalAlert("Error in bulk schedule");
+                if (e && e.name === 'AbortError') {
+                    showGlobalAlert("Scheduling cancelled. Anything already placed was kept.");
+                } else {
+                    showGlobalAlert("Error in bulk schedule");
+                }
             } finally {
+                window.currentScheduleAbort = null;
                 if (schedLoading) {
                     schedLoading.classList.add('hidden');
                 }
             }
-            
+
             await fetchTripData();
             updatePoiBulkActions();
             if (schedLoading) schedLoading.classList.add('hidden');
