@@ -607,30 +607,45 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+            # Transient 5xx (e.g. 503 "model experiencing high demand") gets a
+            # short backoff and retry before we give up on this model.
+            data = None
+            for attempt in range(3):
                 try:
-                    parts = data['candidates'][0]['content']['parts']
-                    
-                    # Check for tool call
-                    tool_calls = []
-                    text_resp = ""
-                    for part in parts:
-                        if 'functionCall' in part:
-                            fc = part['functionCall']
-                            tool_calls.append({
-                                'name': fc['name'],
-                                'arguments': fc['args']
-                            })
-                        if 'text' in part:
-                            text_resp += part['text']
-                            
-                    if tool_calls:
-                        return {"tool_calls": tool_calls, "message": text_resp}
-                        
-                    raw_response = text_resp
-                except (KeyError, IndexError):
-                    raise RuntimeError("Unexpected response format from Gemini API")
+                    with urllib.request.urlopen(req, timeout=180) as resp:
+                        data = json.loads(resp.read().decode('utf-8'))
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code in (500, 502, 503, 504) and attempt < 2:
+                        import time
+                        wait_s = 2 * (attempt + 1)
+                        print(f"Gemini API returned {e.code} for {gemini_model} "
+                              f"(attempt {attempt + 1}/3), retrying in {wait_s}s...")
+                        time.sleep(wait_s)
+                        continue
+                    raise
+            try:
+                parts = data['candidates'][0]['content']['parts']
+
+                # Check for tool call
+                tool_calls = []
+                text_resp = ""
+                for part in parts:
+                    if 'functionCall' in part:
+                        fc = part['functionCall']
+                        tool_calls.append({
+                            'name': fc['name'],
+                            'arguments': fc['args']
+                        })
+                    if 'text' in part:
+                        text_resp += part['text']
+
+                if tool_calls:
+                    return {"tool_calls": tool_calls, "message": text_resp}
+
+                raw_response = text_resp
+            except (KeyError, IndexError, TypeError):
+                raise RuntimeError("Unexpected response format from Gemini API")
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8')
             if e.code == 429:

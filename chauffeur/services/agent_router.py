@@ -47,6 +47,9 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
     system_prompt += json.dumps(tools, indent=2)
     system_prompt += "\n\nIf you do not need to call a tool, return an empty list for tool_calls."
     
+    def _is_transient(err_str: str) -> bool:
+        return any(code in err_str for code in ("429", "500", "502", "503", "504"))
+
     try:
         res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None)
         if res.get("error") and "429" in str(res.get("error")):
@@ -54,10 +57,19 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         return res
     except RateLimitException:
         logger.warning(f"{primary_model} rate limited, falling back to {fallback_model}...")
+    except Exception as e:
+        # 5xx = that model is overloaded/unavailable right now (the call layer
+        # already retried with backoff) — the fallback model may still work.
+        if not _is_transient(str(e)):
+            logger.error(f"Error calling Gemma: {e}")
+            return {"error": str(e)}
+        logger.warning(f"{primary_model} unavailable ({e}), falling back to {fallback_model}...")
+
+    try:
         return _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None)
     except Exception as e:
-        logger.error(f"Error calling Gemma: {e}")
-        return {"error": str(e)}
+        logger.error(f"Error calling Gemma fallback model: {e}")
+        return {"error": str(e), "transient": _is_transient(str(e))}
 
 def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
@@ -123,7 +135,32 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             current_system_prompt += "\n\nTOOL EXECUTION SCRATCHPAD:\n" + agent_scratchpad
             
         llm_response = call_gemma_with_fallback(user_prompt, tools, current_system_prompt)
-        
+
+        # An LLM failure must never masquerade as success ("I have processed
+        # your request") — tell the user what actually happened.
+        if llm_response.get("error"):
+            err = str(llm_response["error"])
+            transient = llm_response.get("transient") or any(
+                code in err for code in ("429", "500", "502", "503", "504"))
+            logger.error(f"Agent LLM call failed (iteration {iteration + 1}): {err}")
+            if transient:
+                agent_message = ("The AI service is overloaded right now, so I couldn't "
+                                 "process your request. Please try again in a minute or two.")
+            else:
+                agent_message = ("I ran into an error talking to the AI service and couldn't "
+                                 "process your request. Please try again — if it keeps "
+                                 "happening, check the server logs.")
+            if iteration > 0:
+                agent_message = ("I completed part of your request, but the AI service "
+                                 "failed before I could finish. " + agent_message)
+            return {
+                "status": "error",
+                "message": agent_message,
+                "target_element_id": target_id,
+                "ui_action": ui_action,
+                "target_driver_id": target_driver_id
+            }
+
         # Check for Delegation to Gemini
         if llm_response.get("delegate_to_gemini"):
             logger.info("Delegating massive task to Gemini 3.1 Flash Lite")
