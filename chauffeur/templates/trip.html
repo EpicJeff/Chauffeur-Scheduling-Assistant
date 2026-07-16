@@ -753,11 +753,11 @@
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-1">Check In</label>
+                        <label id="acc-check-in-label" class="block text-gray-400 text-sm font-bold mb-1">Check In</label>
                         <input type="date" id="acc-check-in" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500">
                     </div>
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-1">Check Out</label>
+                        <label id="acc-check-out-label" class="block text-gray-400 text-sm font-bold mb-1">Check Out</label>
                         <input type="date" id="acc-check-out" class="w-full bg-gray-900 text-white border border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500">
                     </div>
                 </div>
@@ -1094,19 +1094,34 @@
 
 
 
+        // Flexible-date drafts live on a mock calendar behind the scenes; those
+        // fake dates must NEVER be shown to the user — only trip-day numbers.
+        function isFlexibleDraft() {
+            return !!(tripData.metadata.is_draft && tripData.metadata.mock_start_date);
+        }
+
+        function accDateToDayNum(dateStr) {
+            if (!dateStr || !isFlexibleDraft()) return null;
+            const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+            tripStart.setHours(0,0,0,0);
+            const d = new Date(dateStr + "T00:00:00");
+            return Math.round((d - tripStart) / 86400000) + 1;
+        }
+
+        function dayNumToAccDate(dayNum) {
+            const n = parseInt(dayNum);
+            if (!n || n < 1 || !isFlexibleDraft()) return '';
+            const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+            tripStart.setHours(0,0,0,0);
+            const d = new Date(tripStart.getTime() + (n - 1) * 86400000);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
         function formatAccommodationDate(dateStr) {
             if (!dateStr) return '?';
-            if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
-                const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
-                tripStart.setHours(0,0,0,0);
-                const d = new Date(dateStr + "T00:00:00");
-                const msDiff = d - tripStart;
-                const dayNum = Math.round(msDiff / (1000 * 60 * 60 * 24)) + 1;
-                const formattedDate = d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
-                if (dayNum > 0 && dayNum <= 60) {
-                    return `Day ${dayNum} (${formattedDate})`;
-                }
-                return formattedDate;
+            if (isFlexibleDraft()) {
+                const dayNum = accDateToDayNum(dateStr);
+                return (dayNum && dayNum > 0 && dayNum <= 60) ? `Day ${dayNum}` : '?';
             }
             return new Date(dateStr + "T00:00:00").toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
         }
@@ -1157,7 +1172,7 @@
                         </div>
                     </div>` : ''}
                     <div class="mt-4 flex gap-2">
-                        <a href="https://www.google.com/travel/search?q=hotels%20in%20${encodeURIComponent(acc.location || '')}%20on%20${encodeURIComponent(acc.check_in_date || '')}%20to%20${encodeURIComponent(acc.check_out_date || '')}" target="_blank" class="w-full bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 px-3 rounded-xl transition text-center flex items-center justify-center">
+                        <a href="https://www.google.com/travel/search?q=hotels%20in%20${encodeURIComponent(acc.location || '')}${isFlexibleDraft() ? '' : `%20on%20${encodeURIComponent(acc.check_in_date || '')}%20to%20${encodeURIComponent(acc.check_out_date || '')}`}" target="_blank" class="w-full bg-white/10 hover:bg-white/20 text-white text-xs font-bold py-2 px-3 rounded-xl transition text-center flex items-center justify-center">
                             <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                             Check on Google
                         </a>
@@ -1316,8 +1331,24 @@
             }
         }
         
+        // Flexible drafts edit stays as trip-day numbers; real trips edit dates.
+        function configureAccDateInputs() {
+            const flex = isFlexibleDraft();
+            const ci = document.getElementById('acc-check-in');
+            const co = document.getElementById('acc-check-out');
+            ci.type = flex ? 'number' : 'date';
+            co.type = flex ? 'number' : 'date';
+            if (flex) {
+                ci.min = 1; co.min = 2;
+                ci.placeholder = 'e.g. 1'; co.placeholder = 'e.g. 5';
+            }
+            document.getElementById('acc-check-in-label').innerText = flex ? 'Check-in Day' : 'Check In';
+            document.getElementById('acc-check-out-label').innerText = flex ? 'Check-out Day' : 'Check Out';
+        }
+
         function openAddAccommodationModal() {
             document.getElementById('acc-modal-title').innerText = 'Add Accommodation';
+            configureAccDateInputs();
             document.getElementById('acc-id').value = '';
             document.getElementById('acc-name').value = '';
             document.getElementById('acc-location').value = '';
@@ -1327,20 +1358,26 @@
             document.getElementById('acc-delete-btn').classList.add('hidden');
             document.getElementById('accommodation-modal').classList.remove('hidden');
         }
-        
+
         function openEditAccommodationModal(id) {
             const accs = tripData.metadata.accommodations || [];
             const acc = accs.find(a => a.id === id);
             if (!acc) return;
-            
+
             document.getElementById('acc-modal-title').innerText = 'Edit Accommodation';
+            configureAccDateInputs();
             document.getElementById('acc-id').value = acc.id;
             document.getElementById('acc-name').value = acc.name || '';
             document.getElementById('acc-location').value = acc.location || '';
-            document.getElementById('acc-check-in').value = acc.check_in_date || '';
-            document.getElementById('acc-check-out').value = acc.check_out_date || '';
+            if (isFlexibleDraft()) {
+                document.getElementById('acc-check-in').value = accDateToDayNum(acc.check_in_date) || '';
+                document.getElementById('acc-check-out').value = accDateToDayNum(acc.check_out_date) || '';
+            } else {
+                document.getElementById('acc-check-in').value = acc.check_in_date || '';
+                document.getElementById('acc-check-out').value = acc.check_out_date || '';
+            }
             document.getElementById('acc-notes').value = acc.notes || '';
-            
+
             document.getElementById('acc-delete-btn').classList.remove('hidden');
             document.getElementById('accommodation-modal').classList.remove('hidden');
         }
@@ -1420,11 +1457,14 @@
         
         async function saveAccommodation() {
             const id = document.getElementById('acc-id').value;
+            const ciRaw = document.getElementById('acc-check-in').value;
+            const coRaw = document.getElementById('acc-check-out').value;
+            const flex = isFlexibleDraft();
             const payload = {
                 name: document.getElementById('acc-name').value,
                 location: document.getElementById('acc-location').value,
-                check_in_date: document.getElementById('acc-check-in').value,
-                check_out_date: document.getElementById('acc-check-out').value,
+                check_in_date: flex ? dayNumToAccDate(ciRaw) : ciRaw,
+                check_out_date: flex ? dayNumToAccDate(coRaw) : coRaw,
                 notes: document.getElementById('acc-notes').value,
             };
             
