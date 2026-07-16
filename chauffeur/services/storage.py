@@ -6,7 +6,12 @@ import threading
 
 db_lock = threading.RLock()
 
-if os.path.exists('/data/options.json'):
+# CHAUFFEUR_DATA_DIR: test/tooling override so suites run against a temp dir
+# instead of the live data files. Unset in normal operation.
+if os.environ.get('CHAUFFEUR_DATA_DIR'):
+    DB_PATH = os.path.join(os.environ['CHAUFFEUR_DATA_DIR'], 'db.json')
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+elif os.path.exists('/data/options.json'):
     DB_PATH = '/data/chauffeur_db.json'
 else:
     DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'db.json')
