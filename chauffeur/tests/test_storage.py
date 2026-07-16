@@ -852,6 +852,19 @@ SCENARIOS = [
 
 if __name__ == "__main__":
     import traceback
+
+    # With no explicit backend, run the whole suite once per backend in
+    # subprocesses — green on both is the migration's "no behavior change" bar.
+    if "CHAUFFEUR_STORAGE" not in os.environ:
+        import subprocess
+        worst = 0
+        for be in ("tinydb", "sqlite"):
+            env = dict(os.environ, CHAUFFEUR_STORAGE=be)
+            print(f"=== backend: {be} ===")
+            rc = subprocess.call([sys.executable, os.path.abspath(__file__)], env=env)
+            worst = max(worst, rc)
+        raise SystemExit(worst)
+
     backend = getattr(storage, "BACKEND", "tinydb")
     print(f"storage backend: {backend}  (data dir: {_TMP})")
     failed = 0

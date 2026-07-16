@@ -75,9 +75,23 @@ def fix_corrupted_db(path):
     except Exception:
         pass
 
+# Storage engine toggle (docs/sqlite_migration_design.md). 'tinydb' is the
+# legacy escape hatch; it will be removed one release after the swap soaks.
+BACKEND = os.environ.get('CHAUFFEUR_STORAGE', 'tinydb').strip().lower()
+if BACKEND not in ('tinydb', 'sqlite'):
+    print(f"Unknown CHAUFFEUR_STORAGE={BACKEND!r}, falling back to tinydb")
+    BACKEND = 'tinydb'
+
+SQLITE_PATH = os.path.join(os.path.dirname(DB_PATH), 'chauffeur.sqlite3')
+
 with db_lock:
-    fix_corrupted_db(DB_PATH)
-    db = TinyDB(DB_PATH, storage=AtomicJSONStorage)
+    if BACKEND == 'sqlite':
+        from services.storage_sqlite import SqliteStorage
+        db = SqliteStorage(SQLITE_PATH)
+        routes_db = db  # route_geometry lives in the same SQLite file
+    else:
+        fix_corrupted_db(DB_PATH)
+        db = TinyDB(DB_PATH, storage=AtomicJSONStorage)
     drivers_table = db.table('drivers')
     rules_table = db.table('rules')
     priority_rules_table = db.table('priority_rules')
@@ -105,8 +119,9 @@ with db_lock:
     trip_metadata_table = db.table('trip_metadata')
 
     ROUTES_DB_PATH = os.path.join(os.path.dirname(DB_PATH), 'routes_cache.json')
-    fix_corrupted_db(ROUTES_DB_PATH)
-    routes_db = TinyDB(ROUTES_DB_PATH, storage=AtomicJSONStorage)
+    if BACKEND != 'sqlite':
+        fix_corrupted_db(ROUTES_DB_PATH)
+        routes_db = TinyDB(ROUTES_DB_PATH, storage=AtomicJSONStorage)
     route_geometry_cache_table = routes_db.table('route_geometry')
 
 def migrate_passengers_from_settings():
