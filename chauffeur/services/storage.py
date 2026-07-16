@@ -186,10 +186,12 @@ cleanup_corrupted_travel_times()
 
 # Geocode Cache
 def mark_all_daily_schedules_dirty():
+    # One update for every row, not one per row: TinyDB serializes the whole
+    # database to disk on each write, so the per-row loop this replaced cost
+    # ~9s for 71 rows against a 4.4MB db.json - on the request path of every
+    # event-config save.
     with db_lock:
-        for entry in daily_schedules_table.all():
-            entry['events_hash'] = 'DIRTY'
-            daily_schedules_table.update(entry, doc_ids=[entry.doc_id])
+        daily_schedules_table.update({'events_hash': 'DIRTY'})
 
 def clear_schedule_caches():
     with db_lock:
