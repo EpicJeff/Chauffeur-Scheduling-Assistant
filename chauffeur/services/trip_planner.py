@@ -1343,7 +1343,46 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     sugg_pois = response_json.get('pois', [])
     sugg_accs = response_json.get('accommodations', [])
     sugg_flights = response_json.get('flights', [])
-    
+
+    # LLMs are unreliable at long lists: asked for ~40 POIs in one shot they
+    # may return a complete, valid response with 9. Prompt wording doesn't fix
+    # that (tried twice), so top up with small follow-up calls instead —
+    # models reliably produce 8-12 items per request.
+    explicit_count = re.search(
+        r'\b\d+\s+(pois?|places?|restaurants?|activities|attractions?|sights?|museums?|spots?|things)\b',
+        user_prompt, re.IGNORECASE)
+    if not explicit_count:
+        seen_names = {(p or '').lower() for p in existing_poi_names}
+        seen_names.update((s.get('name') or '').lower() for s in sugg_pois)
+        for topup_round in range(3):
+            if len(sugg_pois) >= num_pois:
+                break
+            remaining = num_pois - len(sugg_pois)
+            print(f"generate_trip_plan: {len(sugg_pois)}/{num_pois} POIs after "
+                  f"{topup_round + 1} call(s), requesting ~{remaining} more...")
+            already = ", ".join(sorted(n for n in seen_names if n)) or "None"
+            topup_req = (
+                user_req
+                + f"\n\nCONTINUATION: You already suggested these POIs in a previous response: {already}.\n"
+                  f"Suggest approximately {remaining} MORE POIs to complete the itinerary — new places only, "
+                  f"do NOT repeat anything from that list. Flights and accommodations are already handled: "
+                  f"return empty arrays for them. If the user asked for a specific number of items and it has "
+                  f"already been met, return an empty pois array."
+            )
+            try:
+                topup_json = _call_llm_json(provider, url, api_key, model, system_prompt,
+                                            topup_req, temperature=0.7)
+            except Exception as e:
+                print(f"generate_trip_plan: top-up call failed, keeping {len(sugg_pois)} POIs: {e}")
+                break
+            new_pois = [s for s in (topup_json.get('pois') or [])
+                        if (s.get('name') or '').lower() not in seen_names]
+            if not new_pois:
+                break
+            seen_names.update((s.get('name') or '').lower() for s in new_pois)
+            sugg_pois.extend(new_pois)
+        print(f"generate_trip_plan: {len(sugg_pois)}/{num_pois} POIs after top-up")
+
     # Keyword check: Move hotel POIs to accommodations
     acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
     true_pois = []
