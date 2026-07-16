@@ -766,15 +766,21 @@ def extract_street_address(address: str) -> str:
         
     return address
 
+_TZ_FINDER = None
+
 def get_timezone(address: str) -> str:
     coords = geocode_address(address)
     if not coords:
         return "UTC"
     lat, lon = coords
     try:
-        from timezonefinder import TimezoneFinder
-        tf = TimezoneFinder()
-        tz = tf.timezone_at(lng=lon, lat=lat)
+        # TimezoneFinder() loads a large polygon dataset from disk — constructing it
+        # per call costs seconds. Build once, reuse forever.
+        global _TZ_FINDER
+        if _TZ_FINDER is None:
+            from timezonefinder import TimezoneFinder
+            _TZ_FINDER = TimezoneFinder(in_memory=True)
+        tz = _TZ_FINDER.timezone_at(lng=lon, lat=lat)
         return tz or "UTC"
     except ImportError:
         return "UTC"

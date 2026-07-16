@@ -160,6 +160,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
 
+@app.middleware("http")
+async def slow_request_logger(request, call_next):
+    """Log any request that takes >1s so slowness reports come with data."""
+    import time as _time
+    t0 = _time.monotonic()
+    response = await call_next(request)
+    dt = _time.monotonic() - t0
+    if dt > 1.0:
+        print(f"[SLOW REQUEST] {request.method} {request.url.path} took {dt:.2f}s")
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -472,12 +483,20 @@ def get_trip_api(event_id: str):
         
         tz_str = metadata.get("timeZone")
         if (not tz_str or tz_str == "UTC") and metadata.get("location"):
-            from services.maps import get_timezone
-            new_tz = get_timezone(metadata.get("location"))
-            if new_tz and new_tz != "UTC":
-                tz_str = new_tz
-                metadata["timeZone"] = tz_str
-                storage.set_trip_metadata(event_id, metadata)
+            # A location that never resolves would otherwise cost a geocode on EVERY
+            # fetch of this trip — retry at most once per hour per process.
+            import time as _time
+            if not hasattr(get_trip_api, "_tz_checked"):
+                get_trip_api._tz_checked = {}
+            last = get_trip_api._tz_checked.get(event_id, 0)
+            if _time.monotonic() - last > 3600:
+                get_trip_api._tz_checked[event_id] = _time.monotonic()
+                from services.maps import get_timezone
+                new_tz = get_timezone(metadata.get("location"))
+                if new_tz and new_tz != "UTC":
+                    tz_str = new_tz
+                    metadata["timeZone"] = tz_str
+                    storage.set_trip_metadata(event_id, metadata)
             
         event_details = {
             "id": event_id,

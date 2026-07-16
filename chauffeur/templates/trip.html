@@ -1224,23 +1224,6 @@
             });
         }
         
-        async function deleteAccommodation(id) {
-            openConfirmModal("Delete Accommodation?", "Are you sure you want to delete this accommodation?", [
-                { text: "Cancel", class: "bg-gray-700 hover:bg-gray-600 text-white", onClick: () => closeConfirmModal() },
-                { text: "Delete", class: "bg-red-600 hover:bg-red-700 text-white font-bold", onClick: async () => {
-                    closeConfirmModal();
-                    try {
-                        const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${encodeURIComponent(id)}`, { method: 'DELETE' });
-                        const data = await res.json();
-                        if (data.error) throw new Error(data.error);
-                        await fetchTripData();
-                    } catch (err) {
-                        showGlobalAlert('Failed to delete accommodation: ' + err.message);
-                    }
-                } }
-            ]);
-        }
-        
         async function deleteFlight(id) {
             openConfirmModal("Delete Flight?", "Are you sure you want to delete this flight?", [
                 { text: "Cancel", class: "bg-gray-700 hover:bg-gray-600 text-white", onClick: () => closeConfirmModal() },
@@ -1475,10 +1458,12 @@
             }
         }
         
-        function deleteAccommodation() {
-            const id = document.getElementById('acc-id').value;
-            if(!id) return;
-            
+        function deleteAccommodation(id) {
+            // Card buttons pass the id; the detail/edit modal buttons don't — fall back
+            // to the modal's hidden field for those.
+            if (!id) id = document.getElementById('acc-id').value;
+            if (!id) return;
+
             openConfirmModal("Delete Accommodation?", "Are you sure you want to delete this accommodation?", [
                 {
                     text: "Cancel",
@@ -1487,31 +1472,30 @@
                 {
                     text: "Delete",
                     className: "px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-sm font-medium",
-                    onClick: async () => {
+                    onClick: () => {
+                        // Optimistic: update the UI instantly, sync in the background.
+                        // Backend lock contention must never hold a modal hostage.
                         closeConfirmModal();
-                        const btn = document.getElementById('acc-delete-btn');
-                        btn.innerText = 'Deleting...';
-                        btn.disabled = true;
-                        
-                        try {
-                            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${id}`, {
-                                method: 'DELETE'
-                            });
-                            if(res.ok) {
-                                closeAccommodationModal();
-                                closeAccDetails();
-                                await fetchTripData();
-                            } else {
-                                const data = await res.json();
-                                showGlobalAlert(data.error || 'Failed to delete accommodation');
+                        closeAccommodationModal();
+                        closeAccDetails();
+                        const removed = tripData.metadata.accommodations.find(a => a.id === id);
+                        tripData.metadata.accommodations = tripData.metadata.accommodations.filter(a => a.id !== id);
+                        renderAccommodations();
+
+                        (async () => {
+                            try {
+                                const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/accommodation/${encodeURIComponent(id)}`, {
+                                    method: 'DELETE'
+                                });
+                                const data = res.ok ? await res.json() : { error: 'HTTP ' + res.status };
+                                if (data.error) throw new Error(data.error);
+                            } catch (err) {
+                                console.error(err);
+                                showGlobalAlert('Failed to delete accommodation: ' + err.message);
+                                if (removed) tripData.metadata.accommodations.push(removed);
+                                fetchTripData(); // restore server truth
                             }
-                        } catch (err) {
-                            console.error(err);
-                            showGlobalAlert('Network error deleting accommodation');
-                        } finally {
-                            btn.innerText = 'Delete';
-                            btn.disabled = false;
-                        }
+                        })();
                     }
                 }
             ]);
