@@ -201,6 +201,76 @@ def scenario_persistence_across_reopen():
     db2.close()
 
 
+def scenario_migration_from_tinydb():
+    import json
+    from services.storage_sqlite import migrate_from_tinydb
+
+    d = tempfile.mkdtemp(dir=_TMP)
+    db_json = os.path.join(d, "db.json")
+    routes_json = os.path.join(d, "routes_cache.json")
+    sqlite_path = os.path.join(d, "chauffeur.sqlite3")
+
+    with open(db_json, "w", encoding="utf-8") as f:
+        json.dump({
+            "drivers": {"1": {"name": "Alice"}, "7": {"name": "Bob"}},
+            "rules": {"3": {"constraint_type": "required", "keywords": ["k"]}},
+            "distance_cache": {
+                "1": {"origin": "a", "destination": "b", "duration_mins": 10, "timestamp": 1},
+                "2": {"origin": "a", "destination": "b", "duration_mins": 99, "timestamp": 2},
+                "3": {"origin": "c", "destination": "d", "duration_mins": 5, "timestamp": 1},
+            },
+            "geocode_cache": {
+                "1": {"address": "x", "lat": 1.0, "lon": 2.0},
+                "2": {"address": "x", "lat": 9.0, "lon": 9.0},
+                "3": {"address": "y", "lat": 3.0, "lon": 4.0},
+            },
+        }, f)
+    with open(routes_json, "w", encoding="utf-8") as f:
+        json.dump({"route_geometry": {
+            "5": {"origin": "a", "destination": "b", "profile": "driving",
+                  "data": {"coords": [[1, 2]]}, "timestamp": 1}}}, f)
+
+    stats = migrate_from_tinydb(sqlite_path, db_json, routes_json)
+    check(stats is not None, "migration ran")
+    check(stats["deduped"] == {"distance_cache": 1, "geocode_cache": 1},
+          f"dedup counts, got {stats['deduped']}")
+    check(not os.path.exists(db_json) and os.path.exists(db_json + ".pre-sqlite.bak"),
+          "db.json renamed to .bak")
+    check(os.path.exists(routes_json + ".pre-sqlite.bak"), "routes_cache.json renamed to .bak")
+    check(not os.path.exists(sqlite_path + ".migrating"), "temp build file cleaned up")
+
+    db = SqliteStorage(sqlite_path)
+    drivers = db.table("drivers").all()
+    check([d_.doc_id for d_ in drivers] == [1, 7], "doc_ids preserved verbatim")
+    check(drivers[1] == {"name": "Bob"}, "docs copied verbatim")
+    check(db.table("drivers").insert({"name": "New"}) == 8,
+          "autoincrement continues after preserved ids")
+    check(db.table("rules").get(doc_id=3)["keywords"] == ["k"], "rules doc_id preserved")
+
+    # distance: newest duplicate wins (the row the mem-cache rebuild would use)
+    dist = db.table("distance_cache").all()
+    ab = [r for r in dist if r["origin"] == "a"]
+    check(len(dist) == 2 and len(ab) == 1 and ab[0]["duration_mins"] == 99,
+          f"distance dedup keeps last row, got {dist}")
+    # geocode: first duplicate wins (the row search(...)[0] returns today)
+    geo = db.table("geocode_cache").all()
+    x = [r for r in geo if r["address"] == "x"]
+    check(len(geo) == 2 and len(x) == 1 and x[0]["lat"] == 1.0,
+          f"geocode dedup keeps first row, got {geo}")
+
+    routes = db.table("route_geometry").all()
+    check(len(routes) == 1 and routes[0]["data"] == {"coords": [[1, 2]]},
+          "routes_cache.json merged into route_geometry")
+    db.close()
+
+    # nothing to migrate -> None, no file created
+    empty_dir = tempfile.mkdtemp(dir=_TMP)
+    check(migrate_from_tinydb(os.path.join(empty_dir, "c.sqlite3"),
+                              os.path.join(empty_dir, "db.json")) is None,
+          "no legacy files -> no-op")
+    check(not os.path.exists(os.path.join(empty_dir, "c.sqlite3")), "no empty DB left behind")
+
+
 def scenario_table_name_validation():
     db = fresh_db()
     try:
@@ -221,6 +291,7 @@ SCENARIOS = [
     scenario_transaction_rollback,
     scenario_reentrant_transaction,
     scenario_persistence_across_reopen,
+    scenario_migration_from_tinydb,
     scenario_table_name_validation,
 ]
 

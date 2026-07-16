@@ -85,8 +85,15 @@ if BACKEND not in ('tinydb', 'sqlite'):
 SQLITE_PATH = os.path.join(os.path.dirname(DB_PATH), 'chauffeur.sqlite3')
 
 with db_lock:
+    ROUTES_DB_PATH = os.path.join(os.path.dirname(DB_PATH), 'routes_cache.json')
     if BACKEND == 'sqlite':
-        from services.storage_sqlite import SqliteStorage
+        from services.storage_sqlite import SqliteStorage, migrate_from_tinydb
+        if not os.path.exists(SQLITE_PATH):
+            # first boot on sqlite: migrate legacy TinyDB files if present
+            # (renames them to *.pre-sqlite.bak); fresh install -> empty DB
+            fix_corrupted_db(DB_PATH)
+            fix_corrupted_db(ROUTES_DB_PATH)
+            migrate_from_tinydb(SQLITE_PATH, DB_PATH, ROUTES_DB_PATH)
         db = SqliteStorage(SQLITE_PATH)
         routes_db = db  # route_geometry lives in the same SQLite file
     else:
@@ -118,7 +125,6 @@ with db_lock:
     errand_rules_table = db.table('errand_rules')
     trip_metadata_table = db.table('trip_metadata')
 
-    ROUTES_DB_PATH = os.path.join(os.path.dirname(DB_PATH), 'routes_cache.json')
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
         routes_db = TinyDB(ROUTES_DB_PATH, storage=AtomicJSONStorage)

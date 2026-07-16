@@ -1711,9 +1711,30 @@ def download_db():
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for root, dirs, files in os.walk(data_dir):
             for file in files:
+                # WAL sidecars are meaningless without a matching main file
+                if file.endswith(('-wal', '-shm')) or file.endswith('.migrating'):
+                    continue
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, data_dir)
-                zip_file.write(file_path, arcname)
+                if file.endswith('.sqlite3'):
+                    # zipping a live WAL database copies a torn state; use the
+                    # SQLite backup API for a consistent snapshot instead
+                    import sqlite3
+                    import tempfile
+                    tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
+                    tmp.close()
+                    try:
+                        src = sqlite3.connect(file_path)
+                        dst = sqlite3.connect(tmp.name)
+                        with dst:
+                            src.backup(dst)
+                        dst.close()
+                        src.close()
+                        zip_file.write(tmp.name, arcname)
+                    finally:
+                        os.unlink(tmp.name)
+                else:
+                    zip_file.write(file_path, arcname)
     
     zip_buffer.seek(0)
     return StreamingResponse(

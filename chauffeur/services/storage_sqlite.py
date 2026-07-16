@@ -316,3 +316,106 @@ class SqliteStorage:
         if conn is not None:
             conn.close()
             self._local.conn = None
+
+
+# --- one-way TinyDB -> SQLite migration (design doc §4) ------------------------
+
+def _dedup_keep_last(items, key_fields):
+    """Keep only the newest (last-in-table-order) row per key. Matches the
+    runtime winner: the distance mem-cache is rebuilt in table order with
+    later rows overwriting earlier ones."""
+    winners = {}
+    for doc_id, doc in items:
+        key = tuple(doc.get(f) for f in key_fields)
+        winners[key] = (doc_id, doc)
+    kept = sorted(winners.values(), key=lambda p: p[0])
+    return kept, len(items) - len(kept)
+
+
+def _dedup_keep_first(items, key_fields):
+    """Keep only the first-in-table-order row per key. Matches the runtime
+    winner for tables read via search(...)[0]."""
+    winners = {}
+    for doc_id, doc in items:
+        key = tuple(doc.get(f) for f in key_fields)
+        winners.setdefault(key, (doc_id, doc))
+    kept = sorted(winners.values(), key=lambda p: p[0])
+    return kept, len(items) - len(kept)
+
+
+def _read_tinydb_json(path):
+    """Read a TinyDB JSON file -> {table: [(doc_id, doc), ...]} in file order.
+    Missing or empty file -> {} (same as TinyDB's empty-db handling)."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return {
+        table: [(int(doc_id), doc) for doc_id, doc in docs.items()]
+        for table, docs in raw.items()
+    }
+
+
+def migrate_from_tinydb(sqlite_path, db_json_path, routes_json_path=None):
+    """Copy every TinyDB table into a new SQLite file, preserving doc_ids.
+
+    - Builds at a temp path and os.replace()s into place, so a crash mid-way
+      never leaves a half-built file that would be mistaken for a good DB.
+    - Dedups distance_cache (keep newest per origin+destination) and
+      geocode_cache (keep first per address) — the rows runtime reads already
+      won with. Everything else copies 1:1.
+    - Merges routes_cache.json into the route_geometry table (fresh doc_ids;
+      nothing persists route doc_ids across sessions).
+    - Renames the originals to *.pre-sqlite.bak (never deleted by us).
+
+    Returns a stats dict, or None if there was nothing to migrate.
+    """
+    tables = _read_tinydb_json(db_json_path)
+    routes = _read_tinydb_json(routes_json_path) if routes_json_path else {}
+    if not tables and not routes:
+        return None
+
+    stats = {"tables": {}, "deduped": {}}
+    tmp_path = sqlite_path + ".migrating"
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    store = SqliteStorage(tmp_path)
+    try:
+        with store.transaction():
+            for name, items in tables.items():
+                dropped = 0
+                if name == "distance_cache":
+                    items, dropped = _dedup_keep_last(items, ("origin", "destination"))
+                elif name == "geocode_cache":
+                    items, dropped = _dedup_keep_first(items, ("address",))
+                table = store.table(name)
+                for doc_id, doc in items:
+                    table.insert(Document(doc, doc_id))
+                stats["tables"][name] = len(items)
+                if dropped:
+                    stats["deduped"][name] = dropped
+            for name, items in routes.items():
+                table = store.table(name)
+                for _, doc in items:
+                    table.insert(doc)
+                stats["tables"][name] = stats["tables"].get(name, 0) + len(items)
+        store.connection().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        store.close()
+    os.replace(tmp_path, sqlite_path)
+
+    for src in (db_json_path, routes_json_path):
+        if src and os.path.exists(src):
+            try:
+                os.replace(src, src + ".pre-sqlite.bak")
+            except OSError as e:
+                # e.g. the old app instance still holds the file on Windows;
+                # not fatal — the sqlite file now exists, so the stale JSON
+                # will simply be ignored (and never re-migrated) from now on.
+                print(f"Migration: could not rename {src} to .bak: {e}")
+
+    total = sum(stats["tables"].values())
+    print(f"Migrated TinyDB -> SQLite: {total} docs across "
+          f"{len(stats['tables'])} tables into {os.path.basename(sqlite_path)}; "
+          f"deduped {stats['deduped'] or 'nothing'}")
+    return stats
