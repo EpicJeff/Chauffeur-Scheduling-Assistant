@@ -1119,7 +1119,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         
     if trip.is_draft and trip.mock_start_date:
         trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_nights', 1))
+        if trip.mock_end_date:
+            trip_end_dt = datetime.datetime.fromtimestamp(trip.mock_end_date, tz=datetime.timezone.utc)
+        else:
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_nights', None) or 1)
     else:
         from services.calendar import get_event_dates
         trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
@@ -1140,6 +1143,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"{poi_context}\n"
         f"{budget_context}"
         f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days, emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates: each leg's check_in_date equals the previous leg's check_out_date, the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')}, and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}.\n"
         f"User Request: {user_prompt}\n"
         f"Generate accommodation suggestions."
     )
@@ -1320,6 +1324,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"{date_bounds_str}\n"
         f"{budget_context}"
         f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country, then 2 days at the coast'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}). Distribute POIs geographically to match: a POI belongs near the accommodation whose leg the user intends it for — the scheduler places each POI using that day's accommodation as home base.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"{proposed_str}"

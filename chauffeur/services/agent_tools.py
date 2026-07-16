@@ -205,12 +205,36 @@ class AddTripPoiTool(BaseModel):
 class AddTripAccommodationTool(BaseModel):
     """
     Adds an Accommodation to a specific Trip. Use this when a user says they are staying at a specific hotel, resort, or Airbnb.
+    For a multi-leg trip (e.g. '4 days in Paris, then 3 days in wine country, then 2 days at the coast'), add ONE accommodation
+    per leg and set check_in_night/nights so the stays are consecutive and non-overlapping (leg 2 checks in the night leg 1
+    checks out). The scheduler uses each day's accommodation as that day's home base, so POIs cluster to the correct leg
+    automatically. If no dates/nights are given, the stay spans the whole trip.
     """
     event_id: str = Field(..., description="The event ID of the Trip.")
     name: str = Field(..., description="The name of the Accommodation (e.g. 'Hyatt Place').")
     location: str = Field(..., description="The address/location of the Accommodation.")
     mapbox_id: Optional[str] = Field(default=None, description="The Mapbox ID if found via search_places.")
+    check_in_night: Optional[int] = Field(default=None, description="1-indexed trip night to check in (night 1 = first night of the trip). Preferred over absolute dates for draft trips.")
+    nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
+    check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD. Only use when the user gave explicit calendar dates; otherwise prefer check_in_night/nights.")
+    check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
     notes: Optional[str] = Field(default="", description="Any notes.")
+
+class EditTripAccommodationTool(BaseModel):
+    """
+    Edits an existing Trip Accommodation — use it to change stay dates (e.g. to split a trip into legs), name, location, or notes.
+    Identify the accommodation by accommodation_id, or by name (exact or unambiguous partial match).
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    accommodation_id: Optional[str] = Field(default=None, description="The ID of the accommodation to edit, if known.")
+    name: Optional[str] = Field(default=None, description="Name of the accommodation to edit (used to find it when accommodation_id is not given).")
+    new_name: Optional[str] = Field(default=None, description="New name, if renaming.")
+    location: Optional[str] = Field(default=None, description="New address/location, if moving.")
+    check_in_night: Optional[int] = Field(default=None, description="1-indexed trip night to check in (night 1 = first night of the trip).")
+    nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
+    check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD (prefer check_in_night for drafts).")
+    check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
+    notes: Optional[str] = Field(default=None, description="New notes.")
 
 class EditTripPoiTool(BaseModel):
     """
@@ -260,6 +284,7 @@ TOOL_SCHEMAS = {
     "generate_trip_plan": GenerateTripPlanTool.model_json_schema(),
     "add_trip_poi": AddTripPoiTool.model_json_schema(),
     "add_trip_accommodation": AddTripAccommodationTool.model_json_schema(),
+    "edit_trip_accommodation": EditTripAccommodationTool.model_json_schema(),
     "edit_trip_poi": EditTripPoiTool.model_json_schema(),
 }
 
@@ -598,34 +623,75 @@ def handle_add_trip_poi(args: dict) -> dict:
         "message": f"Added {occurrences} POI(s) '{name}' to trip."
     }
 
+def _trip_date_bounds(metadata):
+    """The trip's (start, end) datetimes: mock window for drafts, calendar
+    event dates otherwise. Either may be None."""
+    import datetime
+    if metadata.get('is_draft') and metadata.get('mock_start_date'):
+        start = datetime.datetime.fromtimestamp(metadata['mock_start_date'], tz=datetime.timezone.utc)
+        if metadata.get('mock_end_date'):
+            end = datetime.datetime.fromtimestamp(metadata['mock_end_date'], tz=datetime.timezone.utc)
+        else:
+            end = start + datetime.timedelta(days=metadata.get('draft_duration_nights') or 1)
+        return start, end
+    if not metadata.get('is_draft'):
+        from services.calendar import get_event_dates
+        return get_event_dates(metadata.get('event_id'))
+    return None, None
+
+
+def _resolve_stay_dates(args, metadata):
+    """Resolve an accommodation stay to (check_in, check_out) YYYY-MM-DD strings.
+
+    Priority: explicit dates > 1-indexed trip-night ordinals (night 1 = the
+    trip's first night, so night N = trip start + N-1 days) > full trip span
+    (the historical default). Ordinal-derived stays are clamped to the trip
+    window; explicit dates are trusted as given. Returns "" when unknowable.
+    """
+    import datetime
+    start_dt, end_dt = _trip_date_bounds(metadata)
+    start_d = start_dt.date() if start_dt else None
+    end_d = end_dt.date() if end_dt else None
+
+    def parse(s):
+        try:
+            return datetime.datetime.strptime(s, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return None
+
+    ci_d = parse(args.get('check_in_date'))
+    co_d = parse(args.get('check_out_date'))
+    night = args.get('check_in_night')
+    nights = args.get('nights')
+
+    if ci_d is None and night and start_d:
+        ci_d = start_d + datetime.timedelta(days=int(night) - 1)
+    if ci_d is None:
+        ci_d = start_d
+    if co_d is None and ci_d and nights:
+        co_d = ci_d + datetime.timedelta(days=int(nights))
+    if co_d is None:
+        co_d = end_d
+    if co_d and end_d and co_d > end_d and not args.get('check_out_date'):
+        co_d = end_d
+    return (ci_d.strftime('%Y-%m-%d') if ci_d else ""), (co_d.strftime('%Y-%m-%d') if co_d else "")
+
+
 def handle_add_trip_accommodation(args: dict) -> dict:
     from services import storage
     from services.trip_planner import enrich_poi_data
     event_id = args.get('event_id')
     metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "accommodations": []}
     import uuid
-    
+
     name = args.get('name')
     location = args.get('location')
     trip_location = metadata.get('location', '')
-    
+
     enrichment = enrich_poi_data(name, location, trip_location)
-    
-    # Try to guess check-in/out dates from the trip bounds if they exist
-    import datetime
-    trip_start_dt, trip_end_dt = None, None
-    if metadata.get('is_draft') and metadata.get('mock_start_date'):
-        trip_start_dt = datetime.datetime.fromtimestamp(metadata.get('mock_start_date'), tz=datetime.timezone.utc)
-        trip_end_dt = trip_start_dt + datetime.timedelta(days=metadata.get('draft_duration_nights', 1))
-    elif not metadata.get('is_draft'):
-        from services.calendar import get_event_dates
-        start, end = get_event_dates(event_id)
-        if start and end:
-            trip_start_dt, trip_end_dt = start, end
-            
-    check_in_date = trip_start_dt.strftime('%Y-%m-%d') if trip_start_dt else ""
-    check_out_date = trip_end_dt.strftime('%Y-%m-%d') if trip_end_dt else ""
-    
+
+    check_in_date, check_out_date = _resolve_stay_dates(args, metadata)
+
     acc = {
         "id": uuid.uuid4().hex,
         "name": name,
@@ -646,8 +712,64 @@ def handle_add_trip_accommodation(args: dict) -> dict:
     
     return {
         "status": "success",
-        "message": f"Added Accommodation '{name}' to trip."
+        "message": f"Added Accommodation '{name}' to trip ({acc['check_in_date'] or 'no date'} -> {acc['check_out_date'] or 'no date'})."
     }
+
+def handle_edit_trip_accommodation(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('accommodations'):
+        return {"status": "error", "message": "Trip not found or has no accommodations."}
+
+    accs = metadata['accommodations']
+    acc = None
+    if args.get('accommodation_id'):
+        acc = next((a for a in accs if a.get('id') == args['accommodation_id']), None)
+    if acc is None and args.get('name'):
+        name_l = args['name'].strip().lower()
+        exact = [a for a in accs if (a.get('name') or '').strip().lower() == name_l]
+        partial = [a for a in accs if name_l in (a.get('name') or '').strip().lower()]
+        matches = exact or partial
+        if len(matches) > 1:
+            names = ", ".join(a.get('name', '?') for a in matches)
+            return {"status": "error",
+                    "message": f"Multiple accommodations match '{args['name']}': {names}. Use accommodation_id."}
+        acc = matches[0] if matches else None
+    if acc is None:
+        return {"status": "error", "message": "Accommodation not found."}
+
+    if args.get('new_name'):
+        acc['name'] = args['new_name']
+    if args.get('location'):
+        from services.trip_planner import enrich_poi_data
+        enrichment = enrich_poi_data(acc.get('name'), args['location'], metadata.get('location', ''))
+        acc['location'] = enrichment.get('location') or args['location']
+        if enrichment.get('lat') is not None:
+            acc['lat'] = enrichment.get('lat')
+            acc['lng'] = enrichment.get('lng')
+        if enrichment.get('mapbox_id'):
+            acc['mapbox_id'] = enrichment.get('mapbox_id')
+    if args.get('notes') is not None:
+        acc['notes'] = args['notes']
+
+    if any(args.get(k) is not None for k in ('check_in_date', 'check_out_date', 'check_in_night', 'nights')):
+        res_args = dict(args)
+        # keep the current dates as the baseline unless an ordinal overrides them
+        if not res_args.get('check_in_date') and not res_args.get('check_in_night'):
+            res_args['check_in_date'] = acc.get('check_in_date')
+        if not res_args.get('check_out_date') and not res_args.get('nights'):
+            res_args['check_out_date'] = acc.get('check_out_date')
+        ci, co = _resolve_stay_dates(res_args, metadata)
+        if ci:
+            acc['check_in_date'] = ci
+        if co:
+            acc['check_out_date'] = co
+
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success",
+            "message": f"Updated accommodation '{acc.get('name')}' "
+                       f"({acc.get('check_in_date') or 'no date'} -> {acc.get('check_out_date') or 'no date'})."}
 
 def handle_edit_trip_poi(args: dict) -> dict:
     from services import storage
@@ -727,6 +849,7 @@ TOOL_HANDLERS = {
     "generate_trip_plan": handle_generate_trip_plan,
     "add_trip_poi": handle_add_trip_poi,
     "add_trip_accommodation": handle_add_trip_accommodation,
+    "edit_trip_accommodation": handle_edit_trip_accommodation,
     "edit_trip_poi": handle_edit_trip_poi,
 }
 
