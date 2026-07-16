@@ -2026,15 +2026,18 @@ def delete_override_by_event(event_id: str, background_tasks: BackgroundTasks, d
 
 # --- Event Configs API ---
 @app.post("/api/events/config/{google_id}")
-def update_event_config(google_id: str, config_data: dict, background_tasks: BackgroundTasks):
+def update_event_config(google_id: str, config_data: dict):
+    # Persist before responding: the write is a fast local upsert, and a client
+    # that re-reads on our "updated" must not race ahead of it. Only the solve
+    # is slow, and trigger_background_refresh does not block.
     storage.set_event_config(google_id, config_data)
-    background_tasks.add_task(trigger_background_refresh)
+    trigger_background_refresh()
     return {"status": "updated"}
 
 @app.delete("/api/events/config/{google_id}")
-def delete_event_config(google_id: str, background_tasks: BackgroundTasks):
+def delete_event_config(google_id: str):
     storage.delete_event_config(google_id)
-    background_tasks.add_task(trigger_background_refresh)
+    trigger_background_refresh()
     return {"status": "deleted"}
 
 # --- Settings API ---
@@ -2470,13 +2473,25 @@ class EventDetailsUpdate(BaseModel):
     source_event_ids: list[str]
 
 @app.patch("/api/events")
-def update_event_details(payload: EventDetailsUpdate):
+def update_event_details(payload: EventDetailsUpdate, background_tasks: BackgroundTasks):
     try:
         details = payload.model_dump(exclude_unset=True) if hasattr(payload, 'model_dump') else payload.dict(exclude_unset=True)
         # remove source_event_ids from details
         details.pop('source_event_ids', None)
-        calendar.update_event_details(payload.source_event_ids, details)
-        return {"status": "updated"}
+
+        # Deferred because this is a Google Calendar round trip, not a local
+        # write - too slow to hold the request open. BackgroundTasks runs it
+        # after the response inside FastAPI's bounded threadpool, so a burst of
+        # edits cannot spawn unbounded threads.
+        def _apply_update():
+            try:
+                calendar.update_event_details(payload.source_event_ids, details)
+                trigger_background_refresh()
+            except Exception as e:
+                logger.error(f"Error applying calendar update: {e}", exc_info=True)
+
+        background_tasks.add_task(_apply_update)
+        return {"status": "updating_in_background"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -2647,13 +2662,79 @@ class AbortRefreshException(Exception):
     pass
 
 class ScheduleCoordinator:
+    """Serializes schedule refreshes and coalesces repeats.
+
+    A refresh is a full multi-day CP-SAT solve. Running several at once is
+    never useful - they duplicate each other's work and, being CPU-bound,
+    saturate the GIL and starve the HTTP handlers. So at most one refresh runs
+    at a time, and requests arriving during a run collapse into a single queued
+    re-run with the newest arguments (latest-wins), rather than a backlog.
+    """
+
     def __init__(self):
         self.lock = threading.RLock()
+        # Held for the duration of a pass, by background AND synchronous
+        # callers alike, so the two can never overlap.
+        self.run_lock = threading.Lock()
         self.is_running = False
         self.pending_refresh = False
         self.pending_args = None
         self.current_args = None
+        self.runner_thread = None
         self.solving_dates = set()
+
+    def try_start(self, args):
+        """Claim the background runner slot.
+
+        Returns True if the caller should spawn the runner. Returns False if a
+        run is already in flight, in which case args are queued and the running
+        pass is asked to abort and restart with them.
+        """
+        with self.lock:
+            if self.is_running:
+                self.pending_refresh = True
+                self.pending_args = args
+                return False
+            self.is_running = True
+            self.current_args = args
+            self.pending_refresh = False
+            self.pending_args = None
+            return True
+
+    def take_pending(self):
+        """Finish a pass: return queued args to run next, or None.
+
+        Returning None releases the runner slot, so the caller must stop.
+        """
+        with self.lock:
+            if self.pending_refresh:
+                self.current_args = self.pending_args
+                self.pending_refresh = False
+                self.pending_args = None
+                return self.current_args
+            self.is_running = False
+            self.current_args = None
+            self.runner_thread = None
+            return None
+
+    def abandon(self):
+        """Release the slot after an unexpected failure, so refreshes can resume."""
+        with self.lock:
+            self.is_running = False
+            self.pending_refresh = False
+            self.pending_args = None
+            self.current_args = None
+            self.runner_thread = None
+
+    def should_abort(self):
+        """True only for the background runner once newer args have been queued.
+
+        Synchronous callers are never aborted: they have a caller waiting on the
+        result, and returning an abort to them would surface as a failure.
+        """
+        with self.lock:
+            return (self.pending_refresh
+                    and self.runner_thread is threading.current_thread())
 
     def start_solving(self, dates):
         with self.lock:
@@ -2674,24 +2755,64 @@ class ScheduleCoordinator:
 schedule_coordinator = ScheduleCoordinator()
 
 def check_abort_refresh():
-    if schedule_coordinator.pending_refresh:
+    if schedule_coordinator.should_abort():
         raise AbortRefreshException()
 
 def trigger_background_refresh(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
-    # Simply run the logic concurrently
-    try:
-        refresh_schedule_logic(start_date_str, end_date_str, force_refresh, draft)
-    except Exception as e:
-        logger.error(f"Error in background schedule run: {e}", exc_info=True)
+    """Request a refresh without blocking the caller.
+
+    Returns immediately. If a refresh is already running this coalesces into
+    it rather than starting a second one, so a burst of edits costs one re-run,
+    not one per edit.
+    """
+    args = (start_date_str, end_date_str, force_refresh, draft)
+    if not schedule_coordinator.try_start(args):
+        return
+
+    def _run():
+        held = True
+        try:
+            current = args
+            while current is not None:
+                try:
+                    refresh_schedule_logic(*current)
+                except AbortRefreshException:
+                    logger.info("Schedule refresh superseded; restarting with newer request")
+                    # The aborted pass left days marked in-flight; the restart
+                    # re-marks whatever it actually solves.
+                    schedule_coordinator.clear_solving_dates()
+                except Exception as e:
+                    logger.error(f"Error in background schedule run: {e}", exc_info=True)
+                    schedule_coordinator.clear_solving_dates()
+                current = schedule_coordinator.take_pending()
+            held = False
+        finally:
+            # take_pending() releases the slot by returning None; anything else
+            # leaving this thread must release it too, or refreshes wedge
+            # permanently with is_running stuck True.
+            if held:
+                schedule_coordinator.abandon()
+
+    t = threading.Thread(target=_run, daemon=True)
+    schedule_coordinator.runner_thread = t
+    t.start()
 
 import threading
 
 def refresh_schedule_logic(start_date_str=None, end_date_str=None, force_refresh=False, draft=False):
     try:
-        res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
+        # The single serialization point. Every caller passes through here -
+        # the background runner and the synchronous endpoints alike - so two
+        # solves can never overlap regardless of how they were requested.
+        with schedule_coordinator.run_lock:
+            res = _refresh_schedule_logic_impl(start_date_str, end_date_str, force_refresh, draft)
         global LAST_UPDATE_TIME
         LAST_UPDATE_TIME = time.time()
         return res
+    except AbortRefreshException:
+        # Not a failure: a newer request superseded this pass. The background
+        # runner catches this and restarts with the newer arguments.
+        raise
     except Exception as e:
         logger.error("Fatal error during schedule generation", exc_info=True)
         import traceback
