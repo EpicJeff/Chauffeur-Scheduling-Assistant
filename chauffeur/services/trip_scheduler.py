@@ -1027,6 +1027,10 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
 
     target_ids = [pid for pid in poi_ids
                   if any(p.id == pid and not p.is_scheduled for p in trip.pois)]
+    # Tell the client what will actually be scheduled so its progress denominator
+    # is honest (already-scheduled selections are skipped, not failed).
+    yield {"type": "summary", "count": len(target_ids),
+           "skipped_already_scheduled": len(poi_ids) - len(target_ids)}
     if not target_ids:
         return
 

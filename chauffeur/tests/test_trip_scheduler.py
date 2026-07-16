@@ -210,14 +210,14 @@ def scenario_locked_incremental():
     trip = mk_trip(days=3)
     trip.pois = list(pois)
     results = list(schedule_pois_bulk(trip, all_ids(pois)))
-    check(all(r["success"] for r in results), f"initial bulk failed: {results}")
+    check(all(r.get("success") for r in results if not r.get("type")), f"initial bulk failed: {results}")
     before = {p.id: local(p.scheduled_start).date() for p in pois}
 
     extra = [mk_poi("Late Add 1", *NEAR_EIFFEL, category="food", meal_type="dinner", duration_mins=90),
              mk_poi("Late Add 2", *NEAR_EIFFEL, category="sightseeing", duration_mins=60)]
     trip.pois.extend(extra)
     results2 = list(schedule_pois_bulk(trip, all_ids(extra)))
-    check(all(r["success"] for r in results2), f"incremental bulk failed: {results2}")
+    check(all(r.get("success") for r in results2 if not r.get("type")), f"incremental bulk failed: {results2}")
     for p in pois:
         check(local(p.scheduled_start).date() == before[p.id],
               f"{p.name} moved days during incremental scheduling")
@@ -231,7 +231,7 @@ def scenario_end_to_end_timing():
     trip = mk_trip(days=2)
     trip.pois = [fine, act]
     results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
-    check(all(r["success"] for r in results), f"bulk failed: {results}")
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
     fine_local = local(fine.scheduled_start)
     check(datetime.time(17, 30) <= fine_local.time() <= datetime.time(20, 30),
           f"fine dining should start in the dinner window, got {fine_local.time()}")
@@ -249,7 +249,7 @@ def scenario_multiday_bg_day_spans():
     trip = mk_trip(days=5)
     trip.pois = [bg, child]
     results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
-    check(all(r["success"] for r in results), f"bulk failed: {results}")
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
     check(len(bg.claimed_dates) == 3, f"expected 3 claimed_dates, got {bg.claimed_dates}")
 
     spans = claimed_day_spans(bg.model_dump(), trip.timeZone)

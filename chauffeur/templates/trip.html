@@ -963,16 +963,43 @@
             renderMap();
         }
 
-        async function loadRouteBetween(act, nextAct, pill, dayKey, isCommute = false) {
+        // Route pills are nice-to-have decoration: cap their concurrency so they never
+        // saturate the browser's ~6-per-host connection limit and block real user
+        // actions (clear itinerary, schedule, save) behind a queue of Mapbox lookups.
+        const routePillQueue = [];
+        let activeRoutePills = 0;
+        const MAX_ROUTE_PILL_CONCURRENCY = 3;
+
+        function loadRouteBetween(act, nextAct, pill, dayKey, isCommute = false) {
+            routePillQueue.push(() => loadRouteBetweenNow(act, nextAct, pill, dayKey, isCommute));
+            pumpRoutePillQueue();
+        }
+
+        function pumpRoutePillQueue() {
+            while (activeRoutePills < MAX_ROUTE_PILL_CONCURRENCY && routePillQueue.length > 0) {
+                const job = routePillQueue.shift();
+                activeRoutePills++;
+                job().finally(() => { activeRoutePills--; pumpRoutePillQueue(); });
+            }
+        }
+
+        function haversineKm(lat1, lng1, lat2, lng2) {
+            const r = 6371, toRad = d => d * Math.PI / 180;
+            const dp = toRad(lat2 - lat1), dl = toRad(lng2 - lng1);
+            const a = Math.sin(dp/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dl/2)**2;
+            return 2 * r * Math.asin(Math.sqrt(a));
+        }
+
+        async function loadRouteBetweenNow(act, nextAct, pill, dayKey, isCommute = false) {
             const routeKey = act.id + '-' + nextAct.id;
             if (cachedRoutes[routeKey]) {
                 updateRoutePill(pill, cachedRoutes[routeKey]);
                 return;
             }
-            
+
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                
+
                 let originLat = null, originLng = null, destLat = null, destLng = null;
                 const pOrig = tripData.metadata.pois.find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
                 if (pOrig && pOrig.lat) { originLat = pOrig.lat; originLng = pOrig.lng; }
@@ -986,34 +1013,41 @@
                     const aDest = tripData.metadata.accommodations.find(a => a.id === nextAct.id);
                     if (aDest && aDest.lat) { destLat = aDest.lat; destLng = aDest.lng; }
                 }
-                
+
                 let coordsParams = '';
                 if (originLat !== null && destLat !== null) {
                     coordsParams = `&origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
                 }
 
-                let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking${coordsParams}`);
-                let data = await res.json();
-                
+                // Pick the likely profile up front from straight-line distance: beyond
+                // ~1.2km nobody walks, so skip the wasted walking request entirely.
+                let tryWalkingFirst = true;
+                if (originLat !== null && destLat !== null) {
+                    tryWalkingFirst = haversineKm(originLat, originLng, destLat, destLng) <= 1.2;
+                }
+
                 let type = 'walking';
                 let duration = 0;
                 let geometry = null;
-                
-                if (data.duration_mins !== undefined) {
-                    if (data.duration_mins <= 15) {
+
+                if (tryWalkingFirst) {
+                    let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking${coordsParams}`);
+                    let data = await res.json();
+                    if (data.duration_mins !== undefined && data.duration_mins <= 15) {
                         duration = data.duration_mins;
                         geometry = data.geometry;
-                    } else {
-                        res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving${coordsParams}`);
-                        data = await res.json();
-                        if (data.duration_mins !== undefined) {
-                            type = 'driving';
-                            duration = data.duration_mins;
-                            geometry = data.geometry;
-                        }
                     }
                 }
-                
+                if (!geometry) {
+                    const res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving${coordsParams}`);
+                    const data = await res.json();
+                    if (data.duration_mins !== undefined) {
+                        type = 'driving';
+                        duration = data.duration_mins;
+                        geometry = data.geometry;
+                    }
+                }
+
                 if (geometry) {
                     cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey, isCommute };
                     updateRoutePill(pill, cachedRoutes[routeKey]);
@@ -1919,6 +1953,7 @@
                 const failures = [];
                 const insights = [];
                 let completed = 0;
+                let totalToSchedule = selected.length;
 
                 // Refresh the board without blocking line processing: at most one
                 // fetch in flight, with a trailing refresh if lines arrived meanwhile.
@@ -1949,10 +1984,19 @@
                                     insights.push(result);
                                     continue;
                                 }
+                                if (result.type === "summary") {
+                                    // Server states how many it will actually schedule
+                                    // (already-scheduled selections are skipped).
+                                    totalToSchedule = result.count;
+                                    if (document.getElementById('schedule-progress-text')) {
+                                        document.getElementById('schedule-progress-text').innerText = `Scheduling 0 of ${totalToSchedule}...`;
+                                    }
+                                    continue;
+                                }
 
                                 completed++;
                                 if (document.getElementById('schedule-progress-text')) {
-                                    document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${selected.length}...`;
+                                    document.getElementById('schedule-progress-text').innerText = `Scheduling ${completed} of ${totalToSchedule}...`;
                                 }
                                 
                                 if (result.success) {
@@ -2012,11 +2056,20 @@
         };
 
         async function bulkSchedulePois() {
+            // Only count POIs that can actually be scheduled — already-scheduled ones
+            // are skipped by the engine, and including them makes "N of M" lie.
             const selected = Array.from(document.querySelectorAll('.poi-checkbox:checked'))
                 .map(cb => cb.dataset.id)
-                .filter(id => id);
-                
-            if (selected.length === 0) return;
+                .filter(id => {
+                    if (!id) return false;
+                    const poi = tripData.metadata.pois.find(p => p.id === id);
+                    return poi && !poi.is_scheduled;
+                });
+
+            if (selected.length === 0) {
+                showGlobalAlert("All selected attractions are already scheduled.");
+                return;
+            }
             
             openConfirmModal("Schedule Attractions", `Are you sure you want to schedule the ${selected.length} selected Attractions via Smart Engine?`, [
                 { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold text-sm" },
