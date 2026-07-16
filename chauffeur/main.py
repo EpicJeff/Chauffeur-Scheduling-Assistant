@@ -2740,8 +2740,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     if not all_cals_to_fetch:
         return {"error": "No calendar IDs configured in settings, drivers, or passengers."}
     
-    # Fetch events dynamically based on the days_to_show settings
-    days_to_fetch = int(settings.get('days_to_show', 30))
+    # The build horizon is deliberately NOT days_to_show: that setting only
+    # controls how much the kiosk renders. Days are solved progressively and
+    # cached per-day, so a longer horizon costs nothing on refreshes where the
+    # events for a day are unchanged.
+    days_to_fetch = int(settings.get('days_to_build', 30))
 
     
     import difflib
@@ -2828,6 +2831,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         except Exception as err:
             logger.warning(f"Skipping invalid override from database: {err}. Override data: {o}")
 
+    with storage.db_lock:
+        all_event_configs_docs = storage.event_configs_table.all()
+    configs_by_google_id = {c['google_id']: c for c in all_event_configs_docs if 'google_id' in c}
+
     for e in all_fetched_events:
         original_calendar_ids = list(e.calendar_ids)
         e.original_calendar_ids = original_calendar_ids
@@ -2837,14 +2844,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for src_id in getattr(e, 'source_event_ids', [e.id]):
             parts = src_id.split('::')
             google_id = parts[-1] if len(parts) > 1 else src_id
-            config = storage.get_event_config(google_id)
+            config = configs_by_google_id.get(google_id)
             if config:
                 e.app_config = config
                 break
                 
         # Fallback to recurring series config
         if not config and getattr(e, 'recurring_event_id', None):
-            config = storage.get_event_config(e.recurring_event_id)
+            config = configs_by_google_id.get(e.recurring_event_id)
             if config:
                 e.app_config = config
 
@@ -3644,7 +3651,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if trip.get('location'):
                 daily_locations.add(trip['location'])
 
-        maps.prime_matrix_cache(list(daily_locations))
+        # ignore_age: only buy pairs we don't have at all. These are free-flow
+        # driving durations between fixed addresses, so a cached value never
+        # goes out of date; re-fetching stale-but-valid pairs is what burned
+        # ~118k Matrix elements in June against a 100k/month allowance.
+        maps.prime_matrix_cache(list(daily_locations), ignore_age=True)
 
         # Check abort before running solver
         check_abort_refresh()

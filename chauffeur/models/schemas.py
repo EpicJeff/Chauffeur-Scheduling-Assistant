@@ -136,10 +136,19 @@ class ManualOverride(BaseModel):
 
 class Settings(BaseModel):
     calendar_ids: List[str]
+    # How many days the kiosk/dashboard renders. Display only.
     days_to_show: int = 7
+    # How far ahead the schedule is actually built, progressively, one day at a
+    # time. Independent of days_to_show: the wall panel showing 5 days must not
+    # stop the solver from placing a monthly errand 30 days out.
+    days_to_build: int = 30
     home_location: Optional[str] = None
     trip_hashtags: List[str] = Field(default_factory=list)
-    route_cache_duration_mins: int = 10
+    # Cached durations come from Mapbox's free-flow 'driving' profile between
+    # fixed addresses, so they do not go stale. A short TTL just re-buys the
+    # same numbers: at 10 minutes this exceeded the 100k/month Matrix
+    # allowance. Only shorten this if a traffic-aware profile is introduced.
+    route_cache_duration_mins: int = 43200  # 30 days
     time_format_24h: bool = False
     disable_mapbox: bool = False
     disable_mapbox_matrix: bool = False

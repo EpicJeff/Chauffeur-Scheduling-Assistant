@@ -258,6 +258,13 @@ def _init_distance_mem_cache():
             if o and d:
                 _distance_mem_cache[(o, d)] = row
 
+# A cached duration of -1 means "we tried and failed to route this pair" (bad
+# address, API outage). It suppresses retry storms that would burn API quota,
+# but it must expire: the usual cause is transient, and callers on the
+# ignore_age path would otherwise treat one bad afternoon as permanent truth.
+UNROUTABLE = -1
+UNROUTABLE_TTL_MINS = 24 * 60
+
 def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10, ignore_age: bool = False) -> Optional[int]:
     if not origin or not destination:
         return None
@@ -269,8 +276,15 @@ def get_cached_travel_time(origin: str, destination: str, max_age_mins: int = 10
         cached_data = _distance_mem_cache.get((orig_clean, dest_clean))
         if cached_data:
             timestamp = cached_data.get('timestamp', 0)
-            if ignore_age or time.time() - timestamp <= max_age_mins * 60:
-                return cached_data.get('duration_mins', cached_data.get('minutes'))
+            age_secs = time.time() - timestamp
+            duration = cached_data.get('duration_mins', cached_data.get('minutes'))
+            if duration == UNROUTABLE:
+                # Always age-checked, even when ignore_age is set.
+                if age_secs > UNROUTABLE_TTL_MINS * 60:
+                    return None
+                return duration
+            if ignore_age or age_secs <= max_age_mins * 60:
+                return duration
         return None
 
 def set_cached_travel_time(origin: str, destination: str, duration_mins: int):

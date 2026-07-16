@@ -262,6 +262,7 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
     coords = []
     loc_names = []
     
+    failed_locs = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_loc = {executor.submit(geocode_address, loc): loc for loc in unique_locs}
         for future in concurrent.futures.as_completed(future_to_loc):
@@ -271,8 +272,21 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                 if c:
                     coords.append(c)
                     loc_names.append(loc)
+                else:
+                    failed_locs.append(loc)
             except Exception as e:
                 print(f"Error parallel geocoding {loc}: {e}")
+                failed_locs.append(loc)
+            
+    if failed_locs:
+        bulk_entries = []
+        for f_loc in failed_locs:
+            for other_loc in locations:
+                if f_loc.lower() != other_loc.lower():
+                    bulk_entries.append({"origin": f_loc.lower(), "destination": other_loc.lower(), "duration_mins": -1})
+                    bulk_entries.append({"origin": other_loc.lower(), "destination": f_loc.lower(), "duration_mins": -1})
+        if bulk_entries:
+            storage.set_cached_travel_times_bulk(bulk_entries)
             
     if len(coords) < 2:
         return
@@ -451,8 +465,10 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                                 success_count += 1
                             else:
                                 print(f"Mapbox Directions API failed: {resp.status_code}")
+                                storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), -1)
                         except Exception as ex:
                             print(f"Mapbox Directions API error: {ex}")
+                            storage.set_cached_travel_time(all_locs[s_idx].lower(), all_locs[d_idx].lower(), -1)
                             
                     if success_count == len(pairs_to_query):
                         return True
@@ -461,6 +477,12 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
         disable_osrm = get_map_option('disable_osrm', False)
         if disable_osrm:
             print("OSRM fallback is disabled. Matrix chunk calculation failed.")
+            bulk_entries = []
+            for s_idx in src_indices:
+                for d_idx in dest_indices:
+                    if s_idx != d_idx:
+                        bulk_entries.append({"origin": all_locs[s_idx].lower(), "destination": all_locs[d_idx].lower(), "duration_mins": -1})
+            storage.set_cached_travel_times_bulk(bulk_entries)
             return False
             
         url = f"http://router.project-osrm.org/table/v1/driving/{coord_str}"
@@ -518,9 +540,21 @@ def prime_matrix_cache(locations: list[str], ignore_age: bool = False):
                 storage.set_cached_travel_times_bulk(bulk_entries)
                 return True
             else:
-                print(f"OSRM Matrix API failed: {resp.status_code} {resp.text}")
+                print(f"OSRM Matrix API failed: {resp.status_code if resp else 'None'}")
+                bulk_entries = []
+                for s_idx in src_indices:
+                    for d_idx in dest_indices:
+                        if s_idx != d_idx:
+                            bulk_entries.append({"origin": all_locs[s_idx].lower(), "destination": all_locs[d_idx].lower(), "duration_mins": -1})
+                storage.set_cached_travel_times_bulk(bulk_entries)
         except Exception as e:
             print(f"OSRM Matrix error: {e}")
+            bulk_entries = []
+            for s_idx in src_indices:
+                for d_idx in dest_indices:
+                    if s_idx != d_idx:
+                        bulk_entries.append({"origin": all_locs[s_idx].lower(), "destination": all_locs[d_idx].lower(), "duration_mins": -1})
+            storage.set_cached_travel_times_bulk(bulk_entries)
         return False
         
     matrix_usage = storage.get_mapbox_usage(current_month, 'matrix')
