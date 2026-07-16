@@ -77,7 +77,7 @@ def fix_corrupted_db(path):
 
 # Storage engine toggle (docs/sqlite_migration_design.md). 'tinydb' is the
 # legacy escape hatch; it will be removed one release after the swap soaks.
-BACKEND = os.environ.get('CHAUFFEUR_STORAGE', 'tinydb').strip().lower()
+BACKEND = os.environ.get('CHAUFFEUR_STORAGE', 'sqlite').strip().lower()
 if BACKEND not in ('tinydb', 'sqlite'):
     print(f"Unknown CHAUFFEUR_STORAGE={BACKEND!r}, falling back to tinydb")
     BACKEND = 'tinydb'

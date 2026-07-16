@@ -36,6 +36,15 @@ Travel times come from Mapbox's Matrix API using the free-flow `driving` profile
 
 ---
 
+## Storage Engine
+All persistence goes through `services/storage.py`, backed by **SQLite** (`data/chauffeur.sqlite3` locally, `/data/chauffeur.sqlite3` on the HA add-on) as of 2026-07-16. It is a document store — one table per legacy TinyDB table, each row `(doc_id, JSON data)` — accessed via a TinyDB-compatible table API (`services/storage_sqlite.py`), so callers still pass `tinydb.Query` objects. WAL mode; writes are single-row and take ~1 ms (previously TinyDB rewrote the entire 4.8 MB JSON file per write, ~275 ms).
+- **Toggle**: `CHAUFFEUR_STORAGE=tinydb` env var is a one-release escape hatch back to the legacy engine; `CHAUFFEUR_DATA_DIR` redirects the data directory (used by tests, which must never touch `data/`).
+- **Migration**: first sqlite boot auto-migrates `db.json` + `routes_cache.json` (route geometry now lives in the same SQLite file), preserving doc_ids and deduplicating the distance/geocode caches; originals are kept as `*.pre-sqlite.bak`. Restore-from-JSON = delete the `.sqlite3` file, place a `db.json`, restart.
+- **Backups**: `/api/download_db` zips the data dir, snapshotting the SQLite file via the backup API (safe under WAL).
+- **`db_lock`**: the coarse process-wide lock in storage.py is still in place (cheap now); removing it is a separate planned cleanup.
+
+---
+
 ## Rule Attributes & Filters
 Every rule (Routing Rule or Priority Rule) can filter events using any combination of the following criteria. The solver evaluates these using AND logic across different criteria types.
 - **Keywords**: Match substrings in the event title or description. (Match Any or Match All).

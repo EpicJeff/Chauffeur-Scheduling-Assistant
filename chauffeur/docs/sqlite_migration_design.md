@@ -1,7 +1,24 @@
 # SQLite Migration — Design & Execution Plan
 
-Status: **PLANNED — execute in a fresh session; this doc is the complete brief**
+Status: **EXECUTED through step 5 (local default = sqlite) on 2026-07-16 — soak in progress**
 Companion: `docs/trip_scheduler_design.md` (same "tests first, seam-preserving swap" playbook)
+
+Execution results (2026-07-16):
+- Steps 1–5 of §7 done, one commit per step. 35-scenario characterization suite
+  (`tests/test_storage.py`) green on both backends; backend unit + migration
+  tests in `tests/test_storage_sqlite.py` (11 scenarios).
+- Real-data verification: migrated a copy of production `db.json` +
+  `routes_cache.json` (7,155 docs, 26 tables); dedup dropped exactly the 2,314
+  measured distance_cache duplicates; a full read-surface dump (every public
+  getter, effective distance/geocode caches, per-row route-geometry hashes)
+  was byte-identical between backends.
+- Deviations from plan: no restore endpoint exists (restore = place db.json,
+  delete .sqlite3, restart — handled by the startup migration); the
+  get_settings 5s memo cache (§3.1) was deferred to keep the swap
+  zero-behavior-change; `/api/download_db` zips the data dir and now snapshots
+  the .sqlite3 member via the backup API.
+- Remaining: local soak (watch [SLOW REQUEST]), then HA ship (config.yaml
+  version bump), then §8 cleanups (drop TinyDB + toggle, db_lock audit).
 
 ## 1. Why (measured, not vibes)
 

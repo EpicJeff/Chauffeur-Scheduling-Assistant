@@ -2,8 +2,13 @@
 import datetime
 import os
 import sys
+import tempfile
 import uuid
 import zoneinfo
+
+# isolate storage before it is imported: tests must never read, write, or
+# (post-SQLite-flip) migrate the real data/ directory
+os.environ.setdefault("CHAUFFEUR_DATA_DIR", tempfile.mkdtemp(prefix="chauffeur_harness_"))
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
