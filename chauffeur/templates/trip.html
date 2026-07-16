@@ -144,6 +144,22 @@
                     <span id="unscheduled-count" class="font-bold text-white bg-red-500/50 px-2 py-0.5 rounded">0</span>
                 </div>
             </div>
+
+            <!-- Trip Scheduling Rules (read-only + enable/disable) -->
+            <div class="glass-panel p-6 rounded-3xl shadow-2xl mt-6" id="rules-panel">
+                <h3 class="text-lg font-bold text-white mb-2 flex items-center">
+                    <svg class="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                    Scheduling Rules
+                </h3>
+                <p class="text-sm text-gray-400 mb-4">Preferences the itinerary scheduler honors. Ask the assistant to add rules like "keep day 4 clear" or "no mornings".</p>
+                <div id="rules-list" class="flex flex-col gap-2">
+                    <p class="text-sm text-gray-500 italic">No rules set.</p>
+                </div>
+                <div id="derived-rules-wrap" class="mt-3 hidden">
+                    <button onclick="document.getElementById('derived-rules-list').classList.toggle('hidden')" class="text-xs text-gray-400 hover:text-white transition">▸ Derived from POI settings</button>
+                    <div id="derived-rules-list" class="hidden flex flex-col gap-1 mt-2"></div>
+                </div>
+            </div>
         </div>
 
         <!-- Right Column: Itinerary and POIs -->
@@ -2344,7 +2360,7 @@
                 
                 if (fixes.length > 0) {
                     fixes.forEach(fix => {
-                        suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', '${fix.type}')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">${fix.label}</button>`;
+                        suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', '${fix.type}', '${fix.rule_id || ''}')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">${fix.label}</button>`;
                     });
                 } else if (poi.ideal_time_start || poi.ideal_time_end) {
                     suggestionsHtml += `<button onclick="applyPoiFix('${poi.id}', 'clear_times')" class="mt-2 text-xs bg-gray-800 hover:bg-gray-700 text-indigo-300 px-3 py-1.5 rounded-lg border border-gray-600 transition-colors mr-2">Clear Ideal Time Constraints</button>`;
@@ -2381,17 +2397,26 @@
             document.getElementById('failed-pois-modal').classList.remove('hidden');
         }
 
-        async function applyPoiFix(poiId, fixType) {
+        async function applyPoiFix(poiId, fixType, ruleId) {
             const poi = tripData.metadata.pois.find(p => p.id === poiId);
             if (!poi) return;
-            
+
             if (fixType === 'priority_want') {
                 poi.priority = 'want';
             } else if (fixType === 'clear_times') {
                 poi.ideal_time_start = null;
                 poi.ideal_time_end = null;
+            } else if (fixType === 'clear_days') {
+                poi.valid_days_of_week = [];
+            } else if (fixType === 'disable_rule' && ruleId) {
+                await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/rules/${ruleId}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ is_enabled: false })
+                });
+                if (typeof loadTripRules === 'function') loadTripRules();
             }
-            
+
             try {
                 await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`, {
                     method: 'POST',
@@ -3052,7 +3077,57 @@
             document.getElementById('activity-details-modal').classList.add('hidden');
         }
 
+        // --- Trip Scheduling Rules panel -------------------------------------
+        async function loadTripRules() {
+            try {
+                const res = await fetch(`api/trip/${EVENT_ID}/rules`);
+                const data = await res.json();
+                if (data.error) return;
+                const list = document.getElementById('rules-list');
+                const rules = data.rules || [];
+                if (!rules.length) {
+                    list.innerHTML = '<p class="text-sm text-gray-500 italic">No rules set.</p>';
+                } else {
+                    list.innerHTML = rules.map(r => `
+                        <div class="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center justify-between gap-2 ${r.is_enabled ? '' : 'opacity-50'}">
+                            <div class="min-w-0">
+                                <p class="text-sm text-white truncate" title="${(r.description || '').replace(/"/g, '&quot;')}">${r.description || r.rule_type}</p>
+                                <p class="text-xs text-gray-400">
+                                    ${r.rule_type} · ${r.hardness}
+                                    ${r.is_ai_generated ? '<span class="ml-1 px-1.5 py-0.5 rounded bg-purple-500/40 text-purple-200">AI</span>' : '<span class="ml-1 px-1.5 py-0.5 rounded bg-blue-500/40 text-blue-200">user</span>'}
+                                </p>
+                            </div>
+                            <button onclick="toggleTripRule('${r.id}', ${!r.is_enabled})"
+                                class="shrink-0 text-xs px-2 py-1 rounded-lg font-bold transition ${r.is_enabled ? 'bg-green-600/60 hover:bg-red-600/60 text-white' : 'bg-gray-600/60 hover:bg-green-600/60 text-gray-200'}">
+                                ${r.is_enabled ? 'On' : 'Off'}
+                            </button>
+                        </div>`).join('');
+                }
+                const derived = data.derived || [];
+                const wrap = document.getElementById('derived-rules-wrap');
+                if (derived.length) {
+                    wrap.classList.remove('hidden');
+                    document.getElementById('derived-rules-list').innerHTML = derived.map(d =>
+                        `<p class="text-xs text-gray-400 bg-white/5 rounded-lg px-2 py-1">${d.description}</p>`).join('');
+                } else {
+                    wrap.classList.add('hidden');
+                }
+            } catch (e) { console.error('loadTripRules failed', e); }
+        }
+
+        async function toggleTripRule(ruleId, enable) {
+            try {
+                await fetch(`api/trip/${EVENT_ID}/rules/${ruleId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_enabled: enable })
+                });
+                await loadTripRules();
+            } catch (e) { console.error('toggleTripRule failed', e); }
+        }
+
         fetchTripData();
+        loadTripRules();
         const mapboxKey = '{{ mapbox_key }}';
         const allowMapLoads = {{ allow_map_loads | lower }};
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Any
 from datetime import datetime
 import uuid
@@ -279,6 +279,36 @@ class TripPOI(BaseModel):
     is_background: bool = False
     valid_days_of_week: List[int] = Field(default_factory=list)
     occurrences: int = 1
+    meal_type: Optional[str] = None      # 'breakfast'|'brunch'|'lunch'|'dinner'|'dessert'|'snack'
+    dining_style: Optional[str] = None   # 'quick'|'casual'|'fine'
+    parent_container: Optional[str] = None  # id of the background POI this lives inside
+    days_claimed: int = 1                # background POIs only: number of full days claimed
+    claimed_dates: List[str] = Field(default_factory=list)  # YYYY-MM-DD (local), set by the scheduler
+
+class TripRule(BaseModel):
+    # extra='forbid' so agent-emitted phantom fields fail loudly instead of silently no-oping
+    model_config = ConfigDict(extra='forbid')
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    description: str                  # human-readable, shown in chat / rules panel
+    rule_type: str                    # 'day_restriction'|'block_restriction'|'budget_cap'|'day_capacity'|'keep_clear'|'spacing'|'template_override'
+    # --- selectors (empty = not filtering on that axis) ---
+    poi_ids: List[str] = Field(default_factory=list)
+    categories: List[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
+    # --- parameters (used per rule_type) ---
+    days_of_week: List[int] = Field(default_factory=list)  # 0=Mon .. 6=Sun
+    trip_days: List[int] = Field(default_factory=list)     # 1-indexed day of trip
+    blocks: List[str] = Field(default_factory=list)        # 'breakfast'..'evening'
+    max_usd: Optional[float] = None
+    max_active_mins: Optional[int] = None
+    min_gap_days: Optional[int] = None
+    template_start: Optional[str] = None  # 'HH:MM', template_override only
+    template_end: Optional[str] = None
+    # --- semantics ---
+    hardness: str = 'soft'            # 'hard' | 'soft'
+    weight: int = 50000               # soft rules only
+    is_ai_generated: bool = False
+    is_enabled: bool = True
 
 class TripAccommodation(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -336,6 +366,7 @@ class TripMetadata(BaseModel):
     pois: List[TripPOI] = Field(default_factory=list)
     accommodations: List[TripAccommodation] = Field(default_factory=list)
     flights: List[TripFlight] = Field(default_factory=list)
+    rules: List[TripRule] = Field(default_factory=list)
 
 class CreateTripRequest(BaseModel):
     title: str

@@ -245,6 +245,64 @@ def clear_trip_itinerary(trip_id: str, action: str) -> Dict[str, Any]:
         "message": f"Successfully {'deleted' if action == 'delete' else 'unlinked'} {cleared_count} items from the trip itinerary."
     }
 
+def manage_trip_rules(trip_id: str, action: str, rule: Dict[str, Any] = None, rule_id: str = None) -> Dict[str, Any]:
+    """
+    Create, list, enable/disable, or delete TripRules on a trip.
+    Rules shape the itinerary scheduler (see system_capabilities.md 'Trip Itinerary Scheduling').
+    """
+    from services.storage import get_trip_metadata, set_trip_metadata
+    from models.schemas import TripRule
+
+    meta = get_trip_metadata(trip_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {trip_id} not found."}
+    rules = meta.get('rules', []) or []
+
+    if action == "list":
+        if not rules:
+            return {"status": "success", "message": "No rules are set on this trip yet.", "rules": []}
+        lines = [f"- {r.get('description')} [{r.get('rule_type')}, {r.get('hardness')}, "
+                 f"{'enabled' if r.get('is_enabled', True) else 'DISABLED'}] (id: {r.get('id')})"
+                 for r in rules]
+        return {"status": "success", "message": "Active trip rules:\n" + "\n".join(lines), "rules": rules}
+
+    if action == "create":
+        if not rule:
+            return {"status": "error", "message": "A 'rule' object is required for create."}
+        try:
+            if 'hardness' not in rule:
+                # keep_clear is a promise of free time — default hard (design §5.3)
+                rule['hardness'] = 'hard' if rule.get('rule_type') == 'keep_clear' else 'soft'
+            validated = TripRule(**{**rule, "is_ai_generated": True})
+        except Exception as e:
+            return {"status": "error",
+                    "message": f"Invalid rule (fix the fields and retry): {e}"}
+        rules.append(validated.model_dump())
+        meta['rules'] = rules
+        set_trip_metadata(trip_id, meta)
+        return {"status": "success",
+                "message": f"Rule added: {validated.description} ({validated.rule_type}, {validated.hardness}). "
+                           "It will apply the next time the itinerary is scheduled.",
+                "rule_id": validated.id}
+
+    if action in ("enable", "disable", "delete"):
+        target = next((r for r in rules if r.get('id') == rule_id), None)
+        if not target and rule_id:
+            target = next((r for r in rules if rule_id.lower() in (r.get('description') or '').lower()), None)
+        if not target:
+            return {"status": "error", "message": f"Rule '{rule_id}' not found. Use action 'list' to see rule ids."}
+        if action == "delete":
+            rules.remove(target)
+            msg = f"Rule deleted: {target.get('description')}"
+        else:
+            target['is_enabled'] = (action == "enable")
+            msg = f"Rule {'enabled' if action == 'enable' else 'disabled'}: {target.get('description')}"
+        meta['rules'] = rules
+        set_trip_metadata(trip_id, meta)
+        return {"status": "success", "message": msg}
+
+    return {"status": "error", "message": f"Unknown action '{action}'. Use create, list, enable, disable, or delete."}
+
 # ==============================================================================
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
@@ -315,6 +373,29 @@ def get_available_tools() -> List[Dict]:
                     "trip_id": {"type": "string"}
                 },
                 "required": ["trip_id"]
+            }
+        },
+        {
+            "name": "manage_trip_rules",
+            "description": ("Create, list, enable, disable, or delete scheduling rules for a trip's itinerary. "
+                            "Use this whenever the user expresses a scheduling preference or constraint, e.g. "
+                            "'keep day 4 clear' (keep_clear), 'nothing before 9am' (template_override with template_start), "
+                            "'Epcot on Tuesday' (day_restriction), 'the boat tour must be in the morning' (block_restriction with blocks), "
+                            "'keep dinners under $100' (budget_cap with max_usd), 'keep Tuesday light' (day_capacity with max_active_mins), "
+                            "'no two parks back-to-back' (spacing with min_gap_days). "
+                            "Rules apply on the next itinerary scheduling run."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"},
+                    "action": {"type": "string", "enum": ["create", "list", "enable", "disable", "delete"]},
+                    "rule_id": {"type": "string", "description": "For enable/disable/delete: the rule id (or a distinctive phrase from its description)."},
+                    "rule": {
+                        "type": "object",
+                        "description": "For create. Fields: description (string, REQUIRED, human-readable), rule_type (REQUIRED: day_restriction|block_restriction|budget_cap|day_capacity|keep_clear|spacing|template_override), poi_ids/categories/keywords (arrays, select which POIs the rule targets; empty = all), days_of_week (ints 0=Mon..6=Sun), trip_days (ints, 1-indexed trip day), blocks (array of breakfast|morning|lunch|afternoon|dinner|evening), max_usd (number), max_active_mins (int), min_gap_days (int), template_start/template_end ('HH:MM'), hardness ('hard'|'soft', default soft; keep_clear defaults hard). Do NOT invent other fields."
+                    }
+                },
+                "required": ["trip_id", "action"]
             }
         }
     ]

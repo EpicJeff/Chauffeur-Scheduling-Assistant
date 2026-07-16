@@ -63,6 +63,28 @@ def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
         "link": link
     }
 
+def _resolve_parent_containers(new_pois: List[TripPOI], trip: TripMetadata) -> None:
+    """Convert LLM-provided parent_container NAMES into background-POI ids (fuzzy match)."""
+    anchors = [p for p in list(new_pois) + list(trip.pois or []) if getattr(p, 'is_background', False)]
+    for p in new_pois:
+        if getattr(p, 'is_background', False):
+            p.parent_container = None  # anchors have no parents
+            continue
+        raw = getattr(p, 'parent_container', None)
+        if not raw:
+            continue
+        raw_l = str(raw).lower().strip()
+        match = None
+        for a in anchors:
+            if a.id == p.id:
+                continue
+            a_name = (a.name or '').lower().strip()
+            if a.id == raw or (a_name and (raw_l == a_name or raw_l in a_name or a_name in raw_l)):
+                match = a
+                break
+        p.parent_container = match.id if match else None
+
+
 def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
@@ -102,17 +124,25 @@ You MUST respond with a single valid JSON object of the following exact structur
       "experience": "Describe what they will actually do there, what the vibe is like, or tips for the visit.",
       "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
       "duration_mins": 90,
-      "ideal_time_start": "09:00",
-      "ideal_time_end": "12:00",
-      "estimated_price_usd": 20.0,
+      "meal_type": null,
+      "dining_style": null,
+      "parent_container": null,
       "is_background": false,
+      "days_claimed": 1,
+      "estimated_price_usd": 20.0,
       "valid_days_of_week": [],
       "occurrences": 1
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. CRITICAL: For ANY major Theme Park or National Park (e.g. Magic Kingdom, EPCOT, Universal Studios), you MUST set `is_background` to true! Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
-CRITICAL: If the category is 'food', you MUST populate `ideal_time_start` and `ideal_time_end` with the typical meal window (e.g., '12:00' and '13:30' for lunch, or '18:00' and '20:00' for dinner) to prevent it from being scheduled at inappropriate times like 7:00 AM.
+`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". Default false.
+`days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
+`parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
+`meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
+`dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
+`valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) so the scheduler places it exactly on those days.
+`occurrences` should be an integer > 1 ONLY for a standalone activity the user explicitly wants to repeat (e.g. "two surf lessons" = occurrences: 2). Never use it for multi-day anchors — that is what days_claimed is for.
+`ideal_time_start`/`ideal_time_end` ("HH:MM") are OPTIONAL overrides — include them only if the user asked for a specific time of day.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -184,12 +214,17 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     for s in suggestions:
         name = s.get('name')
         query = s.get('search_query', name)
-        
+
         enrichment = enrich_poi_data(name, query, trip.location)
-        
-        occurrences = s.get('occurrences', 1)
+
+        is_bg = s.get('is_background', False)
+        # Anchors are ONE POI claiming N days; occurrences-cloning is only for repeated standalone activities.
+        days_claimed = max(1, int(s.get('days_claimed') or 1))
+        occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
+        if is_bg and s.get('occurrences', 1) and int(s.get('occurrences') or 1) > days_claimed:
+            days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
         for i in range(occurrences):
-            name_label = s.get('name') if occurrences == 1 else f"{s.get('name')} (Day {i+1})"
+            name_label = s.get('name') if occurrences == 1 else f"{s.get('name')} ({i+1} of {occurrences})"
             poi = TripPOI(
                 id=uuid.uuid4().hex,
                 name=name_label,
@@ -206,7 +241,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 duration_mins=s.get('duration_mins', 90),
                 valid_days_of_week=s.get('valid_days_of_week', []),
                 occurrences=1,
-                is_background=s.get('is_background', False),
+                is_background=is_bg,
+                days_claimed=days_claimed if is_bg else 1,
+                meal_type=s.get('meal_type'),
+                dining_style=s.get('dining_style'),
+                parent_container=s.get('parent_container'),  # name for now; resolved to an id below
                 lat=enrichment['lat'],
                 lng=enrichment['lng'],
                 wikidata_id=enrichment['wikidata_id'],
@@ -218,7 +257,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 estimated_price_usd=s.get('estimated_price_usd')
             )
             pois.append(poi)
-        
+
+    _resolve_parent_containers(pois, trip)
+
     if getattr(trip, 'budget_max_usd', None):
         total = sum((p.estimated_price_usd or 0) for p in pois)
         if total > trip.budget_max_usd and not budget_warning:
@@ -1211,16 +1252,25 @@ You MUST respond with a single valid JSON object of the following exact structur
       "experience": "Describe what they will actually do there, what the vibe is like, or tips for the visit.",
       "search_query": "The best search query to find this exact place on a map (e.g. 'French Laundry, Yountville, CA')",
       "duration_mins": 90,
-      "ideal_time_start": "09:00",
-      "ideal_time_end": "12:00",
-      "estimated_price_usd": 20.0,
+      "meal_type": null,
+      "dining_style": null,
+      "parent_container": null,
       "is_background": false,
+      "days_claimed": 1,
+      "estimated_price_usd": 20.0,
       "valid_days_of_week": [],
       "occurrences": 1
     }}
   ]
 }}
-`is_background` should be true ONLY if this POI is an umbrella event/location (like a theme park or resort) that spans an entire day or multiple days, and other POIs will be scheduled concurrently inside of it. CRITICAL: For ANY major Theme Park or National Park (e.g. Magic Kingdom, EPCOT, Universal Studios), you MUST set `is_background` to true! Default False. `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) to force the solver to schedule it exactly on those days. `occurrences` should be an integer > 1 ONLY if the user explicitly mentions they want to do this activity MULTIPLE times or for MULTIPLE days (e.g., "3 days at Disney" = occurrences: 3). If they say "3 days", you MUST set occurrences to 3. Otherwise default to 1.
+`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". Default false.
+`days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
+`parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
+`meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
+`dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
+`valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) so the scheduler places it exactly on those days.
+`occurrences` should be an integer > 1 ONLY for a standalone activity the user explicitly wants to repeat (e.g. "two surf lessons" = occurrences: 2). Never use it for multi-day anchors — that is what days_claimed is for.
+`ideal_time_start`/`ideal_time_end` ("HH:MM") are OPTIONAL overrides — include them only if the user asked for a specific time of day.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
 
@@ -1320,12 +1370,16 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             continue
             
         query = s.get('search_query', name)
-        
+
         enrichment = enrich_poi_data(name, query, trip.location)
-        
-        occurrences = s.get('occurrences', 1)
+
+        is_bg = s.get('is_background', False)
+        days_claimed = max(1, int(s.get('days_claimed') or 1))
+        occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
+        if is_bg and s.get('occurrences', 1) and int(s.get('occurrences') or 1) > days_claimed:
+            days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
         for i in range(occurrences):
-            poi_name = name if occurrences == 1 else f"{name} (Day {i+1})"
+            poi_name = name if occurrences == 1 else f"{name} ({i+1} of {occurrences})"
             poi = TripPOI(
                 id=uuid.uuid4().hex,
                 name=poi_name,
@@ -1351,9 +1405,15 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 image_url=enrichment['image_url'],
                 link=enrichment['link'],
                 estimated_price_usd=s.get('estimated_price_usd'),
-                is_background=s.get('is_background', False)
+                is_background=is_bg,
+                days_claimed=days_claimed if is_bg else 1,
+                meal_type=s.get('meal_type'),
+                dining_style=s.get('dining_style'),
+                parent_container=s.get('parent_container')  # name for now; resolved to an id below
             )
             pois.append(poi)
+
+    _resolve_parent_containers(pois, trip)
 
     accs = []
     for s in sugg_accs:

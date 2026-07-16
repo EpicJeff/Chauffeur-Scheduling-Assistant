@@ -176,6 +176,11 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     if res.get("target_element_id"): target_id = res["target_element_id"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
                     if res.get("message"): agent_message = res["message"]
+                elif func_name == "manage_trip_rules":
+                    from services.agent_tools_v2 import manage_trip_rules
+                    res = manage_trip_rules(args.get("trip_id"), args.get("action"),
+                                            rule=args.get("rule"), rule_id=args.get("rule_id"))
+                    if res.get("message"): agent_message = res["message"]
             except Exception as e:
                 res = {"error": str(e)}
                 

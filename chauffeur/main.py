@@ -610,6 +610,33 @@ def get_trip_api(event_id: str):
     for poi in metadata.get("pois", []):
         if poi.get("is_scheduled") and poi.get("scheduled_start") and poi.get("event_id") and poi.get("event_id").startswith("draft_poi_"):
             act_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
+            claimed = poi.get("claimed_dates") or []
+            if poi.get("is_background") and len(claimed) > 1:
+                # Multi-day anchor: one day-view card per claimed date (possibly non-consecutive)
+                import zoneinfo as _zi
+                try:
+                    _tz = _zi.ZoneInfo(metadata.get("timeZone") or "America/New_York")
+                except Exception:
+                    _tz = _zi.ZoneInfo("America/New_York")
+                for i, ds in enumerate(claimed):
+                    try:
+                        d = datetime.strptime(ds, "%Y-%m-%d")
+                    except (ValueError, TypeError):
+                        continue
+                    day_start = d.replace(hour=9, minute=0, tzinfo=_tz).timestamp()
+                    day_end = d.replace(hour=21, minute=0, tzinfo=_tz).timestamp()
+                    activities_details.append({
+                        # suffix keeps UI POI-matching (act.id.endsWith(poi.event_id)) working
+                        "id": f"{act_cal_id}::day{i+1}_{poi['event_id']}",
+                        "title": f"{poi.get('name', '')} (Day {i+1} of {len(claimed)})",
+                        "location": poi.get("location", ""),
+                        "description": poi.get("notes") or poi.get("description", ""),
+                        "start": day_start,
+                        "end": day_end,
+                        "background_url": poi.get("image_url") or metadata.get("background_url"),
+                        "poi_id": poi.get("id")
+                    })
+                continue
             act_id = f"{act_cal_id}::{poi['event_id']}"
             activities_details.append({
                 "id": act_id,
@@ -1146,7 +1173,7 @@ def schedule_poi_api(event_id: str, payload: dict):
         if not poi:
             return {"error": "POI not found"}
             
-        from services.trip_planner import schedule_poi
+        from services.trip_scheduler import schedule_poi
         event_calendar_id, reason, suggested_fixes = schedule_poi(trip_obj, poi)
         if not event_calendar_id:
             return {"error": reason or "Failed to schedule POI (no available time slot or calendar missing)", "suggested_fixes": suggested_fixes}
@@ -1185,7 +1212,7 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
         from models.schemas import TripMetadata
         trip_obj = TripMetadata(**meta)
         
-        from services.trip_planner import schedule_pois_bulk
+        from services.trip_scheduler import schedule_pois_bulk
         import json
         
         def stream_generator():
@@ -1217,10 +1244,57 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
 
         from fastapi.responses import StreamingResponse
         return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
-        
+
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
+
+@app.get("/api/trip/{event_id}/rules")
+def get_trip_rules_api(event_id: str):
+    """Stored TripRules plus a read-only view of rules derived from POI settings (design §5.3)."""
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+        from models.schemas import TripMetadata
+        trip_obj = TripMetadata(**meta)
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        derived = []
+        for p in trip_obj.pois:
+            if p.valid_days_of_week:
+                days = "/".join(day_names[d] for d in sorted(set(p.valid_days_of_week)) if 0 <= d <= 6)
+                derived.append({"poi_id": p.id, "description": f"{p.name}: only on {days}"})
+            if getattr(p, 'meal_type', None):
+                desc = f"{p.name}: {p.meal_type}"
+                if getattr(p, 'dining_style', None):
+                    desc += f" ({p.dining_style} dining)"
+                derived.append({"poi_id": p.id, "description": desc})
+            if getattr(p, 'parent_container', None):
+                parent = next((q for q in trip_obj.pois if q.id == p.parent_container), None)
+                if parent:
+                    derived.append({"poi_id": p.id, "description": f"{p.name}: inside {parent.name}"})
+            if getattr(p, 'is_background', False) and (getattr(p, 'days_claimed', 1) or 1) > 1:
+                derived.append({"poi_id": p.id, "description": f"{p.name}: anchors {p.days_claimed} full days"})
+        return {"rules": [r.model_dump() for r in trip_obj.rules], "derived": derived}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.patch("/api/trip/{event_id}/rules/{rule_id}")
+def patch_trip_rule_api(event_id: str, rule_id: str, payload: dict):
+    """v1 rules panel write op: enable/disable a rule."""
+    try:
+        meta = storage.get_trip_metadata(event_id)
+        if not meta:
+            return {"error": "Trip not found"}
+        rule = next((r for r in meta.get('rules', []) if r.get('id') == rule_id), None)
+        if not rule:
+            return {"error": "Rule not found"}
+        if 'is_enabled' in payload:
+            rule['is_enabled'] = bool(payload['is_enabled'])
+        storage.set_trip_metadata(event_id, meta)
+        return {"status": "ok", "rule": rule}
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.put("/api/trip/{event_id}/poi/{poi_id}")
 def edit_trip_poi_api(event_id: str, poi_id: str, payload: dict):
