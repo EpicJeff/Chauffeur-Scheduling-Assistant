@@ -349,8 +349,8 @@
                     </div>
 
                     <div class="mt-8 flex justify-between items-center">
-                        <button onclick="ignoreEvent()"
-                            class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors flex items-center">
+                        <button id="ignore-event-btn" onclick="ignoreEvent()"
+                            class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors flex items-center min-w-[150px] justify-center">
                             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636">
@@ -361,9 +361,8 @@
                         <div class="space-x-4">
                             <button onclick="switchToViewMode()"
                                 class="px-5 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors">Cancel</button>
-                            <button onclick="saveEventConfig()"
-                                class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors">Save
-                                Configuration</button>
+                            <button id="save-config-btn" onclick="saveEventConfig()"
+                                class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors flex items-center justify-center min-w-[180px] inline-flex">Save Configuration</button>
                         </div>
                     </div>
                 </div>
@@ -1578,7 +1577,6 @@
                 
                 showGlobalAlert("Passenger removed from this instance.", "success");
                 closeEventModal();
-                await fetchSchedule();
             } catch (e) {
                 console.error(e);
                 showGlobalAlert("Failed to update event configuration.", "error");
@@ -1588,6 +1586,14 @@
         async function saveEventConfig() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
+
+            const btn = document.getElementById('save-config-btn');
+            const originalText = btn ? btn.innerHTML : 'Save Configuration';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Saving...';
+                btn.classList.add('opacity-75', 'cursor-not-allowed');
+            }
 
             // Parse Config
             const paxCheckboxes = document.querySelectorAll('.pax-checkbox:checked, .pax-checkbox:disabled');
@@ -1674,23 +1680,38 @@
                 }
 
                 closeEventModal();
-                if (currentData && currentData.events) {
+                if (currentData) {
+                    if (!currentData.evaluating) currentData.evaluating = [];
                     if (ev.recurring_event_id) {
-                        currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
+                        const instances = (currentData.events || []).filter(e => e.recurring_event_id === ev.recurring_event_id);
+                        instances.forEach(inst => currentData.evaluating.push(inst.id));
                     } else {
-                        currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                        currentData.evaluating.push(ev.id);
                     }
                     renderSchedule(currentData);
                 }
-                forceSync(false).catch(console.error);
             } catch (e) {
                 showError("Failed to save configuration.");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                }
             }
         }
 
         async function ignoreEvent() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
+
+            const btn = document.getElementById('ignore-event-btn');
+            const originalText = btn ? btn.innerHTML : 'Ignore Event';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Ignoring...';
+                btn.classList.add('opacity-75', 'cursor-not-allowed');
+            }
 
             const googleIdParts = ev.source_event_ids[0].split('::');
             const googleId = googleIdParts[googleIdParts.length - 1];
@@ -1706,17 +1727,40 @@
                     body: JSON.stringify({ is_ignored: true })
                 });
                 closeEventModal();
-                if (currentData && currentData.events) {
+                if (currentData) {
+                    const removeEvent = (eId) => {
+                        if (currentData.assignments) delete currentData.assignments[eId];
+                        if (currentData.ghost_assignments) delete currentData.ghost_assignments[eId];
+                        if (currentData.unassigned) {
+                            currentData.unassigned = currentData.unassigned.filter(id => id !== eId);
+                        }
+                        if (currentData.true_unassigned) {
+                            currentData.true_unassigned = currentData.true_unassigned.filter(id => id !== eId);
+                        }
+                    };
+                    
                     if (ev.recurring_event_id) {
-                        currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
+                        const instances = (currentData.events || []).filter(e => e.recurring_event_id === ev.recurring_event_id);
+                        instances.forEach(inst => removeEvent(inst.id));
+                        if (currentData.events) {
+                            currentData.events = currentData.events.filter(e => e.recurring_event_id !== ev.recurring_event_id);
+                        }
                     } else {
-                        currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                        removeEvent(ev.id);
+                        if (currentData.events) {
+                            currentData.events = currentData.events.filter(e => e.id !== ev.id);
+                        }
                     }
                     renderSchedule(currentData);
                 }
-                forceSync(false).catch(console.error);
             } catch (e) {
                 showError("Failed to ignore event.");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                }
             }
         }
 
@@ -1813,7 +1857,6 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                fetchSchedule();
             } catch (e) {
                 showGlobalAlert("Failed to update event details");
             }
@@ -2774,9 +2817,11 @@
                             const opacityClass = isCompleted ? 'opacity-40 grayscale' : 'opacity-100';
                             const cursorClass = isReadOnly ? 'cursor-default' : 'cursor-pointer hover:bg-gray-700';
                             const zIndex = 'z-10';
+                            const isEvaluating = currentData && currentData.evaluating && currentData.evaluating.includes(ev.id);
+                            const evalClasses = isEvaluating ? 'opacity-50 animate-pulse !pointer-events-none' : '';
                             colEventsHtml += `
                                 <div id="event-${ev.id}" ${dragAttr} ${clickAttr} title="${ev.title}"
-                                     class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex ${zIndex} ${cursorClass} ${opacityClass} border ${borderClass}"
+                                     class="absolute rounded-md overflow-hidden shadow-lg border-l-4 bg-gray-800 transition-colors group flex ${zIndex} ${cursorClass} ${opacityClass} ${evalClasses} border ${borderClass}"
                                      style="top: ${startY}px; height: ${height}px; left: ${leftStyle}; width: ${widthStyle}; border-left-color: ${evColor} !important; min-height: 24px;">
                                     ${badgeHtml}
                                     <div class="px-1.5 py-1 w-full overflow-hidden pointer-events-none ${isShort ? 'flex flex-row items-center gap-1.5' : 'flex flex-col'}">
@@ -3127,9 +3172,11 @@
                             const evColor = calMetas[0].backgroundColor;
                             const summaries = calMetas.map(m => m.summary).join(' + ');
 
+                            const isEvaluating = currentData && currentData.evaluating && currentData.evaluating.includes(ev.id);
+                            const evalClasses = isEvaluating ? 'opacity-50 animate-pulse !pointer-events-none' : '';
                             colEventsHtml += `
                                 <div id="event-${ev.id}" draggable="true" ondragstart="drag(event, '${ev.id}', '${c_id}')" onclick="openEventModal('${ev.id}')" 
-                                     class="px-2 py-1.5 border-l-4 rounded bg-gray-900 hover:bg-gray-800 transition-colors cursor-pointer group shadow-sm flex items-center justify-between"
+                                     class="px-2 py-1.5 border-l-4 rounded bg-gray-900 hover:bg-gray-800 transition-colors cursor-pointer group shadow-sm flex items-center justify-between ${evalClasses}"
                                      style="border-color: ${evColor} !important;">
                                     <div class="flex items-center gap-2 overflow-hidden flex-1">
                                         <div class="text-[9px] uppercase tracking-wider font-bold opacity-70 whitespace-nowrap" style="color: ${evColor}">${summaries}</div>
