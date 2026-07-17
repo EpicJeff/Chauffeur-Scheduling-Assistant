@@ -205,15 +205,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     budget_warning = response_json.get('budget_warning')
     suggestions = response_json.get('suggestions', [])
     
-    # Keyword check: If a POI is obviously a hotel but the LLM placed it here, we should drop it.
-    acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
-    true_suggestions = []
-    for s in suggestions:
-        name_lower = s.get('name', '').lower()
-        if any(k in name_lower.split() or name_lower.startswith(f"{k} ") or name_lower.endswith(f" {k}") for k in acc_keywords):
-            continue
-        true_suggestions.append(s)
-    suggestions = true_suggestions
+    # Drop lodging the LLM misplaced into the POI list — but only when it carries
+    # no attraction signals (see trip_validation.is_misplaced_accommodation).
+    from services.trip_validation import is_misplaced_accommodation
+    suggestions = [s for s in suggestions if not is_misplaced_accommodation(s)]
 
     pois = []
     
@@ -1400,13 +1395,14 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             print(f"generate_trip_plan: WARNING still below floor after top-up: "
                   f"{len(sugg_pois)}/{min_pois}")
 
-    # Keyword check: Move hotel POIs to accommodations
-    acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
+    # Move lodging the LLM misplaced into the POI list over to accommodations —
+    # but only when it carries no attraction signals ('Villa Ephrussi de
+    # Rothschild' is a garden estate; moving it silently deletes an attraction).
+    from services.trip_validation import is_misplaced_accommodation
     true_pois = []
     for s in sugg_pois:
-        name_lower = s.get('name', '').lower()
-        if any(k in name_lower.split() or name_lower.startswith(f"{k} ") or name_lower.endswith(f" {k}") for k in acc_keywords):
-            # Move it to sugg_accs if not already there
+        if is_misplaced_accommodation(s):
+            print(f"generate_trip_plan: moving lodging-like POI '{s.get('name')}' to accommodations")
             if not any(a.get('name') and (s.get('name').lower() in a.get('name').lower() or a.get('name').lower() in s.get('name').lower()) for a in sugg_accs):
                 sugg_accs.append({
                     "name": s.get('name'),

@@ -110,6 +110,34 @@ def vet_accommodation(enrichment: dict, s: dict) -> None:
     reconcile_coords(enrichment, s)
 
 
+ACCOMMODATION_NAME_KEYWORDS = ('hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt',
+                               'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb')
+
+ATTRACTION_CATEGORIES = ('sightseeing', 'activity', 'shopping', 'food')
+
+
+def is_misplaced_accommodation(s: dict) -> bool:
+    """True when a POI suggestion is really lodging that belongs in accommodations.
+
+    A lodging-flavored name alone is NOT enough: famous attractions carry lodging
+    words ('Villa Ephrussi de Rothschild' is a garden estate, not a hotel), and
+    moving one strips its dates/duration and silently deletes it from the
+    itinerary. Reclassifying needs BOTH a lodging-flavored name AND no attraction
+    signals (anchor flag, parent link, or an attraction category). The asymmetry
+    is deliberate: wrongly keeping a hotel as a POI is visible and recoverable;
+    wrongly moving an attraction is silent data loss.
+    """
+    name_lower = (s.get('name') or '').lower()
+    if not any(k in name_lower.split() or name_lower.startswith(f"{k} ")
+               or name_lower.endswith(f" {k}") for k in ACCOMMODATION_NAME_KEYWORDS):
+        return False
+    if s.get('is_background') or s.get('parent_container'):
+        return False
+    if (s.get('category') or '').lower() in ATTRACTION_CATEGORIES:
+        return False
+    return True
+
+
 def parse_stay_range(ci_s, co_s) -> Optional[Tuple[datetime.date, datetime.date]]:
     """(check_in, check_out) as dates, or None if either is missing/unparseable."""
     try:

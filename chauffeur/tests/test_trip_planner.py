@@ -233,6 +233,25 @@ def scenario_llm_coords_veto_bad_geocode():
           "agreeing geocode kept — it is more precise than the LLM estimate")
 
 
+def scenario_attraction_named_villa_stays_a_poi():
+    """Regression: 'Villa Ephrussi de Rothschild' (a garden-estate attraction) was
+    hijacked into accommodations by the hotel-keyword filter — deleting it from
+    the itinerary and leaving an undated accommodation card. Only lodging with no
+    attraction signals is moved now."""
+    batch = [
+        {"name": "Villa Ephrussi de Rothschild", "category": "sightseeing",
+         "description": "gardens", "search_query": "q", "duration_mins": 120},
+        {"name": "Grand Palace Hotel", "category": "other", "description": "stay here",
+         "search_query": "q"},
+    ]
+    fake, pois, accs = run_plan([batch], prompt="give me 2 places in France")
+    names = [p.name for p in pois]
+    check("Villa Ephrussi de Rothschild" in names, f"attraction kept as a POI, got {names}")
+    check("Grand Palace Hotel" not in names, "plain lodging moved out of the POI list")
+    check(any(a.name == "Grand Palace Hotel" for a in accs),
+          "moved lodging lands in accommodations")
+
+
 def scenario_return_stay_to_same_hotel_kept():
     """Dedup vs existing stays is date-aware: re-suggesting a hotel the trip already
     has is legitimate for a NEW date range (return stay), a duplicate when the dates
@@ -272,6 +291,7 @@ SCENARIOS = [
     scenario_overlap_repair_edge_cases,
     scenario_return_stay_to_same_hotel_kept,
     scenario_llm_coords_veto_bad_geocode,
+    scenario_attraction_named_villa_stays_a_poi,
 ]
 
 if __name__ == "__main__":

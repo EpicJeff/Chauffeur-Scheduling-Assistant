@@ -93,10 +93,30 @@ def scenario_find_stay_overlap():
           "model-object stays supported")
 
 
+def scenario_misplaced_accommodation_classifier():
+    from services.trip_validation import is_misplaced_accommodation
+    check(is_misplaced_accommodation({"name": "Grand Palace Hotel", "category": "other"}),
+          "plain lodging name with no attraction signals is lodging")
+    check(is_misplaced_accommodation({"name": "Grand Palace Hotel"}),
+          "missing category does not protect")
+    check(not is_misplaced_accommodation({"name": "Villa Ephrussi de Rothschild",
+                                          "category": "sightseeing"}),
+          "attraction category protects a lodging-flavored name")
+    check(not is_misplaced_accommodation({"name": "Villa Borghese", "category": "other",
+                                          "parent_container": "Rome Old Town"}),
+          "parent link protects")
+    check(not is_misplaced_accommodation({"name": "Old Faithful Inn Area", "category": "other",
+                                          "is_background": True}),
+          "anchor flag protects")
+    check(not is_misplaced_accommodation({"name": "Eiffel Tower", "category": "other"}),
+          "no lodging keyword -> never lodging")
+
+
 SCENARIOS = [
     scenario_reconcile_coords,
     scenario_anchor_fields,
     scenario_find_stay_overlap,
+    scenario_misplaced_accommodation_classifier,
 ]
 
 if __name__ == "__main__":
