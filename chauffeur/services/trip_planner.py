@@ -112,6 +112,16 @@ def _anchor_fields(s: dict) -> Tuple[bool, int, int]:
     return is_bg, days_claimed, occurrences
 
 
+def _parse_stay_range(ci_s, co_s) -> Optional[Tuple[datetime.date, datetime.date]]:
+    """(check_in, check_out) as dates, or None if either is missing/unparseable."""
+    try:
+        ci = datetime.datetime.strptime(ci_s or '', "%Y-%m-%d").date()
+        co = datetime.datetime.strptime(co_s or '', "%Y-%m-%d").date()
+        return ci, co
+    except (ValueError, TypeError):
+        return None
+
+
 def _repair_accommodation_overlaps(suggestions: List[dict],
                                    existing: Optional[List[Any]] = None) -> List[dict]:
     """Guard against malformed LLM accommodation output.
@@ -124,24 +134,16 @@ def _repair_accommodation_overlaps(suggestions: List[dict],
     clip remaining overlaps forward (the later check_in wins). Undated
     suggestions pass through untouched.
     """
-    def _parse(ci_s, co_s):
-        try:
-            ci = datetime.datetime.strptime(ci_s or '', "%Y-%m-%d").date()
-            co = datetime.datetime.strptime(co_s or '', "%Y-%m-%d").date()
-            return ci, co
-        except (ValueError, TypeError):
-            return None
-
     existing_ranges = []
     for a in existing or []:
-        rng = _parse(getattr(a, 'check_in_date', None), getattr(a, 'check_out_date', None))
+        rng = _parse_stay_range(getattr(a, 'check_in_date', None), getattr(a, 'check_out_date', None))
         if rng and rng[1] > rng[0]:
             existing_ranges.append(rng)
 
     undated = []   # (orig_idx, suggestion)
     dated = []     # [check_in, check_out, orig_idx, suggestion]
     for idx, s in enumerate(suggestions):
-        rng = _parse(s.get('check_in_date'), s.get('check_out_date'))
+        rng = _parse_stay_range(s.get('check_in_date'), s.get('check_out_date'))
         if rng is None:
             undated.append((idx, s))
             continue
@@ -1567,11 +1569,18 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     accs = []
     for s in sugg_accs:
         name = s.get('name')
-        
-        # Deduplication check
-        if any(a.lower() == name.lower() for a in existing_accs):
+
+        # Dedup vs existing stays must be date-aware: returning to the same hotel
+        # for a later leg is legitimate (Paris nights 1-4 + Paris final night).
+        # Date-overlapping suggestions were already dropped by
+        # _repair_accommodation_overlaps, so a name match is only a duplicate
+        # when the suggestion carries no usable dates.
+        if (_parse_stay_range(s.get('check_in_date'), s.get('check_out_date')) is None
+                and any(a.lower() == name.lower() for a in existing_accs)):
+            print(f"trip accommodations: dropping undated re-suggestion of existing stay '{name}'")
             continue
-            
+
+
         query = s.get('location', name)
         
         enrichment = enrich_poi_data(name, query, trip.location)

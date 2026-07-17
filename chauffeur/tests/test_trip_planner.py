@@ -198,6 +198,34 @@ def scenario_overlap_repair_edge_cases():
     check(out == [], "suggestion overlapping an existing stay dropped")
 
 
+def scenario_return_stay_to_same_hotel_kept():
+    """Dedup vs existing stays is date-aware: re-suggesting a hotel the trip already
+    has is legitimate for a NEW date range (return stay), a duplicate when the dates
+    overlap the existing stay, and a duplicate when no dates are given."""
+    from models.schemas import TripAccommodation
+    suggested = [
+        {"name": "Ritz Paris", "location": "Paris",
+         "check_in_date": "2026-09-16", "check_out_date": "2026-09-17"},  # return stay: keep
+        {"name": "Ritz Paris", "location": "Paris"},                      # undated dupe: drop
+        {"name": "Ritz Paris", "location": "Paris",
+         "check_in_date": "2026-09-08", "check_out_date": "2026-09-10"},  # overlaps existing: drop
+    ]
+    fake = FakeLLM([poi_batch(0, 27)], accs=suggested)
+    original = llm._call_llm_json
+    llm._call_llm_json = fake
+    try:
+        trip = mk_trip(days=10)
+        trip.accommodations = [TripAccommodation(
+            name="Ritz Paris", location="Paris",
+            check_in_date="2026-09-07", check_out_date="2026-09-11")]
+        warning, pois, out, flights = generate_trip_plan(
+            trip, "plan a great 10 day trip to France", duration_nights=10)
+    finally:
+        llm._call_llm_json = original
+    check(len(out) == 1, f"expected only the return stay to survive, got {len(out)}")
+    check(out[0].check_in_date == "2026-09-16", "the non-overlapping return stay is kept")
+
+
 SCENARIOS = [
     scenario_healthy_single_shot_costs_one_request,
     scenario_topup_only_on_collapse,
@@ -207,6 +235,7 @@ SCENARIOS = [
     scenario_short_anchor_demoted,
     scenario_accommodation_overlaps_repaired,
     scenario_overlap_repair_edge_cases,
+    scenario_return_stay_to_same_hotel_kept,
 ]
 
 if __name__ == "__main__":
