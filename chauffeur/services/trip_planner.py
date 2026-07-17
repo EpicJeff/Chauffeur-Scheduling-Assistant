@@ -85,6 +85,108 @@ def _resolve_parent_containers(new_pois: List[TripPOI], trip: TripMetadata) -> N
         p.parent_container = match.id if match else None
 
 
+# Below this, an is_background=true suggestion for a single day is an LLM
+# misclassification (a 60-min museum visit is not a day anchor) and gets demoted.
+ANCHOR_MIN_DURATION_MINS = 180
+
+
+def _anchor_fields(s: dict) -> Tuple[bool, int, int]:
+    """Resolve (is_background, days_claimed, occurrences) from an LLM POI suggestion.
+
+    Anchors are ONE POI claiming N days; occurrences-cloning is only for repeated
+    standalone activities. A short single-day "anchor" is demoted to a regular POI:
+    as a background it would claim a whole day exclusively and hijack that day's
+    distance base in the scheduler.
+    """
+    is_bg = bool(s.get('is_background', False))
+    days_claimed = max(1, int(s.get('days_claimed') or 1))
+    if is_bg and int(s.get('occurrences') or 1) > days_claimed:
+        days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
+    dur = s.get('duration_mins')
+    if is_bg and days_claimed <= 1 and isinstance(dur, (int, float)) and dur < ANCHOR_MIN_DURATION_MINS:
+        print(f"trip planner: demoting '{s.get('name')}' to a regular POI "
+              f"(marked is_background but only lasts {int(dur)} mins)")
+        is_bg = False
+        days_claimed = 1
+    occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
+    return is_bg, days_claimed, occurrences
+
+
+def _repair_accommodation_overlaps(suggestions: List[dict],
+                                   existing: Optional[List[Any]] = None) -> List[dict]:
+    """Guard against malformed LLM accommodation output.
+
+    Overlapping stay date ranges poison the scheduler's day->home-base map (the
+    first accommodation covering a date wins), which scatters POIs geographically.
+    Repairs, in order: drop stays that overlap an already-saved stay, drop
+    zero-night stays, drop "umbrella" stays that strictly contain two or more
+    other stays (a whole-trip hotel emitted alongside the per-leg ones), then
+    clip remaining overlaps forward (the later check_in wins). Undated
+    suggestions pass through untouched.
+    """
+    def _parse(ci_s, co_s):
+        try:
+            ci = datetime.datetime.strptime(ci_s or '', "%Y-%m-%d").date()
+            co = datetime.datetime.strptime(co_s or '', "%Y-%m-%d").date()
+            return ci, co
+        except (ValueError, TypeError):
+            return None
+
+    existing_ranges = []
+    for a in existing or []:
+        rng = _parse(getattr(a, 'check_in_date', None), getattr(a, 'check_out_date', None))
+        if rng and rng[1] > rng[0]:
+            existing_ranges.append(rng)
+
+    undated = []   # (orig_idx, suggestion)
+    dated = []     # [check_in, check_out, orig_idx, suggestion]
+    for idx, s in enumerate(suggestions):
+        rng = _parse(s.get('check_in_date'), s.get('check_out_date'))
+        if rng is None:
+            undated.append((idx, s))
+            continue
+        ci, co = rng
+        if co <= ci:
+            print(f"trip accommodations: dropping zero-night stay '{s.get('name')}' "
+                  f"({s.get('check_in_date')} -> {s.get('check_out_date')})")
+            continue
+        if any(ci < eco and eci < co for eci, eco in existing_ranges):
+            print(f"trip accommodations: dropping '{s.get('name')}' — dates overlap an existing stay")
+            continue
+        dated.append([ci, co, idx, s])
+
+    kept = []
+    for ci, co, idx, s in dated:
+        spans = sum(1 for ci2, co2, idx2, _ in dated
+                    if idx2 != idx and ci <= ci2 and co2 <= co and (ci2, co2) != (ci, co))
+        if spans >= 2:
+            print(f"trip accommodations: dropping umbrella stay '{s.get('name')}' "
+                  f"({ci} -> {co}) — it spans {spans} other stays")
+        else:
+            kept.append([ci, co, idx, s])
+
+    kept.sort(key=lambda t: (t[0], t[1]))
+    repaired: List[list] = []
+    for entry in kept:
+        while repaired and entry[0] < repaired[-1][1]:
+            prev = repaired[-1]
+            print(f"trip accommodations: clipping '{prev[3].get('name')}' check-out "
+                  f"{prev[1]} -> {entry[0]} (overlapped '{entry[3].get('name')}')")
+            prev[1] = entry[0]
+            prev[3]['check_out_date'] = entry[0].strftime("%Y-%m-%d")
+            if prev[1] <= prev[0]:
+                print(f"trip accommodations: dropping '{prev[3].get('name')}' — "
+                      f"nothing left after clipping")
+                repaired.pop()
+            else:
+                break
+        repaired.append(entry)
+
+    out = undated + [(idx, s) for _, _, idx, s in repaired]
+    out.sort(key=lambda t: t[0])
+    return [s for _, s in out]
+
+
 def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
     """
     Generates a list of suggested Trip POIs based on the user's prompt using the LLM,
@@ -135,7 +237,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". Default false.
+`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". An anchor must be a half-day-or-longer experience: a single attraction lasting under ~3 hours (a museum visit, a tour, a viewpoint) is NEVER an anchor. Default false.
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
@@ -217,12 +319,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
         enrichment = enrich_poi_data(name, query, trip.location)
 
-        is_bg = s.get('is_background', False)
-        # Anchors are ONE POI claiming N days; occurrences-cloning is only for repeated standalone activities.
-        days_claimed = max(1, int(s.get('days_claimed') or 1))
-        occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
-        if is_bg and s.get('occurrences', 1) and int(s.get('occurrences') or 1) > days_claimed:
-            days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
+        is_bg, days_claimed, occurrences = _anchor_fields(s)
         for i in range(occurrences):
             name_label = s.get('name') if occurrences == 1 else f"{s.get('name')} ({i+1} of {occurrences})"
             poi = TripPOI(
@@ -1155,9 +1252,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return None, []
         
     budget_warning = response_json.get('budget_warning')
-    suggestions = response_json.get('accommodations', [])
+    suggestions = _repair_accommodation_overlaps(
+        response_json.get('accommodations', []), trip.accommodations)
     accs = []
-    
+
     for s in suggestions:
         name = s.get('name')
         query = s.get('location', name)
@@ -1213,10 +1311,11 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
         model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
         api_key = settings.get('llm_gemini_api_key')
         
-    num_pois = max(1, duration_nights * 4)
-    # historical single-shot behavior delivers ~70% of the ask (27-30 for 40);
-    # the floor is what we require in the prompt and enforce with top-up calls
-    min_pois = max(1, (num_pois * 7) // 10)
+    # Ask for what we actually want shipped (~3/night = 30 for a 10-night trip,
+    # the healthy historical band): the floor instruction below makes the model
+    # comply with counts now, so the old 4/night ask overshoots to ~40.
+    num_pois = max(1, duration_nights * 3)
+    min_pois = max(1, (num_pois * 9) // 10)
 
     system_prompt = f"""You are an expert travel agent.
 The user's trip is {duration_nights} nights long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
@@ -1270,7 +1369,7 @@ You MUST respond with a single valid JSON object of the following exact structur
     }}
   ]
 }}
-`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". Default false.
+`is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". An anchor must be a half-day-or-longer experience: a single attraction lasting under ~3 hours (a museum visit, a tour, a viewpoint) is NEVER an anchor. Default false.
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
@@ -1405,7 +1504,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         else:
             true_pois.append(s)
     sugg_pois = true_pois
-    
+
+    sugg_accs = _repair_accommodation_overlaps(sugg_accs, trip.accommodations)
+
+
     pois = []
     for s in sugg_pois:
         name = s.get('name')
@@ -1424,11 +1526,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
         enrichment = enrich_poi_data(name, query, trip.location)
 
-        is_bg = s.get('is_background', False)
-        days_claimed = max(1, int(s.get('days_claimed') or 1))
-        occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
-        if is_bg and s.get('occurrences', 1) and int(s.get('occurrences') or 1) > days_claimed:
-            days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
+        is_bg, days_claimed, occurrences = _anchor_fields(s)
         for i in range(occurrences):
             poi_name = name if occurrences == 1 else f"{name} ({i+1} of {occurrences})"
             poi = TripPOI(

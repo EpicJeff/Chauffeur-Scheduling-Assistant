@@ -1,8 +1,9 @@
-"""Tests for trip plan generation logic (POI top-up loop).
+"""Tests for trip plan generation logic (POI counts, LLM-output repair guards).
 
-Regression for: asking the LLM for ~40 POIs in one shot returned as few as 9
-(complete, valid JSON — the model self-limits on long lists). generate_trip_plan
-now tops up with small follow-up calls until the num_pois target is met.
+Covers: the healthy path costs exactly one LLM request (top-ups fire only on a
+genuine count collapse); short "anchors" are demoted to regular POIs; overlapping
+accommodation date ranges from the LLM are repaired before they can poison the
+scheduler's day->hotel map.
 
 Run from chauffeur/:  python tests/test_trip_planner.py
 """
@@ -27,8 +28,11 @@ def poi_batch(start, n):
 class FakeLLM:
     """Returns scripted POI batches, one per call, recording prompts."""
 
-    def __init__(self, batches):
+    def __init__(self, batches, accs=None):
         self.batches = batches
+        self.accs = accs if accs is not None else [{
+            "name": "Paris Hotel", "location": "Paris",
+            "check_in_date": "2026-09-07", "check_out_date": "2026-09-17"}]
         self.prompts = []
 
     def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
@@ -38,38 +42,37 @@ class FakeLLM:
         batch = self.batches[min(i, len(self.batches) - 1)]
         resp = {"pois": list(batch), "accommodations": [], "flights": []}
         if i == 0:
-            resp["accommodations"] = [{
-                "name": "Paris Hotel", "location": "Paris",
-                "check_in_date": "2026-09-07", "check_out_date": "2026-09-17"}]
+            resp["accommodations"] = list(self.accs)
         return resp
 
 
-def run_plan(batches, prompt="plan a great 10 day trip to France"):
-    fake = FakeLLM(batches)
+def run_plan(batches, prompt="plan a great 10 day trip to France", accs=None):
+    fake = FakeLLM(batches, accs=accs)
     original = llm._call_llm_json
     llm._call_llm_json = fake
     try:
         trip = mk_trip(days=10)
-        warning, pois, accs, flights = generate_trip_plan(trip, prompt, duration_nights=10)
-        return fake, pois, accs
+        warning, pois, accs_out, flights = generate_trip_plan(trip, prompt, duration_nights=10)
+        return fake, pois, accs_out
     finally:
         llm._call_llm_json = original
 
 
 def scenario_healthy_single_shot_costs_one_request():
-    """The historical healthy case (~27-30 POIs for 10 nights) must cost exactly
-    ONE request — the floor is 28 (70% of 40), so 28+ never triggers a top-up."""
-    fake, pois, _ = run_plan([poi_batch(0, 28)])
-    check(len(fake.prompts) == 1, f"28 POIs is healthy, got {len(fake.prompts)} calls")
-    check(len(pois) == 28, f"expected 28 POIs, got {len(pois)}")
-    check("at least 28" in fake.prompts[0], "prompt states the POI floor explicitly")
+    """The healthy case (27-30 POIs for 10 nights) must cost exactly ONE request —
+    the ask is 30 (3/night) with a floor of 27 (90%), so 27+ never triggers a top-up."""
+    fake, pois, _ = run_plan([poi_batch(0, 27)])
+    check(len(fake.prompts) == 1, f"27 POIs is healthy, got {len(fake.prompts)} calls")
+    check(len(pois) == 27, f"expected 27 POIs, got {len(pois)}")
+    check("at least 27" in fake.prompts[0], "prompt states the POI floor explicitly")
+    check("aim for 30" in fake.prompts[0], "prompt states the POI target explicitly")
 
 
 def scenario_topup_only_on_collapse():
     """A collapsed first call (9 POIs) tops up until the floor is met, max 2 rounds."""
     fake, pois, accs = run_plan([poi_batch(0, 9), poi_batch(100, 12), poi_batch(200, 12)])
     check(len(fake.prompts) == 3, f"expected 1 initial + 2 top-up calls, got {len(fake.prompts)}")
-    check(len(pois) == 33, f"expected 33 POIs (9+12+12, floor 28 met), got {len(pois)}")
+    check(len(pois) == 33, f"expected 33 POIs (9+12+12, floor 27 met), got {len(pois)}")
     check("CONTINUATION" not in fake.prompts[0], "first call is not a continuation")
     check(all("CONTINUATION" in p for p in fake.prompts[1:]), "top-ups marked as continuation")
     check("poi 0" in fake.prompts[1].lower(), "top-up lists already-suggested names")
@@ -116,12 +119,94 @@ def scenario_topup_failure_keeps_partial():
     check(len(pois) == 9, f"partial result survives a failed top-up, got {len(pois)}")
 
 
+def scenario_short_anchor_demoted():
+    """A 60-min POI marked is_background is an LLM misclassification: as an anchor
+    it would claim a whole day exclusively and hijack that day's distance base.
+    Real anchors (long, multi-day, or unstated duration) keep their flag."""
+    batch = [
+        {"name": "Quick Museum", "category": "sightseeing", "description": "d",
+         "search_query": "q", "duration_mins": 60, "is_background": True},
+        {"name": "Magic Kingdom", "category": "activity", "description": "d",
+         "search_query": "q", "duration_mins": 600, "is_background": True},
+        {"name": "Disney Week", "category": "activity", "description": "d",
+         "search_query": "q", "duration_mins": 60, "is_background": True, "days_claimed": 3},
+        {"name": "Mystery Anchor", "category": "activity", "description": "d",
+         "search_query": "q", "is_background": True},
+    ]
+    fake, pois, _ = run_plan([batch], prompt="give me 4 places in France")
+    by_name = {p.name: p for p in pois}
+    check(not by_name["Quick Museum"].is_background, "60-min 'anchor' demoted to regular POI")
+    check(by_name["Magic Kingdom"].is_background, "long single-day anchor keeps its flag")
+    check(by_name["Disney Week"].is_background and by_name["Disney Week"].days_claimed == 3,
+          "multi-day anchor kept despite bogus duration")
+    check(by_name["Mystery Anchor"].is_background, "anchor without a stated duration is kept")
+
+
+def scenario_accommodation_overlaps_repaired():
+    """5 accommodations for 4 legs (a whole-trip umbrella + per-leg stays) must be
+    repaired to the 4 legs — overlapping ranges poison the scheduler's day->hotel map."""
+    accs = [
+        {"name": "Grand Umbrella Stay", "location": "Paris",
+         "check_in_date": "2026-09-07", "check_out_date": "2026-09-17"},
+        {"name": "Paris Left Bank", "location": "Paris",
+         "check_in_date": "2026-09-07", "check_out_date": "2026-09-11"},
+        {"name": "Beaune Winery Stay", "location": "Beaune",
+         "check_in_date": "2026-09-11", "check_out_date": "2026-09-14"},
+        {"name": "Nice Beach Stay", "location": "Nice",
+         "check_in_date": "2026-09-14", "check_out_date": "2026-09-16"},
+        {"name": "Paris Final Night", "location": "Paris",
+         "check_in_date": "2026-09-16", "check_out_date": "2026-09-17"},
+    ]
+    fake, pois, out = run_plan([poi_batch(0, 27)], accs=accs)
+    names = [a.name for a in out]
+    check("Grand Umbrella Stay" not in names, "umbrella stay dropped")
+    check(len(out) == 4, f"expected the 4 legs, got {len(out)}: {names}")
+    ranges = sorted((a.check_in_date, a.check_out_date) for a in out)
+    for i in range(len(ranges) - 1):
+        check(ranges[i][1] <= ranges[i + 1][0], f"stays overlap: {ranges[i]} vs {ranges[i + 1]}")
+
+
+def scenario_overlap_repair_edge_cases():
+    """Clip-forward, duplicate ranges, zero-night, undated passthrough, existing stays."""
+    from services.trip_planner import _repair_accommodation_overlaps
+
+    # partial overlap: the earlier stay is clipped to the later stay's check-in
+    a = {"name": "A", "check_in_date": "2030-01-01", "check_out_date": "2030-01-05"}
+    b = {"name": "B", "check_in_date": "2030-01-04", "check_out_date": "2030-01-08"}
+    out = _repair_accommodation_overlaps([a, b])
+    check(len(out) == 2 and out[0]["check_out_date"] == "2030-01-04",
+          "partial overlap clipped forward (check-in wins)")
+
+    # identical ranges: exactly one survives
+    a = {"name": "A", "check_in_date": "2030-01-01", "check_out_date": "2030-01-05"}
+    b = {"name": "B", "check_in_date": "2030-01-01", "check_out_date": "2030-01-05"}
+    out = _repair_accommodation_overlaps([a, b])
+    check(len(out) == 1, f"duplicate range collapses to one stay, got {len(out)}")
+
+    # zero-night dropped; undated passes through untouched
+    z = {"name": "Z", "check_in_date": "2030-01-02", "check_out_date": "2030-01-02"}
+    u = {"name": "U"}
+    out = _repair_accommodation_overlaps([z, u])
+    check([s["name"] for s in out] == ["U"], "zero-night dropped, undated kept")
+
+    # a suggestion overlapping an already-saved stay is dropped, not clipped
+    class Acc:
+        check_in_date = "2030-01-01"
+        check_out_date = "2030-01-05"
+    n = {"name": "N", "check_in_date": "2030-01-03", "check_out_date": "2030-01-07"}
+    out = _repair_accommodation_overlaps([n], existing=[Acc()])
+    check(out == [], "suggestion overlapping an existing stay dropped")
+
+
 SCENARIOS = [
     scenario_healthy_single_shot_costs_one_request,
     scenario_topup_only_on_collapse,
     scenario_topup_dedups_and_stops_when_dry,
     scenario_explicit_count_skips_topup,
     scenario_topup_failure_keeps_partial,
+    scenario_short_anchor_demoted,
+    scenario_accommodation_overlaps_repaired,
+    scenario_overlap_repair_edge_cases,
 ]
 
 if __name__ == "__main__":
