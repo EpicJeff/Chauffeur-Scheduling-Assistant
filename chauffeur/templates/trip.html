@@ -1992,6 +1992,7 @@
                 let buffer = "";
                 const failures = [];
                 const insights = [];
+                let auditWarnings = [];
                 let completed = 0;
                 let totalToSchedule = selected.length;
 
@@ -2033,6 +2034,12 @@
                                     }
                                     continue;
                                 }
+                                if (result.type === "audit") {
+                                    // Post-solve sanity audit: the schedule is placed but
+                                    // geographically suspect — never present it as clean.
+                                    auditWarnings = result.warnings || [];
+                                    continue;
+                                }
 
                                 completed++;
                                 if (document.getElementById('schedule-progress-text')) {
@@ -2056,6 +2063,18 @@
                 
                 if (failures.length > 0) {
                     openFailedPoisModal(failures);
+                } else if (auditWarnings.length > 0) {
+                    // Everything placed, but the sanity audit found geographic
+                    // incoherence — surface it instead of claiming success.
+                    let msg = `<ul class="list-disc pl-5 text-left space-y-3 mt-4 text-amber-200">`;
+                    for (const w of auditWarnings) {
+                        msg += `<li>${w}</li>`;
+                    }
+                    msg += `</ul>`;
+                    openConfirmModal("Schedule Warnings",
+                        `The schedule was placed, but a sanity check flagged some results that look wrong:<br>${msg}`, [
+                        { text: "Close", className: "px-4 py-2 rounded-lg bg-gray-600 hover:bg-gray-500 text-white font-bold shadow-md transition-colors text-sm", onClick: () => { fetchTripData(); updatePoiBulkActions(); } }
+                    ]);
                 } else if (insights.length > 0) {
                     // If there are no failures but there are insights, show a modal for the insights
                     let msg = `<ul class="list-disc pl-5 text-left space-y-4 mt-4 text-indigo-200" id="insight-modal-list">`;

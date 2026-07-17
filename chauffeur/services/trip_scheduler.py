@@ -1043,6 +1043,76 @@ def _layout_one_day(trip: TripMetadata, res: SolveResult, di: int, anchor_by_day
         anchor.scheduled_end = prev_end.timestamp()
 
 
+def audit_solve(trip: TripMetadata, res: SolveResult) -> List[str]:
+    """Post-solve sanity audit — the last line of the data-integrity defense.
+
+    Deterministic haversine checks over the FINAL schedule state (this batch plus
+    everything already placed): no API calls, no LLM, milliseconds. A non-empty
+    result means the itinerary is geographically incoherent in a way the input
+    fences could not prevent (usually stale or poisoned stored data) and must not
+    be presented as a clean success. Day labels are 1-indexed trip days — never
+    calendar dates, which are internal mock values on flexible drafts.
+    """
+    warnings: List[str] = []
+    if not res.days or res.local_tz is None:
+        return warnings
+    day_by_date = {d.date: d for d in res.days}
+    pois_by_id = {p.id: p for p in trip.pois}
+
+    filled: set = set()
+    for p in trip.pois:
+        if not (p.is_scheduled and p.scheduled_start):
+            continue
+        p_local = datetime.datetime.fromtimestamp(
+            p.scheduled_start, tz=datetime.timezone.utc).astimezone(res.local_tz)
+        if getattr(p, 'is_background', False):
+            dates = []
+            for ds in (getattr(p, 'claimed_dates', None) or [p_local.strftime('%Y-%m-%d')]):
+                try:
+                    dates.append(datetime.datetime.strptime(ds, '%Y-%m-%d').date())
+                except ValueError:
+                    pass
+        else:
+            dates = [p_local.date()]
+        for dt in dates:
+            d = day_by_date.get(dt)
+            if d is None:
+                continue
+            filled.add(d.index)
+            dist = _dist_mins(d.accommodation, p) if d.accommodation is not None else None
+            if dist is not None and dist > MAX_BASE_DIST_MINS:
+                kind = "Anchor" if getattr(p, 'is_background', False) else "POI"
+                warnings.append(
+                    f"{kind} '{p.name}' sits on Day {d.index + 1}, ~{dist} min from that day's "
+                    f"home base '{getattr(d.accommodation, 'name', '?')}' — its coordinates or "
+                    f"the stay dates look wrong")
+
+    # days that stayed empty while unscheduled POIs sit near their home base
+    cleared: set = set()
+    for r in (getattr(trip, 'rules', []) or []):
+        if (getattr(r, 'is_enabled', True) and getattr(r, 'rule_type', '') == 'keep_clear'
+                and getattr(r, 'hardness', '') == 'hard'):
+            for di in _rule_days(r, res.days):
+                d = next(dd for dd in res.days if dd.index == di)
+                if not r.blocks or set(r.blocks) >= {b.name for b in d.blocks}:
+                    cleared.add(di)
+    unplaced = [pois_by_id[pid] for pid in res.failures if pid in pois_by_id]
+    for d in res.days:
+        if d.index in filled or d.index in cleared or d.accommodation is None:
+            continue
+        nearby = []
+        for p in unplaced:
+            dist = _dist_mins(d.accommodation, p)
+            if dist is not None and dist <= MAX_BASE_DIST_MINS:
+                nearby.append(p)
+        if nearby:
+            names = ", ".join(p.name for p in nearby[:3])
+            warnings.append(
+                f"Day {d.index + 1} has nothing scheduled while {len(nearby)} unscheduled "
+                f"POI(s) are near its home base ({names}{', ...' if len(nearby) > 3 else ''})")
+    return warnings
+
+
 def claimed_day_spans(poi: Dict[str, Any], tz_str: Optional[str]) -> Optional[List[Tuple[int, int, float, float]]]:
     """
     For a multi-day background POI (dict form, as stored), return one (index, total,
@@ -1117,6 +1187,13 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
         for pid in target_ids:
             if pid in res.assigned and res.assigned[pid][0] == di:
                 yield {"poi_id": pid, "success": True, "reason": None}
+
+    # last line of defense: never present a geographically incoherent result as clean
+    audit = audit_solve(trip, res)
+    if audit:
+        for w in audit:
+            print(f"[TRIP AUDIT] {w}")
+        yield {"type": "audit", "warnings": audit}
 
 
 def schedule_poi(trip: TripMetadata, poi: TripPOI,

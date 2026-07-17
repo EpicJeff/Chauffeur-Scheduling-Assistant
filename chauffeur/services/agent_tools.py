@@ -198,8 +198,11 @@ class AddTripPoiTool(BaseModel):
     category: Optional[str] = Field(default="sightseeing", description="Category (sightseeing, food, activity, shopping, other).")
     duration_mins: int = Field(default=60, description="Duration in minutes.")
     notes: Optional[str] = Field(default="", description="Any notes.")
-    occurrences: Optional[int] = Field(default=1, description="Number of times to add this POI. Set > 1 if user wants multiple days.")
-    is_background: Optional[bool] = Field(default=False, description="Set to true if this is a full-day background event like a theme park.")
+    occurrences: Optional[int] = Field(default=1, description="Number of times to add this standalone POI (e.g. 'two surf lessons'). NOT for multi-day anchors — use days_claimed.")
+    is_background: Optional[bool] = Field(default=False, description="True only for an ANCHOR: a half-day-or-longer experience worth organizing a whole day around (theme park, 'explore the old town'). Never for a single attraction under ~3 hours.")
+    days_claimed: Optional[int] = Field(default=1, description="Anchors only: number of FULL DAYS this anchor occupies ('3 days at Disney' = one POI with days_claimed 3).")
+    approx_lat: Optional[float] = Field(default=None, description="Your best estimate of the POI's latitude (region-level accuracy). Used to reject a map match in the wrong city — always provide it.")
+    approx_lng: Optional[float] = Field(default=None, description="Your best estimate of the POI's longitude. Always provide it with approx_lat.")
     valid_days_of_week: Optional[List[int]] = Field(default_factory=list, description="List of valid days (0=Mon, 6=Sun) to schedule this POI.")
 
 class AddTripAccommodationTool(BaseModel):
@@ -218,6 +221,8 @@ class AddTripAccommodationTool(BaseModel):
     nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
     check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD. Only use when the user gave explicit calendar dates; otherwise prefer check_in_night/nights.")
     check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
+    approx_lat: Optional[float] = Field(default=None, description="Your best estimate of the accommodation's latitude (city-level accuracy). Used to reject a map match in the wrong city — always provide it.")
+    approx_lng: Optional[float] = Field(default=None, description="Your best estimate of the accommodation's longitude. Always provide it with approx_lat.")
     notes: Optional[str] = Field(default="", description="Any notes.")
 
 class EditTripAccommodationTool(BaseModel):
@@ -234,6 +239,8 @@ class EditTripAccommodationTool(BaseModel):
     nights: Optional[int] = Field(default=None, description="Number of nights for this stay. Used with check_in_night.")
     check_in_date: Optional[str] = Field(default=None, description="Absolute check-in date YYYY-MM-DD (prefer check_in_night for drafts).")
     check_out_date: Optional[str] = Field(default=None, description="Absolute check-out date YYYY-MM-DD.")
+    approx_lat: Optional[float] = Field(default=None, description="When changing location: your estimate of the new latitude, to reject a map match in the wrong city.")
+    approx_lng: Optional[float] = Field(default=None, description="When changing location: your estimate of the new longitude.")
     notes: Optional[str] = Field(default=None, description="New notes.")
 
 class EditTripPoiTool(BaseModel):
@@ -247,6 +254,8 @@ class EditTripPoiTool(BaseModel):
     category: Optional[str] = Field(default=None, description="Optional new category.")
     duration_mins: Optional[int] = Field(default=None, description="Optional new duration in minutes.")
     priority: Optional[str] = Field(default=None, description="Optional new priority (must, want, stretch).")
+    approx_lat: Optional[float] = Field(default=None, description="When changing location: your estimate of the new latitude, to reject a map match in the wrong city.")
+    approx_lng: Optional[float] = Field(default=None, description="When changing location: your estimate of the new longitude.")
     valid_days_of_week: Optional[List[int]] = Field(default=None, description="Optional list of integers representing valid days (0=Mon, 6=Sun).")
 
 class StartDriveTool(BaseModel):
@@ -585,12 +594,12 @@ def handle_add_trip_poi(args: dict) -> dict:
     trip_location = metadata.get('location', '')
     
     enrichment = enrich_poi_data(name, location, trip_location)
-    
-    occurrences = args.get('occurrences', 1)
+    from services.trip_validation import vet_poi
+    is_bg, days_claimed, occurrences = vet_poi(enrichment, args)
+
     pois_to_add = []
-    
     for i in range(occurrences):
-        name_label = name if occurrences == 1 else f"{name} (Day {i+1})"
+        name_label = name if occurrences == 1 else f"{name} ({i+1} of {occurrences})"
         poi = {
             "id": uuid.uuid4().hex,
             "name": name_label,
@@ -603,25 +612,26 @@ def handle_add_trip_poi(args: dict) -> dict:
             "scheduled_start": None,
             "scheduled_end": None,
             "occurrences": 1,
-            "is_background": args.get('is_background', False),
+            "is_background": is_bg,
+            "days_claimed": days_claimed if is_bg else 1,
             "valid_days_of_week": args.get('valid_days_of_week', [])
         }
-        
+
         for k, v in enrichment.items():
             if k not in ['location', 'mapbox_id'] and k not in poi:
                 poi[k] = v
-                
+
         pois_to_add.append(poi)
-        
+
     if 'pois' not in metadata:
         metadata['pois'] = []
     metadata['pois'].extend(pois_to_add)
     storage.set_trip_metadata(event_id, metadata)
-    
-    return {
-        "status": "success",
-        "message": f"Added {occurrences} POI(s) '{name}' to trip."
-    }
+
+    msg = f"Added {occurrences} POI(s) '{name}' to trip."
+    if args.get('is_background') and not is_bg:
+        msg += " Note: added as a regular POI, not a day anchor — it lasts under 3 hours."
+    return {"status": "success", "message": msg}
 
 def _trip_date_bounds(metadata):
     """The trip's (start, end) datetimes: mock window for drafts, calendar
@@ -677,9 +687,85 @@ def _resolve_stay_dates(args, metadata):
     return (ci_d.strftime('%Y-%m-%d') if ci_d else ""), (co_d.strftime('%Y-%m-%d') if co_d else "")
 
 
+def _night_ordinal(date_str, metadata):
+    """1-indexed trip night for a YYYY-MM-DD date, or None."""
+    import datetime
+    start_dt, _ = _trip_date_bounds(metadata)
+    if not start_dt:
+        return None
+    try:
+        d = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return None
+    return (d - start_dt.date()).days + 1
+
+
+def _stay_label(ci, co, metadata):
+    """Agent-facing label for a stay range. Draft trips speak in trip nights —
+    their mock calendar dates must never surface anywhere a user could see."""
+    if metadata.get('is_draft'):
+        a, b = _night_ordinal(ci, metadata), _night_ordinal(co, metadata)
+        if a is not None and b is not None:
+            return f"night {a}" if b - a == 1 else f"nights {a}-{b - 1}"
+    return f"{ci} -> {co}"
+
+
+def _validate_stay(ci, co, metadata, exclude_id=None):
+    """Error string if a stay range is invalid or overlaps an existing stay, else None.
+
+    Overlapping stays poison the scheduler's day->home-base map, so the agent
+    gets a correctable error instead of a silent write."""
+    from services.trip_validation import parse_stay_range, find_stay_overlap
+    rng = parse_stay_range(ci, co)
+    if rng and rng[1] <= rng[0]:
+        return "Check-out must be after check-in — a stay needs at least one night."
+    conflict = find_stay_overlap(ci, co, metadata.get('accommodations'), exclude_id=exclude_id)
+    if conflict is not None:
+        return (f"The requested stay ({_stay_label(ci, co, metadata)}) overlaps the existing stay "
+                f"'{conflict.get('name')}' ({_stay_label(conflict.get('check_in_date'), conflict.get('check_out_date'), metadata)}). "
+                f"Legs must be contiguous and non-overlapping — shorten that stay first with "
+                f"edit_trip_accommodation, or choose non-overlapping check_in_night/nights.")
+    return None
+
+
+def _clip_neighbors(new_ci, new_co, metadata, exclude_id):
+    """Make room for an edited stay: clip other stays out of [new_ci, new_co).
+
+    An edit expresses fresh user intent, so neighboring stays yield — their
+    dates are clipped to the edited range's edges (rejecting edits outright
+    would deadlock: two full-span stays could never be re-dated into legs).
+    A stay whose entire range falls inside the edited one cannot be clipped;
+    that returns an error instead — deleting a stay must be the agent's
+    explicit call, never a side effect. Returns (clip_notes, error)."""
+    from services.trip_validation import parse_stay_range
+    rng = parse_stay_range(new_ci, new_co)
+    if rng is None:
+        return [], None
+    ci, co = rng
+    notes = []
+    for a in metadata.get('accommodations') or []:
+        if a.get('id') == exclude_id:
+            continue
+        arng = parse_stay_range(a.get('check_in_date'), a.get('check_out_date'))
+        if not arng or not (arng[0] < co and ci < arng[1]):
+            continue
+        if ci <= arng[0] and arng[1] <= co:
+            return [], (f"Those dates would fully cover the existing stay '{a.get('name')}' "
+                        f"({_stay_label(a.get('check_in_date'), a.get('check_out_date'), metadata)}). "
+                        f"Delete or re-date that stay first.")
+        if arng[0] < ci:
+            a['check_out_date'] = ci.strftime('%Y-%m-%d')
+        else:
+            a['check_in_date'] = co.strftime('%Y-%m-%d')
+        notes.append(f"'{a.get('name')}' is now "
+                     f"{_stay_label(a.get('check_in_date'), a.get('check_out_date'), metadata)}")
+    return notes, None
+
+
 def handle_add_trip_accommodation(args: dict) -> dict:
     from services import storage
     from services.trip_planner import enrich_poi_data
+    from services.trip_validation import vet_accommodation
     event_id = args.get('event_id')
     metadata = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "accommodations": []}
     import uuid
@@ -689,8 +775,12 @@ def handle_add_trip_accommodation(args: dict) -> dict:
     trip_location = metadata.get('location', '')
 
     enrichment = enrich_poi_data(name, location, trip_location)
+    vet_accommodation(enrichment, args)
 
     check_in_date, check_out_date = _resolve_stay_dates(args, metadata)
+    err = _validate_stay(check_in_date, check_out_date, metadata)
+    if err:
+        return {"status": "error", "message": err}
 
     acc = {
         "id": uuid.uuid4().hex,
@@ -710,9 +800,13 @@ def handle_add_trip_accommodation(args: dict) -> dict:
     
     storage.set_trip_metadata(event_id, metadata)
     
+    if acc['check_in_date'] and acc['check_out_date']:
+        span = _stay_label(acc['check_in_date'], acc['check_out_date'], metadata)
+    else:
+        span = "no dates"
     return {
         "status": "success",
-        "message": f"Added Accommodation '{name}' to trip ({acc['check_in_date'] or 'no date'} -> {acc['check_out_date'] or 'no date'})."
+        "message": f"Added Accommodation '{name}' to trip ({span})."
     }
 
 def handle_edit_trip_accommodation(args: dict) -> dict:
@@ -739,37 +833,58 @@ def handle_edit_trip_accommodation(args: dict) -> dict:
     if acc is None:
         return {"status": "error", "message": "Accommodation not found."}
 
-    if args.get('new_name'):
-        acc['name'] = args['new_name']
-    if args.get('location'):
-        from services.trip_planner import enrich_poi_data
-        enrichment = enrich_poi_data(acc.get('name'), args['location'], metadata.get('location', ''))
-        acc['location'] = enrichment.get('location') or args['location']
-        if enrichment.get('lat') is not None:
-            acc['lat'] = enrichment.get('lat')
-            acc['lng'] = enrichment.get('lng')
-        if enrichment.get('mapbox_id'):
-            acc['mapbox_id'] = enrichment.get('mapbox_id')
-    if args.get('notes') is not None:
-        acc['notes'] = args['notes']
-
+    # resolve and validate any date change BEFORE mutating anything, so a
+    # rejected edit leaves the stay untouched
+    new_ci = new_co = None
+    clip_notes = []
     if any(args.get(k) is not None for k in ('check_in_date', 'check_out_date', 'check_in_night', 'nights')):
+        from services.trip_validation import parse_stay_range
         res_args = dict(args)
         # keep the current dates as the baseline unless an ordinal overrides them
         if not res_args.get('check_in_date') and not res_args.get('check_in_night'):
             res_args['check_in_date'] = acc.get('check_in_date')
         if not res_args.get('check_out_date') and not res_args.get('nights'):
             res_args['check_out_date'] = acc.get('check_out_date')
-        ci, co = _resolve_stay_dates(res_args, metadata)
-        if ci:
-            acc['check_in_date'] = ci
-        if co:
-            acc['check_out_date'] = co
+        new_ci, new_co = _resolve_stay_dates(res_args, metadata)
+        rng = parse_stay_range(new_ci, new_co)
+        if rng and rng[1] <= rng[0]:
+            return {"status": "error",
+                    "message": "Check-out must be after check-in — a stay needs at least one night."}
+        clip_notes, err = _clip_neighbors(new_ci, new_co, metadata, acc.get('id'))
+        if err:
+            return {"status": "error", "message": err}
+
+    if args.get('new_name'):
+        acc['name'] = args['new_name']
+    if args.get('location'):
+        from services.trip_planner import enrich_poi_data
+        from services.trip_validation import reconcile_coords
+        enrichment = enrich_poi_data(acc.get('name'), args['location'], metadata.get('location', ''))
+        reconcile_coords(enrichment, {'name': acc.get('name'), 'location': args['location'],
+                                      'approx_lat': args.get('approx_lat'),
+                                      'approx_lng': args.get('approx_lng')})
+        # the old coords/ids described the old location — replace, never keep stale
+        acc['location'] = enrichment.get('location') or args['location']
+        acc['lat'] = enrichment.get('lat')
+        acc['lng'] = enrichment.get('lng')
+        acc['mapbox_id'] = enrichment.get('mapbox_id')
+    if args.get('notes') is not None:
+        acc['notes'] = args['notes']
+
+    if new_ci:
+        acc['check_in_date'] = new_ci
+    if new_co:
+        acc['check_out_date'] = new_co
 
     storage.set_trip_metadata(event_id, metadata)
-    return {"status": "success",
-            "message": f"Updated accommodation '{acc.get('name')}' "
-                       f"({acc.get('check_in_date') or 'no date'} -> {acc.get('check_out_date') or 'no date'})."}
+    if acc.get('check_in_date') and acc.get('check_out_date'):
+        span = _stay_label(acc['check_in_date'], acc['check_out_date'], metadata)
+    else:
+        span = "no dates"
+    msg = f"Updated accommodation '{acc.get('name')}' ({span})."
+    if clip_notes:
+        msg += " Adjusted neighboring stays to make room: " + "; ".join(clip_notes) + "."
+    return {"status": "success", "message": msg}
 
 def handle_edit_trip_poi(args: dict) -> dict:
     from services import storage
@@ -783,10 +898,24 @@ def handle_edit_trip_poi(args: dict) -> dict:
     if not target_poi:
         return {"status": "error", "message": "POI not found in this trip."}
         
-    for field in ['name', 'location', 'category', 'duration_mins', 'priority']:
+    for field in ['name', 'category', 'duration_mins', 'priority']:
         if args.get(field) is not None:
             target_poi[field] = args.get(field)
-            
+
+    if args.get('location') is not None:
+        # re-ground the POI: keeping the old coords/ids for a new location would
+        # leave the scheduler routing to the old place
+        from services.trip_planner import enrich_poi_data
+        from services.trip_validation import reconcile_coords
+        enrichment = enrich_poi_data(target_poi.get('name'), args['location'], metadata.get('location', ''))
+        reconcile_coords(enrichment, {'name': target_poi.get('name'), 'location': args['location'],
+                                      'approx_lat': args.get('approx_lat'),
+                                      'approx_lng': args.get('approx_lng')})
+        target_poi['location'] = enrichment.get('location') or args['location']
+        target_poi['lat'] = enrichment.get('lat')
+        target_poi['lng'] = enrichment.get('lng')
+        target_poi['mapbox_id'] = enrichment.get('mapbox_id')
+
     if args.get('valid_days_of_week') is not None:
         target_poi['valid_days_of_week'] = args.get('valid_days_of_week')
             

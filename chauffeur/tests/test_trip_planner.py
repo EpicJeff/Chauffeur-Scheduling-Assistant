@@ -168,7 +168,7 @@ def scenario_accommodation_overlaps_repaired():
 
 def scenario_overlap_repair_edge_cases():
     """Clip-forward, duplicate ranges, zero-night, undated passthrough, existing stays."""
-    from services.trip_planner import _repair_accommodation_overlaps
+    from services.trip_validation import repair_accommodation_overlaps as _repair_accommodation_overlaps
 
     # partial overlap: the earlier stay is clipped to the later stay's check-in
     a = {"name": "A", "check_in_date": "2030-01-01", "check_out_date": "2030-01-05"}

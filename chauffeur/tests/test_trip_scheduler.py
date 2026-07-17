@@ -115,6 +115,58 @@ def scenario_checkout_day_keeps_home_base():
     check(louvre.id in res.assigned, "near POI schedules normally")
 
 
+def scenario_audit_flags_incoherence():
+    """audit_solve is the last line of defense: a stale/poisoned placement the
+    input fences never saw (locked from an older solve) gets flagged instead of
+    being presented as a clean success."""
+    from services.trip_scheduler import layout_days, audit_solve
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    hotel = mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=3))
+    trip = mk_trip(days=3, accommodations=[hotel])
+    stale = mk_poi("Nice Beach", *NICE, category="sightseeing", duration_mins=90)
+    stale.is_scheduled = True
+    stale.scheduled_start = datetime.datetime.combine(
+        MONDAY + datetime.timedelta(days=1), datetime.time(10, 0), tzinfo=ET).timestamp()
+    stale.scheduled_end = stale.scheduled_start + 5400
+    fresh = mk_poi("Louvre", 48.8606, 2.3376, category="sightseeing", duration_mins=90)
+    trip.pois = [stale, fresh]
+    res = solve_assignment(trip, [fresh.id])
+    check(res.error is None, f"solve error: {res.error}")
+    layout_days(trip, res, [fresh.id])
+    warnings = audit_solve(trip, res)
+    check(any("Nice Beach" in w for w in warnings),
+          f"stale far placement must be flagged, got {warnings}")
+    check(all("2026" not in w for w in warnings), "audit speaks in trip days, not dates")
+
+
+def scenario_audit_clean_and_empty_days():
+    """A coherent solve audits clean; a day left empty while unscheduled POIs sit
+    near its home base gets flagged."""
+    from services.trip_scheduler import layout_days, audit_solve
+    hotel = mk_acc("Paris Hotel", *NEAR_EIFFEL, MONDAY, MONDAY + datetime.timedelta(days=3))
+    trip = mk_trip(days=3, accommodations=[hotel])
+    trip.pois = [mk_poi(f"Spot {i}", *NEAR_EIFFEL, category="sightseeing", duration_mins=90)
+                 for i in range(3)]
+    res = solve_assignment(trip, all_ids(trip.pois))
+    check(res.error is None, f"solve error: {res.error}")
+    layout_days(trip, res, all_ids(trip.pois))
+    check(audit_solve(trip, res) == [], "coherent solve audits clean")
+
+    # three Monday-only dinner spots: one wins the dinner block, two fail,
+    # days 2-3 stay empty while the failures sit right next to the hotel
+    trip2 = mk_trip(days=3, accommodations=[
+        mk_acc("Paris Hotel", *NEAR_EIFFEL, MONDAY, MONDAY + datetime.timedelta(days=3))])
+    trip2.pois = [mk_poi(f"Dinner {i}", *NEAR_EIFFEL, category="food", dining_style="fine",
+                         duration_mins=90, valid_days_of_week=[0]) for i in range(3)]
+    res2 = solve_assignment(trip2, all_ids(trip2.pois))
+    check(res2.error is None, f"solve error: {res2.error}")
+    layout_days(trip2, res2, all_ids(trip2.pois))
+    warnings = audit_solve(trip2, res2)
+    check(any("has nothing scheduled" in w for w in warnings),
+          f"empty days with nearby unscheduled POIs must be flagged, got {warnings}")
+
+
 def scenario_disney_containers():
     mk = mk_poi("Magic Kingdom", *MK, is_background=True, days_claimed=2, priority="must")
     epcot = mk_poi("Epcot", *EPCOT, is_background=True, days_claimed=1, priority="must")
@@ -360,6 +412,8 @@ SCENARIOS = [
     scenario_geography_fence,
     scenario_anchor_needs_days_within_its_leg,
     scenario_checkout_day_keeps_home_base,
+    scenario_audit_flags_incoherence,
+    scenario_audit_clean_and_empty_days,
     scenario_multiday_bg_day_spans,
     scenario_disney_containers,
     scenario_valid_day_claims,

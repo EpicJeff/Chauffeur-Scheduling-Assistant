@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from models.schemas import TripMetadata, TripPOI, Event, TripAccommodation
 from services import storage, maps, calendar
+from services.trip_validation import (vet_poi, vet_accommodation,
+                                       repair_accommodation_overlaps,
+                                       parse_stay_range)
 
 def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
     """
@@ -83,153 +86,6 @@ def _resolve_parent_containers(new_pois: List[TripPOI], trip: TripMetadata) -> N
                 match = a
                 break
         p.parent_container = match.id if match else None
-
-
-# Below this, an is_background=true suggestion for a single day is an LLM
-# misclassification (a 60-min museum visit is not a day anchor) and gets demoted.
-ANCHOR_MIN_DURATION_MINS = 180
-
-
-def _anchor_fields(s: dict) -> Tuple[bool, int, int]:
-    """Resolve (is_background, days_claimed, occurrences) from an LLM POI suggestion.
-
-    Anchors are ONE POI claiming N days; occurrences-cloning is only for repeated
-    standalone activities. A short single-day "anchor" is demoted to a regular POI:
-    as a background it would claim a whole day exclusively and hijack that day's
-    distance base in the scheduler.
-    """
-    is_bg = bool(s.get('is_background', False))
-    days_claimed = max(1, int(s.get('days_claimed') or 1))
-    if is_bg and int(s.get('occurrences') or 1) > days_claimed:
-        days_claimed = int(s.get('occurrences'))  # legacy LLM habit: "3 days" as occurrences
-    dur = s.get('duration_mins')
-    if is_bg and days_claimed <= 1 and isinstance(dur, (int, float)) and dur < ANCHOR_MIN_DURATION_MINS:
-        print(f"trip planner: demoting '{s.get('name')}' to a regular POI "
-              f"(marked is_background but only lasts {int(dur)} mins)")
-        is_bg = False
-        days_claimed = 1
-    occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
-    return is_bg, days_claimed, occurrences
-
-
-# Geocode vs LLM-itinerary disagreement beyond this is a bogus fuzzy match.
-COORD_MISMATCH_KM = 60
-
-
-def _reconcile_poi_coords(enrichment: dict, s: dict) -> None:
-    """Give the LLM's rough coordinates veto power over a bad geocode.
-
-    Mapbox fuzzy-matches invented or region-scale POI names to same-named places
-    anywhere ('Burgundy Wine Trail' matched a spot in Paris), silently relocating
-    a whole leg's POIs for the scheduler. The LLM knows the intended region, so
-    when the geocode disagrees with approx_lat/approx_lng by more than
-    COORD_MISMATCH_KM the match is treated as bogus: keep the LLM's coordinates
-    and drop the matched place's identity fields (hours, website, wikidata),
-    which belong to the wrong place. Mutates `enrichment` in place.
-    """
-    import re
-    try:
-        a_lat, a_lng = float(s.get('approx_lat')), float(s.get('approx_lng'))
-    except (TypeError, ValueError):
-        return
-    if not (-90.0 <= a_lat <= 90.0 and -180.0 <= a_lng <= 180.0) or (a_lat == 0.0 and a_lng == 0.0):
-        return
-    lat, lng = enrichment.get('lat'), enrichment.get('lng')
-    if lat is None or lng is None:
-        enrichment['lat'], enrichment['lng'] = a_lat, a_lng  # rough beats nothing
-        return
-    from services.trip_scheduler import _haversine_km
-    gap_km = _haversine_km(lat, lng, a_lat, a_lng)
-    if gap_km <= COORD_MISMATCH_KM:
-        return
-    print(f"trip planner: geocode for '{s.get('name')}' is {gap_km:.0f}km from where the "
-          f"itinerary places it — keeping the itinerary region, dropping the matched place")
-    enrichment['lat'], enrichment['lng'] = a_lat, a_lng
-    enrichment['location'] = s.get('search_query') or s.get('name') or enrichment['location']
-    for k in ('mapbox_id', 'wikidata_id', 'opening_hours', 'website',
-              'phone_number', 'cuisine', 'internet_access'):
-        enrichment[k] = None
-    clean_name = re.sub(r'\(.*?\)', '', s.get('name') or '').strip()
-    enrichment['image_url'] = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
-    enrichment['link'] = ("https://www.google.com/maps/search/?api=1&query="
-                          + urllib.parse.quote(f"{s.get('name')} {enrichment['location']}"))
-
-
-def _parse_stay_range(ci_s, co_s) -> Optional[Tuple[datetime.date, datetime.date]]:
-    """(check_in, check_out) as dates, or None if either is missing/unparseable."""
-    try:
-        ci = datetime.datetime.strptime(ci_s or '', "%Y-%m-%d").date()
-        co = datetime.datetime.strptime(co_s or '', "%Y-%m-%d").date()
-        return ci, co
-    except (ValueError, TypeError):
-        return None
-
-
-def _repair_accommodation_overlaps(suggestions: List[dict],
-                                   existing: Optional[List[Any]] = None) -> List[dict]:
-    """Guard against malformed LLM accommodation output.
-
-    Overlapping stay date ranges poison the scheduler's day->home-base map (the
-    first accommodation covering a date wins), which scatters POIs geographically.
-    Repairs, in order: drop stays that overlap an already-saved stay, drop
-    zero-night stays, drop "umbrella" stays that strictly contain two or more
-    other stays (a whole-trip hotel emitted alongside the per-leg ones), then
-    clip remaining overlaps forward (the later check_in wins). Undated
-    suggestions pass through untouched.
-    """
-    existing_ranges = []
-    for a in existing or []:
-        rng = _parse_stay_range(getattr(a, 'check_in_date', None), getattr(a, 'check_out_date', None))
-        if rng and rng[1] > rng[0]:
-            existing_ranges.append(rng)
-
-    undated = []   # (orig_idx, suggestion)
-    dated = []     # [check_in, check_out, orig_idx, suggestion]
-    for idx, s in enumerate(suggestions):
-        rng = _parse_stay_range(s.get('check_in_date'), s.get('check_out_date'))
-        if rng is None:
-            undated.append((idx, s))
-            continue
-        ci, co = rng
-        if co <= ci:
-            print(f"trip accommodations: dropping zero-night stay '{s.get('name')}' "
-                  f"({s.get('check_in_date')} -> {s.get('check_out_date')})")
-            continue
-        if any(ci < eco and eci < co for eci, eco in existing_ranges):
-            print(f"trip accommodations: dropping '{s.get('name')}' — dates overlap an existing stay")
-            continue
-        dated.append([ci, co, idx, s])
-
-    kept = []
-    for ci, co, idx, s in dated:
-        spans = sum(1 for ci2, co2, idx2, _ in dated
-                    if idx2 != idx and ci <= ci2 and co2 <= co and (ci2, co2) != (ci, co))
-        if spans >= 2:
-            print(f"trip accommodations: dropping umbrella stay '{s.get('name')}' "
-                  f"({ci} -> {co}) — it spans {spans} other stays")
-        else:
-            kept.append([ci, co, idx, s])
-
-    kept.sort(key=lambda t: (t[0], t[1]))
-    repaired: List[list] = []
-    for entry in kept:
-        while repaired and entry[0] < repaired[-1][1]:
-            prev = repaired[-1]
-            print(f"trip accommodations: clipping '{prev[3].get('name')}' check-out "
-                  f"{prev[1]} -> {entry[0]} (overlapped '{entry[3].get('name')}')")
-            prev[1] = entry[0]
-            prev[3]['check_out_date'] = entry[0].strftime("%Y-%m-%d")
-            if prev[1] <= prev[0]:
-                print(f"trip accommodations: dropping '{prev[3].get('name')}' — "
-                      f"nothing left after clipping")
-                repaired.pop()
-            else:
-                break
-        repaired.append(entry)
-
-    out = undated + [(idx, s) for _, _, idx, s in repaired]
-    out.sort(key=lambda t: t[0])
-    return [s for _, s in out]
 
 
 def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = "") -> Tuple[Optional[str], List[TripPOI]]:
@@ -366,9 +222,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('search_query', name)
 
         enrichment = enrich_poi_data(name, query, trip.location)
-        _reconcile_poi_coords(enrichment, s)
-
-        is_bg, days_claimed, occurrences = _anchor_fields(s)
+        is_bg, days_claimed, occurrences = vet_poi(enrichment, s)
         for i in range(occurrences):
             name_label = s.get('name') if occurrences == 1 else f"{s.get('name')} ({i+1} of {occurrences})"
             poi = TripPOI(
@@ -1233,11 +1087,14 @@ You MUST respond with a single valid JSON object of the following exact structur
       "notes": "Explain why this is a good fit and what POIs it is close to.",
       "check_in_date": "YYYY-MM-DD",
       "check_out_date": "YYYY-MM-DD",
+      "approx_lat": 48.87,
+      "approx_lng": 2.33,
       "estimated_price_usd": 150.0
     }
   ]
 }
 Note: `estimated_price_usd` is your best estimate of the TOTAL cost of the stay for the ENTIRE group for the full duration of the trip in USD.
+`approx_lat`/`approx_lng` are REQUIRED for every accommodation: your best estimate of its real-world latitude/longitude (city-level accuracy is fine). If the map service matches a same-named place in a different city, your coordinates decide which region is correct.
 Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
 """
     
@@ -1301,7 +1158,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return None, []
         
     budget_warning = response_json.get('budget_warning')
-    suggestions = _repair_accommodation_overlaps(
+    suggestions = repair_accommodation_overlaps(
         response_json.get('accommodations', []), trip.accommodations)
     accs = []
 
@@ -1310,7 +1167,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('location', name)
         
         enrichment = enrich_poi_data(name, query, trip.location)
-            
+        vet_accommodation(enrichment, s)
+
         acc = TripAccommodation(
             id=uuid.uuid4().hex,
             name=name,
@@ -1395,6 +1253,8 @@ You MUST respond with a single valid JSON object of the following exact structur
       "notes": "Explain why this is a good fit and what POIs it is close to.",
       "check_in_date": "YYYY-MM-DD",
       "check_out_date": "YYYY-MM-DD",
+      "approx_lat": 48.87,
+      "approx_lng": 2.33,
       "estimated_price_usd": 150.0
     }}
   ],
@@ -1477,7 +1337,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{date_bounds_str}\n"
         f"{budget_context}"
-        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}. Every accommodation MUST include approx_lat/approx_lng — your estimate of the hotel's real coordinates (city-level accuracy is fine).\n"
         f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}). Suggest POIs for every area the user mentioned — do not allocate or ration POIs per leg; the scheduler places each POI on the right days automatically from its location.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
@@ -1557,7 +1417,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             true_pois.append(s)
     sugg_pois = true_pois
 
-    sugg_accs = _repair_accommodation_overlaps(sugg_accs, trip.accommodations)
+    sugg_accs = repair_accommodation_overlaps(sugg_accs, trip.accommodations)
 
 
     pois = []
@@ -1577,9 +1437,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('search_query', name)
 
         enrichment = enrich_poi_data(name, query, trip.location)
-        _reconcile_poi_coords(enrichment, s)
-
-        is_bg, days_claimed, occurrences = _anchor_fields(s)
+        is_bg, days_claimed, occurrences = vet_poi(enrichment, s)
         for i in range(occurrences):
             poi_name = name if occurrences == 1 else f"{name} ({i+1} of {occurrences})"
             poi = TripPOI(
@@ -1626,7 +1484,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         # Date-overlapping suggestions were already dropped by
         # _repair_accommodation_overlaps, so a name match is only a duplicate
         # when the suggestion carries no usable dates.
-        if (_parse_stay_range(s.get('check_in_date'), s.get('check_out_date')) is None
+        if (parse_stay_range(s.get('check_in_date'), s.get('check_out_date')) is None
                 and any(a.lower() == name.lower() for a in existing_accs)):
             print(f"trip accommodations: dropping undated re-suggestion of existing stay '{name}'")
             continue
@@ -1635,7 +1493,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('location', name)
         
         enrichment = enrich_poi_data(name, query, trip.location)
-            
+        vet_accommodation(enrichment, s)
+
         acc = TripAccommodation(
             id=uuid.uuid4().hex,
             name=name,
