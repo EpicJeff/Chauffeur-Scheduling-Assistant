@@ -56,23 +56,24 @@ def run_plan(batches, prompt="plan a great 10 day trip to France"):
         llm._call_llm_json = original
 
 
-def scenario_topup_until_target():
-    """9 POIs from the first call must trigger top-ups until >= 40 (10 nights * 4)."""
-    fake, pois, accs = run_plan([poi_batch(0, 9), poi_batch(100, 12),
-                                 poi_batch(200, 12), poi_batch(300, 12)])
-    check(len(fake.prompts) == 4, f"expected 1 initial + 3 top-up calls, got {len(fake.prompts)}")
-    check(len(pois) == 45, f"expected 45 POIs (9+12+12+12), got {len(pois)}")
+def scenario_healthy_single_shot_costs_one_request():
+    """The historical healthy case (~27-30 POIs for 10 nights) must cost exactly
+    ONE request — the floor is 28 (70% of 40), so 28+ never triggers a top-up."""
+    fake, pois, _ = run_plan([poi_batch(0, 28)])
+    check(len(fake.prompts) == 1, f"28 POIs is healthy, got {len(fake.prompts)} calls")
+    check(len(pois) == 28, f"expected 28 POIs, got {len(pois)}")
+    check("at least 28" in fake.prompts[0], "prompt states the POI floor explicitly")
+
+
+def scenario_topup_only_on_collapse():
+    """A collapsed first call (9 POIs) tops up until the floor is met, max 2 rounds."""
+    fake, pois, accs = run_plan([poi_batch(0, 9), poi_batch(100, 12), poi_batch(200, 12)])
+    check(len(fake.prompts) == 3, f"expected 1 initial + 2 top-up calls, got {len(fake.prompts)}")
+    check(len(pois) == 33, f"expected 33 POIs (9+12+12, floor 28 met), got {len(pois)}")
     check("CONTINUATION" not in fake.prompts[0], "first call is not a continuation")
     check(all("CONTINUATION" in p for p in fake.prompts[1:]), "top-ups marked as continuation")
     check("poi 0" in fake.prompts[1].lower(), "top-up lists already-suggested names")
     check(len(accs) == 1, "accommodations from the first call survive the top-up")
-
-
-def scenario_topup_stops_when_target_met():
-    """A first call that already hits the target must not spawn top-ups."""
-    fake, pois, _ = run_plan([poi_batch(0, 40)])
-    check(len(fake.prompts) == 1, f"no top-up needed, got {len(fake.prompts)} calls")
-    check(len(pois) == 40, f"expected 40 POIs, got {len(pois)}")
 
 
 def scenario_topup_dedups_and_stops_when_dry():
@@ -116,8 +117,8 @@ def scenario_topup_failure_keeps_partial():
 
 
 SCENARIOS = [
-    scenario_topup_until_target,
-    scenario_topup_stops_when_target_met,
+    scenario_healthy_single_shot_costs_one_request,
+    scenario_topup_only_on_collapse,
     scenario_topup_dedups_and_stops_when_dry,
     scenario_explicit_count_skips_topup,
     scenario_topup_failure_keeps_partial,

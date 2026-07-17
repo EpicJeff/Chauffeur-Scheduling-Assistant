@@ -1214,8 +1214,11 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
         api_key = settings.get('llm_gemini_api_key')
         
     num_pois = max(1, duration_nights * 4)
-    
-    system_prompt = f"""You are an expert travel agent. 
+    # historical single-shot behavior delivers ~70% of the ask (27-30 for 40);
+    # the floor is what we require in the prompt and enforce with top-up calls
+    min_pois = max(1, (num_pois * 7) // 10)
+
+    system_prompt = f"""You are an expert travel agent.
 The user's trip is {duration_nights} nights long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
 If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, 1 or more accommodations based on the trip length, and logical flights if applicable.
@@ -1324,13 +1327,15 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"{date_bounds_str}\n"
         f"{budget_context}"
         f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
-        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country, then 2 days at the coast'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}). Place each POI geographically near the leg the user intends it for — the scheduler places each POI using that day's accommodation as home base.\n"
-        f"CRITICAL: A multi-leg trip does NOT reduce the POI count. The day counts in the user's leg description (e.g. '4 days in Paris') describe where they are staying, NOT how many POIs they want. Unless the user explicitly asks for a specific number of POIs, still suggest approximately {num_pois} POIs in total for this {duration_nights}-night trip (roughly 4 per day: activities, sights, and restaurants), split across the legs proportional to their nights.\n"
+        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}). Suggest POIs for every area the user mentioned — do not allocate or ration POIs per leg; the scheduler places each POI on the right days automatically from its location.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"{proposed_str}"
         f"User Request: {user_prompt}\n"
-        f"Generate the requested flights, accommodations and POIs, adhering strictly to any quantities specified by the user."
+        f"Generate the requested flights, accommodations and POIs, adhering strictly to any quantities "
+        f"specified by the user. If the user did NOT specify how many POIs they want, your pois array "
+        f"MUST contain at least {min_pois} entries (aim for {num_pois}) regardless of how the trip is "
+        f"split into legs."
     )
     
     try:
@@ -1344,22 +1349,21 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     sugg_accs = response_json.get('accommodations', [])
     sugg_flights = response_json.get('flights', [])
 
-    # LLMs are unreliable at long lists: asked for ~40 POIs in one shot they
-    # may return a complete, valid response with 9. Prompt wording doesn't fix
-    # that (tried twice), so top up with small follow-up calls instead —
-    # models reliably produce 8-12 items per request.
+    # Safety net, NOT the primary mechanism: a healthy single request returns
+    # >= min_pois and costs exactly one call. Top-ups fire only on a genuine
+    # count collapse (LLM ignoring the floor), max 2 extra requests.
     explicit_count = re.search(
         r'\b\d+\s+(pois?|places?|restaurants?|activities|attractions?|sights?|museums?|spots?|things)\b',
         user_prompt, re.IGNORECASE)
     if not explicit_count:
         seen_names = {(p or '').lower() for p in existing_poi_names}
         seen_names.update((s.get('name') or '').lower() for s in sugg_pois)
-        for topup_round in range(3):
-            if len(sugg_pois) >= num_pois:
+        for topup_round in range(2):
+            if len(sugg_pois) >= min_pois:
                 break
             remaining = num_pois - len(sugg_pois)
             print(f"generate_trip_plan: {len(sugg_pois)}/{num_pois} POIs after "
-                  f"{topup_round + 1} call(s), requesting ~{remaining} more...")
+                  f"{topup_round + 1} call(s) (floor {min_pois}), requesting ~{remaining} more...")
             already = ", ".join(sorted(n for n in seen_names if n)) or "None"
             topup_req = (
                 user_req
@@ -1381,7 +1385,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                 break
             seen_names.update((s.get('name') or '').lower() for s in new_pois)
             sugg_pois.extend(new_pois)
-        print(f"generate_trip_plan: {len(sugg_pois)}/{num_pois} POIs after top-up")
+        if len(sugg_pois) < min_pois:
+            print(f"generate_trip_plan: WARNING still below floor after top-up: "
+                  f"{len(sugg_pois)}/{min_pois}")
 
     # Keyword check: Move hotel POIs to accommodations
     acc_keywords = ['hotel', 'resort', 'motel', 'inn', 'airbnb', 'hyatt', 'marriott', 'hilton', 'lodge', 'suites', 'villa', 'bnb']
