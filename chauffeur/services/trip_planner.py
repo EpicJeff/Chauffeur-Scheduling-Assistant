@@ -112,6 +112,49 @@ def _anchor_fields(s: dict) -> Tuple[bool, int, int]:
     return is_bg, days_claimed, occurrences
 
 
+# Geocode vs LLM-itinerary disagreement beyond this is a bogus fuzzy match.
+COORD_MISMATCH_KM = 60
+
+
+def _reconcile_poi_coords(enrichment: dict, s: dict) -> None:
+    """Give the LLM's rough coordinates veto power over a bad geocode.
+
+    Mapbox fuzzy-matches invented or region-scale POI names to same-named places
+    anywhere ('Burgundy Wine Trail' matched a spot in Paris), silently relocating
+    a whole leg's POIs for the scheduler. The LLM knows the intended region, so
+    when the geocode disagrees with approx_lat/approx_lng by more than
+    COORD_MISMATCH_KM the match is treated as bogus: keep the LLM's coordinates
+    and drop the matched place's identity fields (hours, website, wikidata),
+    which belong to the wrong place. Mutates `enrichment` in place.
+    """
+    import re
+    try:
+        a_lat, a_lng = float(s.get('approx_lat')), float(s.get('approx_lng'))
+    except (TypeError, ValueError):
+        return
+    if not (-90.0 <= a_lat <= 90.0 and -180.0 <= a_lng <= 180.0) or (a_lat == 0.0 and a_lng == 0.0):
+        return
+    lat, lng = enrichment.get('lat'), enrichment.get('lng')
+    if lat is None or lng is None:
+        enrichment['lat'], enrichment['lng'] = a_lat, a_lng  # rough beats nothing
+        return
+    from services.trip_scheduler import _haversine_km
+    gap_km = _haversine_km(lat, lng, a_lat, a_lng)
+    if gap_km <= COORD_MISMATCH_KM:
+        return
+    print(f"trip planner: geocode for '{s.get('name')}' is {gap_km:.0f}km from where the "
+          f"itinerary places it — keeping the itinerary region, dropping the matched place")
+    enrichment['lat'], enrichment['lng'] = a_lat, a_lng
+    enrichment['location'] = s.get('search_query') or s.get('name') or enrichment['location']
+    for k in ('mapbox_id', 'wikidata_id', 'opening_hours', 'website',
+              'phone_number', 'cuisine', 'internet_access'):
+        enrichment[k] = None
+    clean_name = re.sub(r'\(.*?\)', '', s.get('name') or '').strip()
+    enrichment['image_url'] = f"api/unsplash/background?query={urllib.parse.quote(clean_name)}"
+    enrichment['link'] = ("https://www.google.com/maps/search/?api=1&query="
+                          + urllib.parse.quote(f"{s.get('name')} {enrichment['location']}"))
+
+
 def _parse_stay_range(ci_s, co_s) -> Optional[Tuple[datetime.date, datetime.date]]:
     """(check_in, check_out) as dates, or None if either is missing/unparseable."""
     try:
@@ -233,6 +276,8 @@ You MUST respond with a single valid JSON object of the following exact structur
       "parent_container": null,
       "is_background": false,
       "days_claimed": 1,
+      "approx_lat": 48.86,
+      "approx_lng": 2.35,
       "estimated_price_usd": 20.0,
       "valid_days_of_week": [],
       "occurrences": 1
@@ -241,6 +286,7 @@ You MUST respond with a single valid JSON object of the following exact structur
 }}
 `is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". An anchor must be a half-day-or-longer experience: a single attraction lasting under ~3 hours (a museum visit, a tour, a viewpoint) is NEVER an anchor. Default false.
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
+`approx_lat`/`approx_lng` are REQUIRED for every POI: your best estimate of its real-world latitude/longitude (region-level accuracy is fine). This anchors map matching — if the map service finds a same-named place in a different city, your coordinates decide which region is correct.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
 `dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
@@ -320,6 +366,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('search_query', name)
 
         enrichment = enrich_poi_data(name, query, trip.location)
+        _reconcile_poi_coords(enrichment, s)
 
         is_bg, days_claimed, occurrences = _anchor_fields(s)
         for i in range(occurrences):
@@ -1365,6 +1412,8 @@ You MUST respond with a single valid JSON object of the following exact structur
       "parent_container": null,
       "is_background": false,
       "days_claimed": 1,
+      "approx_lat": 48.86,
+      "approx_lng": 2.35,
       "estimated_price_usd": 20.0,
       "valid_days_of_week": [],
       "occurrences": 1
@@ -1373,6 +1422,7 @@ You MUST respond with a single valid JSON object of the following exact structur
 }}
 `is_background` should be true if this POI is an ANCHOR: an experience worth organizing an entire day (or several days) around, with other POIs scheduled in and around it. Theme parks and national parks (Magic Kingdom, EPCOT, Universal Studios, Yellowstone) are always anchors, but so are things like "Explore the Eiffel Tower district" or "Old Town day". An anchor must be a half-day-or-longer experience: a single attraction lasting under ~3 hours (a museum visit, a tour, a viewpoint) is NEVER an anchor. Default false.
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
+`approx_lat`/`approx_lng` are REQUIRED for every POI: your best estimate of its real-world latitude/longitude (region-level accuracy is fine). This anchors map matching — if the map service finds a same-named place in a different city, your coordinates decide which region is correct.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
 `dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
@@ -1527,6 +1577,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         query = s.get('search_query', name)
 
         enrichment = enrich_poi_data(name, query, trip.location)
+        _reconcile_poi_coords(enrichment, s)
 
         is_bg, days_claimed, occurrences = _anchor_fields(s)
         for i in range(occurrences):

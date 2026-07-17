@@ -198,6 +198,41 @@ def scenario_overlap_repair_edge_cases():
     check(out == [], "suggestion overlapping an existing stay dropped")
 
 
+def scenario_llm_coords_veto_bad_geocode():
+    """Regression: Mapbox matched 'Burgundy Wine Trail' to a same-named spot in
+    PARIS, silently moving the whole wine leg for the scheduler. When the geocode
+    lands > 60km from the LLM's approx_lat/approx_lng, the LLM's region wins and
+    the matched place's identity fields are dropped. Agreeing geocodes are kept."""
+    rich_enrich = lambda name, location_query, trip_location: {
+        "location": "Rue de Bourgogne, Paris", "mapbox_id": "mb123", "lat": 48.85, "lng": 2.35,
+        "wikidata_id": "Q1", "opening_hours": "9:00-18:00", "website": "http://x",
+        "phone_number": "1", "cuisine": None, "internet_access": None,
+        "image_url": "img", "link": "lnk"}
+    prev = trip_planner.enrich_poi_data
+    trip_planner.enrich_poi_data = rich_enrich
+    try:
+        batch = [
+            {"name": "Burgundy Wine Trail", "category": "activity", "description": "d",
+             "search_query": "Burgundy wine route", "duration_mins": 480,
+             "is_background": True, "approx_lat": 47.02, "approx_lng": 4.84},
+            {"name": "Louvre Museum", "category": "sightseeing", "description": "d",
+             "search_query": "Louvre", "duration_mins": 240,
+             "approx_lat": 48.86, "approx_lng": 2.34},
+        ]
+        fake, pois, _ = run_plan([batch], prompt="give me 2 places in France")
+    finally:
+        trip_planner.enrich_poi_data = prev
+    by_name = {p.name: p for p in pois}
+    wine = by_name["Burgundy Wine Trail"]
+    check(abs(wine.lat - 47.02) < 0.01 and abs(wine.lng - 4.84) < 0.01,
+          f"far geocode vetoed by LLM region, got ({wine.lat}, {wine.lng})")
+    check(wine.opening_hours is None and wine.mapbox_id is None and wine.wikidata_id is None,
+          "wrong place's identity fields dropped")
+    louvre = by_name["Louvre Museum"]
+    check(abs(louvre.lat - 48.85) < 0.01 and louvre.opening_hours == "9:00-18:00",
+          "agreeing geocode kept — it is more precise than the LLM estimate")
+
+
 def scenario_return_stay_to_same_hotel_kept():
     """Dedup vs existing stays is date-aware: re-suggesting a hotel the trip already
     has is legitimate for a NEW date range (return stay), a duplicate when the dates
@@ -236,6 +271,7 @@ SCENARIOS = [
     scenario_accommodation_overlaps_repaired,
     scenario_overlap_repair_edge_cases,
     scenario_return_stay_to_same_hotel_kept,
+    scenario_llm_coords_veto_bad_geocode,
 ]
 
 if __name__ == "__main__":

@@ -62,6 +62,17 @@ BALANCE_DEADBAND_MINS = 60  # imbalance this small is free — geography should 
 W_IDEAL_TIME_SOFT = 20_000
 HAVERSINE_MINS_PER_KM = 1.4
 
+# Hard geography fence: a POI (or an anchor's claim) may not land on a day whose
+# home base is farther than this. Soft distance penalties are NOT enough here —
+# scheduling beats dropping by W_WANT (1M) vs ~300/min, so under capacity pressure
+# POIs silently spill onto the wrong leg of a multi-leg trip, and a far anchor
+# claim turns the anchor-day base switch into a reward for dragging its whole
+# neighborhood along. 240 haversine-min (~170 km line-of-sight) still allows real
+# day trips (Paris->Reims ~182, Paris->Giverny ~91) while fencing off cross-leg
+# placement (Paris->Beaune ~386, Paris->Riviera ~965). Days with no coordinates
+# on their base are never fenced. Children follow their parent's claim instead.
+MAX_BASE_DIST_MINS = 240
+
 # Wall-time cap for the solve. CP-SAT finds the best plan in milliseconds at our sizes;
 # extra time only goes to *proving* optimality, so a short cap returns the same schedule.
 # A relative gap limit is NOT safe here: shaping terms (clustering, balance) are tiny
@@ -222,8 +233,11 @@ def _build_day_grid(trip: TripMetadata, start_utc: datetime.datetime, end_utc: d
             if b_end > start_local and b_start < end_local:
                 blocks.append(b)
         if blocks:
+            # checkout day (and any gap day): you wake up at last night's hotel, so
+            # it stays the day's routing base rather than leaving the day baseless
+            acc = acc_by_date.get(d) or acc_by_date.get(d - datetime.timedelta(days=1))
             days.append(DayGrid(index=idx, date=d, weekday=d.weekday(), blocks=blocks,
-                                accommodation=acc_by_date.get(d)))
+                                accommodation=acc))
             idx += 1
         d += datetime.timedelta(days=1)
     return days
@@ -383,6 +397,7 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
 
     for b in backgrounds:
         legal_days = []
+        far_days = 0
         for d in days:
             if b.valid_days_of_week and d.weekday not in b.valid_days_of_week:
                 continue
@@ -390,6 +405,10 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
                 continue  # fully cleared day can't be claimed
             if any(d.index in bdays for bdays in locked_bg_days.values()):
                 continue  # a locked background already owns this day
+            bdist = _dist_mins(d.accommodation, b) if d.accommodation is not None else None
+            if bdist is not None and bdist > MAX_BASE_DIST_MINS:
+                far_days += 1
+                continue  # claiming a day in another leg is never legitimate
             legal_days.append(d.index)
         need = max(1, getattr(b, 'days_claimed', 1) or 1)
         sv = model.NewBoolVar(f"bgsched_{b.id}")
@@ -400,6 +419,9 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
                 prune_cause[b.id] = (f"needs {need} day(s) on "
                                      f"{_weekday_names(b.valid_days_of_week)} but the trip only has "
                                      f"{len(legal_days)} such day(s) available")
+            elif far_days:
+                prune_cause[b.id] = (f"needs {need} day(s) near it, but the trip only stays within "
+                                     f"reach of it for {len(legal_days)} day(s)")
             else:
                 prune_cause[b.id] = f"needs {need} day(s) but only {len(legal_days)} are available"
         for di in legal_days:
@@ -434,6 +456,7 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
     x: Dict[Tuple[str, int, str], Any] = {}
     poi_reason: Dict[str, str] = {}
     poi_fixes: Dict[str, List[dict]] = {}
+    bg_ids = {b.id for b in backgrounds}
 
     for p in regulars:
         allowed_blocks = set(_allowed_blocks_for(p))
@@ -455,6 +478,21 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
         allowed_days = set(range(D))
         if p.valid_days_of_week:
             allowed_days = {d.index for d in days if d.weekday in p.valid_days_of_week}
+
+        # geography fence: never place a POI on a day based in another leg.
+        # Children are exempt — they follow their parent's claimed days instead.
+        far_fenced = False
+        parent_raw = getattr(p, 'parent_container', None)
+        has_live_parent = parent_raw and (parent_raw in bg_ids or parent_raw in locked_bg_days)
+        if p.lat is not None and p.lng is not None and not has_live_parent:
+            near_days = set()
+            for d in days:
+                pdist = _dist_mins(d.accommodation, p) if d.accommodation is not None else None
+                if pdist is None or pdist <= MAX_BASE_DIST_MINS:
+                    near_days.add(d.index)
+            if allowed_days - near_days:
+                far_fenced = True
+                allowed_days &= near_days
 
         # hard rules
         blocked_by_rule = None
@@ -492,6 +530,10 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
                 poi_reason[p.id] = f"blocked by rule: {blocked_by_rule.description}"
                 poi_fixes[p.id] = [{"type": "disable_rule", "rule_id": blocked_by_rule.id,
                                     "label": f"Disable rule '{blocked_by_rule.description}' and retry"}]
+            elif far_fenced and not allowed_days:
+                poi_reason[p.id] = ("it is over "
+                                    f"{MAX_BASE_DIST_MINS // 60} hours from where you're staying on every "
+                                    "eligible day — it doesn't sit near any leg of this trip")
             elif p.valid_days_of_week and not allowed_days:
                 poi_reason[p.id] = (f"restricted to {_weekday_names(p.valid_days_of_week)}, "
                                     "but the trip includes none of those days")

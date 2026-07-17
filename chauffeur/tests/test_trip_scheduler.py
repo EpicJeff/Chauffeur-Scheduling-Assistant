@@ -49,6 +49,72 @@ def scenario_anchor_respects_legs():
           f"Nice anchor must claim a Nice-hotel night, got {nice_days}")
 
 
+def scenario_geography_fence():
+    """Regression (real 'Paris Anniversary' trip): under capacity pressure POIs
+    spilled onto other legs' days (scheduling beats dropping by 1M vs ~300/min),
+    and a far anchor claim flipped the anchor-day base switch into a net reward
+    for dragging its whole neighborhood cross-leg. Placement candidates are now
+    hard-fenced to days whose home base is within MAX_BASE_DIST_MINS."""
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    BERLIN = (52.5200, 13.4050)
+    trip = mk_trip(days=4)
+    trip.accommodations = [
+        mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=2)),
+        mk_acc("Nice Hotel", *NICE, MONDAY + datetime.timedelta(days=2),
+               MONDAY + datetime.timedelta(days=4)),
+    ]
+    paris_pois = [mk_poi(f"Paris Spot {i}", PARIS[0] + i * 0.001, PARIS[1],
+                         category="sightseeing", duration_mins=120) for i in range(14)]
+    berlin = mk_poi("Berlin Wall", *BERLIN, category="sightseeing", duration_mins=90)
+    trip.pois = paris_pois + [berlin]
+    res = solve_assignment(trip, all_ids(trip.pois))
+    check(res.error is None, f"solve error: {res.error}")
+    for p in paris_pois:
+        if p.id in res.assigned:
+            check(res.assigned[p.id][0] in (0, 1),
+                  f"{p.name} spilled onto a Nice-leg day {res.assigned[p.id][0]}")
+    overflow = [p for p in paris_pois if p.id in res.failures]
+    check(overflow, "capacity overflow must fail POIs rather than cross legs")
+    check(berlin.id in res.failures and "near any leg" in res.failures[berlin.id],
+          f"Berlin POI should fail with a distance reason, got {res.failures.get(berlin.id)}")
+
+
+def scenario_anchor_needs_days_within_its_leg():
+    """An anchor needing more days than its leg offers must fail with a reach
+    reason, not spill claims into another leg 900 km away."""
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    trip = mk_trip(days=4)
+    trip.accommodations = [
+        mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=2)),
+        mk_acc("Nice Hotel", *NICE, MONDAY + datetime.timedelta(days=2),
+               MONDAY + datetime.timedelta(days=4)),
+    ]
+    anchor = mk_poi("Louvre Marathon", *PARIS, is_background=True, days_claimed=3, priority="must")
+    trip.pois = [anchor]
+    res = solve_assignment(trip, [anchor.id])
+    check(anchor.id in res.failures and "within reach" in res.failures[anchor.id],
+          f"expected a reach-shortage reason, got {res.failures}")
+
+
+def scenario_checkout_day_keeps_home_base():
+    """The morning after final checkout had no accommodation and therefore no
+    geography, so far-flung POIs landed on it. It now inherits the hotel you
+    woke up in as its routing base."""
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    hotel = mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=2))
+    trip = mk_trip(days=3, accommodations=[hotel])  # grid: Mon/Tue/Wed, Wed = checkout morning
+    nice = mk_poi("Nice Beach", *NICE, category="sightseeing", duration_mins=90)
+    louvre = mk_poi("Louvre", 48.8606, 2.3376, category="sightseeing", duration_mins=90)
+    trip.pois = [nice, louvre]
+    res = solve_assignment(trip, all_ids(trip.pois))
+    check(res.error is None, f"solve error: {res.error}")
+    check(nice.id in res.failures, "far POI must not land on the checkout morning")
+    check(louvre.id in res.assigned, "near POI schedules normally")
+
+
 def scenario_disney_containers():
     mk = mk_poi("Magic Kingdom", *MK, is_background=True, days_claimed=2, priority="must")
     epcot = mk_poi("Epcot", *EPCOT, is_background=True, days_claimed=1, priority="must")
@@ -291,6 +357,9 @@ def scenario_multiday_bg_day_spans():
 
 SCENARIOS = [
     scenario_anchor_respects_legs,
+    scenario_geography_fence,
+    scenario_anchor_needs_days_within_its_leg,
+    scenario_checkout_day_keeps_home_base,
     scenario_multiday_bg_day_spans,
     scenario_disney_containers,
     scenario_valid_day_claims,
