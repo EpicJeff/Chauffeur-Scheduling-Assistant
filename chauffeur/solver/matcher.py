@@ -958,6 +958,75 @@ def solve_schedule(
         
     return assignments, unassigned, lateness_warnings
 
+def explain_assignment_conflicts(event: Event, driver: Driver, rules: List[Rule] = None,
+                                 passengers: List[Passenger] = None, trip_metadata: List[dict] = None,
+                                 driver_events: List[Event] = None) -> List[str]:
+    """Human-readable reasons why the solver would normally refuse to assign
+    this driver to this event. Purely informational — a manual override always
+    wins every one of these — so the UI can warn before creating the override.
+    trip dicts use the same shape as solve_schedule's trip_metadata (datetime
+    start/end, entities as a set or list)."""
+    reasons = []
+    rules = rules or []
+    passengers = passengers or []
+    trip_metadata = trip_metadata or []
+    driver_events = driver_events or []
+
+    if trip_metadata:
+        e_ents = compute_event_trip_entities([event], passengers).get(event.id, set())
+        for trip in trip_metadata:
+            trip_ents = set(trip.get('entities') or [])
+            is_global = 'global' in trip_ents
+            if not (event.start < trip['end'] and event.end > trip['start']):
+                continue
+            trip_name = trip.get('title') or 'a trip'
+            driver_on_trip = (f"driver_{driver.id}" in trip_ents) or is_global
+            pax_on_trip = is_global or (bool(e_ents) and e_ents.issubset(trip_ents))
+            if driver_on_trip:
+                if event.location and trip.get('location'):
+                    t_mins = get_travel_time_minutes(event.location, trip['location'])
+                    if t_mins > 60:
+                        reasons.append(f"{driver.name} is away on '{trip_name}' and this event is about {t_mins} minutes from the trip destination.")
+            elif pax_on_trip:
+                reasons.append(f"This event's passengers are away on '{trip_name}', and {driver.name} is not on that trip.")
+
+    for r in rules:
+        r_type = getattr(r, 'constraint_type', '')
+        if r_type not in ('required', 'unavailable', 'avoid'):
+            continue
+        if not does_event_match_rule(event, r, passengers):
+            continue
+        if r_type == 'required' and r.driver_id != driver.id:
+            reasons.append(f"A rule requires a different driver ('{r.driver_id}') for this event.")
+        elif r_type == 'unavailable' and r.driver_id == driver.id:
+            reasons.append(f"A rule marks {driver.name} as unavailable for this event.")
+        elif r_type == 'avoid' and r.driver_id == driver.id:
+            reasons.append(f"A rule says to avoid assigning {driver.name} to this event.")
+
+    e_orig = getattr(event, 'original_event_id', None) or event.id
+    for de in driver_events:
+        de_orig = getattr(de, 'original_event_id', None) or de.id
+        # Skip the event itself: a driver ATTENDING the event is the solver's
+        # favorite assignment, not a conflict (mirrors the attendee check).
+        if de.id == event.id or de_orig == e_orig:
+            continue
+        if de.start == event.start and de.end == event.end and (de.title or '').strip().lower() == (event.title or '').strip().lower():
+            continue
+        if event.start < de.end and event.end > de.start:
+            reasons.append(f"{driver.name} has their own event '{de.title}' at the same time.")
+
+    if driver.preferred_start or driver.preferred_end:
+        try:
+            p_start = datetime.strptime(driver.preferred_start, '%H:%M').time() if driver.preferred_start else None
+            p_end = datetime.strptime(driver.preferred_end, '%H:%M').time() if driver.preferred_end else None
+            if (p_start and event.start.time() < p_start) or (p_end and event.end.time() > p_end):
+                reasons.append(f"This event falls outside {driver.name}'s preferred driving hours ({driver.preferred_start or 'any'}–{driver.preferred_end or 'any'}).")
+        except ValueError:
+            pass
+
+    return reasons
+
+
 def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None, rules: List[Rule] = None, passengers: List[Passenger] = None, trip_metadata: List[dict] = None) -> Tuple[Dict[str, str], List[dict]]:
     if not events:
         return {}, []

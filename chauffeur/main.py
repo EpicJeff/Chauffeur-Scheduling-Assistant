@@ -2521,6 +2521,68 @@ def delete_theme(doc_id: int, background_tasks: BackgroundTasks):
 def get_overrides():
     return storage.get_all_overrides()
 
+class OverrideCheckPayload(BaseModel):
+    event_id: str
+    driver_id: str
+
+@app.post("/api/overrides/check")
+def check_override_conflicts(payload: OverrideCheckPayload):
+    """Dry-run: reasons the solver would normally refuse this (event, driver)
+    pair. Informational only — the override still wins if created."""
+    from models.schemas import Event as EventModel
+    import datetime as _dt
+    cache = storage.get_cached_schedule()
+    ev_dict = next((e for e in cache.get("events", []) if e.get("id") == payload.event_id), None)
+    d_dict = next((d for d in storage.get_all_drivers() if d.get("id") == payload.driver_id), None)
+    if not ev_dict or not d_dict:
+        return {"conflicts": []}
+    try:
+        event = EventModel(**ev_dict)
+        d_dict.setdefault('group', 'primary'); d_dict.setdefault('priority_index', 1); d_dict.setdefault('calendar_ids', [])
+        driver = Driver(**d_dict)
+    except Exception:
+        return {"conflicts": []}
+
+    settings = storage.get_settings()
+    enable_ai = settings.get("enable_ai_rules", True)
+    enable_std = settings.get("enable_standard_rules", True)
+    rules = []
+    for r in storage.get_all_rules():
+        try:
+            rule_obj = Rule(**r)
+        except Exception:
+            continue
+        if not rule_obj.is_enabled: continue
+        if rule_obj.is_ai_generated and not enable_ai: continue
+        if not rule_obj.is_ai_generated and not enable_std: continue
+        rules.append(rule_obj)
+    passengers = [Passenger(**p) for p in storage.get_all_passengers()]
+
+    trips = []
+    for tm in cache.get("trip_metadata", []):
+        try:
+            trips.append({**tm,
+                          "start": _dt.datetime.fromisoformat(tm["start"]),
+                          "end": _dt.datetime.fromisoformat(tm["end"]),
+                          "entities": set(tm.get("entities") or [])})
+        except Exception:
+            continue
+
+    events_by_id = {e.get("id"): e for e in cache.get("events", [])}
+    driver_events = []
+    for ev_id in cache.get("driver_events", {}).get(payload.driver_id, []):
+        de = events_by_id.get(ev_id)
+        if de:
+            try:
+                driver_events.append(EventModel(**de))
+            except Exception:
+                pass
+
+    conflicts = matcher.explain_assignment_conflicts(
+        event, driver, rules=rules, passengers=passengers,
+        trip_metadata=trips, driver_events=driver_events)
+    return {"conflicts": conflicts}
+
 @app.post("/api/overrides")
 def create_override(override: ManualOverride, background_tasks: BackgroundTasks, draft: bool = False):
     doc_id = storage.add_override(override.model_dump() if hasattr(override, 'model_dump') else override.dict())
@@ -3694,6 +3756,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 "id": e.id,
                 "start": trip_start,
                 "end": trip_end,
+                "title": e.title,
                 "location": e.location,
                 "entities": applicable_entities,
                 "all_day": e.all_day
@@ -4102,7 +4165,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "passengers": passengers,
             "drivers": drivers,
             "solving_dates": schedule_coordinator.get_solving_dates(),
-            "ai_metadata": combined_ai_metadata
+            "ai_metadata": combined_ai_metadata,
+            # Persisted so /api/overrides/check can explain trip conflicts
+            # without re-deriving trip entities outside the refresh
+            "trip_metadata": trip_metadata
         })
 
         if not start_date_str and not end_date_str:

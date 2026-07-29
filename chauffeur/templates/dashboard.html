@@ -1886,6 +1886,32 @@
                 }
             }
 
+            // Dry-run: if the solver would normally refuse this pair (driver on a
+            // trip, unavailable rule, own event at that time, ...), explain why
+            // and confirm before overriding. The override still wins if confirmed.
+            if (driverId !== 'unassigned') {
+                try {
+                    const chkRes = await fetch('api/overrides/check', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ event_id: ghostEventId, driver_id: driverId })
+                    });
+                    const chk = await chkRes.json();
+                    if (chk.conflicts && chk.conflicts.length > 0) {
+                        const proceed = await promptConfirm(
+                            "Scheduling Conflict",
+                            "The solver would normally not assign this driver:\n\n• " + chk.conflicts.join("\n• ") + "\n\nOverride anyway?",
+                            "Override Anyway", "Cancel");
+                        if (!proceed) {
+                            if (currentData) renderSchedule(currentData);
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Override conflict check failed, proceeding without it', e);
+                }
+            }
+
             document.getElementById('schedule-container').classList.add('opacity-50', 'pointer-events-none');
             try {
                 await fetch(`api/overrides?draft=${isDraftMode}`, {
@@ -1983,7 +2009,9 @@
                 const elem = ev.target.closest('.bg-cardbg');
                 if (elem) elem.style.opacity = '0.5';
                 await forceSwap(eventId, 'unassigned');
-            } else if (driverId !== 'no_location' && !driverId.startsWith('g')) {
+            } else if (driverId !== 'no_location' && !/^g\d+$/.test(driverId)) {
+                // ghost columns are g1, g2, ... — a REAL driver whose id merely
+                // starts with 'g' must still accept drops
                 // Change UI to reflect loading instantly
                 const elem = ev.target.closest('.bg-cardbg');
                 if (elem) elem.style.opacity = '0.5';
