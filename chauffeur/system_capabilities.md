@@ -134,11 +134,21 @@ Distinct from standard rules, priority rules allow dynamic modification of the `
 ## User Interface Architecture
 - The Rules tab is divided into two sub-tabs: 'Routing Rules' and 'Priority Rules', controlled by Alpine.js state.
 - Rule creation forms are located at the top of each sub-tab, before the respective rule lists.
-- **Kiosk Mode (`?kiosk=true`)**: A streamlined display state that hides the triage inbox and converts the full sidebar chat into a floating popup, maintaining chat history while maximizing schedule visibility.
+- **Kiosk Mode (`?kiosk=true`)**: A streamlined display state that hides the triage inbox and header chrome while maximizing schedule visibility. The standard bottom-center Argyle chat box remains the single chat entry point (the old floating chat FAB/popup was removed from the dashboard — it survives only in the PWA `app.html`, where it is the mobile chat surface).
 - **HA Theme (`?theme=ha`)**: Supports Home Assistant integrations via CSS variable propagation without overwriting the core Tailwind configuration palette. State is persisted across navigation views.
 - **Dynamic Drive Times**: The UI intelligently handles drive-time calculations when errands are toggled off. It accumulates the time of the hidden `A -> Errand` and `Errand -> B` edges so the gap accurately reflects the total actual drive time.
 - **Calendar Passenger Resolution**: The `calendar.html` view shares the same deep passenger resolution logic as the dashboard, analyzing `matched_rules` to display non-attendee passengers as colorful pills.
 - **Triage Diagnostics**: When an event cannot be scheduled, it falls into the "Unassigned" triage bucket. The solver provides granular diagnostics per driver. If an event has multiple passengers and one of them causes a physical overlap conflict (double booking) with another scheduled event, the UI intelligently catches the `passenger_conflict` diagnostic type and presents a one-click button to drop the conflicting passenger from that specific event instance.
+
+## PWA Driver Chat (driver-context agent)
+The driver PWA (`app.html`) chat posts to `/api/chat` with `source: 'pwa'` and the logged-in `driver_id`; `handle_chat` forwards both into `agent_router.process_agent_request`. When the driver id resolves to a real driver, the Gemma router switches into **driver mode**:
+- **Prompt**: identifies the driver by name, mandates brief mobile-friendly replies, and injects the driver's TODAY schedule (titles, locations, times, drive statuses) directly into the system prompt — zero extra LLM requests.
+- **Driver tools** (registered only in driver mode; `driver_id` is injected server-side at dispatch, never taken from the LLM):
+  - `get_my_route(target_date)` — the driver's assigned events (real + ghost assignments from the combined schedule cache) with per-event drive status.
+  - `start_route(event_name)` — fuzzy-matches an event on the driver's day and marks its drive legs `in_progress` (same `drive_status` store as the PWA's Start Drive button).
+  - `complete_route(event_name, action)` — records a TelemetryEvent (`picked up`/`dropped off`/`arrived`/`completed`, mirroring the Mark Completed button) and marks the legs `completed`.
+- **Leg-id convention**: the PWA constructs drive-leg ids client-side (`init_{ev}[_1|_2]`, `route_{ev}_1..3`, `final_{ev}`); the tools mark the whole id family so timeline pills light up regardless of route layout. Unused ids are inert.
+- The admin/dashboard chat (`source: 'admin'`) never sees driver tools. The v1 stack (`agentic_chat_loop`) has its own PWA prompt branch but is NOT the live path for the chat widget or PWA — both go through agent_router/agent_tools_v2.
 
 ## Errands Scheduling Logic
 - **Errands Inbox**: A dynamic management UI allows users to add errands using natural language.

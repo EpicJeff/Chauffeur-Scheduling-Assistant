@@ -409,3 +409,191 @@ def auto_schedule_trip_itinerary(trip_id: str) -> Dict[str, Any]:
         "message": "I'm starting the auto-scheduler for your itinerary now! It might take a moment to plot everything based on distances and opening hours.",
         "ui_action": "auto_schedule_trip"
     }
+
+# ==============================================================================
+# DRIVER TOOLS (PWA chat context — driver_id is injected server-side, never
+# supplied by the LLM)
+# ==============================================================================
+
+def _leg_id_variants(event_id: str) -> List[str]:
+    # The PWA constructs leg ids client-side (init_{ev}[_1|_2], route_{ev}_1..3,
+    # final_{ev}); the drive_status store is keyed by those strings. Marking the
+    # whole family covers every layout the timeline can render; unused ids are
+    # inert rows the UI never looks up.
+    return ([f"init_{event_id}", f"init_{event_id}_1", f"init_{event_id}_2"] +
+            [f"route_{event_id}_{i}" for i in (1, 2, 3)] +
+            [f"final_{event_id}", f"final_{event_id}_1"])
+
+
+def _parse_fuzzy_date(target_date: str):
+    import datetime
+    import re
+    from dateutil.parser import parse
+    cleaned = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', (target_date or 'today')).strip()
+    try:
+        if cleaned.lower() in ('', 'today', 'now', 'tonight'):
+            return datetime.datetime.now().date()
+        if cleaned.lower() == 'tomorrow':
+            return (datetime.datetime.now() + datetime.timedelta(days=1)).date()
+        return parse(cleaned, default=datetime.datetime.now()).date()
+    except Exception:
+        return datetime.datetime.now().date()
+
+
+def _driver_events_for_date(driver_id: str, target_date) -> List[Dict[str, Any]]:
+    """The driver's assigned events (real + ghost assignments) on a date, with
+    per-event drive status derived from the drive_status store."""
+    import datetime
+    from services.storage import get_cached_schedule, get_completed_drives, get_in_progress_drives
+    sched = get_cached_schedule()
+    assignments = dict(sched.get("assignments", {}))
+    assignments.update(sched.get("ghost_assignments", {}))
+    completed = set(get_completed_drives())
+    in_progress = set(get_in_progress_drives())
+
+    result = []
+    for ev in sched.get("events", []):
+        if assignments.get(ev.get("id")) != driver_id:
+            continue
+        ev_start = ev.get("start", "")
+        try:
+            if datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00')).date() != target_date:
+                continue
+        except (ValueError, AttributeError):
+            continue
+        variants = set(_leg_id_variants(ev.get("id")))
+        status = "pending"
+        if variants & in_progress:
+            status = "driving now"
+        if variants & completed:
+            status = "completed"
+        result.append({
+            "id": ev.get("id"),
+            "title": ev.get("title"),
+            "location": ev.get("location"),
+            "start": ev.get("start"),
+            "end": ev.get("end"),
+            "drive_status": status,
+        })
+    result.sort(key=lambda e: e.get("start") or "")
+    return result
+
+
+def _fuzzy_pick_event(events: List[Dict[str, Any]], event_name: str):
+    import re
+    name_lower = (event_name or "").lower().strip()
+    stop_words = {"to", "for", "the", "a", "at", "on", "in", "and", "my", "drive"}
+    search_words = set(w for w in re.findall(r'\w+', name_lower) if w not in stop_words)
+    best, best_score = None, 0
+    for ev in events:
+        title = (ev.get("title") or "").lower()
+        if name_lower and (name_lower in title or (title in name_lower and len(title) > 3)):
+            return ev
+        title_words = set(w for w in re.findall(r'\w+', title) if w not in stop_words)
+        overlap = len(search_words & title_words)
+        if overlap > best_score:
+            best, best_score = ev, overlap
+    return best
+
+
+def get_my_route(driver_id: str, target_date: str = "today") -> Dict[str, Any]:
+    """Lists the calling driver's assigned events and drive statuses for a day."""
+    from services.storage import get_all_drivers
+    day = _parse_fuzzy_date(target_date)
+    events = _driver_events_for_date(driver_id, day)
+    d = next((d for d in get_all_drivers() if d.get("id") == driver_id), None)
+    if not events:
+        return {"status": "success", "message": f"No drives assigned to {d.get('name') if d else 'you'} on {day.isoformat()}.", "events": []}
+    return {"status": "success", "date": day.isoformat(), "events": events}
+
+
+def start_route(driver_id: str, event_name: str, target_date: str = "today") -> Dict[str, Any]:
+    """Marks the drive for a fuzzy-matched event as in progress (same
+    drive_status store the PWA's Start Drive button writes)."""
+    from services.storage import mark_drive_status
+    day = _parse_fuzzy_date(target_date)
+    events = _driver_events_for_date(driver_id, day)
+    if not events:
+        return {"status": "error", "message": f"You have no assigned drives on {day.isoformat()}."}
+    ev = _fuzzy_pick_event(events, event_name)
+    if not ev:
+        return {"status": "error", "message": f"Couldn't find a drive matching '{event_name}' on your schedule for {day.isoformat()}."}
+    for leg_id in _leg_id_variants(ev["id"]):
+        mark_drive_status(leg_id, "in_progress")
+    return {"status": "success",
+            "message": f"On your way to '{ev['title']}'" + (f" at {ev['location']}" if ev.get("location") else "") + ". Drive safe!",
+            "event_id": ev["id"]}
+
+
+def complete_route(driver_id: str, event_name: str, action: str = "completed", target_date: str = "today") -> Dict[str, Any]:
+    """Marks a fuzzy-matched drive as done: records a telemetry event (same as
+    the PWA's Mark Completed button) and completes the drive_status legs."""
+    from services.storage import mark_drive_status, add_telemetry_event
+    import time as _time
+    import uuid
+    day = _parse_fuzzy_date(target_date)
+    events = _driver_events_for_date(driver_id, day)
+    if not events:
+        return {"status": "error", "message": f"You have no assigned drives on {day.isoformat()}."}
+    ev = _fuzzy_pick_event(events, event_name)
+    if not ev:
+        return {"status": "error", "message": f"Couldn't find a drive matching '{event_name}' on your schedule for {day.isoformat()}."}
+    allowed = {"picked up", "dropped off", "arrived", "completed"}
+    action_str = action if action in allowed else "completed"
+    add_telemetry_event({
+        "id": uuid.uuid4().hex,
+        "driver_id": driver_id,
+        "event_id": ev["id"],
+        "action": action_str,
+        "timestamp": _time.time(),
+        "details": f"Via chat: {action_str} for '{ev['title']}'",
+    })
+    for leg_id in _leg_id_variants(ev["id"]):
+        mark_drive_status(leg_id, "completed")
+    return {"status": "success",
+            "message": f"Got it — marked '{ev['title']}' as {action_str}.",
+            "event_id": ev["id"]}
+
+
+def get_driver_tools() -> List[Dict]:
+    """Extra tool schemas exposed only in PWA driver chat. driver_id is
+    deliberately absent from the schemas — the router injects the logged-in
+    driver's id when dispatching."""
+    return [
+        {
+            "name": "get_my_route",
+            "description": "Gets YOUR (the driver's) assigned drives and their statuses for a day. Use when the driver asks about their schedule, next drive, or what's left.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "e.g. 'today' (default), 'tomorrow', 'Friday'."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "start_route",
+            "description": "Marks one of YOUR drives as started / in progress. Use when the driver says they are leaving, heading out, or starting a drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The event the drive is for, e.g. 'soccer practice'."},
+                    "target_date": {"type": "string", "description": "Defaults to today."}
+                },
+                "required": ["event_name"]
+            }
+        },
+        {
+            "name": "complete_route",
+            "description": "Marks one of YOUR drives as done. Use when the driver says they picked someone up, dropped someone off, arrived, or finished a drive. Choose the action that matches their words.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The event the drive is for."},
+                    "action": {"type": "string", "enum": ["picked up", "dropped off", "arrived", "completed"]},
+                    "target_date": {"type": "string", "description": "Defaults to today."}
+                },
+                "required": ["event_name"]
+            }
+        }
+    ]

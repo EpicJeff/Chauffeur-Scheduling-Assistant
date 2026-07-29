@@ -71,13 +71,23 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         logger.error(f"Error calling Gemma fallback model: {e}")
         return {"error": str(e), "transient": _is_transient(str(e))}
 
-def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None) -> Dict[str, Any]:
+def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None,
+                          source: str = "admin", driver_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
+    source/driver_id come from the chat payload: the PWA sends source='pwa'
+    plus the logged-in driver's id, which switches on driver context.
     """
+    # Resolve driver context (PWA chat only). The driver must actually exist —
+    # a stale localStorage id must not grant driver tools acting on nobody.
+    driver = None
+    if source == "pwa" and driver_id:
+        from services.storage import get_all_drivers
+        driver = next((d for d in get_all_drivers() if d.get("id") == driver_id), None)
+
     system_prompt = f"""You are Argyle, an intelligent family assistant.
-You help manage schedules, trips, and errands. 
+You help manage schedules, trips, and errands.
 You MUST use your provided tools to fetch data or perform actions.
 Respond with a concise, helpful message about what you did.
 
@@ -86,6 +96,31 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
 2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST use the `auto_schedule_trip_itinerary` tool to instantly bulk-schedule all of them into the timeline based on their distances and opening hours.
 """
     
+    if driver:
+        system_prompt += f"""
+DRIVER MODE (PWA):
+You are speaking directly to {driver.get('name')}, a family driver, on their phone while on the go.
+Be brief, warm, and plain-spoken — no technical jargon, short sentences, mobile-friendly replies.
+Their drives for TODAY are listed below; use get_my_route for other days.
+When they say they are leaving or heading out, call start_route. When they say they picked up,
+dropped off, arrived, or finished, call complete_route with the matching action.
+Never ask them which driver they are — you already know.
+"""
+        try:
+            from services.agent_tools_v2 import get_my_route
+            today = get_my_route(driver_id)
+            evs = today.get("events", [])
+            if evs:
+                system_prompt += "\nYOUR DRIVES TODAY:\n"
+                for ev in evs:
+                    system_prompt += (f"- {ev.get('title')} at {ev.get('location') or 'no location'} "
+                                      f"({ev.get('start', '')[11:16]}-{ev.get('end', '')[11:16]}) "
+                                      f"[{ev.get('drive_status')}]\n")
+            else:
+                system_prompt += "\nYOUR DRIVES TODAY: none assigned.\n"
+        except Exception as e:
+            logger.warning(f"Could not inject driver schedule: {e}")
+
     if history:
         system_prompt += "\n\nCONVERSATION HISTORY:\n"
         # Take last 5 turns to keep context window small
@@ -120,7 +155,10 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                         system_prompt += f"- {a.get('name')} (Check in: {a.get('check_in_date')})\n"
                         
     tools = get_available_tools()
-    
+    if driver:
+        from services.agent_tools_v2 import get_driver_tools
+        tools = tools + get_driver_tools()
+
     agent_scratchpad = ""
     max_iterations = 3
     
@@ -217,6 +255,17 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     from services.agent_tools_v2 import manage_trip_rules
                     res = manage_trip_rules(args.get("trip_id"), args.get("action"),
                                             rule=args.get("rule"), rule_id=args.get("rule_id"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("get_my_route", "start_route", "complete_route") and driver:
+                    # driver_id is always the logged-in driver — never taken from the LLM
+                    from services.agent_tools_v2 import get_my_route, start_route, complete_route
+                    if func_name == "get_my_route":
+                        res = get_my_route(driver_id, args.get("target_date", "today"))
+                    elif func_name == "start_route":
+                        res = start_route(driver_id, args.get("event_name", ""), args.get("target_date", "today"))
+                    else:
+                        res = complete_route(driver_id, args.get("event_name", ""),
+                                             args.get("action", "completed"), args.get("target_date", "today"))
                     if res.get("message"): agent_message = res["message"]
             except Exception as e:
                 res = {"error": str(e)}

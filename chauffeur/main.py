@@ -2236,7 +2236,8 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                 
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'user', 'content': payload.message, 'timestamp': time.time()})
 
-        res = process_agent_request(payload.message, context=payload.context, history=conv_history)
+        res = process_agent_request(payload.message, context=payload.context, history=conv_history,
+                                    source=payload.source or "admin", driver_id=payload.driver_id)
         reply = res.get("message", "I did not understand that.")
         target_id = res.get("target_element_id")
         
