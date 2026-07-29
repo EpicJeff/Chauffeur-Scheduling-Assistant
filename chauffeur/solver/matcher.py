@@ -393,6 +393,10 @@ def solve_schedule(
                         elif e_ents:
                             pax_on_trip = e_ents.issubset(trip_ents)
                         
+                        # A manual override on this exact pair always wins — every
+                        # other hard ban in the model has the same escape hatch.
+                        if (e.id, d.id) in overridden_pairs:
+                            continue
                         if driver_on_trip:
                             # Driver on trip CANNOT take events that are far away from the trip location
                             if e.location and trip.get('location'):

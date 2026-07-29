@@ -130,6 +130,43 @@ def scenario_metric_driving_time_prefers_local():
           f"zero-drive local driver takes everything under driving-time metric, got {assignments}")
 
 
+def scenario_overrides_beat_balancing():
+    # Manual overrides pin all four events to d1 even with balancing on: the
+    # override bonus (~1.9e9) dwarfs the saturated balancing penalty (<=1.44M).
+    drivers = [mk_driver(1, 1), mk_driver(2, 4), mk_driver(3, 4), mk_driver(4, 4)]
+    events = [mk_event(i, 8 + i * 2) for i in range(4)]
+    overrides = [{"event_id": e.id, "driver_id": "d1", "created_at": 1750000000 + i}
+                 for i, e in enumerate(events)]
+
+    for metric in ("events", "driving_time", "occupied_time"):
+        assignments, unassigned, _ = matcher.solve_schedule(
+            events, drivers, [], overrides=overrides,
+            load_balancing=True, load_balancing_metric=metric)
+        check(not unassigned and all(d == "d1" for d in assignments.values()),
+              f"overrides pin everything to d1 under '{metric}' balancing, got {assignments}")
+
+
+def scenario_override_beats_trip_ban():
+    # d2 is NOT on the trip and the event's passenger IS: normally hard-banned
+    # for d2 (event goes unassigned) — but a manual override must still win.
+    import datetime as dt
+    from models.schemas import Passenger
+    drivers = [mk_driver(2, 1)]
+    pax = Passenger(id="p1", name="James", hashtags=["#james"])
+    ev = mk_event(0, 9)
+    ev.title = "Soccer #james"
+    trip = {"id": "t1", "start": ev.start - dt.timedelta(days=1), "end": ev.end + dt.timedelta(days=1),
+            "location": None, "entities": {"passenger_p1"}}
+
+    a_no, un_no, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip])
+    check(ev.id in un_no, f"without an override the trip ban leaves it unassigned, got {a_no}")
+
+    ovr = [{"event_id": ev.id, "driver_id": "d2", "created_at": 1750000000}]
+    a_ovr, un_ovr, _ = matcher.solve_schedule([ev], drivers, [], overrides=ovr,
+                                              passengers=[pax], trip_metadata=[trip])
+    check(a_ovr.get(ev.id) == "d2", f"override onto the trip-banned driver wins, got {a_ovr}")
+
+
 SCENARIOS = [
     scenario_bucket_fill_default,
     scenario_load_balancing_spreads,
@@ -137,6 +174,8 @@ SCENARIOS = [
     scenario_metric_events_vs_occupied,
     scenario_metric_driving_time_spreads,
     scenario_metric_driving_time_prefers_local,
+    scenario_overrides_beat_balancing,
+    scenario_override_beats_trip_ban,
 ]
 
 if __name__ == "__main__":
