@@ -661,8 +661,23 @@
 
     <div id="poi-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
         <div class="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl">
-            <h3 class="text-2xl font-bold text-white mb-6">Add Point of Interest</h3>
-            <div class="space-y-4">
+            <h3 class="text-2xl font-bold text-white mb-4">Add Attraction</h3>
+            <div class="flex space-x-4 mb-4 border-b border-gray-700 pb-2">
+                <button id="tab-new-poi" onclick="switchPoiTab('new')" class="text-blue-400 font-bold border-b-2 border-blue-400 px-2 pb-1">Create New</button>
+                <button id="tab-link-poi" onclick="switchPoiTab('link')" class="text-gray-400 font-bold hover:text-gray-200 px-2 pb-1">Link Existing Event</button>
+            </div>
+
+            <!-- Link Existing Event pane (multiselect) -->
+            <div id="poi-link-pane" class="hidden space-y-3">
+                <label class="block text-gray-400 text-sm font-bold">Link Calendar Events</label>
+                <div id="poi-link-pills" class="flex flex-wrap gap-2"></div>
+                <input type="text" id="poi-link-search" oninput="renderLinkList()" placeholder="Search events to link..." class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-blue-500">
+                <div id="poi-link-list" class="max-h-56 overflow-y-auto border border-gray-700 rounded-lg divide-y divide-gray-700/60"></div>
+                <p class="text-xs text-gray-400">Select one or more calendar events (e.g. booked reservations) to add as <span class="text-cyan-300 font-semibold">fixed attractions</span> — they stay put at their real times and the scheduler plans around them. Shows upcoming events (next 30 days) not already on this trip.</p>
+            </div>
+
+            <!-- Create New pane -->
+            <div id="poi-new-pane" class="space-y-4">
                 <div>
                     <label class="block text-gray-400 mb-1 text-sm font-bold">Name</label>
                     <input type="text" id="poi-name" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500" placeholder="e.g. Eiffel Tower">
@@ -863,14 +878,11 @@
         <div class="bg-gray-800 rounded-2xl w-full max-w-lg border border-gray-600 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div class="p-6 border-b border-gray-700 bg-gray-850 shrink-0">
                 <h3 class="text-2xl font-bold text-white">Add Activity</h3>
-                <div class="flex space-x-4 mt-4 border-b border-gray-700 pb-2">
-                    <button id="tab-new-act" onclick="switchActTab('new')" class="text-indigo-400 font-bold border-b-2 border-indigo-400 px-2 pb-1">Create New</button>
-                    <button id="tab-link-act" onclick="switchActTab('link')" class="text-gray-400 font-bold hover:text-gray-200 px-2 pb-1">Link Existing Event</button>
-                </div>
+                <p class="text-xs text-gray-400 mt-1">Create a new timed event on your trip. To link an existing calendar event, use <span class="text-blue-300 font-semibold">Add Attraction → Link Existing Event</span>.</p>
             </div>
             
             <div class="p-6 overflow-y-auto space-y-4">
-                <!-- Create New Tab -->
+                <!-- Create New Activity -->
                 <div id="act-new-pane" class="space-y-4">
                     <div>
                         <label class="block text-gray-400 text-sm font-bold mb-2">Title</label>
@@ -892,16 +904,6 @@
                     </div>
                 </div>
                 
-                <!-- Link Existing Tab -->
-                <div id="act-link-pane" class="hidden space-y-4">
-                    <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Select Upcoming Event</label>
-                        <select id="act-existing-select" class="w-full bg-gray-700 text-white border border-gray-600 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500">
-                            <option value="">Loading events...</option>
-                        </select>
-                        <p class="text-xs text-gray-400 mt-2">Only shows events from the next 30 days.</p>
-                    </div>
-                </div>
             </div>
             
             <div class="p-6 border-t border-gray-700 bg-gray-850 shrink-0 flex justify-end space-x-4">
@@ -924,6 +926,7 @@
         let groupedActivities = {};
         let cachedRoutes = {};
         let renderMapTimeout = null;
+        let styleRenderQueued = false;
         let currentPoiValidDays = [];
         
         function renderPoiValidDays(containerId) {
@@ -963,6 +966,11 @@
             renderMap();
         }
 
+        // Route keys queued by the most recent renderActivities() pass. Anything in
+        // cachedRoutes that isn't in here belongs to a deleted, rescheduled, or
+        // reordered pair and must not be drawn on the map anymore.
+        let activeRouteKeys = new Set();
+
         // Route pills are nice-to-have decoration: cap their concurrency so they never
         // saturate the browser's ~6-per-host connection limit and block real user
         // actions (clear itinerary, schedule, save) behind a queue of Mapbox lookups.
@@ -971,6 +979,19 @@
         const MAX_ROUTE_PILL_CONCURRENCY = 3;
 
         function loadRouteBetween(act, nextAct, pill, dayKey, isCommute = false) {
+            const routeKey = act.id + '-' + nextAct.id;
+            activeRouteKeys.add(routeKey);
+            if (cachedRoutes[routeKey]) {
+                // Re-home the cached route: after a reschedule the same pair can
+                // land on a different day, and a stale dayKey makes renderMap
+                // draw it on the wrong day or drop it entirely. Must happen
+                // synchronously so the renderMap() that follows renderActivities()
+                // sees current dayKeys.
+                cachedRoutes[routeKey].dayKey = dayKey;
+                cachedRoutes[routeKey].isCommute = isCommute;
+                updateRoutePill(pill, cachedRoutes[routeKey]);
+                return;
+            }
             routePillQueue.push(() => loadRouteBetweenNow(act, nextAct, pill, dayKey, isCommute));
             pumpRoutePillQueue();
         }
@@ -983,6 +1004,16 @@
             }
         }
 
+        // Commute lines are map-only (no pill). If the activity endpoint has no
+        // known coordinates, the backend geocodes its label and the line can
+        // dead-end at a spot with no marker — callers skip those routes.
+        function actHasKnownCoords(act) {
+            const p = (tripData.metadata.pois || []).find(x => x.event_id === act.id || (x.event_id && act.id.endsWith(x.event_id)));
+            if (p && p.lat && p.lng) return true;
+            const a = (tripData.metadata.accommodations || []).find(x => x.id === act.id);
+            return !!(a && a.lat && a.lng);
+        }
+
         function haversineKm(lat1, lng1, lat2, lng2) {
             const r = 6371, toRad = d => d * Math.PI / 180;
             const dp = toRad(lat2 - lat1), dl = toRad(lng2 - lng1);
@@ -993,6 +1024,8 @@
         async function loadRouteBetweenNow(act, nextAct, pill, dayKey, isCommute = false) {
             const routeKey = act.id + '-' + nextAct.id;
             if (cachedRoutes[routeKey]) {
+                cachedRoutes[routeKey].dayKey = dayKey;
+                cachedRoutes[routeKey].isCommute = isCommute;
                 updateRoutePill(pill, cachedRoutes[routeKey]);
                 return;
             }
@@ -1048,7 +1081,11 @@
                     }
                 }
 
-                if (geometry) {
+                if (geometry && !activeRouteKeys.has(routeKey)) {
+                    // The itinerary was re-rendered without this pair while the
+                    // fetch was in flight — caching it now would draw a phantom line.
+                    if (pill) pill.remove();
+                } else if (geometry) {
                     cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey, isCommute };
                     updateRoutePill(pill, cachedRoutes[routeKey]);
                     if (renderMapTimeout) clearTimeout(renderMapTimeout);
@@ -1618,56 +1655,87 @@
             renderMap();
         }
 
+        // A POI is "calendar-backed" (a fixed anchor) if its event_id is a real
+        // calendar id rather than a fuzzy draft_poi_ placeholder. These are never
+        // auto-unscheduled; the solver routes planning POIs around them.
+        function isCalendarBackedPoi(p) {
+            return !!(p.event_id && p.event_id.includes('::') && !p.event_id.startsWith('draft_poi_'));
+        }
+
+        // Rebuild: re-solve the itinerary from the current attractions and their
+        // settings WITHOUT clearing, unlinking, or deleting anything. Uses the
+        // trip's own CP-SAT scheduler (meal blocks, geography, locked anchors) —
+        // not the daily errand matcher the old Rebuild button called.
         async function rebuildSchedule() {
-            if (!tripData) return;
-            const btn = document.getElementById('rebuild-schedule-btn');
-            
-            const schedLoading = document.getElementById('schedule-loading-overlay');
-            if (schedLoading) schedLoading.classList.remove('hidden');
-
-            try {
-                let s, e;
-                const isDraft = tripData.metadata.is_draft || false;
-                
-                if (isDraft) {
-                    if (tripData.metadata.mock_start_date && tripData.metadata.mock_end_date) {
-                        s = new Date(tripData.metadata.mock_start_date * 1000).toISOString().split('T')[0];
-                        e = new Date(tripData.metadata.mock_end_date * 1000).toISOString().split('T')[0];
-                    } else {
-                        throw new Error("Draft trip has no start or end date set.");
-                    }
-                } else {
-                    if (tripData.event.start && tripData.event.start.dateTime) {
-                        s = tripData.event.start.dateTime.split('T')[0];
-                        e = tripData.event.end.dateTime.split('T')[0];
-                    } else if (tripData.event.start && tripData.event.start.date) {
-                        s = tripData.event.start.date;
-                        e = tripData.event.end.date;
-                    } else {
-                        throw new Error("Trip event has no valid dates.");
-                    }
-                }
-
-                const url = `api/schedule/refresh?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&force=true&draft=${isDraft}`;
-                const res = await fetch(url, { method: 'POST' });
-                if (!res.ok) {
-                    const errText = await res.text();
-                    throw new Error(`Schedule rebuild failed: ${errText}`);
-                }
-                
-                await fetchTripData();
-            } catch (err) {
-                showGlobalAlert(err.message);
-            } finally {
-                if (schedLoading) schedLoading.classList.add('hidden');
+            if (!tripData || !tripData.metadata) return;
+            const pois = tripData.metadata.pois || [];
+            const fuzzyIds = pois.filter(p => !isCalendarBackedPoi(p)).map(p => p.id);
+            if (fuzzyIds.length === 0) {
+                showGlobalAlert("There are no planning attractions to rebuild.");
+                return;
             }
+            openConfirmModal("Rebuild Schedule",
+                `Re-solve the itinerary from your ${fuzzyIds.length} planning attraction(s) and their current settings? Fixed calendar events stay exactly where they are, and nothing is unlinked or deleted.`, [
+                { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold text-sm" },
+                { text: "Rebuild", className: "px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        closeConfirmModal();
+                        try {
+                            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                            // Un-schedule the planning POIs so the scheduler will re-place them
+                            // (schedule_pois_bulk only touches unscheduled POIs).
+                            await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}/unschedule`, {
+                                method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ poi_ids: fuzzyIds })
+                            });
+                            await fetchTripData();
+                            await window.executeBulkSchedule(fuzzyIds);
+                        } catch (err) {
+                            showGlobalAlert("Rebuild failed: " + err.message);
+                        }
+                    }
+                }
+            ]);
+        }
+
+        // Clear one day's planning items from the timeline — un-schedules them
+        // (they stay in the Attractions list) without deleting any calendar event.
+        async function clearDay(dayKey) {
+            const group = groupedActivities[dayKey];
+            if (!group) return;
+            const poiIds = [...new Set(group.items.map(a => a.poi_id).filter(Boolean))];
+            if (poiIds.length === 0) {
+                showGlobalAlert("There's nothing scheduled on this day to clear.");
+                return;
+            }
+            openConfirmModal("Clear This Day",
+                `Remove the ${poiIds.length} scheduled item(s) from "${dayKey}"? They stay in your Attractions list so you can adjust and reschedule. Nothing is deleted from your calendar.`, [
+                { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold text-sm" },
+                { text: "Clear Day", className: "px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-bold shadow-md transition-colors text-sm",
+                    onClick: async () => {
+                        closeConfirmModal();
+                        try {
+                            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                            await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}/unschedule`, {
+                                method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ poi_ids: poiIds })
+                            });
+                            await fetchTripData();
+                        } catch (e) {
+                            showGlobalAlert("Error clearing day");
+                        }
+                    }
+                }
+            ]);
         }
 
         function renderActivities() {
             const grid = document.getElementById('activities-grid');
             grid.innerHTML = '';
-            
+            activeRouteKeys = new Set();
+
             if(!tripData.activities || tripData.activities.length === 0) {
+                cachedRoutes = {};
                 grid.innerHTML = `
                     <div class="w-full py-12 text-center text-gray-400 bg-white/5 border border-white/10 rounded-2xl border-dashed">
                         <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
@@ -1719,6 +1787,7 @@
                 
                 const dayItems = grouped[dayKey].items;
                 let dayAccAct = null;
+                let dayReturnsToAcc = false;
                 if (dayItems.length > 0 && tripData.metadata.accommodations && tripData.metadata.accommodations.length > 0) {
                     const firstAct = dayItems[0];
                     if (firstAct.start) {
@@ -1729,14 +1798,37 @@
                         const day = d.toLocaleDateString('en-US', { day: '2-digit', ...tzOpts });
                         const dateStr = `${year}-${month}-${day}`;
                         
-                        const acc = tripData.metadata.accommodations.find(a => 
-                            a.check_in_date && a.check_out_date && 
-                            dateStr >= a.check_in_date && dateStr <= a.check_out_date &&
-                            a.lat && a.lng
+                        // The day's routing base is the stay you sleep at that night
+                        // (check_in <= date < check_out), matching the solver's day->home-base
+                        // map. The checked-out stay is only a fallback (final/gap day: you
+                        // woke up there and no stay covers the night).
+                        const staysWithCoords = tripData.metadata.accommodations.filter(a =>
+                            a.check_in_date && a.check_out_date && a.lat && a.lng
                         );
+                        const checkinAcc = staysWithCoords.find(a => dateStr >= a.check_in_date && dateStr < a.check_out_date);
+                        const checkoutAcc = staysWithCoords.find(a => dateStr === a.check_out_date);
+                        const acc = checkinAcc || checkoutAcc;
                         if (acc) {
                             dayAccAct = { id: acc.id, location: acc.location || acc.name, name: acc.name };
-                            loadRouteBetween(dayAccAct, firstAct, null, dayKey, true);
+                            // Only route back to the stay in the evening if you
+                            // actually sleep there tonight — on a checkout-only
+                            // (departure/gap) day you leave and don't return.
+                            dayReturnsToAcc = !!checkinAcc;
+                            if (checkinAcc && checkoutAcc && checkoutAcc.id !== checkinAcc.id) {
+                                // Switch day: transfer old stay -> new stay (drop the bags),
+                                // then the day's POI routes run from the new stay.
+                                const prevAccAct = { id: checkoutAcc.id, location: checkoutAcc.location || checkoutAcc.name, name: checkoutAcc.name };
+                                loadRouteBetween(prevAccAct, dayAccAct, null, dayKey, true);
+                            }
+                            // Morning stay->activity commute only if you woke up at a
+                            // stay: either you checked out of one today, or tonight's
+                            // stay was already checked into before today. On arrival
+                            // day (check-in == today, no prior stay) the day doesn't
+                            // start at the hotel.
+                            const wokeUpAtStay = !!checkoutAcc || (checkinAcc && dateStr > checkinAcc.check_in_date);
+                            if (wokeUpAtStay && actHasKnownCoords(firstAct)) {
+                                loadRouteBetween(dayAccAct, firstAct, null, dayKey, true);
+                            }
                         }
                     }
                 }
@@ -1825,11 +1917,17 @@
                             container.appendChild(pill);
                             loadRouteBetween(act, nextAct, pill, dayKey);
                         }
-                    } else if (dayAccAct) {
+                    } else if (dayAccAct && dayReturnsToAcc && actHasKnownCoords(act)) {
                         loadRouteBetween(act, dayAccAct, null, dayKey, true);
                     }
                 });
                 grid.appendChild(col);
+            });
+
+            // Evict cached routes no longer queued by this pass (deleted activity,
+            // reordered day, changed accommodation) so renderMap can't draw them.
+            Object.keys(cachedRoutes).forEach(key => {
+                if (!activeRouteKeys.has(key)) delete cachedRoutes[key];
             });
         }
 
@@ -1878,9 +1976,15 @@
                     div.className = `bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-colors cursor-pointer group relative flex flex-col h-full`;
                     div.onclick = () => openPoiDetails(index);
                     
-                    let scheduleBadge = poi.is_scheduled 
+                    let scheduleBadge = poi.is_scheduled
                         ? `<span class="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded-full border border-green-500/30 flex items-center"><svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg> Scheduled</span>`
                         : `<span class="bg-yellow-500/20 text-yellow-400 text-xs px-2 py-1 rounded-full border border-yellow-500/30">Unscheduled</span>`;
+
+                    // Calendar-backed POIs are fixed anchors linked from a real event —
+                    // flag them so it's clear the scheduler won't move them.
+                    const externalBadge = poi.is_external_event
+                        ? `<span class="bg-cyan-500/20 text-cyan-300 text-xs px-2 py-1 rounded-full border border-cyan-500/30 flex items-center" title="Linked from a calendar event — fixed in place"><svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> From Calendar</span>`
+                        : '';
 
                     div.innerHTML = `
                         <input type="checkbox" class="poi-checkbox absolute top-4 right-4 w-5 h-5 bg-gray-900 border-gray-600 rounded cursor-pointer z-10" data-index="${index}" data-id="${poi.id}" onclick="event.stopPropagation(); updatePoiBulkActions()">
@@ -1891,6 +1995,7 @@
                                     <span class="${colorClass} text-xs px-2 py-1 rounded-md font-bold uppercase tracking-wider">${poi.category || 'other'}</span>
                                     <span class="${prioColors[poi.priority] || prioColors['want']} text-xs px-2 py-1 rounded-full border font-bold">${prioLabel[poi.priority] || 'Want'}</span>
                                     ${scheduleBadge}
+                                    ${externalBadge}
                                     ${poi.valid_days_of_week && poi.valid_days_of_week.length > 0 ? `<span class="text-xs font-bold text-indigo-400 ml-1 bg-indigo-900/30 border border-indigo-500/30 px-1.5 py-0.5 rounded flex items-center" title="Valid Days">Days: ${poi.valid_days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(', ')}</span>` : ''}
                                     <span class="text-xs text-gray-400"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>${poi.duration_mins}m</span>
                                     ${poi.website ? `<a href="${poi.website}" target="_blank" onclick="event.stopPropagation()" class="text-xs text-blue-400 hover:text-blue-300 ml-1" title="Website"><svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>Website</a>` : ''}
@@ -2380,6 +2485,8 @@
             }
         }
         
+        let currentPoiTab = 'new';
+
         function openAddPoiModal() {
             document.getElementById('poi-name').value = '';
             document.getElementById('poi-location').value = '';
@@ -2387,7 +2494,129 @@
             document.getElementById('poi-notes').value = '';
             currentPoiValidDays = [];
             renderPoiValidDays('poi-valid-days-toggles');
+            switchPoiTab('new');
+            loadLinkableEvents();
             document.getElementById('poi-modal').classList.remove('hidden');
+        }
+
+        function switchPoiTab(tab) {
+            currentPoiTab = tab;
+            document.getElementById('poi-new-pane').classList.toggle('hidden', tab !== 'new');
+            document.getElementById('poi-link-pane').classList.toggle('hidden', tab !== 'link');
+            const active = "text-blue-400 font-bold border-b-2 border-blue-400 px-2 pb-1";
+            const idle = "text-gray-400 font-bold hover:text-gray-200 px-2 pb-1";
+            document.getElementById('tab-new-poi').className = tab === 'new' ? active : idle;
+            document.getElementById('tab-link-poi').className = tab === 'link' ? active : idle;
+            const saveBtn = document.querySelector('#poi-modal button[onclick="savePoi()"]');
+            if (saveBtn) saveBtn.innerText = tab === 'link' ? 'Link Events' : 'Save Attraction';
+        }
+
+        // --- Multiselect "Link Existing Event" ---
+        let linkableEvents = [];       // upcoming non-trip events {id, title, date}
+        let selectedLinkEvents = [];   // chosen subset, same shape
+
+        function escHtml(s) {
+            return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        // Load the user's upcoming events (next 30 days), minus background trips.
+        async function loadLinkableEvents() {
+            linkableEvents = [];
+            selectedLinkEvents = [];
+            const listEl = document.getElementById('poi-link-list');
+            const searchEl = document.getElementById('poi-link-search');
+            if (searchEl) searchEl.value = '';
+            if (listEl) listEl.innerHTML = '<div class="p-3 text-gray-500 text-sm">Loading events...</div>';
+            try {
+                // Span the TRIP's own date range (±1 day buffer), not a fixed
+                // 30-days-from-today window — otherwise events late in a trip that
+                // starts ~30 days out (or later) fall off the edge and can't be linked.
+                let startStr, endStr;
+                const ev = tripData.event;
+                if (!tripData.metadata.is_draft && ev && ev.start && ev.end) {
+                    const s = new Date(ev.start * 1000); s.setDate(s.getDate() - 1);
+                    const e = new Date(ev.end * 1000); e.setDate(e.getDate() + 1);
+                    startStr = s.toISOString().split('T')[0];
+                    endStr = e.toISOString().split('T')[0];
+                } else {
+                    const today = new Date();
+                    const e = new Date(); e.setDate(e.getDate() + 60);
+                    startStr = today.toISOString().split('T')[0];
+                    endStr = e.toISOString().split('T')[0];
+                }
+                // Raw calendar events (fresh) — NOT the solved schedule, whose per-day
+                // cache can be stale and drop an event added after that day was solved.
+                const res = await fetch(`api/calendar/events?start_date=${startStr}&end_date=${endStr}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    (data.events || []).forEach(e => {
+                        if (e.event_type !== 'background_trip' && e.source_event_ids && e.source_event_ids[0]) {
+                            linkableEvents.push({ id: e.source_event_ids[0], title: e.title || '(untitled)', date: (e.start || '').split('T')[0] });
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error(e);
+            }
+            renderLinkPills();
+            renderLinkList();
+        }
+
+        // Events already linked to this trip (calendar-backed POIs) are hidden.
+        function linkedEventIdSet() {
+            const s = new Set();
+            (tripData.metadata.pois || []).forEach(p => { if (p.source_event_id) s.add(p.source_event_id); });
+            return s;
+        }
+
+        function renderLinkList() {
+            const listEl = document.getElementById('poi-link-list');
+            if (!listEl) return;
+            const q = (document.getElementById('poi-link-search').value || '').toLowerCase();
+            const linked = linkedEventIdSet();
+            const selectedIds = new Set(selectedLinkEvents.map(e => e.id));
+            const rows = linkableEvents.filter(e =>
+                !linked.has(e.id) && !selectedIds.has(e.id) &&
+                (!q || e.title.toLowerCase().includes(q) || (e.date || '').includes(q))
+            );
+            if (rows.length === 0) {
+                listEl.innerHTML = '<div class="p-3 text-gray-500 text-sm">No matching events.</div>';
+                return;
+            }
+            listEl.innerHTML = rows.map(e =>
+                `<div class="p-3 hover:bg-gray-700/50 cursor-pointer flex justify-between items-center gap-2" onclick="addLinkSelection('${e.id.replace(/'/g, "\\'")}')">
+                    <span class="text-white text-sm truncate">${escHtml(e.title)}</span>
+                    <span class="text-gray-500 text-xs shrink-0">${escHtml(e.date)}</span>
+                </div>`
+            ).join('');
+        }
+
+        function renderLinkPills() {
+            const el = document.getElementById('poi-link-pills');
+            if (!el) return;
+            if (selectedLinkEvents.length === 0) {
+                el.innerHTML = '<span class="text-gray-500 text-xs">No events selected yet — pick from the list below.</span>';
+                return;
+            }
+            el.innerHTML = selectedLinkEvents.map(e =>
+                `<span class="bg-cyan-600/20 text-cyan-200 border border-cyan-500/30 text-xs pl-2.5 pr-1.5 py-1 rounded-full flex items-center gap-1 max-w-[220px]">
+                    <span class="truncate">${escHtml(e.title)}</span>
+                    <button type="button" onclick="removeLinkSelection('${e.id.replace(/'/g, "\\'")}')" class="hover:text-white text-cyan-300 font-bold text-sm leading-none shrink-0">&times;</button>
+                </span>`
+            ).join('');
+        }
+
+        function addLinkSelection(id) {
+            const ev = linkableEvents.find(e => e.id === id);
+            if (ev && !selectedLinkEvents.some(e => e.id === id)) selectedLinkEvents.push(ev);
+            renderLinkPills();
+            renderLinkList();
+        }
+
+        function removeLinkSelection(id) {
+            selectedLinkEvents = selectedLinkEvents.filter(e => e.id !== id);
+            renderLinkPills();
+            renderLinkList();
         }
         function closeAddPoiModal() {
             document.getElementById('poi-modal').classList.add('hidden');
@@ -2663,6 +2892,28 @@
         }
 
         async function savePoi() {
+            // Link Existing Event tab: attach a real calendar event to the trip.
+            // The backend links it (event-config trip_id) and the POI sync turns
+            // it into a fixed, calendar-backed attraction.
+            if (currentPoiTab === 'link') {
+                if (selectedLinkEvents.length === 0) return showGlobalAlert("Select at least one event to link.");
+                const saveBtn = document.querySelector('#poi-modal button[onclick="savePoi()"]');
+                if (saveBtn) saveBtn.innerText = "Linking...";
+                try {
+                    await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}/link_events`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ source_event_ids: selectedLinkEvents.map(e => e.id) })
+                    });
+                    closeAddPoiModal();
+                    await fetchTripData();
+                } catch (e) {
+                    showGlobalAlert("Error linking events");
+                }
+                if (saveBtn) saveBtn.innerText = "Link Events";
+                return;
+            }
+
             const poi = {
                 name: document.getElementById('poi-name').value,
                 location: document.getElementById('poi-location').value,
@@ -2765,10 +3016,39 @@
         };
 
         async function deletePoi(index) {
+            const poi = tripData.metadata.pois[index];
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+
+            // A calendar-backed POI mirrors a real event linked in from the Schedule
+            // page. "Deleting" it here only UNLINKS it from this trip — the calendar
+            // event is never touched, and just removing it locally wouldn't stick
+            // (the link would re-create it on next load).
+            if (poi && poi.is_external_event) {
+                openConfirmModal("Remove Linked Event?",
+                    `"${poi.name}" is linked from your calendar. Removing it here unlinks it from this trip only — the calendar event itself is not deleted.`, [
+                    { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm" },
+                    { text: "Unlink", className: "px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-bold shadow-md transition-colors text-sm",
+                        onClick: async () => {
+                            closeConfirmModal();
+                            try {
+                                await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}/unlink_event`, {
+                                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ source_event_id: poi.source_event_id || poi.event_id })
+                                });
+                                await fetchTripData();
+                            } catch (e) {
+                                showGlobalAlert("Error unlinking event");
+                            }
+                        }
+                    }
+                ]);
+                return;
+            }
+
             openConfirmModal("Delete Attraction?", "Are you sure you want to remove this from your list? This cannot be undone.", [
                 { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm" },
-                { 
-                    text: "Delete", 
+                {
+                    text: "Delete",
                     className: "px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold shadow-md transition-colors text-sm",
                     onClick: async () => {
                         tripData.metadata.pois.splice(index, 1);
@@ -3012,11 +3292,9 @@
             }
         });
 
-        let currentActTab = 'new';
-        
         async function openAddActivityModal() {
             document.getElementById('activity-modal').classList.remove('hidden');
-            
+
             // Populate dates
             if(tripData.event) {
                 const s = new Date(tripData.event.start * 1000);
@@ -3027,63 +3305,27 @@
                 document.getElementById('act-start').value = fmt(s);
                 document.getElementById('act-end').value = fmt(e);
             }
-            
-            // Fetch events for linking
-            const select = document.getElementById('act-existing-select');
-            select.innerHTML = '<option value="">Loading events...</option>';
-            try {
-                const today = new Date();
-                const startStr = today.toISOString().split('T')[0];
-                const endDate = new Date();
-                endDate.setDate(endDate.getDate() + 30);
-                const endStr = endDate.toISOString().split('T')[0];
-                
-                const res = await fetch(`api/schedule?start_date=${startStr}&end_date=${endStr}`);
-                if(res.ok) {
-                    const data = await res.json();
-                    const events = data.events || [];
-                    select.innerHTML = '<option value="">-- Select an Event --</option>';
-                    events.forEach(e => {
-                        if (e.event_type !== 'background_trip') {
-                            select.innerHTML += `<option value="${e.source_event_ids[0]}">${e.title} (${e.start.split('T')[0]})</option>`;
-                        }
-                    });
-                }
-            } catch(e) {
-                console.error(e);
-                select.innerHTML = '<option value="">Failed to load</option>';
-            }
         }
-        
+
         function closeAddActivityModal() {
             document.getElementById('activity-modal').classList.add('hidden');
         }
-        
+
         function switchActTab(tab) {
-            currentActTab = tab;
             document.getElementById('act-new-pane').classList.toggle('hidden', tab !== 'new');
-            document.getElementById('act-link-pane').classList.toggle('hidden', tab !== 'link');
-            
+
             document.getElementById('tab-new-act').className = tab === 'new' ? "text-indigo-400 font-bold border-b-2 border-indigo-400 px-2 pb-1" : "text-gray-400 font-bold hover:text-gray-200 px-2 pb-1";
-            document.getElementById('tab-link-act').className = tab === 'link' ? "text-indigo-400 font-bold border-b-2 border-indigo-400 px-2 pb-1" : "text-gray-400 font-bold hover:text-gray-200 px-2 pb-1";
         }
         
         async function saveActivity() {
-            let payload = {};
-            if(currentActTab === 'link') {
-                const val = document.getElementById('act-existing-select').value;
-                if(!val) return showGlobalAlert("Select an event to link.");
-                payload = { activity_id: val };
-            } else {
-                payload = {
-                    title: document.getElementById('act-title').value,
-                    location: document.getElementById('act-location').value,
-                    start: document.getElementById('act-start').value + ':00Z',
-                    end: document.getElementById('act-end').value + ':00Z'
-                };
-                if(!payload.title || !document.getElementById('act-start').value) return showGlobalAlert("Title and start time required.");
-            }
-            
+            const payload = {
+                title: document.getElementById('act-title').value,
+                location: document.getElementById('act-location').value,
+                start: document.getElementById('act-start').value + ':00Z',
+                end: document.getElementById('act-end').value + ':00Z'
+            };
+            if(!payload.title || !document.getElementById('act-start').value) return showGlobalAlert("Title and start time required.");
+
             const btn = document.querySelector('#activity-modal button:last-child');
             btn.innerText = "Saving...";
             
@@ -3102,6 +3344,35 @@
         }
         
         async function deleteActivity(actId) {
+            // Calendar-backed items are fixed events linked into the trip — removing
+            // one from the itinerary unlinks it (never deletes the calendar event).
+            const act = (tripData.activities || []).find(a => a.id === actId);
+            if (act && act.is_external) {
+                const poi = (tripData.metadata.pois || []).find(p => p.id === act.poi_id);
+                const srcId = (poi && (poi.source_event_id || poi.event_id)) || actId;
+                openConfirmModal("Remove Linked Event?",
+                    "This event is linked from your calendar. Removing it unlinks it from this trip only — the calendar event itself is not deleted.", [
+                    { text: "Cancel", className: "px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm" },
+                    { text: "Unlink", className: "px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-white font-bold shadow-md transition-colors text-sm",
+                        onClick: async () => {
+                            closeConfirmModal();
+                            try {
+                                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                                await fetch(`${apiBase}api/trip/${encodeURIComponent(EVENT_ID)}/unlink_event`, {
+                                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ source_event_id: srcId })
+                                });
+                                closeActivityDetails();
+                                fetchTripData();
+                            } catch (e) {
+                                showGlobalAlert("Error unlinking event");
+                            }
+                        }
+                    }
+                ]);
+                return;
+            }
+
             openConfirmModal("Remove Activity", "Do you want to delete this event ENTIRELY from Google Calendar as well, or just unlink it from this trip?", [
                 { text: "Cancel" },
                 { 
@@ -3351,6 +3622,18 @@
             mapMarkers.forEach(m => m.remove());
             mapMarkers = [];
 
+            // Route layers can only be touched when the style is loaded. When it
+            // isn't (fresh map, style mid-repaint), the blocks below silently
+            // skip — leaking the previous day's lines and dropping this day's —
+            // so schedule one re-render for when the map settles.
+            if (!poiMap.isStyleLoaded() && !styleRenderQueued) {
+                styleRenderQueued = true;
+                poiMap.once('idle', () => {
+                    styleRenderQueued = false;
+                    renderMap();
+                });
+            }
+
             // Clear old routes
             if (poiMap && poiMap.isStyleLoaded()) {
                 const style = poiMap.getStyle();
@@ -3408,21 +3691,32 @@
                         const popupContent = `
                             <div class="text-gray-900 p-1">
                                 <p class="font-bold mb-1">${poi.name}</p>
-                                <p class="text-xs uppercase font-semibold text-gray-500 mb-2">${poi.category || 'other'}</p>
+                                <p class="text-xs uppercase font-semibold text-gray-500 mb-2">${poi.is_background ? '🌟 Day Theme' : (poi.category || 'other')}</p>
                                 <button onclick="openPoiDetails(${idx})" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1 px-2 rounded transition-colors">Details</button>
                             </div>
                         `;
                         const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
 
-                        const prioHexColors = { 'must': '#ef4444', 'want': '#3b82f6', 'stretch': '#eab308' };
-                        const markerColor = poi.is_scheduled ? '#10b981' : (prioHexColors[poi.priority] || '#3b82f6');
-                        
-                        // Map marker
-                        const marker = new mapboxgl.Marker({color: markerColor})
-                            .setLngLat([poi.lng, poi.lat])
-                            .setPopup(popup)
-                            .addTo(poiMap);
-                        
+                        let marker;
+                        if (poi.is_background) {
+                            // Day themes aren't activity pins: star badge matching the
+                            // itinerary's "Day Theme" container styling.
+                            const el = document.createElement('div');
+                            el.className = `w-9 h-9 ${poi.is_scheduled ? 'bg-indigo-600' : 'bg-gray-500'} rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white cursor-pointer`;
+                            el.innerHTML = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>';
+                            marker = new mapboxgl.Marker({element: el})
+                                .setLngLat([poi.lng, poi.lat])
+                                .setPopup(popup)
+                                .addTo(poiMap);
+                        } else {
+                            const prioHexColors = { 'must': '#ef4444', 'want': '#3b82f6', 'stretch': '#eab308' };
+                            const markerColor = poi.is_scheduled ? '#10b981' : (prioHexColors[poi.priority] || '#3b82f6');
+                            marker = new mapboxgl.Marker({color: markerColor})
+                                .setLngLat([poi.lng, poi.lat])
+                                .setPopup(popup)
+                                .addTo(poiMap);
+                        }
+
                         mapMarkers.push(marker);
                         bounds.extend([poi.lng, poi.lat]);
                     }

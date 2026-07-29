@@ -470,6 +470,205 @@ def trip_view(request: Request, event_id: str):
 def health_check():
     return {"status": "healthy"}
 
+def _coerce_ts(v):
+    """Normalize an activity start/end to a float unix timestamp.
+
+    Activity starts arrive as unix floats (parse_dt, claimed_day_spans, most
+    POI writers) but a legacy bug stored some POI scheduled_start values as ISO
+    strings; the frontend needs numeric timestamps and Python can't sort mixed
+    str/float, so coerce everything here. Unparseable/empty -> 0.0."""
+    if v is None or v == "":
+        return 0.0
+    if isinstance(v, bool):
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except ValueError:
+            pass
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            s = v.replace('Z', '+00:00')
+            if len(v) <= 10:
+                return _dt.strptime(v, "%Y-%m-%d").replace(tzinfo=_tz.utc).timestamp()
+            return _dt.fromisoformat(s).timestamp()
+        except (ValueError, TypeError):
+            return 0.0
+    return 0.0
+
+
+def _meal_from_iso(dt_iso: str):
+    """Infer a meal_type from a timed event's local start (its ISO offset IS the
+    local time). Restaurant reservations often have opaque names ('Chef Mickey',
+    'Maria and Enzo') with no food keyword, but their time is a reliable signal.
+    Gaps (mid-afternoon, late night) return None so a non-meal event isn't tagged."""
+    import datetime as _dt
+    if not dt_iso or len(dt_iso) <= 10:   # missing or all-day (no clock time)
+        return None
+    try:
+        t = _dt.datetime.fromisoformat(dt_iso.replace('Z', '+00:00')).time()
+    except ValueError:
+        return None
+    if _dt.time(6, 30) <= t < _dt.time(10, 45):
+        return 'breakfast'
+    if _dt.time(10, 45) <= t < _dt.time(15, 0):
+        return 'lunch'
+    if _dt.time(16, 0) <= t < _dt.time(21, 0):
+        return 'dinner'
+    return None
+
+
+def _build_calendar_backed_poi(cal_event_id: str, service, trip_location: str = "") -> dict:
+    """Turn a real Google Calendar event into a fixed, calendar-backed trip POI.
+    Returns None if the event can't be fetched. The POI is is_scheduled at the
+    event's real time so the scheduler locks around it and it renders on the
+    itinerary exactly like a scheduled attraction."""
+    if not service or "::" not in cal_event_id:
+        return None
+    cal_id, raw_id = cal_event_id.split("::", 1)
+    try:
+        g = service.events().get(calendarId=cal_id, eventId=raw_id).execute()
+    except Exception as e:
+        print(f"Could not fetch linked event {cal_event_id}: {e}")
+        return None
+    start_ts = _coerce_ts(g.get('start', {}).get('dateTime', g.get('start', {}).get('date')))
+    end_ts = _coerce_ts(g.get('end', {}).get('dateTime', g.get('end', {}).get('date')))
+    title = g.get('summary', 'Event')
+    location = g.get('location', '') or title
+    tl = title.lower()
+    food_kw = ('lunch', 'dinner', 'breakfast', 'brunch', 'dining', 'restaurant',
+               'cafe', 'café', 'table', 'reservation', 'bar', 'grill', 'bistro',
+               'kitchen', 'eatery', 'tavern', 'buffet', 'steakhouse', 'ristorante', 'trattoria')
+    # Time is the reliable meal signal when the name is opaque ('Chef Mickey').
+    inferred_meal = _meal_from_iso(g.get('start', {}).get('dateTime'))
+    is_food = any(k in tl for k in food_kw) or inferred_meal is not None
+    category = 'food' if is_food else 'other'
+    meal_type = inferred_meal if is_food else None
+    dur = int((end_ts - start_ts) / 60) if end_ts > start_ts else 60
+
+    # Enrich with the same Mapbox/Wikidata/OpenStreetMap data regular attractions
+    # get (coords, hours, website, phone, cuisine, wikidata image). Best-effort and
+    # done once at creation — a linked event is still useful without it.
+    enrich = {}
+    try:
+        from services.trip_planner import enrich_poi_data
+        enrich = enrich_poi_data(title, location, trip_location) or {}
+    except Exception as e:
+        print(f"Enrichment failed for linked event {cal_event_id}: {e}")
+
+    import uuid as _uuid
+    return {
+        "id": _uuid.uuid4().hex,
+        "name": title,
+        # The event's own location (set in Google Calendar) is authoritative —
+        # never let the fuzzy enrichment match overwrite it with a different
+        # address. Enrichment still contributes the extras (image, hours, etc.).
+        "location": location,
+        "mapbox_id": enrich.get('mapbox_id'),
+        "category": category,
+        "meal_type": meal_type,
+        "description": g.get('description', '') or '',
+        "event_id": cal_event_id,
+        "source_event_id": cal_event_id,
+        "is_external_event": True,
+        "is_scheduled": True,
+        "scheduled_start": start_ts,
+        "scheduled_end": end_ts,
+        "duration_mins": max(15, dur),
+        "priority": "must",   # a real booking is a fixed, must-honor anchor
+        "lat": enrich.get('lat'),
+        "lng": enrich.get('lng'),
+        "wikidata_id": enrich.get('wikidata_id'),
+        "opening_hours": enrich.get('opening_hours'),
+        "website": enrich.get('website'),
+        "phone_number": enrich.get('phone_number'),
+        "cuisine": enrich.get('cuisine'),
+        "internet_access": enrich.get('internet_access'),
+        "image_url": enrich.get('image_url'),
+        "link": enrich.get('link'),
+    }
+
+
+def _sync_linked_events_to_pois(metadata: dict, event_id: str, service) -> bool:
+    """Reconcile externally-linked calendar events (Schedule-page event configs
+    with trip_id == this trip) into calendar-backed POIs: create one when an
+    event is newly linked, remove it when the event is unlinked. Committed POIs
+    (events Chauffeur itself created from a POI) are left alone. Returns True if
+    metadata changed. This is what makes a linked event show up as a POI, exactly
+    as if it had been added through Add Attraction."""
+    from services.storage import event_configs_table
+    from tinydb import Query
+    trip_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
+
+    linked = set()
+    for conf in event_configs_table.search(Query().trip_id == event_id):
+        gid = conf.get('google_id')
+        if gid:
+            linked.add(gid if "::" in gid else f"{trip_cal_id}::{gid}")
+
+    pois = metadata.setdefault("pois", [])
+    # An event Chauffeur committed from one of its own POIs is already represented;
+    # never turn it into a second, external POI.
+    committed_event_ids = {p.get("event_id") for p in pois if not p.get("is_external_event")}
+    linked = {e for e in linked if e not in committed_event_ids}
+
+    existing_by_source = {p.get("source_event_id"): p for p in pois if p.get("is_external_event")}
+    changed = False
+
+    trip_location = metadata.get("location", "") or ""
+    for ev_id in linked:
+        if ev_id in existing_by_source:
+            continue
+        poi = _build_calendar_backed_poi(ev_id, service, trip_location)
+        if poi:
+            pois.append(poi)
+            changed = True
+
+    for src, p in list(existing_by_source.items()):
+        if src not in linked:   # user unlinked it on the Schedule page
+            pois.remove(p)
+            changed = True
+            continue
+        # A calendar-backed POI must always be scheduled at its real event time.
+        # Heal it if its cal:: id was clobbered, if its scheduled state was wiped
+        # (e.g. by the daily solver before it stopped touching trip POIs), or if it
+        # was created before meal-time inference and is mis-categorized 'other'.
+        # One fetch fixes all; once healed it stops re-fetching.
+        needs_reanchor = (p.get("event_id") != src or not p.get("is_scheduled")
+                          or not p.get("scheduled_start"))
+        needs_category = p.get("category") != 'food'
+        if (needs_reanchor or needs_category) and "::" in src and service:
+            try:
+                cal_id, raw_id = src.split("::", 1)
+                g = service.events().get(calendarId=cal_id, eventId=raw_id).execute()
+                if needs_reanchor:
+                    p["event_id"] = src
+                    p["is_scheduled"] = True
+                    p["scheduled_start"] = _coerce_ts(g.get('start', {}).get('dateTime', g.get('start', {}).get('date')))
+                    p["scheduled_end"] = _coerce_ts(g.get('end', {}).get('dateTime', g.get('end', {}).get('date')))
+                    changed = True
+                if needs_category:
+                    mt = _meal_from_iso(g.get('start', {}).get('dateTime'))
+                    if mt:   # a real reservation at a meal time -> a meal that reserves its block
+                        p["category"] = 'food'
+                        if not p.get("meal_type"):
+                            p["meal_type"] = mt
+                        changed = True
+            except Exception as e:
+                print(f"Could not heal calendar-backed POI {src}: {e}")
+
+    # The legacy activities list is retired under the POI-centric model.
+    if metadata.get("activities"):
+        metadata["activities"] = []
+        changed = True
+
+    if changed:
+        storage.set_trip_metadata(metadata.get("event_id", event_id), metadata)
+    return changed
+
+
 @app.get("/api/trip/{event_id}")
 def get_trip_api(event_id: str):
     metadata = storage.get_trip_metadata(event_id)
@@ -543,8 +742,11 @@ def get_trip_api(event_id: str):
                     "end": poi.get("scheduled_end", 0),
                     "background_url": background_url
                 })
-        activities_details.sort(key=lambda x: x["start"] if x["start"] else 0)
-        
+        for a in activities_details:
+            a["start"] = _coerce_ts(a.get("start"))
+            a["end"] = _coerce_ts(a.get("end"))
+        activities_details.sort(key=lambda x: x["start"])
+
         return {
             "metadata": metadata,
             "event": event_details,
@@ -592,91 +794,78 @@ def get_trip_api(event_id: str):
         except Exception as e:
             print(f"Error fetching trip details from Google Calendar: {e}")
             
-    # Merge activities from event configs that have this trip_id
-    from services.storage import event_configs_table
-    from tinydb import Query
-    linked_configs = event_configs_table.search(Query().trip_id == event_id)
-    trip_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
-    
-    for conf in linked_configs:
-        gid = conf.get('google_id')
-        if gid:
-            full_gid = gid if "::" in gid else f"{trip_cal_id}::{gid}"
-            if full_gid not in metadata["activities"]:
-                metadata["activities"].append(full_gid)
-            
-    # Resolve activities
+    # POI-centric model: events linked to this trip (Schedule-page event configs
+    # with trip_id set) are reconciled into calendar-backed POIs — created on
+    # link, removed on unlink — so they render and schedule exactly like any
+    # attraction. The old separate "activities" list is retired here.
+    _sync_linked_events_to_pois(metadata, event_id, service)
     activities_details = []
-    for act_id in metadata["activities"]:
-        if "::" not in act_id: continue
-        act_cal_id, act_raw_id = act_id.split("::", 1)
-        
-        if act_raw_id.startswith("draft_poi_") or act_raw_id.startswith("draft_acc_"):
-            continue
 
-        try:
-            if service:
-                g_act = service.events().get(calendarId=act_cal_id, eventId=act_raw_id).execute()
-                act_start_str = g_act.get('start', {}).get('dateTime', g_act.get('start', {}).get('date'))
-                act_end_str = g_act.get('end', {}).get('dateTime', g_act.get('end', {}).get('date'))
-                
-                # Cache Unsplash Background
-                act_meta = storage.get_trip_metadata(act_id) or {"event_id": act_id, "is_activity": True}
-                if "background_url" not in act_meta or not act_meta.get("is_activity"):
-                    act_meta["is_activity"] = True
-                    import urllib.parse
-                    query = g_act.get("location") or g_act.get("summary", "travel")
-                    encoded_query = urllib.parse.quote(query)
-                    act_meta["background_url"] = act_meta.get("background_url", f"https://loremflickr.com/1280/720/{encoded_query},scenery")
-                    storage.set_trip_metadata(act_id, act_meta)
-                    
-                activities_details.append({
-                    "id": act_id,
-                    "title": g_act.get("summary", ""),
-                    "location": g_act.get("location", ""),
-                    "description": g_act.get("description", ""),
-                    "start": parse_dt(act_start_str),
-                    "end": parse_dt(act_end_str),
-                    "background_url": act_meta.get("background_url")
-                })
-        except Exception as e:
-            print(f"Error fetching activity {act_id}: {e}")
-            
-    # Inject Draft POIs that have been scheduled
+    # Self-heal scheduled POIs that never got a draft_poi_ event_id: the main
+    # daily solver's write-back marks trip POIs is_scheduled with a scheduled_start
+    # but historically left event_id empty, so they counted as "scheduled" in the
+    # attractions list yet never appeared in the itinerary below (which keys off a
+    # draft_poi_ id). Backfill the id so the two views agree.
+    import uuid as _uuid
+    _healed = False
     for poi in metadata.get("pois", []):
-        if poi.get("is_scheduled") and poi.get("scheduled_start") and poi.get("event_id") and poi.get("event_id").startswith("draft_poi_"):
-            act_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
-            from services.trip_scheduler import claimed_day_spans
-            spans = claimed_day_spans(poi, metadata.get("timeZone"))
-            if spans:
-                # Multi-day anchor: one day-view card per claimed date (possibly non-consecutive)
-                for i, n, day_start, day_end in spans:
-                    activities_details.append({
-                        # suffix keeps UI POI-matching (act.id.endsWith(poi.event_id)) working
-                        "id": f"{act_cal_id}::day{i+1}_{poi['event_id']}",
-                        "title": f"{poi.get('name', '')} (Day {i+1} of {n})",
-                        "location": poi.get("location", ""),
-                        "description": poi.get("notes") or poi.get("description", ""),
-                        "start": day_start,
-                        "end": day_end,
-                        "background_url": poi.get("image_url") or metadata.get("background_url"),
-                        "poi_id": poi.get("id")
-                    })
-                continue
-            act_id = f"{act_cal_id}::{poi['event_id']}"
-            activities_details.append({
-                "id": act_id,
-                "title": poi.get("name", ""),
-                "location": poi.get("location", ""),
-                "description": poi.get("notes") or poi.get("description", ""),
-                "start": poi.get("scheduled_start"),
-                "end": poi.get("scheduled_end") or (poi.get("scheduled_start") + 3600),
-                "background_url": poi.get("image_url") or metadata.get("background_url"),
-                "poi_id": poi.get("id")
+        # Skip calendar-backed POIs — their event_id is a real cal:: id we must keep.
+        if poi.get("is_external_event") or _is_calendar_backed_poi(poi):
+            continue
+        if poi.get("is_scheduled") and poi.get("scheduled_start") and not (poi.get("event_id") or "").startswith("draft_poi_"):
+            poi["event_id"] = f"draft_poi_{_uuid.uuid4().hex}"
+            _healed = True
+    if _healed:
+        storage.set_trip_metadata(metadata.get("event_id", event_id), metadata)
+
+    # Inject scheduled POIs (fuzzy draft_poi_ AND calendar-backed) into the itinerary.
+    for poi in metadata.get("pois", []):
+        ev = poi.get("event_id") or ""
+        cal_backed = _is_calendar_backed_poi(poi)
+        if not (poi.get("is_scheduled") and poi.get("scheduled_start") and (ev.startswith("draft_poi_") or cal_backed)):
+            continue
+        act_cal_id = event_id.split("::", 1)[0] if "::" in event_id else "primary"
+        from services.trip_scheduler import claimed_day_spans
+        spans = claimed_day_spans(poi, metadata.get("timeZone"))
+        if spans:
+            # Multi-day anchor: one day-view card per claimed date (possibly non-consecutive)
+            for i, n, day_start, day_end in spans:
+                activities_details.append({
+                    # suffix keeps UI POI-matching (act.id.endsWith(poi.event_id)) working
+                    "id": f"{act_cal_id}::day{i+1}_{ev}",
+                    "title": f"{poi.get('name', '')} (Day {i+1} of {n})",
+                    "location": poi.get("location", ""),
+                    "description": poi.get("notes") or poi.get("description", ""),
+                    "start": day_start,
+                    "end": day_end,
+                    "background_url": poi.get("image_url") or metadata.get("background_url"),
+                    "poi_id": poi.get("id"),
+                    "is_external": bool(poi.get("is_external_event"))
+                })
+            continue
+        # A calendar-backed POI's event_id is already a full cal:: id; a fuzzy POI's
+        # needs the trip calendar prefix so the UI's endsWith(event_id) match works.
+        act_id = ev if cal_backed else f"{act_cal_id}::{ev}"
+        # scheduled_start is normally a unix float, but a legacy writer stored
+        # some as ISO strings — coerce before the +3600 arithmetic below.
+        sched_start = _coerce_ts(poi.get("scheduled_start"))
+        activities_details.append({
+            "id": act_id,
+            "title": poi.get("name", ""),
+            "location": poi.get("location", ""),
+            "description": poi.get("notes") or poi.get("description", ""),
+            "start": sched_start,
+            "end": _coerce_ts(poi.get("scheduled_end")) or (sched_start + 3600),
+            "background_url": poi.get("image_url") or metadata.get("background_url"),
+            "poi_id": poi.get("id"),
+            "is_external": bool(poi.get("is_external_event"))
             })
-            
-    # Sort activities by start time
-    activities_details.sort(key=lambda x: x["start"] if x["start"] else 0)
+
+    # Sort activities by start time (normalize any heterogeneous types first)
+    for a in activities_details:
+        a["start"] = _coerce_ts(a.get("start"))
+        a["end"] = _coerce_ts(a.get("end"))
+    activities_details.sort(key=lambda x: x["start"])
             
     return {
         "event": event_details,
@@ -775,18 +964,22 @@ def schedule_trip_api(event_id: str, payload: dict):
 
 @app.post("/api/trip/{event_id}/activity")
 def add_activity_api(event_id: str, payload: dict):
-    # payload can contain {"activity_id": "cal::event"} to link existing
-    # or {"title": "...", "location": "...", "start": "...", "end": "...", "calendar_id": "..."} to create new
-    meta = storage.get_trip_metadata(event_id) or {"event_id": event_id, "pois": [], "activities": []}
-    if "activities" not in meta:
-        meta["activities"] = []
-        
+    """Link an existing calendar event to the trip, or create a new one and link
+    it. POI-centric: linking sets the event's config trip_id so the get_trip_api
+    sync turns it into a calendar-backed POI (the old meta["activities"] list is
+    retired). payload = {"activity_id": "cal::event"} to link existing, or
+    {"title","location","start","end","calendar_id"} to create-then-link."""
+    from services.calendar import get_calendar_service
+    try:
+        service = get_calendar_service()
+    except Exception:
+        service = None
+
     act_id = payload.get("activity_id")
     if not act_id and "title" in payload:
-        # Create new event
-        from services.calendar import get_calendar_service
-        service = get_calendar_service()
-        cal_id = payload.get("calendar_id", "primary")
+        if not service:
+            return {"error": "Calendar service unavailable"}
+        cal_id = payload.get("calendar_id") or (event_id.split("::", 1)[0] if "::" in event_id else "primary")
         event_body = {
             "summary": payload["title"],
             "location": payload.get("location", ""),
@@ -795,11 +988,21 @@ def add_activity_api(event_id: str, payload: dict):
         }
         res = service.events().insert(calendarId=cal_id, body=event_body).execute()
         act_id = f"{cal_id}::{res['id']}"
-        
-    if act_id and act_id not in meta["activities"]:
-        meta["activities"].append(act_id)
-        storage.set_trip_metadata(event_id, meta)
-        
+
+    if not act_id:
+        return {"error": "activity_id or title required"}
+
+    # Link via the event config's trip_id — the single source the POI sync reads.
+    raw_id = act_id.split("::", 1)[1] if "::" in act_id else act_id
+    conf = dict(storage.get_event_config(raw_id) or {"google_id": raw_id})
+    conf["trip_id"] = event_id
+    storage.set_event_config(raw_id, conf)
+
+    # Reconcile now so the calendar-backed POI shows up immediately.
+    meta = storage.get_trip_metadata(event_id)
+    if meta is not None:
+        _sync_linked_events_to_pois(meta, event_id, service)
+
     return {"status": "ok", "activity_id": act_id}
 
 @app.delete("/api/trip/{event_id}/activity/{activity_id}")
@@ -823,14 +1026,18 @@ def delete_activity_api(event_id: str, activity_id: str, delete_from_calendar: b
         if changed:
             storage.set_trip_metadata(event_id, meta)
     if delete_from_calendar and "::" in activity_id:
-        cal_id, raw_id = activity_id.split("::", 1)
-        try:
-            from services.calendar import get_calendar_service
-            service = get_calendar_service()
-            service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
-        except Exception as e:
-            print(f"Error deleting activity from calendar: {e}")
-            
+        # Never delete an externally-authored event through Chauffeur.
+        if _is_chauffeur_calendar_event(activity_id):
+            cal_id, raw_id = activity_id.split("::", 1)
+            try:
+                from services.calendar import get_calendar_service
+                service = get_calendar_service()
+                service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
+            except Exception as e:
+                print(f"Error deleting activity from calendar: {e}")
+        else:
+            print(f"Refusing to delete non-Chauffeur event {activity_id}")
+
     return {"status": "ok"}
 
 @app.post("/api/trip/{event_id}/activities/delete_bulk")
@@ -875,18 +1082,43 @@ def delete_activities_bulk_api(event_id: str, payload: dict):
 
     return {"status": "ok"}
 
+def _is_chauffeur_calendar_event(cal_event_id: str) -> bool:
+    """True only if Chauffeur created this Google event (it carries our poi_id
+    stamp). Externally-authored events linked into a trip must NEVER be deletable
+    through Chauffeur — deleting the itinerary must not destroy, e.g., a family
+    member's reservation."""
+    if not cal_event_id or "::" not in cal_event_id:
+        return False
+    try:
+        from services.calendar import get_calendar_service
+        cal_id, raw_id = cal_event_id.split("::", 1)
+        g = get_calendar_service().events().get(calendarId=cal_id, eventId=raw_id).execute()
+        props = (g.get("extendedProperties", {}) or {}).get("private", {}) or {}
+        return bool(props.get("poi_id") or props.get("trip_id"))
+    except Exception as e:
+        # Unknown provenance -> refuse to delete. Safety beats convenience.
+        print(f"Provenance check failed for {cal_event_id}, will NOT delete: {e}")
+        return False
+
+
 @app.delete("/api/trip/{event_id}/activities")
 def clear_itinerary_api(event_id: str, delete_from_calendar: bool = False):
     meta = storage.get_trip_metadata(event_id)
     if not meta: return {"status": "ok"}
-    
-    activities_to_delete = meta.get("activities", [])
-    
+
+    # Capture the calendar events THIS trip created (committed POIs carry a cal::
+    # event_id in our own pois list) BEFORE we reset POI state below. Externally
+    # linked events live in meta["activities"] and are only ever unlinked, never
+    # deleted — so they are deliberately excluded from the delete set.
+    committed_poi_events = [p.get("event_id") for p in meta.get("pois", [])
+                            if "::" in (p.get("event_id") or "")
+                            and not (p.get("event_id") or "").startswith("draft_poi_")]
+
     changed = False
     if "activities" in meta and meta["activities"]:
-        meta["activities"] = []
+        meta["activities"] = []   # unlink external events; the events stay in Google
         changed = True
-        
+
     for poi in meta.get("pois", []):
         if poi.get("is_scheduled") or poi.get("event_id"):
             poi["is_scheduled"] = False
@@ -894,24 +1126,22 @@ def clear_itinerary_api(event_id: str, delete_from_calendar: bool = False):
             poi["scheduled_start"] = None
             poi["scheduled_end"] = None
             changed = True
-            
+
     if changed:
         storage.set_trip_metadata(event_id, meta)
-        
+
     if delete_from_calendar:
-        try:
-            from services.calendar import get_calendar_service
-            service = get_calendar_service()
-            for act_id in activities_to_delete:
-                if "::" in act_id:
+        # Delete only events Chauffeur created, and double-check provenance on the
+        # Google event itself before each delete.
+        for act_id in committed_poi_events:
+            if _is_chauffeur_calendar_event(act_id):
+                try:
+                    from services.calendar import get_calendar_service
                     cal_id, raw_id = act_id.split("::", 1)
-                    try:
-                        service.events().delete(calendarId=cal_id, eventId=raw_id).execute()
-                    except Exception as e:
-                        print(f"Error deleting {act_id} from calendar: {e}")
-        except Exception as e:
-            print(f"Error getting calendar service: {e}")
-            
+                    get_calendar_service().events().delete(calendarId=cal_id, eventId=raw_id).execute()
+                except Exception as e:
+                    print(f"Error deleting {act_id} from calendar: {e}")
+
     return {"status": "ok"}
 
 @app.post("/api/trip/{event_id}")
@@ -1288,6 +1518,159 @@ def schedule_pois_bulk_api(event_id: str, payload: dict):
     except Exception as e:
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+def _is_calendar_backed_poi(poi: dict) -> bool:
+    """A POI that stands in for a real calendar event (committed by Chauffeur or,
+    once linking-as-POI lands, an externally-authored event pulled in). Its
+    event_id is a real cal id, not a fuzzy draft_poi_ placeholder. These are
+    fixed anchors: never auto-unscheduled by clear/rebuild, and the solver
+    schedules other POIs around them via its 'locked' mechanism."""
+    ev = poi.get("event_id") or ""
+    return "::" in ev and not ev.startswith("draft_poi_")
+
+
+@app.post("/api/trip/{event_id}/unschedule")
+def unschedule_pois_api(event_id: str, payload: dict):
+    """Remove specific POIs from the timeline WITHOUT deleting anything from the
+    calendar — the planning-friendly 'clear the schedule' primitive (per-day or
+    per-selection). Calendar-backed anchors are left untouched."""
+    poi_ids = set(payload.get("poi_ids", []))
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"status": "ok", "unscheduled": 0}
+    n = 0
+    for poi in meta.get("pois", []):
+        if poi.get("id") in poi_ids and not _is_calendar_backed_poi(poi):
+            if poi.get("is_scheduled") or poi.get("scheduled_start"):
+                poi["is_scheduled"] = False
+                poi["scheduled_start"] = None
+                poi["scheduled_end"] = None
+                if (poi.get("event_id") or "").startswith("draft_poi_"):
+                    poi["event_id"] = None
+                n += 1
+    if n:
+        storage.set_trip_metadata(event_id, meta)
+    return {"status": "ok", "unscheduled": n}
+
+
+@app.post("/api/trip/{event_id}/rebuild")
+def rebuild_itinerary_api(event_id: str):
+    """Re-solve the itinerary from scratch WITHOUT clearing, unlinking, or
+    deleting anything. Planning POIs are un-scheduled and re-placed; calendar-
+    backed anchors (committed POIs, and — once linking-as-POI lands — linked real
+    events) stay put and the solver routes around them. This is the everyday
+    'change some settings, rebuild the schedule' action."""
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"error": "Trip not found"}
+    fuzzy_ids = []
+    for poi in meta.get("pois", []):
+        if _is_calendar_backed_poi(poi):
+            continue  # fixed anchor — leave it exactly where it is
+        if poi.get("is_scheduled") or poi.get("scheduled_start"):
+            poi["is_scheduled"] = False
+            poi["scheduled_start"] = None
+            poi["scheduled_end"] = None
+            if (poi.get("event_id") or "").startswith("draft_poi_"):
+                poi["event_id"] = None
+        fuzzy_ids.append(poi.get("id"))
+    storage.set_trip_metadata(event_id, meta)
+    # Reuse the streaming scheduler; already-scheduled anchors are treated as
+    # locked placements the solver won't move.
+    return schedule_pois_bulk_api(event_id, {"poi_ids": fuzzy_ids})
+
+
+@app.get("/api/calendar/events")
+def list_calendar_events_api(start_date: str = None, end_date: str = None):
+    """Raw Google Calendar events in a date range, straight from the calendar —
+    for the trip event linker. Deliberately NOT sourced from the solved/cached
+    daily schedule (which can be stale and omit an event added after that day was
+    last solved — e.g. a dinner booked later shows on every other day but not the
+    one whose cache predates it)."""
+    settings = storage.get_settings()
+    calendar_ids = settings.get('calendar_ids', [])
+    if not calendar_ids or not start_date or not end_date:
+        return {"events": []}
+    from services.calendar import fetch_upcoming_events
+    try:
+        events = fetch_upcoming_events(calendar_ids, start_date_str=start_date, end_date_str=end_date)
+    except Exception as e:
+        return {"error": str(e), "events": []}
+    out = []
+    for ev in events:
+        start = getattr(ev, 'start', None)
+        out.append({
+            "id": getattr(ev, 'id', None),
+            "title": getattr(ev, 'title', ''),
+            "start": start.isoformat() if hasattr(start, 'isoformat') else (str(start) if start else ''),
+            "event_type": getattr(ev, 'event_type', 'standard'),
+            "trip_id": getattr(ev, 'trip_id', None),
+            "source_event_ids": getattr(ev, 'source_event_ids', []),
+        })
+    return {"events": out}
+
+
+@app.post("/api/trip/{event_id}/link_events")
+def link_events_api(event_id: str, payload: dict):
+    """Link one or more existing calendar events to the trip in a single call:
+    set each event config's trip_id, then run the POI sync ONCE so all the
+    calendar-backed POIs are created together. Backs the multiselect linker."""
+    ids = payload.get("source_event_ids") or []
+    if not isinstance(ids, list) or not ids:
+        return {"error": "source_event_ids list required"}
+
+    linked = 0
+    for src in ids:
+        if not src:
+            continue
+        raw_id = src.split("::", 1)[1] if "::" in src else src
+        conf = dict(storage.get_event_config(raw_id) or {"google_id": raw_id})
+        conf["trip_id"] = event_id
+        storage.set_event_config(raw_id, conf)
+        linked += 1
+
+    from services.calendar import get_calendar_service
+    try:
+        service = get_calendar_service()
+    except Exception:
+        service = None
+    meta = storage.get_trip_metadata(event_id)
+    if meta is not None:
+        _sync_linked_events_to_pois(meta, event_id, service)
+
+    return {"status": "ok", "linked": linked}
+
+
+@app.post("/api/trip/{event_id}/unlink_event")
+def unlink_event_api(event_id: str, payload: dict):
+    """Detach an externally-linked calendar event from the trip: clear the
+    Schedule-page event-config link (so the POI sync stops re-creating it) and
+    drop its calendar-backed POI now. The Google Calendar event is NEVER deleted
+    — unlinking only removes it from THIS trip's plan."""
+    source_event_id = payload.get("source_event_id") or ""
+    if "::" not in source_event_id:
+        return {"error": "source_event_id (cal::id) required"}
+    raw_id = source_event_id.split("::", 1)[1]
+
+    cleared = 0
+    conf = storage.get_event_config(raw_id)
+    if conf and conf.get("trip_id"):
+        conf = dict(conf)
+        conf["trip_id"] = None
+        storage.set_event_config(raw_id, conf)
+        cleared = 1
+
+    meta = storage.get_trip_metadata(event_id)
+    if meta:
+        before = len(meta.get("pois", []))
+        meta["pois"] = [p for p in meta.get("pois", [])
+                        if p.get("source_event_id") != source_event_id]
+        if len(meta.get("pois", [])) != before:
+            storage.set_trip_metadata(event_id, meta)
+
+    return {"status": "ok", "cleared": cleared}
+
 
 @app.get("/api/trip/{event_id}/rules")
 def get_trip_rules_api(event_id: str):
@@ -3321,18 +3704,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if not meta or not meta.get('pois'):
             continue
             
-        # If computing live schedule, reset all POIs
-        if not draft and not start_date_str and not end_date_str:
-            changed = False
-            for poi in meta['pois']:
-                if poi.get('is_scheduled'):
-                    poi['is_scheduled'] = False
-                    poi['scheduled_start'] = None
-                    poi['scheduled_end'] = None
-                    changed = True
-            if changed:
-                storage.set_trip_metadata(tm['id'], meta)
-                
+        # The trip itinerary's scheduled state is owned SOLELY by the trip page's
+        # CP-SAT scheduler (schedule_pois_bulk), triggered explicitly by the user.
+        # The daily family solver must NOT wipe or reschedule it — doing so clobbered
+        # the user's itinerary (and dropped calendar-backed reservations) on every
+        # background refresh. Already-scheduled POIs are left untouched below.
         for poi in meta['pois']:
             if poi.get('is_scheduled') and (not draft and not start_date_str and not end_date_str):
                 continue
@@ -4048,20 +4424,11 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         }
         
 
-        # Save Trip POI scheduled state
-        if not draft and not start_date_str and not end_date_str:
-            for se in scheduled_errands:
-                if '_poi_' in se['id']:
-                    trip_id = se['id'].split('_poi_')[0]
-                    poi_id = se['id'].split('_poi_')[1].split('_occ_')[0]
-                    t_meta = storage.get_trip_metadata(trip_id)
-                    if t_meta and 'pois' in t_meta:
-                        for p in t_meta['pois']:
-                            if p['id'] == poi_id:
-                                p['is_scheduled'] = True
-                                p['scheduled_start'] = se['start']
-                                p['scheduled_end'] = se['end']
-                        storage.set_trip_metadata(trip_id, t_meta)
+        # NOTE: the daily solver deliberately does NOT persist trip-POI scheduled
+        # state. The trip page's CP-SAT scheduler owns the itinerary; the matcher's
+        # bounded-errand placement here is used only for the family dashboard's
+        # in-memory display, never written back to the trip (writing it back
+        # rescheduled the user's itinerary on every refresh).
 
         encoded_schedule = jsonable_encoder(daily_schedule)
         storage.save_cached_daily_schedule(date_str, encoded_schedule, daily_hash, ai_status='evaluating')

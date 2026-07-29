@@ -1425,6 +1425,47 @@
             document.getElementById('modal-view-mode').classList.remove('hidden');
         }
 
+        async function populateTripDropdown(selectedTripId) {
+            const tripDropdown = document.getElementById('edit-trip-id');
+            if (!tripDropdown) return;
+
+            // Keep the current selection visible while we load, so a linked trip
+            // doesn't flicker to "None" mid-fetch.
+            const keepSel = selectedTripId
+                ? `<option value="${selectedTripId}" selected>Loading trips…</option>`
+                : '';
+            tripDropdown.innerHTML = `<option value="">None</option>${keepSel}`;
+
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/trips`);
+                if (!res.ok) throw new Error(`status ${res.status}`);
+                const data = await res.json();
+                const trips = (data.trips || []).filter(t => !t.is_draft);
+
+                let optionsHtml = '<option value="">None</option>';
+                let matched = false;
+                trips.forEach(t => {
+                    const isSel = selectedTripId === t.id;
+                    if (isSel) matched = true;
+                    const dateLabel = t.start ? ` (${t.start.split('T')[0]})` : '';
+                    optionsHtml += `<option value="${t.id}" ${isSel ? 'selected' : ''}>${t.title}${dateLabel}</option>`;
+                });
+                // A previously-linked trip that no longer appears (e.g. an old
+                // day-slice id from before this fix) — keep it selectable so we
+                // don't silently drop the existing link, but flag it.
+                if (selectedTripId && !matched) {
+                    optionsHtml += `<option value="${selectedTripId}" selected>Currently linked (re-select to fix)</option>`;
+                }
+                tripDropdown.innerHTML = optionsHtml;
+            } catch (e) {
+                console.error('Failed to load trips for link dropdown', e);
+                tripDropdown.innerHTML = `<option value="">None</option>` +
+                    (selectedTripId ? `<option value="${selectedTripId}" selected>Currently linked</option>` : '') +
+                    `<option value="" disabled>⚠️ Could not load trips</option>`;
+            }
+        }
+
         function switchToEditMode() {
             const ev = currentEventsMap[activeEventId];
             if (!ev) return;
@@ -1438,13 +1479,11 @@
             document.getElementById('edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
             document.getElementById('edit-is-trip').checked = appConfig.is_trip || false;
 
-            const tripDropdown = document.getElementById('edit-trip-id');
-            const trips = (currentData.events || []).filter(e => e.event_type === 'background_trip');
-            let optionsHtml = '<option value="">None</option>';
-            trips.forEach(t => {
-                optionsHtml += `<option value="${t.id}" ${appConfig.trip_id === t.id ? 'selected' : ''}>${t.title} (${t.start.split('T')[0]})</option>`;
-            });
-            tripDropdown.innerHTML = optionsHtml;
+            // Populate from the canonical trip list (same source as the Trips page),
+            // NOT currentData.events — those are per-day background_trip SLICES whose
+            // ids are day instances, so linking to one never matches the real trip
+            // (get_trip_api matches event_configs by the base {cal}::{google_id}).
+            populateTripDropdown(appConfig.trip_id);
 
             // Passengers
             const paxContainer = document.getElementById('edit-passengers-container');
