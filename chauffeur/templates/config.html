@@ -471,6 +471,25 @@
                 <div x-show="activeTab === 'drivers'" x-cloak x-transition.opacity
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
                     <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
+
+                    <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                        <div class="flex items-center space-x-3 shrink-0">
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="loadBalancingEnabled" @change="saveSettings()"
+                                    class="sr-only peer">
+                                <div
+                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                </div>
+                            </label>
+                            <span class="font-bold text-gray-300">Balance Driving Load</span>
+                        </div>
+                        <p class="text-sm text-gray-500">
+                            When on, the solver spreads events across all drivers by total occupied time.
+                            When off, it fills the highest-priority drivers first. Attendee assignments,
+                            manual overrides, and shared-passenger chains still take precedence.
+                        </p>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                         <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
                             <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1"
@@ -2294,6 +2313,7 @@
                 enableStandardPriorityRules: true,
                 enableAiPriorityRules: true,
                 enableAiThemes: true,
+                loadBalancingEnabled: false,
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -2616,6 +2636,7 @@
                     this.enableStandardPriorityRules = data.enable_standard_priority_rules !== false;
                     this.enableAiPriorityRules = data.enable_ai_priority_rules !== false;
                     this.enableAiThemes = data.enable_ai_themes !== false;
+                    this.loadBalancingEnabled = data.load_balancing_enabled === true;
 
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
@@ -2678,7 +2699,8 @@
                             enable_ai_rules: this.enableAiRules,
                             enable_standard_priority_rules: this.enableStandardPriorityRules,
                             enable_ai_priority_rules: this.enableAiPriorityRules,
-                            enable_ai_themes: this.enableAiThemes
+                            enable_ai_themes: this.enableAiThemes,
+                            load_balancing_enabled: this.loadBalancingEnabled
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

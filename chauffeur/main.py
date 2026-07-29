@@ -3861,6 +3861,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     if not default_theme and themes:
         default_theme = themes[0]
 
+    load_balancing = settings.get("load_balancing_enabled", False)
+
     base_schedules = {}
 
     for date_str, daily_fetched in fetched_by_date.items():
@@ -3940,7 +3942,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -4069,7 +4071,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 }]
                 
                 for t in o_themes:
-                    a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t)
+                    a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing)
                     ue = [e for e in d_evs if e.id in u]
                     ae = [e for e in d_evs if e.id in a]
                     ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs)

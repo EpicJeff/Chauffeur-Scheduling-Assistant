@@ -257,7 +257,8 @@ def solve_schedule(
     driver_events: Dict[str, List[Event]] = None,
     passengers: List[Passenger] = None,
     trip_metadata: List[dict] = None,
-    theme: dict = None
+    theme: dict = None,
+    load_balancing: bool = False
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -315,7 +316,7 @@ def solve_schedule(
     # Default missing event locations to home_location to prevent 0-minute teleportation
     for e in events:
         if not getattr(e, 'location', None) or str(e.location).strip() == "":
-            e.location = home_location
+            e.location = theme.get('home_location') if theme else None
 
     # Pre-calculate requires_attendance per event
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
@@ -801,6 +802,35 @@ def solve_schedule(
             model.AddImplication(both_assigned, assign_vars[(e2_id, d.id)])
             model.AddBoolOr([both_assigned, assign_vars[(e1_id, d.id)].Not(), assign_vars[(e2_id, d.id)].Not()])
             objective_terms.append(both_assigned * 1000)
+    # 4d. Load Balancing (optional): quadratic penalty on each driver's total
+    # occupied minutes. Sum-of-squares is minimized by an even split, so every
+    # additional event on an already-loaded driver costs more than the same
+    # event on an idle one. At 1 point per minute^2, moving a 60-min event off
+    # a driver with 3h already booked gains ~14,000 points: enough to overrule
+    # priority/primary bonuses (<=3,500), not enough to break attendee
+    # assignments (+50M), overrides (+100M), or tight passenger-continuity
+    # chains (up to +50,000) unless the imbalance is severe. The marginal cost
+    # is also capped well below the 1,000,000 assignment reward (durations are
+    # clamped to 600 min), so balancing can never push an event to unassigned.
+    if load_balancing:
+        for d in drivers:
+            if d.id == 'unassigned_ghost':
+                continue
+            load_terms = []
+            max_load = 0
+            for e in assignable_events:
+                dur = int((e.end - e.start).total_seconds() // 60)
+                dur = max(1, min(dur, 600))
+                load_terms.append(assign_vars[(e.id, d.id)] * dur)
+                max_load += dur
+            if not load_terms:
+                continue
+            load_var = model.NewIntVar(0, max_load, f'load_{d.id}')
+            model.Add(load_var == sum(load_terms))
+            load_sq = model.NewIntVar(0, max_load * max_load, f'load_sq_{d.id}')
+            model.AddMultiplicationEquality(load_sq, [load_var, load_var])
+            objective_terms.append(load_sq * -1)
+
     # 4e. Override weights
     import time
     base_time = time.time()

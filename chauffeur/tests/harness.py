@@ -17,7 +17,7 @@ from services import storage, maps  # noqa: E402
 
 # --- offline mocks ----------------------------------------------------------
 storage.get_settings = lambda: {"calendar_ids": ["primary"]}
-maps.get_travel_time_minutes = lambda a, b, **kw: 0 if (a or "").lower() == (b or "").lower() else 10
+maps.get_travel_time_minutes = lambda a, b, *args, **kw: 0 if (a or "").lower() == (b or "").lower() else 10
 maps.get_timezone = lambda addr: "America/New_York"
 
 ET = zoneinfo.ZoneInfo("America/New_York")

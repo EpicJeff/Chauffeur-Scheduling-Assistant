@@ -172,6 +172,10 @@ class Settings(BaseModel):
     enable_standard_priority_rules: bool = True
     enable_ai_priority_rules: bool = True
     enable_ai_themes: bool = True
+    # When True, the solver adds a quadratic penalty on each driver's total
+    # occupied minutes so work spreads across the roster instead of stacking
+    # onto the highest-priority drivers ("bucket filling").
+    load_balancing_enabled: bool = False
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
