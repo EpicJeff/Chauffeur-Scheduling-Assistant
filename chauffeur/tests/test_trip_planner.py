@@ -9,8 +9,14 @@ Run from chauffeur/:  python tests/test_trip_planner.py
 """
 from harness import mk_trip, check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
 
-from services import llm, trip_planner
+from services import llm, storage, trip_planner
 from services.trip_planner import generate_trip_plan
+
+# A configured origin, so the "no flights because no home location" user note
+# doesn't fire in scenarios that aren't about flights. (The harness stubs
+# get_settings, so patch the stub — update_settings writes would be invisible.)
+storage.get_settings = lambda: {"calendar_ids": ["primary"],
+                                "home_location": "123 Home St, Springfield"}
 
 trip_planner.enrich_poi_data = lambda name, location_query, trip_location: {
     "location": location_query, "mapbox_id": None, "lat": 48.85, "lng": 2.35,
@@ -198,6 +204,105 @@ def scenario_overlap_repair_edge_cases():
     check(out == [], "suggestion overlapping an existing stay dropped")
 
 
+def scenario_uncovered_nights_detector():
+    """Pure detector: every trip night [start, end) needs a stay; the repair
+    layer never invents nights (per-leg counts are user intent)."""
+    import datetime as _dt
+    from services.trip_validation import uncovered_nights
+    start, end = _dt.date(2030, 1, 5), _dt.date(2030, 1, 15)
+
+    # the real 'Paris Anniversary' failure: chain starts day 2 -> night 1 uncovered
+    stays = [{"name": "Paris", "check_in_date": "2030-01-06", "check_out_date": "2030-01-10"},
+             {"name": "Bagnols", "check_in_date": "2030-01-10", "check_out_date": "2030-01-13"},
+             {"name": "Riviera", "check_in_date": "2030-01-13", "check_out_date": "2030-01-14"},
+             {"name": "Meurice", "check_in_date": "2030-01-14", "check_out_date": "2030-01-15"}]
+    gaps = uncovered_nights(stays, None, start, end)
+    check(gaps == [_dt.date(2030, 1, 5)], f"night 1 uncovered, got {gaps}")
+
+    # full contiguous chain -> no gaps
+    stays[0]["check_in_date"] = "2030-01-05"
+    stays[0]["check_out_date"] = "2030-01-09"
+    stays[1]["check_in_date"] = "2030-01-09"
+    stays[1]["check_out_date"] = "2030-01-12"
+    stays[2]["check_in_date"] = "2030-01-12"
+    check(uncovered_nights(stays, None, start, end) == [], "full chain covers all nights")
+
+    # existing stays count toward coverage
+    class Acc:
+        check_in_date = "2030-01-05"
+        check_out_date = "2030-01-15"
+    check(uncovered_nights([], [Acc()], start, end) == [], "existing stay covers the trip")
+
+
+def scenario_stay_chain_translated_to_arrival_day():
+    """Regression (real 'Paris Anniversary' trip, twice): the LLM starts the stay
+    chain a day late ('overnight flight, arrive next morning'), and with the old
+    end-pinned prompt that compressed the user's 2-night Riviera leg to 1. Leg
+    lengths are user intent — the gate never resizes them; it translates the whole
+    chain back to the arrival day (system truth) for free, and anything still
+    uncovered becomes a visible warning. Never an extra LLM request."""
+    def run(accs_in):
+        class Fake:
+            def __init__(self): self.prompts = []
+            def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
+                         temperature=0.1, tools=None):
+                self.prompts.append(user_prompt)
+                return {"pois": poi_batch(0, 30), "accommodations": [dict(s) for s in accs_in], "flights": []}
+        fake = Fake()
+        original = llm._call_llm_json
+        llm._call_llm_json = fake
+        try:
+            trip = mk_trip(days=10)  # Sept 7 -> 17
+            warning, pois, accs, flights = generate_trip_plan(
+                trip, "4 days in Paris, 3 days wine country, 2 days riviera, 1 final day in Paris",
+                duration_nights=10)
+            return fake, warning, accs
+        finally:
+            llm._call_llm_json = original
+
+    # chain shifted a day late but with CORRECT leg lengths (overhangs the end):
+    # translated back — Riviera keeps its 2 nights, full coverage, no warning
+    shifted_correct = [
+        {"name": "Dame des Arts", "location": "Paris", "check_in_date": "2026-09-08", "check_out_date": "2026-09-12"},
+        {"name": "Bagnols", "location": "Beaujolais", "check_in_date": "2026-09-12", "check_out_date": "2026-09-15"},
+        {"name": "Cap-Eden-Roc", "location": "Antibes", "check_in_date": "2026-09-15", "check_out_date": "2026-09-17"},
+        {"name": "Meurice", "location": "Paris", "check_in_date": "2026-09-17", "check_out_date": "2026-09-18"}]
+    fake, warning, accs = run(shifted_correct)
+    check(len(fake.prompts) == 1, f"translation must cost ZERO extra requests, got {len(fake.prompts)} calls")
+    check(accs[0].check_in_date == "2026-09-07", "chain anchored to the arrival day")
+    riviera = next(a for a in accs if a.name == "Cap-Eden-Roc")
+    check(riviera.check_in_date == "2026-09-14" and riviera.check_out_date == "2026-09-16",
+          f"Riviera keeps its 2 nights, got {riviera.check_in_date}->{riviera.check_out_date}")
+    check(warning is None, f"full coverage -> no warning, got {warning}")
+
+    # chain the LLM itself compressed (old end-pinned failure shape): translated
+    # back, lengths untouched (intent unknown), remaining gap surfaced visibly
+    compressed = [
+        {"name": "Dame des Arts", "location": "Paris", "check_in_date": "2026-09-08", "check_out_date": "2026-09-12"},
+        {"name": "Bagnols", "location": "Beaujolais", "check_in_date": "2026-09-12", "check_out_date": "2026-09-15"},
+        {"name": "Cap-Eden-Roc", "location": "Antibes", "check_in_date": "2026-09-15", "check_out_date": "2026-09-16"},
+        {"name": "Meurice", "location": "Paris", "check_in_date": "2026-09-16", "check_out_date": "2026-09-17"}]
+    fake, warning, accs = run(compressed)
+    check(len(fake.prompts) == 1, "no retry even when coverage stays short")
+    check(accs[0].check_in_date == "2026-09-07", "compressed chain still anchored to arrival day")
+    riviera = next(a for a in accs if a.name == "Cap-Eden-Roc")
+    check(riviera.check_out_date == "2026-09-15" and riviera.check_in_date == "2026-09-14",
+          "no leg is ever resized by the gate")
+    check(warning and "9 of the trip's 10 nights" in warning,
+          f"remaining deficit surfaced to the user, got {warning}")
+
+    # dated existing stays suppress translation (a shift could collide with them)
+    import datetime as _dt
+    from services.trip_validation import shift_stays_to_trip_start
+    class Acc:
+        check_in_date = "2026-09-07"
+        check_out_date = "2026-09-08"
+    stays = [{"name": "X", "check_in_date": "2026-09-09", "check_out_date": "2026-09-12"}]
+    check(shift_stays_to_trip_start(stays, [Acc()], _dt.date(2026, 9, 7)) == 0
+          and stays[0]["check_in_date"] == "2026-09-09",
+          "existing dated stay -> chain not shifted")
+
+
 def scenario_llm_coords_veto_bad_geocode():
     """Regression: Mapbox matched 'Burgundy Wine Trail' to a same-named spot in
     PARIS, silently moving the whole wine leg for the scheduler. When the geocode
@@ -280,6 +385,80 @@ def scenario_return_stay_to_same_hotel_kept():
     check(out[0].check_in_date == "2026-09-16", "the non-overlapping return stay is kept")
 
 
+def scenario_no_origin_flight_note():
+    """An empty flights array is silent when an origin is configured (the LLM
+    legitimately decided not to fly), but with NO home_location it surfaces an
+    actionable note — silently missing flights read as a bug to the user."""
+    # (origin configured + no flights -> silent is already proven by
+    # scenario_stay_chain_translated_to_arrival_day's warning-is-None check)
+    prev_settings = storage.get_settings
+    storage.get_settings = lambda: {"calendar_ids": ["primary"]}
+    try:
+        fake = FakeLLM([poi_batch(0, 27)])
+        original = llm._call_llm_json
+        llm._call_llm_json = fake
+        try:
+            trip = mk_trip(days=10)
+            warning, _, _, _ = generate_trip_plan(
+                trip, "plan a great 10 day trip to France", duration_nights=10)
+        finally:
+            llm._call_llm_json = original
+        check(warning and "Home Location" in warning,
+              f"missing origin must produce an actionable note, got: {warning}")
+    finally:
+        storage.get_settings = prev_settings
+
+
+def scenario_generate_trip_flights():
+    """The dedicated flight generator: one LLM request, TripFlight objects out,
+    origin context in the prompt, and the no-origin note when it has nothing."""
+    from services.trip_planner import generate_trip_flights
+
+    class FakeFlightLLM:
+        def __init__(self, flights):
+            self.flights = flights
+            self.prompts = []
+
+        def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
+                     temperature=0.1, tools=None):
+            self.prompts.append(user_prompt)
+            return {"flights": list(self.flights)}
+
+    fake = FakeFlightLLM([
+        {"airline": "Delta", "origin": "JFK", "destination": "CDG",
+         "departure_time": "2026-09-06T18:00:00", "arrival_time": "2026-09-07T07:30:00",
+         "estimated_price_usd": 900.0},
+        {"airline": "Delta", "origin": "CDG", "destination": "JFK",
+         "departure_time": "2026-09-17T11:00:00", "arrival_time": "2026-09-17T14:00:00",
+         "estimated_price_usd": 900.0},
+    ])
+    original = llm._call_llm_json
+    llm._call_llm_json = fake
+    try:
+        warning, flights = generate_trip_flights(mk_trip(days=10), "add flights please")
+    finally:
+        llm._call_llm_json = original
+    check(len(fake.prompts) == 1, f"flight generation costs exactly one request, got {len(fake.prompts)}")
+    check("Home Location" in fake.prompts[0] and "123 Home St" in fake.prompts[0],
+          "the configured origin is in the prompt")
+    check(len(flights) == 2 and flights[0].origin == "JFK", f"TripFlight objects built: {flights}")
+    check(all(f.id for f in flights), "generated flights get ids")
+    check(warning is None, f"healthy generation -> no warning, got {warning}")
+
+    # no origin anywhere -> empty result carries the actionable note
+    prev_settings = storage.get_settings
+    storage.get_settings = lambda: {"calendar_ids": ["primary"]}
+    fake = FakeFlightLLM([])
+    llm._call_llm_json = fake
+    try:
+        warning, flights = generate_trip_flights(mk_trip(days=10), "add flights please")
+    finally:
+        llm._call_llm_json = original
+        storage.get_settings = prev_settings
+    check(not flights and warning and "Home Location" in warning,
+          f"no origin -> note, got {warning}")
+
+
 SCENARIOS = [
     scenario_healthy_single_shot_costs_one_request,
     scenario_topup_only_on_collapse,
@@ -289,9 +468,13 @@ SCENARIOS = [
     scenario_short_anchor_demoted,
     scenario_accommodation_overlaps_repaired,
     scenario_overlap_repair_edge_cases,
+    scenario_uncovered_nights_detector,
+    scenario_stay_chain_translated_to_arrival_day,
     scenario_return_stay_to_same_hotel_kept,
     scenario_llm_coords_veto_bad_geocode,
     scenario_attraction_named_villa_stays_a_poi,
+    scenario_no_origin_flight_note,
+    scenario_generate_trip_flights,
 ]
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from models.schemas import TripMetadata, TripPOI, Event, TripAccommodation
 from services import storage, maps, calendar
 from services.trip_validation import (vet_poi, vet_accommodation,
                                        repair_accommodation_overlaps,
-                                       parse_stay_range)
+                                       parse_stay_range, reground_area_anchors)
 
 def enrich_poi_data(name: str, location_query: str, trip_location: str) -> dict:
     """
@@ -144,6 +144,7 @@ You MUST respond with a single valid JSON object of the following exact structur
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
 `approx_lat`/`approx_lng` are REQUIRED for every POI: your best estimate of its real-world latitude/longitude (region-level accuracy is fine). This anchors map matching — if the map service finds a same-named place in a different city, your coordinates decide which region is correct.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
+Anchors are CONTAINERS, not summaries. If an anchor's plan covers specific named sights (e.g. a walking tour "of the Eiffel Tower, Arc de Triomphe, and Champs-Élysées"), you MUST ALSO emit each named sight as its own POI with `parent_container` set to that anchor. A sight that exists only inside an anchor's description is invisible to the trip: it gets no opening hours, no price, no map pin, and cannot be scheduled.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
 `dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
 `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) so the scheduler places it exactly on those days.
@@ -254,6 +255,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             pois.append(poi)
 
     _resolve_parent_containers(pois, trip)
+    reground_area_anchors(list(pois) + list(trip.pois or []))
 
     if getattr(trip, 'budget_max_usd', None):
         total = sum((p.estimated_price_usd or 0) for p in pois)
@@ -1049,6 +1051,33 @@ def schedule_pois_bulk(trip: TripMetadata, poi_ids: List[str]) -> Iterator[Dict[
                 }
                 insights_yielded += 1
 
+def _ensure_stay_coverage(sugg_accs, existing, trip_start, trip_end):
+    """Zero-request stay-coverage guard.
+
+    The one failure mode generation actually exhibits is a TRANSLATED chain: the
+    LLM keeps every leg length the user asked for but starts a day late
+    ("overnight flight, arrive next morning" prior). Leg lengths are user intent
+    the code must never resize; the anchor is system truth (mock_start_date IS
+    the arrival day) — so shift the whole chain back, which preserves every
+    length and costs nothing. Any coverage still missing after that is surfaced
+    as a visible warning, never silently repaired and never worth a second LLM
+    request. Returns (stays, warning|None).
+    """
+    from services.trip_validation import uncovered_nights, shift_stays_to_trip_start
+    if not sugg_accs:
+        return sugg_accs, None
+    shift_stays_to_trip_start(sugg_accs, existing, trip_start)
+    gaps = uncovered_nights(sugg_accs, existing, trip_start, trip_end)
+    if not gaps:
+        return sugg_accs, None
+    total = (trip_end - trip_start).days
+    dates = ", ".join(d.strftime("%Y-%m-%d") for d in gaps)
+    print(f"trip accommodations: only {total - len(gaps)}/{total} nights covered (no stay on {dates})")
+    return sugg_accs, (f"Warning: the suggested accommodations cover only {total - len(gaps)} of the "
+                       f"trip's {total} nights — no stay on {dates}. Ask me to adjust the stay dates "
+                       f"if every night should be covered.")
+
+
 def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[Optional[str], List[TripAccommodation]]:
     """
     Generates suggested accommodations based on the user's prompt and currently scheduled POIs.
@@ -1140,8 +1169,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Existing Accommodations: {existing_accs_str}\n"
         f"{poi_context}\n"
         f"{budget_context}"
-        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}.\n"
-        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days, emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates: each leg's check_in_date equals the previous leg's check_out_date, the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')}, and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}.\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}. The start date is the traveler's ARRIVAL day (any overnight flight has already landed), so the first night needs a bed: the first check_in_date MUST be exactly {trip_start_dt.strftime('%Y-%m-%d')} — never skip the first night.\n"
+        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days, emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates: each leg's check_in_date equals the previous leg's check_out_date, and the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} (the arrival day). 'N days' in an area means N nights at that leg's hotel. Give every leg EXACTLY the nights the user asked for — a correct allocation anchored on the arrival day ends on {trip_end_dt.strftime('%Y-%m-%d')} by itself; NEVER stretch or shrink a leg to hit that date.\n"
         f"User Request: {user_prompt}\n"
         f"Generate accommodation suggestions."
     )
@@ -1155,6 +1184,10 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     budget_warning = response_json.get('budget_warning')
     suggestions = repair_accommodation_overlaps(
         response_json.get('accommodations', []), trip.accommodations)
+    suggestions, coverage_warning = _ensure_stay_coverage(
+        suggestions, trip.accommodations, trip_start_dt.date(), trip_end_dt.date())
+    if coverage_warning:
+        budget_warning = f"{budget_warning}\n{coverage_warning}" if budget_warning else coverage_warning
     accs = []
 
     for s in suggestions:
@@ -1407,6 +1440,7 @@ You MUST respond with a single valid JSON object of the following exact structur
 `days_claimed` (anchors only): the number of FULL DAYS this anchor should occupy. "3 days at Disney" = one Magic Kingdom POI with days_claimed: 3. Do NOT emit duplicate POIs for multi-day anchors.
 `approx_lat`/`approx_lng` are REQUIRED for every POI: your best estimate of its real-world latitude/longitude (region-level accuracy is fine). This anchors map matching — if the map service finds a same-named place in a different city, your coordinates decide which region is correct.
 `parent_container`: if this POI is inside or immediately around one of the anchor POIs you are suggesting (or an existing anchor on the trip), set it to that anchor's exact NAME (e.g. character dining inside Magic Kingdom -> "Magic Kingdom"). Otherwise null.
+Anchors are CONTAINERS, not summaries. If an anchor's plan covers specific named sights (e.g. a walking tour "of the Eiffel Tower, Arc de Triomphe, and Champs-Élysées"), you MUST ALSO emit each named sight as its own POI with `parent_container` set to that anchor. A sight that exists only inside an anchor's description is invisible to the trip: it gets no opening hours, no price, no map pin, and cannot be scheduled.
 `meal_type` is REQUIRED for every 'food' POI: exactly one of 'breakfast', 'brunch', 'lunch', 'dinner', 'dessert', 'snack'. The scheduler places meals into the right time slots from this field — do not rely on times.
 `dining_style` for 'food' POIs: 'quick', 'casual', or 'fine'. Fine dining is scheduled at dinner.
 `valid_days_of_week` is an optional array of integers (0=Mon, 6=Sun) representing the ONLY days this POI can be scheduled. CRITICAL: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6. You MUST map the day name in the proposed itinerary to the exact integer, ignoring relative "Day 1" labels. If the user's prompt mentions preferred days, crowd optimization, or avoiding crowds for specific places, you MUST populate this field with the corresponding day integers (e.g., [1, 2, 4]) so the scheduler places it exactly on those days.
@@ -1460,8 +1494,8 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         f"Trip Notes/Context: {trip.notes or 'None'}\n"
         f"{date_bounds_str}\n"
         f"{budget_context}"
-        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}. Every accommodation MUST include approx_lat/approx_lng — your estimate of the hotel's real coordinates (city-level accuracy is fine).\n"
-        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')} and the last check_out_date is {trip_end_dt.strftime('%Y-%m-%d')}). Suggest POIs for every area the user mentioned — do not allocate or ration POIs per leg; the scheduler places each POI on the right days automatically from its location.\n"
+        f"IMPORTANT: The check_in_date and check_out_date for accommodations MUST fall exactly on or between {trip_start_dt.strftime('%Y-%m-%d')} and {trip_end_dt.strftime('%Y-%m-%d')}. If there is only one accommodation, its check_out_date MUST be exactly {trip_end_dt.strftime('%Y-%m-%d')}. The start date is the traveler's ARRIVAL day (any overnight flight has already landed), so the first night needs a bed: the first check_in_date MUST be exactly {trip_start_dt.strftime('%Y-%m-%d')} — never skip the first night. Every accommodation MUST include approx_lat/approx_lng — your estimate of the hotel's real coordinates (city-level accuracy is fine).\n"
+        f"MULTI-LEG TRIPS: If the user describes staying in different areas on different days (e.g. '4 days in Paris, then 3 days in wine country'), you MUST emit one accommodation per leg, in the user's stated order, with contiguous non-overlapping dates (each leg's check_in_date equals the previous leg's check_out_date; the first check_in_date is {trip_start_dt.strftime('%Y-%m-%d')}, the arrival day). 'N days' in an area means N nights at that leg's hotel. Give every leg EXACTLY the nights the user asked for — a correct allocation anchored on the arrival day ends on {trip_end_dt.strftime('%Y-%m-%d')} by itself; NEVER stretch or shrink a leg to hit that date. Suggest POIs for every area the user mentioned — do not allocate or ration POIs per leg; the scheduler places each POI on the right days automatically from its location.\n"
         f"Existing POIs (DO NOT suggest these again): {existing_pois_str}\n"
         f"Existing Accommodations (DO NOT suggest these again): {existing_accs_str}\n"
         f"{proposed_str}"
@@ -1550,6 +1584,11 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     sugg_pois = true_pois
 
     sugg_accs = repair_accommodation_overlaps(sugg_accs, trip.accommodations)
+    if sugg_accs:
+        sugg_accs, coverage_warning = _ensure_stay_coverage(
+            sugg_accs, trip.accommodations, trip_start_dt.date(), trip_end_dt.date())
+        if coverage_warning:
+            budget_warning = f"{budget_warning}\n{coverage_warning}" if budget_warning else coverage_warning
 
 
     pois = []
@@ -1606,6 +1645,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             pois.append(poi)
 
     _resolve_parent_containers(pois, trip)
+    reground_area_anchors(list(pois) + list(trip.pois or []))
 
     accs = []
     for s in sugg_accs:

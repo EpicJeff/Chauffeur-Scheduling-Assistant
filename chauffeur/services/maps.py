@@ -1075,9 +1075,34 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
             if coords:
                 center_lat, center_lon = coords
 
-    results = []
+    import math
 
-    # 1. Primary: Nominatim OpenStreetMap search (For enriched extratags: wikidata, opening_hours)
+    def _dist_m(lat1, lon1, lat2, lon2):
+        R = 6371000.0
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    def _looks_like_rental_listing(name, osm_type):
+        # OSM free-text search surfaces private vacation rentals whose names embed
+        # landmark names ("Loftly ... apartment ... near Disney, Magic Kingdom ...").
+        # These pollute a landmark query and must never outrank the real POI.
+        nl = (name or "").lower()
+        if osm_type in ("apartment", "chalet", "guest_house", "hostel", "caravan_site", "static_caravan"):
+            return True
+        if len(name or "") > 70:
+            return True
+        listing_kw = ("2br", "1br", "3br", "4br", "2ba", "1ba", "3ba", "/night", "per night",
+                      "sleeps", "free parking", "free wifi", "free cable", "gated community",
+                      "near disney", "close to disney", "spacious", "cozy retreat")
+        if sum(1 for k in listing_kw if k in nl) >= 2:
+            return True
+        return False
+
+    # 1. Nominatim (OpenStreetMap): rich extratags (wikidata, opening_hours, website),
+    #    but poor relevance for landmark names — so it enriches, it doesn't decide.
+    nominatim_results = []
     with api_rate_lock:
         if not hasattr(geocode_address, "last_nominatim_time"):
             geocode_address.last_nominatim_time = 0
@@ -1085,13 +1110,13 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
         elapsed = now - geocode_address.last_nominatim_time
         if elapsed < 1.1:
             time.sleep(1.1 - elapsed)
-        
+
         headers = {'User-Agent': 'ChauffeurScheduleAssistant/1.0 (https://github.com/EpicJeff/Chauffeur-Scheduling-Assistant)'}
         nom_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=5&extratags=1"
         if center_lat is not None and center_lon is not None:
             viewbox = f"{center_lon - 0.5},{center_lat + 0.5},{center_lon + 0.5},{center_lat - 0.5}"
             nom_url += f"&viewbox={viewbox}&bounded=0"
-            
+
         try:
             resp = requests.get(nom_url, headers=headers, timeout=10)
             geocode_address.last_nominatim_time = time.time()
@@ -1101,71 +1126,58 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
                     lat = float(item.get("lat", 0))
                     lon = float(item.get("lon", 0))
                     name = item.get("name", query)
+                    if _looks_like_rental_listing(name, item.get("type")):
+                        continue  # drop vacation-rental listing junk
                     address = item.get("display_name", "")
                     extratags = item.get("extratags", {}) or {}
-                    wikidata_id = extratags.get("wikidata")
-                    opening_hours = extratags.get("opening_hours")
-                    website = extratags.get("website") or extratags.get("contact:website")
-                    phone_number = extratags.get("phone") or extratags.get("contact:phone")
-                    cuisine = extratags.get("cuisine")
-                    internet_access = extratags.get("internet_access")
-                    
                     storage.set_cached_geocode(address, lat, lon, address)
-                    results.append({
+                    nominatim_results.append({
                         "name": name,
                         "address": address,
                         "distance_meters": 0,
                         "lat": lat,
                         "lon": lon,
                         "source": "nominatim",
-                        "wikidata_id": wikidata_id,
-                        "opening_hours": opening_hours,
-                        "website": website,
-                        "phone_number": phone_number,
-                        "cuisine": cuisine,
-                        "internet_access": internet_access
+                        "wikidata_id": extratags.get("wikidata"),
+                        "opening_hours": extratags.get("opening_hours"),
+                        "website": extratags.get("website") or extratags.get("contact:website"),
+                        "phone_number": extratags.get("phone") or extratags.get("contact:phone"),
+                        "cuisine": extratags.get("cuisine"),
+                        "internet_access": extratags.get("internet_access")
                     })
-                if results:
-                    return results
         except Exception as ex:
             print(f"Nominatim API exception in search_places: {ex}")
 
-    # 2. Fallback: Mapbox Forward Search
+    # 2. Mapbox Search Box: authoritative, proximity-biased POI/address results — it
+    #    won't return random Airbnb listings for a landmark query. This is the source
+    #    of the real address whenever Mapbox is available.
+    mapbox_results = []
     if mapbox_key and not disable_mapbox:
-        check_usage_limits_and_spikes('searchbox', 1)
-        url_fwd = "https://api.mapbox.com/search/searchbox/v1/forward"
-        params_fwd = {
-            "access_token": mapbox_key,
-            "q": query,
-            "limit": 5,
-            "language": "en"
-        }
-        if center_lon is not None and center_lat is not None:
-            params_fwd['proximity'] = f"{center_lon},{center_lat}"
-            
         try:
+            check_usage_limits_and_spikes('searchbox', 1)
+            url_fwd = "https://api.mapbox.com/search/searchbox/v1/forward"
+            params_fwd = {"access_token": mapbox_key, "q": query, "limit": 5, "language": "en"}
+            if center_lon is not None and center_lat is not None:
+                params_fwd['proximity'] = f"{center_lon},{center_lat}"
             resp = requests.get(url_fwd, params=params_fwd, timeout=5)
             if resp.status_code == 200:
-                data = resp.json()
-                features = data.get("features", [])
-                for f in features:
+                for f in resp.json().get("features", []):
                     props = f.get("properties", {})
                     name = props.get("name", "")
                     place = props.get("place_formatted", "")
                     full_address = f"{name}, {place}".strip(", ")
                     coords = f.get("geometry", {}).get("coordinates", [])
-                    distance = props.get("distance", 0)
-                    
                     if name and coords and len(coords) == 2:
                         lon, lat = coords[0], coords[1]
                         storage.set_cached_geocode(full_address, float(lat), float(lon), full_address)
-                        results.append({
+                        mapbox_results.append({
                             "name": name,
                             "address": full_address,
-                            "distance_meters": distance,
+                            "distance_meters": props.get("distance", 0),
                             "lat": lat,
                             "lon": lon,
                             "source": "mapbox_forward",
+                            "mapbox_id": props.get("mapbox_id"),
                             "wikidata_id": None,
                             "opening_hours": None,
                             "website": None,
@@ -1173,8 +1185,24 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
                             "cuisine": None,
                             "internet_access": None
                         })
-                return results
         except Exception as ex:
             print(f"Mapbox Forward API exception: {ex}")
 
-    return results
+    # 3. Prefer Mapbox for the real name/address/coords; backfill extratags
+    #    (wikidata/hours/website) from the nearest matching Nominatim result — same
+    #    place, so a landmark keeps its wikidata while shedding the listing junk.
+    if mapbox_results:
+        for m in mapbox_results:
+            best, best_d = None, 300.0   # metres — same-place threshold
+            for n in nominatim_results:
+                d = _dist_m(m["lat"], m["lon"], n["lat"], n["lon"])
+                if d < best_d:
+                    best, best_d = n, d
+            if best:
+                for k in ("wikidata_id", "opening_hours", "website", "phone_number", "cuisine", "internet_access"):
+                    if not m.get(k) and best.get(k):
+                        m[k] = best[k]
+        return mapbox_results
+
+    # No Mapbox available/enabled — fall back to the junk-filtered Nominatim results.
+    return nominatim_results

@@ -293,6 +293,12 @@ class TripPOI(BaseModel):
     parent_container: Optional[str] = None  # id of the background POI this lives inside
     days_claimed: int = 1                # background POIs only: number of full days claimed
     claimed_dates: List[str] = Field(default_factory=list)  # YYYY-MM-DD (local), set by the scheduler
+    # Calendar-backed POIs: a POI that mirrors a real Google Calendar event linked
+    # into the trip (e.g. a reservation someone booked). It is a FIXED anchor —
+    # is_scheduled at the event's real time, never re-solved or auto-cleared, and
+    # (being externally authored) its calendar event is never deletable by Chauffeur.
+    is_external_event: bool = False
+    source_event_id: Optional[str] = None  # the cal::id this POI mirrors (link key)
 
 class TripRule(BaseModel):
     # extra='forbid' so agent-emitted phantom fields fail loudly instead of silently no-oping

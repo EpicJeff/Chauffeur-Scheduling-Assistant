@@ -16,7 +16,10 @@ Entry points:
 - vet_poi(enrichment, s)            -> (is_background, days_claimed, occurrences)
 - vet_accommodation(enrichment, s)  -> None (mutates enrichment)
 - repair_accommodation_overlaps(suggestions, existing) -> repaired list
+- shift_stays_to_trip_start(suggestions, existing, trip_start) -> days shifted
+- uncovered_nights(suggestions, existing, trip_start, trip_end) -> [date, ...]
 - find_stay_overlap(check_in, check_out, existing)     -> conflicting stay | None
+- reground_area_anchors(pois)       -> ids of anchors whose coordinates moved
 """
 import datetime
 import re
@@ -51,6 +54,51 @@ def anchor_fields(s: dict) -> Tuple[bool, int, int]:
         days_claimed = 1
     occurrences = 1 if is_bg else max(1, int(s.get('occurrences') or 1))
     return is_bg, days_claimed, occurrences
+
+
+def reground_area_anchors(pois) -> List[str]:
+    """Re-center area anchors onto the centroid of their children's coordinates.
+
+    Coordinate trust hierarchy for anchors (is_background POIs): an anchor that
+    kept a confirmed place identity through reconcile_coords (mapbox_id or
+    wikidata_id) is a real venue — its coordinates are ground truth. Without an
+    identity it is an *area* anchor ("Paris Classic Exploration") whose
+    coordinates are an LLM regional guess: leg-scale accurate (right region of a
+    multi-leg trip) but not day-scale accurate. On a claimed day the anchor's
+    coordinates become the scheduler's home base, so a regional guess bends the
+    whole day toward a place nobody is going. The centroid of its children —
+    real geocoded POIs — is where the day actually happens.
+
+    Takes TripPOI objects or plain dicts (agent tools work pre-schema), mutates
+    lat/lng in place, returns the ids of anchors that moved. Anchors with no
+    located children are left untouched (the guess still carries its one real
+    signal: which leg to claim).
+    """
+    def g(p, k):
+        return p.get(k) if isinstance(p, dict) else getattr(p, k, None)
+
+    moved: List[str] = []
+    for b in pois:
+        if not g(b, 'is_background'):
+            continue
+        if g(b, 'mapbox_id') or g(b, 'wikidata_id'):
+            continue
+        bid = g(b, 'id')
+        kids = [p for p in pois
+                if g(p, 'parent_container') == bid
+                and g(p, 'lat') is not None
+                and g(p, 'lng') is not None]
+        if not kids:
+            continue
+        lat = sum(g(p, 'lat') for p in kids) / len(kids)
+        lng = sum(g(p, 'lng') for p in kids) / len(kids)
+        if (g(b, 'lat'), g(b, 'lng')) != (lat, lng):
+            if isinstance(b, dict):
+                b['lat'], b['lng'] = lat, lng
+            else:
+                b.lat, b.lng = lat, lng
+            moved.append(bid)
+    return moved
 
 
 def reconcile_coords(enrichment: dict, s: dict) -> None:
@@ -184,6 +232,13 @@ def repair_accommodation_overlaps(suggestions: List[dict],
     other stays (a whole-trip hotel emitted alongside the per-leg ones), then
     clip remaining overlaps forward (the later check_in wins). Undated
     suggestions pass through untouched.
+
+    This function deliberately never invents or extends nights: how many nights
+    each leg gets is user intent the gate cannot know (extending the first stay
+    to close a gap once gave Paris a 5th night the user had allotted to the
+    Riviera). Coverage deficits are detected by uncovered_nights() and sent back
+    to the LLM for one corrective pass at the planner layer, which still has the
+    user's per-leg wording in context.
     """
     existing_ranges = []
     for a in existing or []:
@@ -238,3 +293,64 @@ def repair_accommodation_overlaps(suggestions: List[dict],
     out = undated + [(idx, s) for _, _, idx, s in repaired]
     out.sort(key=lambda t: t[0])
     return [s for _, s in out]
+
+
+def shift_stays_to_trip_start(suggestions: List[dict], existing: Optional[List[Any]],
+                              trip_start: datetime.date) -> int:
+    """Translate a late-starting stay chain back to the trip start (arrival day).
+
+    The generation LLM's one persistent bias is starting the chain a day late
+    ("overnight flight, arrive next morning") while keeping every leg length the
+    user asked for. Leg lengths are user intent the gate must never touch; the
+    anchor point is system truth — mock_start_date IS the arrival day, computed
+    from the flight lookup at draft creation. Shifting the whole chain preserves
+    every length and fixes only the anchor. Zero LLM requests.
+
+    No-op when nothing is dated or when any existing stay is dated (a shift
+    could collide with saved stays). Returns the number of days shifted."""
+    for a in existing or []:
+        if parse_stay_range(_stay_field(a, 'check_in_date'), _stay_field(a, 'check_out_date')):
+            return 0
+    dated = []
+    for s in suggestions or []:
+        rng = parse_stay_range(s.get('check_in_date'), s.get('check_out_date'))
+        if rng:
+            dated.append((s, rng))
+    if not dated:
+        return 0
+    delta = (min(rng[0] for _, rng in dated) - trip_start).days
+    if delta <= 0:
+        return 0
+    print(f"trip validation: stay chain starts {delta} day(s) after the trip's arrival day — "
+          f"shifting all {len(dated)} stay(s) back to {trip_start} (leg lengths preserved)")
+    for s, (ci, co) in dated:
+        s['check_in_date'] = (ci - datetime.timedelta(days=delta)).strftime("%Y-%m-%d")
+        s['check_out_date'] = (co - datetime.timedelta(days=delta)).strftime("%Y-%m-%d")
+    return delta
+
+
+def uncovered_nights(suggestions: List[dict], existing: Optional[List[Any]],
+                     trip_start: datetime.date, trip_end: datetime.date) -> List[datetime.date]:
+    """Trip nights in [trip_start, trip_end) not covered by any suggested or
+    existing stay. Every night of a trip needs a bed: mock_start_date is already
+    the arrival day (the flight lookup at draft creation computed it), and the
+    last night ends with checkout on the trip's end date. An uncovered FIRST day
+    is extra bad — mid-trip gap days inherit the previous night's stay as their
+    scheduling home base, but day 1 has nothing to inherit, leaving it baseless
+    and unfenced. Pure detector: no mutation, no LLM calls."""
+    ranges = []
+    for s in suggestions or []:
+        rng = parse_stay_range(s.get('check_in_date'), s.get('check_out_date'))
+        if rng and rng[1] > rng[0]:
+            ranges.append(rng)
+    for a in existing or []:
+        rng = parse_stay_range(_stay_field(a, 'check_in_date'), _stay_field(a, 'check_out_date'))
+        if rng and rng[1] > rng[0]:
+            ranges.append(rng)
+    out = []
+    d = trip_start
+    while d < trip_end:
+        if not any(ci <= d < co for ci, co in ranges):
+            out.append(d)
+        d += datetime.timedelta(days=1)
+    return out

@@ -199,8 +199,9 @@ class AddTripPoiTool(BaseModel):
     duration_mins: int = Field(default=60, description="Duration in minutes.")
     notes: Optional[str] = Field(default="", description="Any notes.")
     occurrences: Optional[int] = Field(default=1, description="Number of times to add this standalone POI (e.g. 'two surf lessons'). NOT for multi-day anchors — use days_claimed.")
-    is_background: Optional[bool] = Field(default=False, description="True only for an ANCHOR: a half-day-or-longer experience worth organizing a whole day around (theme park, 'explore the old town'). Never for a single attraction under ~3 hours.")
+    is_background: Optional[bool] = Field(default=False, description="True only for an ANCHOR: a half-day-or-longer experience worth organizing a whole day around (theme park, 'explore the old town'). Never for a single attraction under ~3 hours. Anchors are containers, not summaries: also add each named sight the anchor covers as its own POI with parent_container set to the anchor, or those sights are invisible to the itinerary.")
     days_claimed: Optional[int] = Field(default=1, description="Anchors only: number of FULL DAYS this anchor occupies ('3 days at Disney' = one POI with days_claimed 3).")
+    parent_container: Optional[str] = Field(default=None, description="If this POI is inside or part of an anchor (background) POI on the trip, that anchor's name or id. Links the sight to its day container so it schedules on the anchor's claimed days.")
     approx_lat: Optional[float] = Field(default=None, description="Your best estimate of the POI's latitude (region-level accuracy). Used to reject a map match in the wrong city — always provide it.")
     approx_lng: Optional[float] = Field(default=None, description="Your best estimate of the POI's longitude. Always provide it with approx_lat.")
     valid_days_of_week: Optional[List[int]] = Field(default_factory=list, description="List of valid days (0=Mon, 6=Sun) to schedule this POI.")
@@ -665,8 +666,12 @@ def handle_add_trip_poi(args: dict) -> dict:
     trip_location = metadata.get('location', '')
     
     enrichment = enrich_poi_data(name, location, trip_location)
-    from services.trip_validation import vet_poi
+    from services.trip_validation import vet_poi, reground_area_anchors
     is_bg, days_claimed, occurrences = vet_poi(enrichment, args)
+
+    parent_id = None
+    if not is_bg:  # anchors have no parents
+        parent_id = _resolve_parent_anchor(args.get('parent_container'), metadata.get('pois') or [])
 
     pois_to_add = []
     for i in range(occurrences):
@@ -685,6 +690,7 @@ def handle_add_trip_poi(args: dict) -> dict:
             "occurrences": 1,
             "is_background": is_bg,
             "days_claimed": days_claimed if is_bg else 1,
+            "parent_container": parent_id,
             "valid_days_of_week": args.get('valid_days_of_week', [])
         }
 
@@ -697,12 +703,32 @@ def handle_add_trip_poi(args: dict) -> dict:
     if 'pois' not in metadata:
         metadata['pois'] = []
     metadata['pois'].extend(pois_to_add)
+    # A new child moves its area anchor's centroid — re-ground before saving so
+    # the map is right immediately, not only after the next solve.
+    reground_area_anchors(metadata['pois'])
     storage.set_trip_metadata(event_id, metadata)
 
     msg = f"Added {occurrences} POI(s) '{name}' to trip."
     if args.get('is_background') and not is_bg:
         msg += " Note: added as a regular POI, not a day anchor — it lasts under 3 hours."
+    if args.get('parent_container') and not is_bg and not parent_id:
+        msg += f" Note: no anchor matching '{args.get('parent_container')}' was found — the POI is not linked to a day container."
     return {"status": "success", "message": msg}
+
+
+def _resolve_parent_anchor(raw, pois):
+    """Anchor name-or-id -> anchor id, with the same fuzzy-name semantics as the
+    planner's _resolve_parent_containers. None when nothing matches."""
+    if not raw:
+        return None
+    raw_l = str(raw).lower().strip()
+    for a in pois:
+        if not a.get('is_background'):
+            continue
+        a_name = (a.get('name') or '').lower().strip()
+        if a.get('id') == raw or (a_name and (raw_l == a_name or raw_l in a_name or a_name in raw_l)):
+            return a.get('id')
+    return None
 
 def _trip_date_bounds(metadata):
     """The trip's (start, end) datetimes: mock window for drafts, calendar

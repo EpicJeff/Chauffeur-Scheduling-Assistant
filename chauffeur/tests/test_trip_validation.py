@@ -9,7 +9,7 @@ Run from chauffeur/:  python tests/test_trip_validation.py
 from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
 
 from services.trip_validation import (anchor_fields, find_stay_overlap,
-                                      reconcile_coords)
+                                      reconcile_coords, reground_area_anchors)
 
 
 def base_enrichment(**over):
@@ -112,9 +112,39 @@ def scenario_misplaced_accommodation_classifier():
           "no lodging keyword -> never lodging")
 
 
+def scenario_reground_area_anchors():
+    # identity-less anchor moves to its children's centroid (dict mode: agent tools)
+    anchor = {"id": "a1", "name": "Paris Classic Exploration", "is_background": True,
+              "lat": 44.83, "lng": -0.57}
+    kid1 = {"id": "k1", "parent_container": "a1", "lat": 48.8584, "lng": 2.2945}
+    kid2 = {"id": "k2", "parent_container": "a1", "lat": 48.8738, "lng": 2.2950}
+    moved = reground_area_anchors([anchor, kid1, kid2])
+    check(moved == ["a1"], f"anchor should move, got {moved}")
+    check(abs(anchor["lat"] - 48.8661) < 1e-4 and abs(anchor["lng"] - 2.29475) < 1e-4,
+          f"anchor should sit on the children's centroid, got ({anchor['lat']}, {anchor['lng']})")
+
+    # a confirmed place identity is ground truth — never moved
+    venue = {"id": "a2", "name": "Magic Kingdom", "is_background": True,
+             "mapbox_id": "mb", "lat": 28.4177, "lng": -81.5812}
+    kid = {"id": "k3", "parent_container": "a2", "lat": 28.5, "lng": -81.3}
+    check(reground_area_anchors([venue, kid]) == [] and venue["lat"] == 28.4177,
+          "venue anchor keeps its own coords")
+
+    # childless anchor untouched here (its regional guess still picks the leg;
+    # the scheduler snaps it to the claimed day's accommodation post-claim)
+    lone = {"id": "a3", "name": "Old Town Day", "is_background": True, "lat": 1.0, "lng": 2.0}
+    check(reground_area_anchors([lone]) == [] and lone["lat"] == 1.0, "no children -> untouched")
+
+    # a child without coords contributes nothing (and alone, changes nothing)
+    a = {"id": "a4", "name": "Harbor Day", "is_background": True, "lat": 5.0, "lng": 6.0}
+    k = {"id": "k4", "parent_container": "a4", "lat": None, "lng": None}
+    check(reground_area_anchors([a, k]) == [] and a["lat"] == 5.0, "unlocated child ignored")
+
+
 SCENARIOS = [
     scenario_reconcile_coords,
     scenario_anchor_fields,
+    scenario_reground_area_anchors,
     scenario_find_stay_overlap,
     scenario_misplaced_accommodation_classifier,
 ]

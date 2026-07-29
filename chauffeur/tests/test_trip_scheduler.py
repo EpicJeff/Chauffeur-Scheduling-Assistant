@@ -98,6 +98,124 @@ def scenario_anchor_needs_days_within_its_leg():
           f"expected a reach-shortage reason, got {res.failures}")
 
 
+def scenario_switch_day_transfer_blocks_morning():
+    """Regression (real 'Paris Anniversary' Day 10): on an accommodation-switch
+    day the travelers wake up at the OLD hotel, check out at 11:00, and travel —
+    the scheduler must not book 8 AM at the new base. The transfer window
+    (checkout + distance-based travel; rail/air pacing on long hauls) is derived
+    from the stays and blocked off by clipping the day's blocks."""
+    PARIS = (48.8566, 2.3522)
+    NICE = (43.7102, 7.2620)
+    trip = mk_trip(days=4)
+    trip.accommodations = [
+        mk_acc("Nice Hotel", *NICE, MONDAY, MONDAY + datetime.timedelta(days=2)),
+        mk_acc("Paris Hotel", *PARIS, MONDAY + datetime.timedelta(days=2),
+               MONDAY + datetime.timedelta(days=4)),
+    ]
+    pois = [mk_poi(f"Paris Spot {i}", PARIS[0] + i * 0.001, PARIS[1],
+                   category="sightseeing", duration_mins=60) for i in range(4)]
+    trip.pois = pois
+    res = solve_assignment(trip, all_ids(trip.pois))
+    check(res.error is None, f"solve error: {res.error}")
+
+    switch = next(d for d in res.days if d.index == 2)  # Wed: Nice -> Paris
+    transfer = trip_scheduler._transfer_mins(trip.accommodations[0], trip.accommodations[1])
+    arrival = (datetime.datetime.combine(switch.date, trip_scheduler.CHECKOUT_TIME)
+               + datetime.timedelta(minutes=transfer)).time()
+    names = {b.name for b in switch.blocks}
+    check(not names & {'breakfast', 'morning', 'lunch'},
+          f"pre-arrival blocks must be gone on a long-haul switch day, got {names}")
+    check(all(b.start >= arrival for b in switch.blocks),
+          f"switch-day blocks must start after arrival {arrival}, got "
+          f"{[(b.name, b.start) for b in switch.blocks]}")
+    normal = next(d for d in res.days if d.index == 3)  # Thu: no switch
+    check({b.name for b in normal.blocks} == {b.name for b in trip_scheduler.DEFAULT_TEMPLATE},
+          "non-switch days keep the full template")
+
+    # end-to-end: laid-out times on the switch day never precede arrival
+    results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
+    for p in trip.pois:
+        p_local = local(p.scheduled_start)
+        if p_local.date() == switch.date:
+            check(p_local.time() >= arrival,
+                  f"{p.name} scheduled {p_local.time()} before arrival {arrival}")
+
+    # short same-city switch: only the pre-checkout blocks are lost
+    trip2 = mk_trip(days=4)
+    trip2.accommodations = [
+        mk_acc("Left Bank Hotel", 48.8500, 2.3400, MONDAY, MONDAY + datetime.timedelta(days=2)),
+        mk_acc("Right Bank Hotel", 48.8800, 2.3600, MONDAY + datetime.timedelta(days=2),
+               MONDAY + datetime.timedelta(days=4)),
+    ]
+    trip2.pois = [mk_poi("Louvre", 48.8606, 2.3376, category="sightseeing", duration_mins=60)]
+    res2 = solve_assignment(trip2, all_ids(trip2.pois))
+    switch2 = next(d for d in res2.days if d.index == 2)
+    transfer2 = trip_scheduler._transfer_mins(trip2.accommodations[0], trip2.accommodations[1])
+    arrival2 = (datetime.datetime.combine(switch2.date, trip_scheduler.CHECKOUT_TIME)
+                + datetime.timedelta(minutes=transfer2)).time()
+    names2 = {b.name for b in switch2.blocks}
+    check('breakfast' not in names2 and 'lunch' in names2 and 'afternoon' in names2,
+          f"same-city switch loses only the pre-checkout blocks, got {names2}")
+    check(all(b.start >= arrival2 for b in switch2.blocks),
+          f"same-city switch blocks start after arrival {arrival2}, got "
+          f"{[(b.name, b.start) for b in switch2.blocks]}")
+
+
+def scenario_area_anchor_regrounds_to_children():
+    """Regression (real 'Bordeaux star' bug): an identity-less area anchor carries
+    an LLM regional guess for coordinates, and on its claimed day that guess became
+    the home base — bending the whole day toward a city nobody visits. Solving now
+    re-grounds such an anchor onto the centroid of its children first."""
+    BRIVE = (45.1583, 1.5321)
+    BORDEAUX = (44.8378, -0.5792)   # the regional guess, ~170 km from the leg
+    CAHORS = (44.4475, 1.4406)
+    hotel = mk_acc("Brive Hotel", *BRIVE, MONDAY, MONDAY + datetime.timedelta(days=2))
+    trip = mk_trip(days=2, accommodations=[hotel])
+    anchor = mk_poi("Dordogne Exploration", *BORDEAUX, is_background=True,
+                    days_claimed=1, priority="must")
+    child = mk_poi("Cahors Old Bridge", *CAHORS, parent_container=anchor.id,
+                   category="sightseeing", duration_mins=90)
+    trip.pois = [anchor, child]
+    results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
+    check(abs(anchor.lat - CAHORS[0]) < 1e-6 and abs(anchor.lng - CAHORS[1]) < 1e-6,
+          f"anchor must sit on its only child, got ({anchor.lat}, {anchor.lng})")
+
+
+def scenario_childless_area_anchor_snaps_to_leg_hotel():
+    """A pure theme (no children, no confirmed place identity) has no location of
+    its own: after claiming a day it borrows that day's accommodation coordinates
+    instead of keeping the LLM's regional guess."""
+    BRIVE = (45.1583, 1.5321)
+    PERIGUEUX = (45.1846, 0.7214)   # regional guess ~64 km from the hotel
+    hotel = mk_acc("Brive Hotel", *BRIVE, MONDAY, MONDAY + datetime.timedelta(days=2))
+    trip = mk_trip(days=2, accommodations=[hotel])
+    anchor = mk_poi("Countryside Day", *PERIGUEUX, is_background=True,
+                    days_claimed=1, priority="must")
+    trip.pois = [anchor]
+    results = list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
+    check((anchor.lat, anchor.lng) == (hotel.lat, hotel.lng),
+          f"childless area anchor should borrow the hotel's coords, got ({anchor.lat}, {anchor.lng})")
+
+
+def scenario_venue_anchor_keeps_own_coords():
+    """An anchor that kept a confirmed place identity (mapbox_id) is a real venue:
+    its coordinates are ground truth and must never move toward its children."""
+    PARIS = (48.8566, 2.3522)
+    hotel = mk_acc("Paris Hotel", *PARIS, MONDAY, MONDAY + datetime.timedelta(days=2))
+    trip = mk_trip(days=2, accommodations=[hotel])
+    anchor = mk_poi("Louvre", 48.8606, 2.3376, is_background=True, days_claimed=1,
+                    priority="must", mapbox_id="mb.louvre")
+    child = mk_poi("Cafe Marly", *MONTMARTRE, parent_container=anchor.id,
+                   category="food", meal_type="lunch", duration_mins=60)
+    trip.pois = [anchor, child]
+    list(schedule_pois_bulk(trip, all_ids(trip.pois)))
+    check((anchor.lat, anchor.lng) == (48.8606, 2.3376),
+          f"venue anchor moved to ({anchor.lat}, {anchor.lng})")
+
+
 def scenario_checkout_day_keeps_home_base():
     """The morning after final checkout had no accommodation and therefore no
     geography, so far-flung POIs landed on it. It now inherits the hotel you
@@ -371,6 +489,78 @@ def scenario_locked_incremental():
         check(p.is_scheduled and p.scheduled_start, f"{p.name} not scheduled")
 
 
+def scenario_external_event_locked_to_real_time():
+    """A calendar-backed external POI (a real reservation) is a FIXED anchor: the
+    solver locks it to its exact real time and day, never re-times it to a meal
+    slot, never clobbers its cal:: event_id, and won't let another meal take its
+    locked block."""
+    ext_start = datetime.datetime(2026, 9, 8, 17, 30, tzinfo=ET)   # Tue dinner reservation
+    ext = mk_poi("Reservation Dinner", *NEAR_MK, category="food", meal_type="dinner",
+                 duration_mins=90, is_external_event=True,
+                 source_event_id="cal::realdinner", event_id="cal::realdinner",
+                 is_scheduled=True, scheduled_start=ext_start.timestamp(),
+                 scheduled_end=(ext_start + datetime.timedelta(minutes=90)).timestamp())
+    museum = mk_poi("Museum", *MK, category="sightseeing", duration_mins=120)
+    other_dinner = mk_poi("Other Dinner", *NEAR_MK, category="food", meal_type="dinner", duration_mins=90)
+    trip = mk_trip(days=3)
+    trip.pois = [ext, museum, other_dinner]
+
+    # schedule only the fuzzy POIs; the external one is already scheduled (locked)
+    results = list(schedule_pois_bulk(trip, all_ids([museum, other_dinner])))
+    check(all(r.get("success") for r in results if not r.get("type")), f"bulk failed: {results}")
+
+    check(ext.event_id == "cal::realdinner", f"external event_id was clobbered: {ext.event_id}")
+    check(abs(ext.scheduled_start - ext_start.timestamp()) < 1,
+          f"external event re-timed off its real slot: {local(ext.scheduled_start).time()}")
+    check(local(ext.scheduled_start).date() == datetime.date(2026, 9, 8),
+          f"external event moved off its real day: {local(ext.scheduled_start).date()}")
+    if other_dinner.is_scheduled:
+        check(local(other_dinner.scheduled_start).date() != datetime.date(2026, 9, 8),
+              "a second dinner took the locked reservation's day/slot")
+
+
+def scenario_external_event_no_double_book():
+    """No flexible POI may be laid out on top of a fixed reservation's time window,
+    even across block boundaries (a 11:00 reservation sits in the morning block but
+    must not collide with a lunch-block or other morning POI)."""
+    resv_start = datetime.datetime(2026, 9, 7, 11, 0, tzinfo=ET)   # Mon, morning block
+    resv = mk_poi("Character Brunch", *NEAR_MK, category="food", duration_mins=60,
+                  is_external_event=True, source_event_id="cal::brunch", event_id="cal::brunch",
+                  is_scheduled=True, scheduled_start=resv_start.timestamp(),
+                  scheduled_end=(resv_start + datetime.timedelta(minutes=60)).timestamp())
+    fuzzy = [mk_poi(f"Sight {i}", MK[0] + i * 0.001, MK[1], category="sightseeing", duration_mins=90)
+             for i in range(3)]
+    trip = mk_trip(days=1)   # one day: everything shares the reservation's day
+    trip.pois = [resv] + fuzzy
+    list(schedule_pois_bulk(trip, all_ids(fuzzy)))
+
+    check(abs(resv.scheduled_start - resv_start.timestamp()) < 1, "reservation was moved")
+    rs, re_ = resv.scheduled_start, resv.scheduled_end
+    for p in fuzzy:
+        if p.is_scheduled and p.scheduled_start:
+            ps, pe = p.scheduled_start, p.scheduled_end
+            check(not (ps < re_ and pe > rs),
+                  f"{p.name} ({local(ps).time()}–{local(pe).time()}) double-books the "
+                  f"reservation ({local(rs).time()}–{local(re_).time()})")
+
+
+def scenario_offtime_meal_reserves_block():
+    """A meal reservation at an off-time (11:10, before the 11:30 lunch block; or
+    17:25, before the 17:30 dinner block) still reserves that meal's slot for the
+    day, so a fuzzy meal isn't scheduled alongside it."""
+    lunch_resv = datetime.datetime(2026, 9, 7, 11, 10, tzinfo=ET)   # before lunch block
+    resv = mk_poi("Cinderella Table", *NEAR_MK, category="food", duration_mins=90,
+                  is_external_event=True, source_event_id="cal::cindy", event_id="cal::cindy",
+                  is_scheduled=True, scheduled_start=lunch_resv.timestamp(),
+                  scheduled_end=(lunch_resv + datetime.timedelta(minutes=90)).timestamp())
+    fuzzy_lunch = mk_poi("Columbia Harbour", *NEAR_MK, category="food", meal_type="lunch", duration_mins=60)
+    trip = mk_trip(days=1)
+    trip.pois = [resv, fuzzy_lunch]
+    list(schedule_pois_bulk(trip, all_ids([fuzzy_lunch])))
+    check(not fuzzy_lunch.is_scheduled,
+          "a second lunch was scheduled despite an off-time (11:10) reservation holding the lunch slot")
+
+
 def scenario_end_to_end_timing():
     fine = mk_poi("Le Grand", *NEAR_EIFFEL, category="food", dining_style="fine", duration_mins=120)
     act = mk_poi("Louvre", 48.8606, 2.3376, category="sightseeing", duration_mins=180)
@@ -411,6 +601,10 @@ SCENARIOS = [
     scenario_anchor_respects_legs,
     scenario_geography_fence,
     scenario_anchor_needs_days_within_its_leg,
+    scenario_switch_day_transfer_blocks_morning,
+    scenario_area_anchor_regrounds_to_children,
+    scenario_childless_area_anchor_snaps_to_leg_hotel,
+    scenario_venue_anchor_keeps_own_coords,
     scenario_checkout_day_keeps_home_base,
     scenario_audit_flags_incoherence,
     scenario_audit_clean_and_empty_days,
@@ -423,6 +617,9 @@ SCENARIOS = [
     scenario_balance,
     scenario_rules,
     scenario_locked_incremental,
+    scenario_external_event_locked_to_real_time,
+    scenario_external_event_no_double_book,
+    scenario_offtime_meal_reserves_block,
     scenario_end_to_end_timing,
 ]
 

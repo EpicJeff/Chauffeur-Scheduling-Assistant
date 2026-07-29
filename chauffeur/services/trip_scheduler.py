@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from ortools.sat.python import cp_model
 
 from models.schemas import TripMetadata, TripPOI, TripRule
+from services.trip_validation import reground_area_anchors
 
 # ---------------------------------------------------------------------------
 # Block template (trip-local times). Overridable via template_override rules.
@@ -99,6 +100,30 @@ def _dist_mins(a, b) -> Optional[int]:
     if alat is None or alng is None or blat is None or blng is None:
         return None
     return int(round(_haversine_km(alat, alng, blat, blng) * HAVERSINE_MINS_PER_KM))
+
+
+# Accommodation-switch day model: you pack, check out at the standard hour, and
+# travel to the new base — nothing can be scheduled at the new base before you
+# physically arrive. Beyond LONG_HAUL_KM the driving pace would write off the
+# whole day (Riviera->Paris haversine-drive ≈ 16 h), but real travelers take a
+# train/flight, so long hauls switch to overhead + fast-leg pacing (~500 km/h).
+CHECKOUT_TIME = datetime.time(11, 0)
+LONG_HAUL_KM = 350
+LONG_HAUL_OVERHEAD_MINS = 150
+LONG_HAUL_MINS_PER_KM = 0.12
+MIN_BLOCK_USABLE_MINS = 30    # a clipped block shorter than this is dropped
+
+
+def _transfer_mins(a, b) -> Optional[int]:
+    """Rough door-to-door minutes for an accommodation switch."""
+    alat, alng = getattr(a, 'lat', None), getattr(a, 'lng', None)
+    blat, blng = getattr(b, 'lat', None), getattr(b, 'lng', None)
+    if alat is None or alng is None or blat is None or blng is None:
+        return None
+    km = _haversine_km(alat, alng, blat, blng)
+    if km <= LONG_HAUL_KM:
+        return int(round(km * HAVERSINE_MINS_PER_KM))
+    return int(round(LONG_HAUL_OVERHEAD_MINS + km * LONG_HAUL_MINS_PER_KM))
 
 
 def _parse_hhmm(s: str) -> Optional[datetime.time]:
@@ -225,17 +250,49 @@ def _build_day_grid(trip: TripMetadata, start_utc: datetime.datetime, end_utc: d
     d = start_local.date()
     idx = 0
     while d <= end_local.date():
+        # checkout day (and any gap day): you wake up at last night's hotel, so
+        # it stays the day's routing base rather than leaving the day baseless
+        acc = acc_by_date.get(d) or acc_by_date.get(d - datetime.timedelta(days=1))
+
+        # Accommodation-switch day: the travelers wake up at the OLD hotel, check
+        # out at CHECKOUT_TIME, and travel — the transfer window is blocked off by
+        # clipping the day's blocks. Derived from the stays on every solve (the
+        # switch days and distances are always known), so unlike a stored
+        # "travel event" it can never go stale or leak into the UI/calendar.
+        arrival_local = None
+        prev_acc = acc_by_date.get(d - datetime.timedelta(days=1))
+        today_acc = acc_by_date.get(d)
+        if (prev_acc is not None and today_acc is not None
+                and getattr(prev_acc, 'id', None) != getattr(today_acc, 'id', None)):
+            transfer = _transfer_mins(prev_acc, today_acc)
+            if transfer is not None:
+                arrival_local = (datetime.datetime.combine(d, CHECKOUT_TIME, tzinfo=local_tz)
+                                 + datetime.timedelta(minutes=transfer))
+
         blocks = []
         for b in template:
             b_start = datetime.datetime.combine(d, b.start, tzinfo=local_tz)
             b_end = datetime.datetime.combine(d, b.end, tzinfo=local_tz)
-            # keep the block only if its window intersects the trip bounds
-            if b_end > start_local and b_start < end_local:
+            # clip the block to the trip bounds and (on switch days) to the
+            # post-transfer window; drop it when too little usable time remains
+            eff_start = max(b_start, start_local)
+            if arrival_local is not None:
+                eff_start = max(eff_start, arrival_local)
+            if eff_start.minute % 5:
+                # round up to :05 — Level 2 snaps starts DOWN to 5 minutes, which
+                # would slip a POI back before the arrival clip
+                eff_start += datetime.timedelta(minutes=5 - eff_start.minute % 5)
+            eff_end = min(b_end, end_local)
+            if (eff_end - eff_start) < datetime.timedelta(minutes=MIN_BLOCK_USABLE_MINS):
+                continue
+            if eff_start > b_start or eff_end < b_end:
+                cap = b.capacity_mins
+                if cap is not None:
+                    cap = min(cap, int((eff_end - eff_start).total_seconds() // 60))
+                blocks.append(BlockDef(b.name, eff_start.time(), eff_end.time(), b.kind, cap))
+            else:
                 blocks.append(b)
         if blocks:
-            # checkout day (and any gap day): you wake up at last night's hotel, so
-            # it stays the day's routing base rather than leaving the day baseless
-            acc = acc_by_date.get(d) or acc_by_date.get(d - datetime.timedelta(days=1))
             days.append(DayGrid(index=idx, date=d, weekday=d.weekday(), blocks=blocks,
                                 accommodation=acc))
             idx += 1
@@ -272,7 +329,10 @@ def _allowed_blocks_for(poi: TripPOI) -> List[str]:
         return list(ACTIVITY_BLOCKS)
     if mt in ('dessert', 'snack'):
         return list(ACTIVITY_BLOCKS)
-    if getattr(poi, 'dining_style', None) == 'fine' and mt != 'lunch':
+    # Fine dining gravitates to dinner ONLY when the meal isn't already pinned to a
+    # specific earlier meal — an explicit breakfast/lunch reservation (e.g. a
+    # character breakfast) must keep its own slot, not be shoved to dinner.
+    if getattr(poi, 'dining_style', None) == 'fine' and mt in (None, 'dinner'):
         return ['dinner']
     if mt in MEAL_BLOCKS:
         return [mt]
@@ -310,6 +370,37 @@ def _rule_days(rule: TripRule, days: List[DayGrid]) -> List[int]:
     return out
 
 
+def _reground_anchors(trip: TripMetadata, days: List['DayGrid']) -> None:
+    """Correct untrusted anchor coordinates before they steer a solve or layout.
+
+    Trust hierarchy: a confirmed place identity (mapbox_id/wikidata_id) keeps its
+    own coordinates; an identity-less anchor with located children moves to their
+    centroid (reground_area_anchors); an identity-less anchor with no children but
+    existing day claims snaps to the accommodation of its first claimed day — a
+    pure theme has no location of its own, so it borrows the leg's. The LLM's
+    regional guess is only consulted for what it actually knows: which leg the
+    anchor belongs to.
+    """
+    reground_area_anchors(trip.pois or [])
+    day_by_date = {d.date.strftime("%Y-%m-%d"): d for d in days}
+    for b in trip.pois or []:
+        if not getattr(b, 'is_background', False):
+            continue
+        if getattr(b, 'mapbox_id', None) or getattr(b, 'wikidata_id', None):
+            continue
+        if any(getattr(p, 'parent_container', None) == b.id
+               and getattr(p, 'lat', None) is not None
+               and getattr(p, 'lng', None) is not None
+               for p in trip.pois):
+            continue  # centroid case, handled above
+        for ds in (getattr(b, 'claimed_dates', None) or []):
+            d = day_by_date.get(ds)
+            acc = getattr(d, 'accommodation', None) if d else None
+            if acc is not None and getattr(acc, 'lat', None) is not None and getattr(acc, 'lng', None) is not None:
+                b.lat, b.lng = acc.lat, acc.lng
+                break
+
+
 # ---------------------------------------------------------------------------
 # Level 1 — CP-SAT assignment
 # ---------------------------------------------------------------------------
@@ -344,6 +435,10 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
     D = len(days)
     day_by_idx = {d.index: d for d in days}
 
+    # Anchor coords feed the fence, the leg pull, and the base switch — correct
+    # them before the model sees them.
+    _reground_anchors(trip, days)
+
     rules = [r for r in (getattr(trip, 'rules', []) or []) if r.is_enabled and r.rule_type != 'template_override']
 
     pois_by_id = {p.id: p for p in trip.pois}
@@ -374,11 +469,24 @@ def solve_assignment(trip: TripMetadata, target_ids: List[str],
                     bg_days.append(d_idx)
             locked_bg_days[p.id] = bg_days
             continue
+        block_names = {b.name for b in day_by_idx[di].blocks}
         blk = None
-        for b in day_by_idx[di].blocks:
-            if b.start <= p_local.time() < b.end:
-                if blk is None or (_is_meal(p) == (b.kind == 'meal')):
-                    blk = b.name
+        if _is_meal(p):
+            # A meal reservation reserves its MEAL slot for the day even when its
+            # real time sits just outside the block window (an 11:10 lunch is before
+            # the 11:30 lunch block; a 17:25 dinner is before the 17:30 dinner block).
+            # Filing it under the meal block — not the activity block its clock time
+            # lands in — is what stops a second fuzzy meal being scheduled alongside.
+            t = p_local.time()
+            meal_blk = ('breakfast' if t < datetime.time(10, 30)
+                        else 'lunch' if t < datetime.time(15, 30) else 'dinner')
+            if meal_blk in block_names:
+                blk = meal_blk
+        if blk is None:
+            for b in day_by_idx[di].blocks:
+                if b.start <= p_local.time() < b.end:
+                    if blk is None or (_is_meal(p) == (b.kind == 'meal')):
+                        blk = b.name
         locked_at[p.id] = (di, blk or day_by_idx[di].blocks[0].name)
 
     model = cp_model.CpModel()
@@ -942,6 +1050,9 @@ def _apply_claims(trip: TripMetadata, res: SolveResult) -> None:
         b.scheduled_end = end_local.timestamp()
         if not b.event_id:
             b.event_id = f"draft_poi_{uuid.uuid4().hex}"
+    # Fresh claims give childless area anchors their day->accommodation binding;
+    # snap them before layout uses anchor coords as the day base.
+    _reground_anchors(trip, res.days)
 
 
 def _anchor_map(trip: TripMetadata, res: SolveResult) -> Dict[int, TripPOI]:
@@ -997,14 +1108,49 @@ def _layout_one_day(trip: TripMetadata, res: SolveResult, di: int, anchor_by_day
     prev_loc = getattr(base, 'location', None) or trip.location
     prev_end: Optional[datetime.datetime] = None
 
+    def _to_local(ts):
+        return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).astimezone(local_tz)
+
+    def _snap(dt):
+        return dt - datetime.timedelta(minutes=dt.minute % 5, seconds=dt.second, microseconds=dt.microsecond)
+
+    # Calendar-backed reservations keep their EXACT real times and are immovable.
+    # Collect them for the WHOLE day (blocks overlap in time — a 11:10 reservation
+    # sits in the morning block yet can collide with a lunch-block POI — so the
+    # no-overlap check must be day-wide, not per-block).
+    day_fixed = []  # (start, end, poi)
+    for pid in entries:
+        p = pois_by_id[pid]
+        if getattr(p, 'is_external_event', False) and p.scheduled_start:
+            fs = _to_local(p.scheduled_start)
+            fe = _to_local(p.scheduled_end) if p.scheduled_end else fs + datetime.timedelta(minutes=p.duration_mins or 60)
+            day_fixed.append((fs, fe, p))
+    day_fixed.sort(key=lambda t: t[0])
+
+    def _bump_past_fixed(start, dur):
+        """Push a proposed [start, start+dur) forward past any fixed reservation it
+        would overlap, so a flexible POI never double-books a real event."""
+        guard = 0
+        while guard <= len(day_fixed) + 1:
+            end = start + dur
+            hit = next(((fs, fe) for (fs, fe, _) in day_fixed if start < fe and end > fs), None)
+            if not hit:
+                return start
+            start = _snap(hit[1])   # resume right after the reservation ends
+            guard += 1
+        return start
+
     for b in day.blocks:
-        block_pois = [pois_by_id[pid] for pid, blk in entries.items() if blk == b.name]
-        if not block_pois:
+        # fixed reservations keep their own times; only flexible POIs are laid out
+        flexible = [pois_by_id[pid] for pid, blk in entries.items()
+                    if blk == b.name and not (getattr(pois_by_id[pid], 'is_external_event', False)
+                                              and pois_by_id[pid].scheduled_start)]
+        if not flexible:
             continue
         # nearest-neighbor order within the block, starting from the previous stop
         ordered: List[TripPOI] = []
         cursor = prev
-        remaining = list(block_pois)
+        remaining = list(flexible)
         while remaining:
             nxt = min(remaining, key=lambda q: (_dist_mins(cursor, q) if _dist_mins(cursor, q) is not None else 30))
             ordered.append(nxt)
@@ -1022,10 +1168,10 @@ def _layout_one_day(trip: TripMetadata, res: SolveResult, di: int, anchor_by_day
                 anchor_t = datetime.datetime.combine(day.date, MEAL_ANCHOR[b.name], tzinfo=local_tz)
                 latest_ok = window_end - datetime.timedelta(minutes=(p.duration_mins or 60))
                 start = min(max(start, anchor_t), max(window_start, latest_ok))
-            # snap to 5 minutes
-            start -= datetime.timedelta(minutes=start.minute % 5, seconds=start.second,
-                                        microseconds=start.microsecond)
-            end = start + datetime.timedelta(minutes=p.duration_mins or 60)
+            start = _snap(start)
+            dur = datetime.timedelta(minutes=p.duration_mins or 60)
+            start = _bump_past_fixed(start, dur)   # never sit on a real reservation
+            end = start + dur
             p.is_scheduled = True
             p.scheduled_start = start.timestamp()
             p.scheduled_end = end.timestamp()
@@ -1034,6 +1180,11 @@ def _layout_one_day(trip: TripMetadata, res: SolveResult, di: int, anchor_by_day
             prev_end = end
             prev_loc = p.location or prev_loc
             prev = p
+
+    # let the anchor-span extension below see the fixed reservations' end times too
+    for (fs, fe, fp) in day_fixed:
+        if prev_end is None or fe > prev_end:
+            prev_end = fe
 
     # extend the day's background span to cover late children on its final claimed day
     anchor = anchor_by_day.get(di)
