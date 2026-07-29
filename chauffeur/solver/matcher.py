@@ -258,7 +258,8 @@ def solve_schedule(
     passengers: List[Passenger] = None,
     trip_metadata: List[dict] = None,
     theme: dict = None,
-    load_balancing: bool = False
+    load_balancing: bool = False,
+    load_balancing_metric: str = 'occupied_time'
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
@@ -803,33 +804,61 @@ def solve_schedule(
             model.AddBoolOr([both_assigned, assign_vars[(e1_id, d.id)].Not(), assign_vars[(e2_id, d.id)].Not()])
             objective_terms.append(both_assigned * 1000)
     # 4d. Load Balancing (optional): quadratic penalty on each driver's total
-    # occupied minutes. Sum-of-squares is minimized by an even split, so every
-    # additional event on an already-loaded driver costs more than the same
-    # event on an idle one. At 1 point per minute^2, moving a 60-min event off
-    # a driver with 3h already booked gains ~14,000 points: enough to overrule
-    # priority/primary bonuses (<=3,500), not enough to break attendee
-    # assignments (+50M), overrides (+100M), or tight passenger-continuity
-    # chains (up to +50,000) unless the imbalance is severe. The marginal cost
-    # is also capped well below the 1,000,000 assignment reward (durations are
-    # clamped to 600 min), so balancing can never push an event to unassigned.
+    # load. Sum-of-squares is minimized by an even split, so every additional
+    # event on an already-loaded driver costs more than the same event on an
+    # idle one. The metric decides what "load" means per (driver, event):
+    #   'events'        - 1 per event (fair by count)
+    #   'driving_time'  - round-trip minutes from the driver's home (or the
+    #                     global home) to the event; a PROXY for real driving,
+    #                     since true routes exist only after assignment and
+    #                     chained events share travel. Unknown routes cost a
+    #                     neutral 60 so a home-less driver never becomes a
+    #                     free sink for every event.
+    #   'occupied_time' - summed event durations in minutes
+    # Coefficients make a typical one-event move gain roughly 10k-40k points:
+    # enough to overrule priority/primary bonuses (<=3,500), not enough to
+    # break attendee assignments (+50M), overrides (+100M), or tight
+    # passenger-continuity chains (up to +50,000) unless the imbalance is
+    # severe. Each driver's load saturates at `cap` (AddMinEquality), which
+    # bounds the marginal penalty of one more event strictly below the
+    # 1,000,000 assignment reward: balancing can never unassign an event.
     if load_balancing:
+        metric_params = {
+            'events': (10000, 12),
+            'driving_time': (5, 360),
+            'occupied_time': (1, 600),
+        }
+        coef, cap = metric_params.get(load_balancing_metric, metric_params['occupied_time'])
+        global_home = theme.get('home_location') if theme else None
         for d in drivers:
             if d.id == 'unassigned_ghost':
                 continue
             load_terms = []
             max_load = 0
             for e in assignable_events:
-                dur = int((e.end - e.start).total_seconds() // 60)
-                dur = max(1, min(dur, 600))
-                load_terms.append(assign_vars[(e.id, d.id)] * dur)
-                max_load += dur
+                if load_balancing_metric == 'events':
+                    val = 1
+                elif load_balancing_metric == 'driving_time':
+                    origin = d.home_location or global_home
+                    if origin and e.location:
+                        val = min(get_travel_time_minutes(origin, e.location) * 2, 240)
+                    else:
+                        val = 60
+                else:
+                    val = int((e.end - e.start).total_seconds() // 60)
+                    val = max(1, min(val, 600))
+                if val > 0:
+                    load_terms.append(assign_vars[(e.id, d.id)] * val)
+                    max_load += val
             if not load_terms:
                 continue
             load_var = model.NewIntVar(0, max_load, f'load_{d.id}')
             model.Add(load_var == sum(load_terms))
-            load_sq = model.NewIntVar(0, max_load * max_load, f'load_sq_{d.id}')
-            model.AddMultiplicationEquality(load_sq, [load_var, load_var])
-            objective_terms.append(load_sq * -1)
+            capped_load = model.NewIntVar(0, cap, f'load_capped_{d.id}')
+            model.AddMinEquality(capped_load, [load_var, model.NewConstant(cap)])
+            load_sq = model.NewIntVar(0, cap * cap, f'load_sq_{d.id}')
+            model.AddMultiplicationEquality(load_sq, [capped_load, capped_load])
+            objective_terms.append(load_sq * -coef)
 
     # 4e. Override weights
     import time

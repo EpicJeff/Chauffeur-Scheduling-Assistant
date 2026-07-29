@@ -3862,6 +3862,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         default_theme = themes[0]
 
     load_balancing = settings.get("load_balancing_enabled", False)
+    load_balancing_metric = settings.get("load_balancing_metric", "occupied_time")
 
     base_schedules = {}
 
@@ -3942,7 +3943,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             true_unassigned = unassigned
         else:
             assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -4071,7 +4072,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 }]
                 
                 for t in o_themes:
-                    a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing)
+                    a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric)
                     ue = [e for e in d_evs if e.id in u]
                     ae = [e for e in d_evs if e.id in a]
                     ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs)

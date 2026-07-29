@@ -483,10 +483,22 @@
                             </label>
                             <span class="font-bold text-gray-300">Balance Driving Load</span>
                         </div>
+                        <div x-show="loadBalancingEnabled" class="flex items-center gap-2 shrink-0">
+                            <label class="text-sm text-gray-400 font-semibold" for="loadBalancingMetric">Balance by</label>
+                            <select id="loadBalancingMetric" x-model="loadBalancingMetric" @change="saveSettings()"
+                                class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                <option value="events">Total Events Driven</option>
+                                <option value="driving_time">Total Driving Time</option>
+                                <option value="occupied_time">Total Occupied Time</option>
+                            </select>
+                        </div>
                         <p class="text-sm text-gray-500">
-                            When on, the solver spreads events across all drivers by total occupied time.
+                            When on, the solver spreads events across all drivers using the chosen measure of load.
                             When off, it fills the highest-priority drivers first. Attendee assignments,
                             manual overrides, and shared-passenger chains still take precedence.
+                            <span x-show="loadBalancingEnabled && loadBalancingMetric === 'driving_time'">
+                                Driving time is estimated as the round trip from each driver's home to the event.
+                            </span>
                         </p>
                     </div>
 
@@ -2314,6 +2326,7 @@
                 enableAiPriorityRules: true,
                 enableAiThemes: true,
                 loadBalancingEnabled: false,
+                loadBalancingMetric: 'occupied_time',
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -2637,6 +2650,7 @@
                     this.enableAiPriorityRules = data.enable_ai_priority_rules !== false;
                     this.enableAiThemes = data.enable_ai_themes !== false;
                     this.loadBalancingEnabled = data.load_balancing_enabled === true;
+                    this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
 
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
@@ -2700,7 +2714,8 @@
                             enable_standard_priority_rules: this.enableStandardPriorityRules,
                             enable_ai_priority_rules: this.enableAiPriorityRules,
                             enable_ai_themes: this.enableAiThemes,
-                            load_balancing_enabled: this.loadBalancingEnabled
+                            load_balancing_enabled: this.loadBalancingEnabled,
+                            load_balancing_metric: this.loadBalancingMetric
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

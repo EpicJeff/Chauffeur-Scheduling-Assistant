@@ -19,11 +19,12 @@ def mk_driver(i, priority_index):
                   group="primary", priority_index=priority_index)
 
 
-def mk_event(i, start_hour, duration_mins=60):
+def mk_event(i, start_hour, duration_mins=60, location=None):
     day = datetime.datetime(2026, 9, 7)
     start = day.replace(hour=start_hour)
     return Event(id=f"e{i}", title=f"Event {i}", start=start,
                  end=start + datetime.timedelta(minutes=duration_mins),
+                 location=location,
                  calendar_ids=["primary"], source_event_ids=[f"e{i}"])
 
 
@@ -69,10 +70,73 @@ def scenario_attendee_still_wins():
           f"balancing pushes the remaining event to the idle driver, got {assignments}")
 
 
+def scenario_metric_events_vs_occupied():
+    # Durations [120, 40, 40, 40]: by count the fair split is 2/2, by occupied
+    # time it is the 120-min event alone vs the three 40-min ones (120/120).
+    drivers = [mk_driver(1, 1), mk_driver(2, 4)]
+    durations = [120, 40, 40, 40]
+    events = [mk_event(i, 8 + i * 3, duration_mins=durations[i]) for i in range(4)]
+
+    a_ev, un_ev, _ = matcher.solve_schedule(events, drivers, [],
+                                            load_balancing=True, load_balancing_metric='events')
+    check(not un_ev, "all events assigned (events metric)")
+    counts = {}
+    for d_id in a_ev.values():
+        counts[d_id] = counts.get(d_id, 0) + 1
+    check(sorted(counts.values()) == [2, 2],
+          f"events metric splits 2/2 regardless of duration, got {a_ev}")
+
+    a_oc, un_oc, _ = matcher.solve_schedule(events, drivers, [],
+                                            load_balancing=True, load_balancing_metric='occupied_time')
+    check(not un_oc, "all events assigned (occupied metric)")
+    mins = {}
+    for e in events:
+        d_id = a_oc[e.id]
+        mins[d_id] = mins.get(d_id, 0) + int((e.end - e.start).total_seconds() // 60)
+    check(sorted(mins.values()) == [120, 120],
+          f"occupied metric isolates the long event (120/120 split), got {a_oc}")
+
+
+def scenario_metric_driving_time_spreads():
+    # All events at the same venue, both drivers living at Home: each event is
+    # the same round trip, so driving-time balancing splits them 2/2 even
+    # though d1 outranks d2 on priority.
+    drivers = [mk_driver(1, 1), mk_driver(2, 4)]
+    for d in drivers:
+        d.home_location = "Home"
+    events = [mk_event(i, 8 + i * 3, location="Venue") for i in range(4)]
+
+    assignments, unassigned, _ = matcher.solve_schedule(
+        events, drivers, [], load_balancing=True, load_balancing_metric='driving_time')
+    check(not unassigned, "all events assigned")
+    counts = {}
+    for d_id in assignments.values():
+        counts[d_id] = counts.get(d_id, 0) + 1
+    check(sorted(counts.values()) == [2, 2],
+          f"driving-time metric splits equal round trips 2/2, got {assignments}")
+
+
+def scenario_metric_driving_time_prefers_local():
+    # d2 lives at the venue: their round trips cost 0 driving, so every event
+    # goes to them despite d1's higher priority — no driving burden to balance.
+    d1 = mk_driver(1, 1); d1.home_location = "Home"
+    d2 = mk_driver(2, 4); d2.home_location = "Venue"
+    events = [mk_event(i, 8 + i * 3, location="Venue") for i in range(4)]
+
+    assignments, unassigned, _ = matcher.solve_schedule(
+        events, [d1, d2], [], load_balancing=True, load_balancing_metric='driving_time')
+    check(not unassigned, "all events assigned")
+    check(all(d_id == "d2" for d_id in assignments.values()),
+          f"zero-drive local driver takes everything under driving-time metric, got {assignments}")
+
+
 SCENARIOS = [
     scenario_bucket_fill_default,
     scenario_load_balancing_spreads,
     scenario_attendee_still_wins,
+    scenario_metric_events_vs_occupied,
+    scenario_metric_driving_time_spreads,
+    scenario_metric_driving_time_prefers_local,
 ]
 
 if __name__ == "__main__":

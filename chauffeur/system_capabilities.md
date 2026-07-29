@@ -27,12 +27,17 @@ When evaluating whether to assign an event to a driver or leave it unassigned:
 - **Soft Buffer Violation:** `-2,000` points if an event slightly overlaps a buffer zone.
 
 ### Load Balancing Mode (optional)
-Toggled by `load_balancing_enabled` in Settings (Config → Drivers tab; default **off**). By default the solver has **no fairness term**: per-event driver scores are independent, so the highest-scoring driver (primary group, lowest `priority_index`) absorbs every event they can physically fit ("bucket filling"), and the stickiness and continuity bonuses reinforce that concentration across runs.
+Toggled by `load_balancing_enabled` in Settings (Config → Drivers tab; default **off**), with a companion `load_balancing_metric` combo box choosing what "load" means. By default the solver has **no fairness term**: per-event driver scores are independent, so the highest-scoring driver (primary group, lowest `priority_index`) absorbs every event they can physically fit ("bucket filling"), and the stickiness and continuity bonuses reinforce that concentration across runs.
 
-When enabled, the solver subtracts a **quadratic penalty of `1` point per (occupied minute)²** per driver, where occupied minutes = the summed durations of the events assigned to that driver that day (each event clamped to 600 min). Sum-of-squares is minimized by an even split, so each additional event on a loaded driver costs more than the same event on an idle one. Interaction with other weights:
-- **Overrules:** the Priority Scaling Bonus (`+150`/rank) and Primary Driver Bonus (`+2000`) — e.g. moving a 60-min event off a driver with 3h booked gains ~14,400 points.
+When enabled, the solver subtracts a **quadratic penalty on each driver's daily load** (sum-of-squares is minimized by an even split, so each additional event on a loaded driver costs more than the same event on an idle one). The metric sets the per-event load value and penalty coefficient:
+- **`events`** — 1 per event, coefficient `10,000`. Fair by count, ignores duration and distance.
+- **`driving_time`** — round-trip minutes from the driver's home (falling back to the global `home_location`) to the event, clamped to 240, coefficient `5`; unknown routes cost a neutral 60 so a home-less driver never becomes a free sink. This is a **proxy**: true driving is only known after assignment, and chained events share travel, so back-to-back same-location events each count a full round trip. A driver living at the venue genuinely has zero driving load and will soak up those events — by design.
+- **`occupied_time`** (default) — summed event durations in minutes (each clamped to 600), coefficient `1`.
+
+Interaction with other weights (all metrics):
+- **Overrules:** the Priority Scaling Bonus (`+150`/rank) and Primary Driver Bonus (`+2000`) — a typical one-event move gains ~10k–40k points.
 - **Does not overrule:** Attendee bonus (`+50M`), Manual Overrides (`+100M`), or `required` rules. Tight passenger-continuity chains (up to `+50,000`) also survive unless the imbalance is severe.
-- **Never causes unassignment:** the marginal penalty is capped well below the `1,000,000` base assignment reward.
+- **Never causes unassignment:** each driver's load saturates at a per-metric cap (`AddMinEquality`), bounding the marginal penalty of one more event strictly below the `1,000,000` base assignment reward.
 - Balancing counts only solver-assigned driving (including self-driven attendee events); personal calendar events that need no driver are not counted.
 
 ---

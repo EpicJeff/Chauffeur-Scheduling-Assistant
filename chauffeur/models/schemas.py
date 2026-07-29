@@ -173,9 +173,14 @@ class Settings(BaseModel):
     enable_ai_priority_rules: bool = True
     enable_ai_themes: bool = True
     # When True, the solver adds a quadratic penalty on each driver's total
-    # occupied minutes so work spreads across the roster instead of stacking
-    # onto the highest-priority drivers ("bucket filling").
+    # load so work spreads across the roster instead of stacking onto the
+    # highest-priority drivers ("bucket filling").
     load_balancing_enabled: bool = False
+    # What "load" means: 'events' (count of events driven), 'driving_time'
+    # (round-trip travel from the driver's home to each event — a proxy, since
+    # true routes are only known after assignment), or 'occupied_time' (summed
+    # event durations).
+    load_balancing_metric: str = "occupied_time"
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
