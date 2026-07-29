@@ -502,6 +502,24 @@
                         </p>
                     </div>
 
+                    <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                        <div class="flex items-center space-x-3 shrink-0">
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="suggestedRoutesEnabled" @change="saveSettings()"
+                                    class="sr-only peer">
+                                <div
+                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                </div>
+                            </label>
+                            <span class="font-bold text-gray-300">Suggested Driver Routes</span>
+                        </div>
+                        <p class="text-sm text-gray-500">
+                            When on, events no real driver can take get a suggested "extra driver" route
+                            (ghost columns on the dashboard). When off, those events just stay in the
+                            unassigned triage bucket.
+                        </p>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                         <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
                             <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1"
@@ -2327,6 +2345,7 @@
                 enableAiThemes: true,
                 loadBalancingEnabled: false,
                 loadBalancingMetric: 'occupied_time',
+                suggestedRoutesEnabled: true,
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -2651,6 +2670,7 @@
                     this.enableAiThemes = data.enable_ai_themes !== false;
                     this.loadBalancingEnabled = data.load_balancing_enabled === true;
                     this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
+                    this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
 
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
@@ -2715,7 +2735,8 @@
                             enable_ai_priority_rules: this.enableAiPriorityRules,
                             enable_ai_themes: this.enableAiThemes,
                             load_balancing_enabled: this.loadBalancingEnabled,
-                            load_balancing_metric: this.loadBalancingMetric
+                            load_balancing_metric: this.loadBalancingMetric,
+                            suggested_routes_enabled: this.suggestedRoutesEnabled
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

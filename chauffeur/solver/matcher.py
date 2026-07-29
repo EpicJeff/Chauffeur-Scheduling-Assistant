@@ -18,6 +18,32 @@ def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=Fa
 from datetime import datetime, time, timedelta
 import math
 
+def compute_event_trip_entities(events, passengers):
+    """Map event id -> set of passenger_{id} entities, matched the same way the
+    trip-assignment constraint does: passenger hashtags (falling back to a
+    name-derived tag) in the title/description, plus calendar-id matches.
+    Shared by solve_schedule and solve_ghost_routes so both apply identical
+    trip-conflict semantics."""
+    e_entities_map = {}
+    for e in events:
+        entities = set()
+        for p in passengers:
+            p_tags = p.hashtags
+            if not p_tags:
+                p_tags = ['#' + ''.join(c.lower() for c in getattr(p, 'name', '') if c.isalnum())]
+            e_title = (e.title or "").lower()
+            e_desc = (getattr(e, 'description', '') or "").lower()
+            if any(p_tags and (t in e_title or t in e_desc) for t in p_tags):
+                entities.add(f"passenger_{p.id}")
+        if hasattr(e, 'calendar_ids') and e.calendar_ids:
+            for cid in e.calendar_ids:
+                for p in passengers:
+                    if cid == str(p.id) or (p.calendar_ids and cid in p.calendar_ids):
+                        entities.add(f"passenger_{p.id}")
+        e_entities_map[e.id] = entities
+    return e_entities_map
+
+
 def get_event_passenger_ids(event, passengers):
     if not passengers: return set()
     result = set()
@@ -345,22 +371,7 @@ def solve_schedule(
     # Pre-calculate e_entities for trip constraints
     e_entities_map = {}
     if trip_metadata:
-        for e in assignable_events:
-            entities = set()
-            for p in passengers:
-                p_tags = p.hashtags
-                if not p_tags:
-                    p_tags = ['#' + ''.join(c.lower() for c in getattr(p, 'name', '') if c.isalnum())]
-                e_title = (e.title or "").lower()
-                e_desc = (getattr(e, 'description', '') or "").lower()
-                if any(p_tags and (t in e_title or t in e_desc) for t in p_tags):
-                    entities.add(f"passenger_{p.id}")
-            if hasattr(e, 'calendar_ids') and e.calendar_ids:
-                for cid in e.calendar_ids:
-                    for p in passengers:
-                        if cid == str(p.id) or (p.calendar_ids and cid in p.calendar_ids):
-                            entities.add(f"passenger_{p.id}")
-            e_entities_map[e.id] = entities
+        e_entities_map = compute_event_trip_entities(assignable_events, passengers)
 
     for e in assignable_events:
         for d in drivers:
@@ -943,16 +954,18 @@ def solve_schedule(
         
     return assignments, unassigned, lateness_warnings
 
-def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None, rules: List[Rule] = None, passengers: List[Passenger] = None) -> Tuple[Dict[str, str], List[dict]]:
+def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None, rules: List[Rule] = None, passengers: List[Passenger] = None, trip_metadata: List[dict] = None) -> Tuple[Dict[str, str], List[dict]]:
     if not events:
         return {}, []
-        
+
     if assigned_events is None:
         assigned_events = []
     if rules is None:
         rules = []
     if passengers is None:
         passengers = []
+    if trip_metadata is None:
+        trip_metadata = []
         
     e_buffer_before = {}
     e_buffer_after = {}
@@ -984,9 +997,28 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
                     key = r.id
                 mut_ex_counts[key] += 1
     
+    # Trip conflict logic, mirroring solve_schedule's trip-assignment constraint:
+    # a ghost driver is by definition NOT on any trip, and a driver not on the
+    # trip cannot take an in-window event whose passengers are away on it (or
+    # any in-window event of a 'global' whole-family trip). Without this,
+    # events that the real solver correctly banned (e.g. hashtag-matched
+    # passengers the upstream calendar-id filter missed) came back as
+    # suggested ghost routes for people who aren't even home.
+    e_trip_entities = compute_event_trip_entities(events, passengers) if trip_metadata else {}
+
     valid_events = []
     for e in events:
         is_impossible = False
+        if trip_metadata:
+            e_ents = e_trip_entities.get(e.id, set())
+            for trip in trip_metadata:
+                trip_ents = trip.get('entities', set())
+                if e.start < trip['end'] and e.end > trip['start']:
+                    if 'global' in trip_ents or (e_ents and e_ents.issubset(trip_ents)):
+                        is_impossible = True
+                        break
+        if is_impossible:
+            continue
         for ae in assigned_events:
             shares_passenger = bool(get_event_passenger_ids(e, passengers).intersection(get_event_passenger_ids(ae, passengers)))
             if shares_passenger:

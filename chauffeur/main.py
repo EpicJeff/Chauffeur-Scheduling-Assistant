@@ -4251,6 +4251,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     load_balancing = settings.get("load_balancing_enabled", False)
     load_balancing_metric = settings.get("load_balancing_metric", "occupied_time")
+    suggested_routes_enabled = settings.get("suggested_routes_enabled", True)
 
     base_schedules = {}
 
@@ -4336,7 +4337,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
             assigned_events = [e for e in daily_events_to_solve if e.id in assignments]
-            ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers)
+            if suggested_routes_enabled:
+                ghost_assignments, ghost_drivers = matcher.solve_ghost_routes(unassigned_events, assigned_events, rules, passengers, trip_metadata=trip_metadata)
+            else:
+                ghost_assignments, ghost_drivers = {}, []
             
             true_unassigned = [e.id for e in unassigned_events if e.id not in ghost_assignments]
             conflicts = matcher.compute_conflicts(assignments, ghost_assignments, daily_events_to_solve)
@@ -4454,7 +4458,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric)
                     ue = [e for e in d_evs if e.id in u]
                     ae = [e for e in d_evs if e.id in a]
-                    ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs)
+                    ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs, trip_metadata=meta) if suggested_routes_enabled else ({}, [])
                     all_a = {**a, **ga}
                     re, ie, fe = matcher.compute_route_edges(all_a, d_evs, drvs, home_location=home_loc, trip_metadata=meta, driver_attendances=p_events_ids, rules=rls, passengers=paxs)
                     tu = [e.id for e in ue if e.id not in ga]

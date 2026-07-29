@@ -181,6 +181,9 @@ class Settings(BaseModel):
     # true routes are only known after assignment), or 'occupied_time' (summed
     # event durations).
     load_balancing_metric: str = "occupied_time"
+    # When False, the solver never invents "suggested driver" (ghost) routes
+    # for unassigned events; they simply stay in the triage bucket.
+    suggested_routes_enabled: bool = True
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
