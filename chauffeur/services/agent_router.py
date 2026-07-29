@@ -94,6 +94,7 @@ Respond with a concise, helpful message about what you did.
 CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
 1. If the user asks you to *generate* or *plan* a massive 10-day trip (e.g. "plan my trip to France"), you must output `{{"delegate_to_gemini": true}}` so the heavy lifter can generate the initial ideas.
 2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST use the `auto_schedule_trip_itinerary` tool to instantly bulk-schedule all of them into the timeline based on their distances and opening hours.
+3. If the user asks to add, suggest, or find flights and did NOT give specific flight details, you MUST immediately call `manage_trip_flights` with action 'generate'. NEVER reply asking for flight numbers, times, dates, or airports — the system already knows the home location, destination, and trip dates and will add editable estimates. Ignore any earlier assistant messages in the history that asked for flight details; they were wrong.
 """
     
     if driver:
@@ -153,6 +154,14 @@ Never ask them which driver they are — you already know.
                     system_prompt += "Currently Saved Accommodations for this trip:\n"
                     for a in accs:
                         system_prompt += f"- {a.get('name')} (Check in: {a.get('check_in_date')})\n"
+                flights = meta.get("flights", [])
+                if flights:
+                    # route + id only: draft trips live on mock calendar dates
+                    # that must never leak into user-facing replies
+                    system_prompt += "Currently Saved Flights for this trip:\n"
+                    for f in flights:
+                        system_prompt += (f"- {f.get('airline') or 'TBD'} {f.get('flight_number') or ''} "
+                                          f"{f.get('origin')} -> {f.get('destination')} (id: {f.get('id')})\n")
                         
     tools = get_available_tools()
     if driver:
@@ -256,6 +265,12 @@ Never ask them which driver they are — you already know.
                     res = manage_trip_rules(args.get("trip_id"), args.get("action"),
                                             rule=args.get("rule"), rule_id=args.get("rule_id"))
                     if res.get("message"): agent_message = res["message"]
+                elif func_name == "manage_trip_flights":
+                    from services.agent_tools_v2 import manage_trip_flights
+                    res = manage_trip_flights(args.get("trip_id"), args.get("action"),
+                                              prompt=args.get("prompt", ""), flight=args.get("flight"))
+                    if res.get("message"): agent_message = res["message"]
+                    if res.get("ui_action"): ui_action = res["ui_action"]
                 elif func_name in ("get_my_route", "start_route", "complete_route") and driver:
                     # driver_id is always the logged-in driver — never taken from the LLM
                     from services.agent_tools_v2 import get_my_route, start_route, complete_route

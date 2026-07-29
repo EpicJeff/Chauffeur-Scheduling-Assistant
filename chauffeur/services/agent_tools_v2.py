@@ -307,6 +307,33 @@ def manage_trip_rules(trip_id: str, action: str, rule: Dict[str, Any] = None, ru
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
 
+def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Flight management for the v2 router. Thin wrapper over the validated v1
+    handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
+    agent stacks share one implementation."""
+    from services import agent_tools
+    action = (action or "generate").lower()
+    args = {"event_id": trip_id}
+    if isinstance(flight, dict):
+        args.update(flight)
+
+    if action == "generate":
+        res = agent_tools.handle_generate_trip_flights({"event_id": trip_id, "prompt": prompt or ""})
+    elif action == "add":
+        res = agent_tools.handle_add_trip_flight(args)
+    elif action == "edit":
+        res = agent_tools.handle_edit_trip_flight(args)
+    elif action == "delete":
+        res = agent_tools.handle_delete_trip_flight(args)
+    else:
+        return {"status": "error",
+                "message": f"Unknown flight action '{action}' — use generate, add, edit, or delete."}
+
+    if res.get("status") == "success":
+        res["ui_action"] = "sync"
+    return res
+
+
 def get_available_tools() -> List[Dict]:
     """
     Returns the JSON schemas for the tools available to the Gemma router.
@@ -373,6 +400,35 @@ def get_available_tools() -> List[Dict]:
                     "trip_id": {"type": "string"}
                 },
                 "required": ["trip_id"]
+            }
+        },
+        {
+            "name": "manage_trip_flights",
+            "description": ("Generate, add, edit, or delete flights on a trip. "
+                            "Use action 'generate' whenever the user asks to add, suggest, or find flights "
+                            "WITHOUT giving specific flight details — do NOT ask them for flight numbers, "
+                            "times, or airports first: the system already knows the family's home location, "
+                            "the trip destination, and the dates, and it adds realistic round-trip flights "
+                            "as editable estimates. "
+                            "Use 'add' only when the user provided a specific flight's details, and "
+                            "'edit'/'delete' to change or remove an existing flight (match by id or route)."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trip_id": {"type": "string"},
+                    "action": {"type": "string", "enum": ["generate", "add", "edit", "delete"]},
+                    "prompt": {"type": "string", "description": "For 'generate': the user's request verbatim, including any stated origin, airline, or cabin preferences. Empty is fine for a bare 'add flights'."},
+                    "flight": {
+                        "type": "object",
+                        "description": ("For add/edit/delete. Fields: origin, destination (add: REQUIRED), airline, flight_number, "
+                                        "class_type, estimated_price_usd (total for the whole party), notes, "
+                                        "departure_day/arrival_day (1-indexed trip day; 0 = the day before the trip for overnight outbound) "
+                                        "with departure_time/arrival_time as 'HH:MM' 24h — never show draft mock calendar dates to the user. "
+                                        "For edit/delete matching: flight_id (preferred), or flight_number, or origin+destination. "
+                                        "For edit renames use new_origin/new_destination/new_flight_number. Do NOT invent other fields.")
+                    }
+                },
+                "required": ["trip_id", "action"]
             }
         },
         {

@@ -236,8 +236,178 @@ def scenario_poi_coord_veto_via_agent():
           "wrong place's identity fields dropped")
 
 
+def scenario_flight_add_by_trip_days():
+    """Flights via trip-day ordinals on a draft: an overnight outbound departing
+    the day BEFORE the trip (day 0), landing day 1; return departs the last day.
+    Agent-facing messages must speak in trip days, never mock dates."""
+    mk_draft("draft_trip_flights")
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flights", origin="JFK", destination="CDG",
+        airline="Delta", flight_number="DL123",
+        departure_day=0, departure_time="18:00", arrival_day=1, arrival_time="08:30"))
+    check(res["status"] == "success", f"add outbound failed: {res}")
+    check("2029" not in res["message"] and "2030" not in res["message"],
+          f"draft flight message must not leak mock dates: {res['message']}")
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flights", origin="CDG", destination="JFK",
+        airline="Delta", flight_number="DL124", departure_day=11, departure_time="16:00"))
+    check(res["status"] == "success", f"add return failed: {res}")
+
+    flights = {f["flight_number"]: f for f in storage.get_trip_metadata("draft_trip_flights")["flights"]}
+    check(flights["DL123"]["departure_time"] == "2029-12-31T18:00:00",
+          f"day 0 = day before mock start: {flights['DL123']['departure_time']}")
+    check(flights["DL123"]["arrival_time"] == "2030-01-01T08:30:00",
+          f"day 1 arrival: {flights['DL123']['arrival_time']}")
+    check(flights["DL124"]["departure_time"] == "2030-01-11T16:00:00",
+          f"day 11 return: {flights['DL124']['departure_time']}")
+    check(flights["DL123"]["is_live_price"] is False, "agent-added flight is not a live price")
+
+    # the stored dicts must round-trip through the pydantic model
+    from models.schemas import TripMetadata
+    TripMetadata(**storage.get_trip_metadata("draft_trip_flights"))
+
+
+def scenario_flight_bad_times_rejected():
+    mk_draft("draft_trip_flightbad")
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightbad", origin="JFK", destination="CDG",
+        departure_day=1, departure_time="18:00", arrival_day=1, arrival_time="08:30"))
+    check(res["status"] == "error" and "NEXT day" in res["message"],
+          f"arrival before departure must be rejected with overnight guidance: {res}")
+    check(not storage.get_trip_metadata("draft_trip_flightbad").get("flights"),
+          "rejected flight must not be persisted")
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightbad", origin="JFK", destination="CDG",
+        departure_day=1, departure_time="6pm"))
+    check(res["status"] == "error", f"unparseable time must be rejected: {res}")
+
+
+def scenario_flight_duplicate_rejected():
+    mk_draft("draft_trip_flightdup")
+    agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
+        flight_number="DL123", departure_day=1, departure_time="08:00"))
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
+        flight_number="DL 123", departure_day=1, departure_time="09:00"))
+    check(res["status"] == "error" and "already exists" in res["message"],
+          f"same flight number + day must be rejected: {res}")
+    res = agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightdup", origin="JFK", destination="CDG",
+        departure_day=1, departure_time="11:00"))
+    check(res["status"] == "error", f"same route + day without number must be rejected: {res}")
+    check(len(storage.get_trip_metadata("draft_trip_flightdup")["flights"]) == 1,
+          "duplicates must not be persisted")
+
+
+def scenario_flight_edit_and_delete():
+    mk_draft("draft_trip_flightedit")
+    agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
+        airline="Delta", flight_number="DL123", departure_day=1, departure_time="08:00",
+        estimated_price_usd=900.0))
+    # time-only edit keeps the existing date; price edit clears any live-price flag
+    meta = storage.get_trip_metadata("draft_trip_flightedit")
+    meta["flights"][0]["is_live_price"] = True
+    storage.set_trip_metadata("draft_trip_flightedit", meta)
+    res = agent_tools.handle_edit_trip_flight(dict(
+        event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
+        departure_time="10:15", estimated_price_usd=850.0))
+    check(res["status"] == "success", f"edit failed: {res}")
+    f = storage.get_trip_metadata("draft_trip_flightedit")["flights"][0]
+    check(f["departure_time"] == "2030-01-01T10:15:00",
+          f"time-only edit keeps the existing date: {f['departure_time']}")
+    check(f["is_live_price"] is False, "hand-edited price is an estimate again")
+    check(f["estimated_price_usd"] == 850.0, "price applied")
+
+    # ambiguity is an error, never a guess
+    agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightedit", origin="JFK", destination="CDG",
+        flight_number="DL999", departure_day=3, departure_time="08:00"))
+    res = agent_tools.handle_edit_trip_flight(dict(
+        event_id="draft_trip_flightedit", origin="JFK", destination="CDG", airline="United"))
+    check(res["status"] == "error" and "Multiple" in res["message"],
+          f"ambiguous route match -> error: {res}")
+
+    res = agent_tools.handle_delete_trip_flight(dict(
+        event_id="draft_trip_flightedit", flight_number="DL999"))
+    check(res["status"] == "success", f"delete failed: {res}")
+    check(len(storage.get_trip_metadata("draft_trip_flightedit")["flights"]) == 1,
+          "deleted flight removed, the other kept")
+
+
+def scenario_generate_flights_tool():
+    """A bare 'add flights' goes through generate_trip_flights: generated flights
+    are persisted, re-suggestions of existing routes are dropped, and the agent
+    message speaks in trip days (never mock dates)."""
+    from models.schemas import TripFlight
+    mk_draft("draft_trip_flightgen")
+    agent_tools.handle_add_trip_flight(dict(
+        event_id="draft_trip_flightgen", origin="JFK", destination="CDG",
+        departure_day=0, departure_time="18:00"))
+
+    prev = trip_planner.generate_trip_flights
+    trip_planner.generate_trip_flights = lambda trip, prompt: (None, [
+        TripFlight(airline="Delta", origin="JFK", destination="CDG",
+                   departure_time="2029-12-31T19:00:00"),   # same route+day as existing: dropped
+        TripFlight(airline="Delta", origin="CDG", destination="JFK",
+                   departure_time="2030-01-11T11:00:00"),
+    ])
+    try:
+        res = agent_tools.handle_generate_trip_flights(dict(event_id="draft_trip_flightgen"))
+    finally:
+        trip_planner.generate_trip_flights = prev
+    check(res["status"] == "success", f"generate failed: {res}")
+    check("2029" not in res["message"] and "2030" not in res["message"],
+          f"draft message must not leak mock dates: {res['message']}")
+    flights = storage.get_trip_metadata("draft_trip_flightgen")["flights"]
+    check(len(flights) == 2, f"1 existing + 1 new (dupe route dropped), got {len(flights)}")
+    check(any(f["origin"] == "CDG" for f in flights), "the return flight was added")
+
+
+def scenario_v2_router_flight_tool():
+    """The v2 chat router (/api/chat -> agent_router -> agent_tools_v2) shares
+    the v1 flight implementation: generate delegates to the generator, add/edit/
+    delete hit the validated handlers, and success requests a UI sync."""
+    from models.schemas import TripFlight
+    from services import agent_tools_v2
+    mk_draft("draft_trip_v2flights")
+
+    prev = trip_planner.generate_trip_flights
+    trip_planner.generate_trip_flights = lambda trip, prompt: (None, [
+        TripFlight(airline="Delta", origin="JFK", destination="CDG",
+                   departure_time="2029-12-31T18:00:00"),
+    ])
+    try:
+        res = agent_tools_v2.manage_trip_flights("draft_trip_v2flights", "generate",
+                                                 prompt="add flights to my trip")
+    finally:
+        trip_planner.generate_trip_flights = prev
+    check(res["status"] == "success", f"v2 generate failed: {res}")
+    check(res.get("ui_action") == "sync", "success triggers a UI data sync")
+    check(len(storage.get_trip_metadata("draft_trip_v2flights")["flights"]) == 1,
+          "generated flight persisted through the v2 path")
+
+    res = agent_tools_v2.manage_trip_flights("draft_trip_v2flights", "add", flight={
+        "origin": "CDG", "destination": "JFK", "departure_day": 11, "departure_time": "16:00"})
+    check(res["status"] == "success", f"v2 add failed: {res}")
+    res = agent_tools_v2.manage_trip_flights("draft_trip_v2flights", "delete",
+                                             flight={"origin": "CDG", "destination": "JFK"})
+    check(res["status"] == "success", f"v2 delete failed: {res}")
+    check(len(storage.get_trip_metadata("draft_trip_v2flights")["flights"]) == 1,
+          "v2 delete removed the flight")
+    res = agent_tools_v2.manage_trip_flights("draft_trip_v2flights", "teleport")
+    check(res["status"] == "error", "unknown action -> error")
+
+
 def scenario_tool_registered():
     check("edit_trip_accommodation" in agent_tools.TOOL_SCHEMAS, "schema registered")
+    for t in ("generate_trip_flights", "add_trip_flight", "edit_trip_flight", "delete_trip_flight"):
+        check(t in agent_tools.TOOL_SCHEMAS, f"{t} schema registered")
+        check(t in agent_tools.TOOL_HANDLERS, f"{t} handler registered")
+    props = agent_tools.TOOL_SCHEMAS["add_trip_flight"].get("properties", {})
+    check("departure_day" in props and "arrival_day" in props,
+          "flight add tool exposes trip-day ordinals to the LLM")
     check("edit_trip_accommodation" in agent_tools.TOOL_HANDLERS
           if hasattr(agent_tools, "TOOL_HANDLERS") else True, "handler registered")
     schema = agent_tools.TOOL_SCHEMAS["add_trip_accommodation"]
@@ -256,6 +426,12 @@ SCENARIOS = [
     scenario_edit_clips_neighbors,
     scenario_poi_gate_demotes_and_keeps_anchors,
     scenario_poi_coord_veto_via_agent,
+    scenario_flight_add_by_trip_days,
+    scenario_flight_bad_times_rejected,
+    scenario_flight_duplicate_rejected,
+    scenario_flight_edit_and_delete,
+    scenario_generate_flights_tool,
+    scenario_v2_router_flight_tool,
     scenario_tool_registered,
 ]
 

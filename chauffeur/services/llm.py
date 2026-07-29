@@ -910,8 +910,8 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             else:
                 duration_days = 3
         
-        # Determine intent (POIs vs Accommodations vs Entire Trip)
-        system_prompt = "You are a classifier. The user is asking to add things to their trip itinerary. Decide if they are asking for 'accommodations' (hotels, airbnbs, lodging, places to stay, house), 'pois' (activities, restaurants, sights, points of interest, etc), or an 'entire_trip' (they want you to plan a full trip, an entire itinerary, or both accommodations and pois at the same time). Respond with a JSON object exactly like this: {\"intent\": \"accommodations\"}, {\"intent\": \"pois\"}, or {\"intent\": \"entire_trip\"}."
+        # Determine intent (POIs vs Accommodations vs Flights vs Entire Trip)
+        system_prompt = "You are a classifier. The user is asking to add things to their trip itinerary. Decide if they are asking for 'accommodations' (hotels, airbnbs, lodging, places to stay, house), 'flights' (plane tickets, airfare, how to get there and back), 'pois' (activities, restaurants, sights, points of interest, etc), or an 'entire_trip' (they want you to plan a full trip, an entire itinerary, or accommodations and pois at the same time). Respond with a JSON object exactly like this: {\"intent\": \"accommodations\"}, {\"intent\": \"flights\"}, {\"intent\": \"pois\"}, or {\"intent\": \"entire_trip\"}."
         
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         api_key = settings.get('llm_gemini_api_key', '')
@@ -924,7 +924,18 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
             print(f"Failed to classify intent: {e}")
             intent = 'pois'
             
-        if intent == 'accommodations':
+        if intent == 'flights':
+            from services.trip_planner import generate_trip_flights
+            warning, flights = generate_trip_flights(trip_obj, user_msg)
+
+            if 'flights' not in meta:
+                meta['flights'] = []
+            for flight in flights:
+                meta['flights'].append(flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict())
+
+            success_msg = f"✨ I've generated and added {len(flights)} flights to your trip based on your request!"
+            reply = f"{success_msg}\n\n{warning}" if warning else success_msg
+        elif intent == 'accommodations':
             from services.trip_planner import generate_trip_accommodations
             warning, accs = generate_trip_accommodations(trip_obj, user_msg)
             
@@ -979,7 +990,12 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
     
     import datetime
     today_str = datetime.datetime.now().strftime('%Y-%m-%d')
-    
+
+    # The agent needs the home location for flight origins and routing context;
+    # settings are otherwise only injected on the config page.
+    home_loc = settings.get('home_location') or ''
+    home_loc_str = f" The family's home location is: {home_loc}." if home_loc else ""
+
     capabilities_str = ""
     try:
         capabilities_path = os.path.join(DATA_DIR, 'system_capabilities.md')
@@ -989,7 +1005,7 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
     except Exception:
         pass
 
-    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{memory_str}{capabilities_str}{page_context_str}
+    SYSTEM_PROMPT = f"""You are Argyle, the AI Assistant for 'Chauffeur'. Today is {today_str}.{home_loc_str}{memory_str}{capabilities_str}{page_context_str}
 Your job is to help the user manage their family's calendar, routing, and driving schedule.
 Use the tools provided to fetch the current state, add rules, add overrides, manage errands, search places (POIs), update your memory, and run the solver.
 Always call run_solver after adding or deleting rules to ensure the schedule resolves successfully.
@@ -997,6 +1013,7 @@ If the user asks for a one-off change to a specific event, DO NOT create a rule.
 If the user wants a persistent pattern, use add_routing_rule.
 If the user asks to add an errand near a person's route, FIRST use get_current_state to identify a location on their route, SECOND use search_places with that proximity to find a real address, and THIRD use add_errand with the specific found location.
 If the user asks to add a Point of Interest (POI) to a trip, FIRST use get_current_state to identify the trip event, SECOND use search_places to find the exact address, and THIRD use add_trip_poi.
+If the user asks to add, suggest, or find flights for a trip WITHOUT giving specific flight details, call generate_trip_flights immediately — NEVER ask them for flight numbers, times, or airports first; the system already knows the home location, destination, and trip dates. Use add_trip_flight only when the user provides a specific flight's details.
 If the user specifies WHO should run the errand (e.g., "Lorena needs to get gas"), you MUST use the required_drivers parameter directly on add_errand (or update_errand) instead of creating an errand rule. You can also set time constraints (time_window_start/end), buffers, tolerances, and group_ids directly on the errand.
 If the user specifies urgency or a tight deadline (e.g. "this afternoon", "today", "tomorrow"), you MUST pass window_days: 1 to the errand to restrict the solver to that specific day.
 If the solver returns an error, explain the conflict to the user and ask how they want to resolve it.

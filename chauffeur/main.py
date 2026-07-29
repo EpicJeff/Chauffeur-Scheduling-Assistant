@@ -2276,22 +2276,33 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
                         
                         if 'pois' not in meta_dict: meta_dict['pois'] = []
                         if 'accommodations' not in meta_dict: meta_dict['accommodations'] = []
-                        
+                        if 'flights' not in meta_dict: meta_dict['flights'] = []
+
                         existing_poi_names = {p.get('name', '').lower() for p in meta_dict['pois']}
                         for poi in pois:
                             if poi.name.lower() not in existing_poi_names:
                                 meta_dict['pois'].append(poi.model_dump() if hasattr(poi, 'model_dump') else poi.dict())
                                 existing_poi_names.add(poi.name.lower())
-                                
+
                         existing_acc_names = {a.get('name', '').lower() for a in meta_dict['accommodations']}
                         for acc in accs:
                             if acc.name.lower() not in existing_acc_names:
                                 meta_dict['accommodations'].append(acc.model_dump() if hasattr(acc, 'model_dump') else acc.dict())
                                 existing_acc_names.add(acc.name.lower())
-                                
+
+                        # Flights were generated but previously dropped on the floor here —
+                        # persist them with the same origin-destination-airline dedup key
+                        # used by the /generate_pois endpoint.
+                        existing_flight_keys = {f"{f.get('origin')}-{f.get('destination')}-{f.get('airline')}" for f in meta_dict['flights']}
+                        for flight in flights:
+                            key = f"{flight.origin}-{flight.destination}-{flight.airline}"
+                            if key not in existing_flight_keys:
+                                meta_dict['flights'].append(flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict())
+                                existing_flight_keys.add(key)
+
                         storage.set_trip_metadata(t_id, meta_dict)
-                        
-                        msg = f"I've finished planning your trip! I generated {len(pois)} points of interest and {len(accs)} accommodations. {warning or ''}"
+
+                        msg = f"I've finished planning your trip! I generated {len(pois)} points of interest, {len(accs)} accommodations, and {len(flights)} flights. {warning or ''}"
                         if conv_id:
                             storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': msg, 'timestamp': time.time()})
                         

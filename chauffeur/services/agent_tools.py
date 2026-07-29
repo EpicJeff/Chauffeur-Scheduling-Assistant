@@ -258,6 +258,73 @@ class EditTripPoiTool(BaseModel):
     approx_lng: Optional[float] = Field(default=None, description="When changing location: your estimate of the new longitude.")
     valid_days_of_week: Optional[List[int]] = Field(default=None, description="Optional list of integers representing valid days (0=Mon, 6=Sun).")
 
+class GenerateTripFlightsTool(BaseModel):
+    """
+    Generates and adds realistic round-trip flight suggestions to a Trip in one step, using the
+    configured home location as the origin and the trip's destination and dates. ALWAYS use this when
+    the user asks to add, suggest, or find flights WITHOUT giving specific flight details — do NOT ask
+    them for flight numbers, times, or airports first. The flights are added as editable estimates.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    prompt: str = Field(default="", description="The user's request verbatim, including any stated origin, airline, or cabin preferences. Empty is fine for a bare 'add flights'.")
+
+class AddTripFlightTool(BaseModel):
+    """
+    Adds a single specific flight to a Trip. Use this when the user provides the flight's details
+    (route and day/time, e.g. a flight they already booked). If the user asks for flights WITHOUT
+    details, use generate_trip_flights instead — never interrogate them for details.
+    On draft trips give times as departure_day/arrival_day trip-day ordinals with 'HH:MM' — the draft's
+    mock calendar dates are an implementation detail and must never be shown to the user.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    origin: str = Field(..., description="Origin airport code or city (e.g. 'JFK' or 'New York').")
+    destination: str = Field(..., description="Destination airport code or city.")
+    airline: Optional[str] = Field(default=None, description="Airline name (e.g. 'Delta').")
+    flight_number: Optional[str] = Field(default=None, description="Flight number (e.g. 'DL123'), if known.")
+    departure_day: Optional[int] = Field(default=None, description="1-indexed trip day of departure (day 1 = the trip's arrival day). 0 = the day BEFORE the trip starts (overnight outbound legs). Preferred over ISO datetimes for drafts.")
+    departure_time: Optional[str] = Field(default=None, description="Departure time 'HH:MM' 24h (paired with departure_day), or a full ISO datetime 'YYYY-MM-DDTHH:MM:SS' when the user gave explicit calendar dates.")
+    arrival_day: Optional[int] = Field(default=None, description="1-indexed trip day of arrival. Overnight flights usually land the day AFTER departure_day.")
+    arrival_time: Optional[str] = Field(default=None, description="Arrival time 'HH:MM' 24h (paired with arrival_day), or a full ISO datetime.")
+    class_type: Optional[str] = Field(default=None, description="Cabin class (e.g. 'Economy', 'Business').")
+    estimated_price_usd: Optional[float] = Field(default=None, description="Estimated total price for the WHOLE travel party in USD.")
+    notes: Optional[str] = Field(default="", description="Any notes (layovers, seat preference, booking status).")
+
+class EditTripFlightTool(BaseModel):
+    """
+    Edits an existing flight on a Trip — times, airline, route, class, price, or notes.
+    Identify the flight by flight_id (preferred), by flight_number, or by origin/destination (must match
+    exactly one flight). Only the fields you provide are changed; use new_origin/new_destination/
+    new_flight_number to change those values. On draft trips prefer departure_day/arrival_day trip-day
+    ordinals — mock calendar dates must never be shown to the user.
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    flight_id: Optional[str] = Field(default=None, description="The ID of the flight to edit, if known.")
+    flight_number: Optional[str] = Field(default=None, description="Flight number used to FIND the flight when flight_id is not given.")
+    origin: Optional[str] = Field(default=None, description="Origin used to FIND the flight when flight_id/flight_number are not given.")
+    destination: Optional[str] = Field(default=None, description="Destination used to FIND the flight when flight_id/flight_number are not given.")
+    new_flight_number: Optional[str] = Field(default=None, description="New flight number, if changing it.")
+    new_origin: Optional[str] = Field(default=None, description="New origin, if changing it.")
+    new_destination: Optional[str] = Field(default=None, description="New destination, if changing it.")
+    airline: Optional[str] = Field(default=None, description="New airline name.")
+    departure_day: Optional[int] = Field(default=None, description="New 1-indexed trip day of departure (0 = day before the trip).")
+    departure_time: Optional[str] = Field(default=None, description="New departure time 'HH:MM' (paired with departure_day or the flight's existing date), or a full ISO datetime.")
+    arrival_day: Optional[int] = Field(default=None, description="New 1-indexed trip day of arrival.")
+    arrival_time: Optional[str] = Field(default=None, description="New arrival time 'HH:MM', or a full ISO datetime.")
+    class_type: Optional[str] = Field(default=None, description="New cabin class.")
+    estimated_price_usd: Optional[float] = Field(default=None, description="New estimated total price in USD for the whole party.")
+    notes: Optional[str] = Field(default=None, description="New notes.")
+
+class DeleteTripFlightTool(BaseModel):
+    """
+    Deletes a flight from a Trip. Identify it by flight_id (preferred), by flight_number, or by
+    origin/destination (must match exactly one flight).
+    """
+    event_id: str = Field(..., description="The event ID of the Trip.")
+    flight_id: Optional[str] = Field(default=None, description="The ID of the flight to delete, if known.")
+    flight_number: Optional[str] = Field(default=None, description="Flight number used to find the flight.")
+    origin: Optional[str] = Field(default=None, description="Origin used to find the flight.")
+    destination: Optional[str] = Field(default=None, description="Destination used to find the flight.")
+
 class StartDriveTool(BaseModel):
     """Logs a telemetry event that the driver has started a leg, and returns a navigation URL."""
     driver_id: str = Field(..., description="The ID of the driver.")
@@ -295,6 +362,10 @@ TOOL_SCHEMAS = {
     "add_trip_accommodation": AddTripAccommodationTool.model_json_schema(),
     "edit_trip_accommodation": EditTripAccommodationTool.model_json_schema(),
     "edit_trip_poi": EditTripPoiTool.model_json_schema(),
+    "generate_trip_flights": GenerateTripFlightsTool.model_json_schema(),
+    "add_trip_flight": AddTripFlightTool.model_json_schema(),
+    "edit_trip_flight": EditTripFlightTool.model_json_schema(),
+    "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -923,6 +994,296 @@ def handle_edit_trip_poi(args: dict) -> dict:
     return {"status": "success", "message": f"Updated POI {target_poi['name']}."}
 
 
+def _resolve_flight_dt(day, time_str, metadata, existing_iso=None):
+    """Resolve a flight time to an ISO datetime string.
+
+    Accepts a full ISO datetime in time_str, or a 1-indexed trip-day ordinal
+    (day 1 = the trip's first day; 0 = the day before, for overnight outbound
+    legs) paired with an 'HH:MM' time. Missing pieces fall back to the existing
+    value's date/time (edits), then to 12:00. Returns (iso_or_None, error_or_None).
+    """
+    import datetime
+    time_str = str(time_str) if time_str is not None else ''
+    if 'T' in time_str:
+        try:
+            datetime.datetime.fromisoformat(time_str)
+        except ValueError:
+            return None, (f"Could not parse '{time_str}' — use 'YYYY-MM-DDTHH:MM:SS', "
+                          f"or a trip-day ordinal with an 'HH:MM' time.")
+        return time_str, None
+
+    hhmm = None
+    if time_str:
+        try:
+            hhmm = datetime.datetime.strptime(time_str, '%H:%M').strftime('%H:%M')
+        except ValueError:
+            return None, (f"Could not parse time '{time_str}' — use 'HH:MM' (24h) "
+                          f"or a full ISO datetime.")
+
+    date_part = None
+    if day is not None:
+        start_dt, _ = _trip_date_bounds(metadata)
+        if not start_dt:
+            return None, ("The trip has no dates yet, so trip-day ordinals can't be "
+                          "resolved — give a full ISO datetime instead.")
+        date_part = (start_dt.date() + datetime.timedelta(days=int(day) - 1)).strftime('%Y-%m-%d')
+    elif existing_iso and 'T' in str(existing_iso):
+        date_part = str(existing_iso).split('T')[0]
+    if date_part is None:
+        return None, ("Provide departure_day/arrival_day (1-indexed trip day) with the "
+                      "'HH:MM' time, or a full ISO datetime.")
+    if hhmm is None:
+        if existing_iso and 'T' in str(existing_iso):
+            hhmm = str(existing_iso).split('T')[1][:5]
+        else:
+            hhmm = '12:00'
+    return f"{date_part}T{hhmm}:00", None
+
+
+def _flight_time_label(iso_str, metadata):
+    """Agent-facing label for a flight time. Draft trips speak in trip days —
+    their mock calendar dates must never surface anywhere a user could see."""
+    if not iso_str:
+        return "time TBD"
+    date_part, _, time_part = str(iso_str).partition('T')
+    time_part = time_part[:5]
+    if metadata.get('is_draft'):
+        n = _night_ordinal(date_part, metadata)
+        if n is not None:
+            return f"day {n}" + (f" {time_part}" if time_part else "")
+    return f"{date_part} {time_part}".strip()
+
+
+def _validate_flight_times(dep_iso, arr_iso):
+    import datetime
+    if dep_iso and arr_iso:
+        try:
+            if datetime.datetime.fromisoformat(arr_iso) <= datetime.datetime.fromisoformat(dep_iso):
+                return ("Arrival is not after departure. Remember overnight flights land the "
+                        "NEXT day — set arrival_day to departure_day + 1.")
+        except ValueError:
+            pass
+    return None
+
+
+def _find_trip_flight(args, flights):
+    """Locate a flight by flight_id, flight_number, or origin/destination.
+    Returns (flight, error_or_None); ambiguity is an error, never a guess."""
+    if args.get('flight_id'):
+        f = next((x for x in flights if x.get('id') == args['flight_id']), None)
+        return (f, None) if f else (None, "No flight with that flight_id on this trip.")
+
+    def norm(s):
+        return str(s or '').replace(' ', '').strip().lower()
+
+    matches = flights
+    if args.get('flight_number'):
+        fn = norm(args['flight_number'])
+        matches = [x for x in matches if norm(x.get('flight_number')) == fn]
+    elif args.get('origin') or args.get('destination'):
+        def loose(a, b):
+            a, b = norm(a), norm(b)
+            return bool(a) and bool(b) and (a in b or b in a)
+        if args.get('origin'):
+            matches = [x for x in matches if loose(args['origin'], x.get('origin'))]
+        if args.get('destination'):
+            matches = [x for x in matches if loose(args['destination'], x.get('destination'))]
+    else:
+        return None, "Provide flight_id, flight_number, or origin/destination to identify the flight."
+
+    if not matches:
+        return None, "No matching flight found on this trip."
+    if len(matches) > 1:
+        desc = "; ".join(f"{x.get('airline') or '?'} {x.get('flight_number') or ''} "
+                         f"{x.get('origin')}->{x.get('destination')} (id {x.get('id')})"
+                         for x in matches)
+        return None, f"Multiple flights match: {desc}. Use flight_id."
+    return matches[0], None
+
+
+def handle_generate_trip_flights(args: dict) -> dict:
+    from services import storage
+    from models.schemas import TripMetadata
+    from services.trip_planner import generate_trip_flights
+
+    event_id = args.get('event_id')
+    meta = storage.get_trip_metadata(event_id)
+    if not meta:
+        return {"status": "error", "message": f"Trip {event_id} not found."}
+
+    trip_obj = TripMetadata(**meta)
+    warning, flights = generate_trip_flights(trip_obj, args.get('prompt', ''))
+
+    if 'flights' not in meta:
+        meta['flights'] = []
+
+    # same-route-same-day flights are re-suggestions, not additions
+    def key(origin, destination, dep):
+        return (str(origin or '').strip().lower(), str(destination or '').strip().lower(),
+                str(dep or '').split('T')[0])
+    existing_keys = {key(f.get('origin'), f.get('destination'), f.get('departure_time'))
+                     for f in meta['flights']}
+    added = []
+    for flight in flights:
+        d = flight.model_dump() if hasattr(flight, 'model_dump') else flight.dict()
+        if key(d.get('origin'), d.get('destination'), d.get('departure_time')) in existing_keys:
+            continue
+        meta['flights'].append(d)
+        added.append(d)
+
+    storage.set_trip_metadata(event_id, meta)
+
+    if added:
+        lines = "; ".join(f"{f.get('airline') or 'TBD'} {f.get('origin')} -> {f.get('destination')} "
+                          f"departing {_flight_time_label(f.get('departure_time'), meta)}"
+                          for f in added)
+        msg = (f"Generated and added {len(added)} flight(s) to the trip: {lines}. "
+               f"These are estimates the user can correct with edit_trip_flight.")
+    else:
+        msg = "No new flights were added."
+    res = {"status": "success", "message": msg}
+    if warning:
+        res["budget_warning"] = warning
+    return res
+
+
+def handle_add_trip_flight(args: dict) -> dict:
+    from services import storage
+    import uuid
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id) or {
+        "event_id": event_id, "pois": [], "accommodations": [], "flights": []}
+
+    dep_iso = arr_iso = None
+    if args.get('departure_day') is not None or args.get('departure_time'):
+        dep_iso, err = _resolve_flight_dt(args.get('departure_day'), args.get('departure_time'), metadata)
+        if err:
+            return {"status": "error", "message": err}
+    if args.get('arrival_day') is not None or args.get('arrival_time'):
+        arr_iso, err = _resolve_flight_dt(args.get('arrival_day'), args.get('arrival_time'), metadata)
+        if err:
+            return {"status": "error", "message": err}
+    err = _validate_flight_times(dep_iso, arr_iso)
+    if err:
+        return {"status": "error", "message": err}
+
+    flights = metadata.get('flights') or []
+    dep_date = (dep_iso or '').split('T')[0]
+    fn = str(args.get('flight_number') or '').replace(' ', '').lower()
+    for f in flights:
+        f_date = str(f.get('departure_time') or '').split('T')[0]
+        same_number = fn and str(f.get('flight_number') or '').replace(' ', '').lower() == fn
+        same_route = (str(f.get('origin') or '').strip().lower() == str(args.get('origin') or '').strip().lower()
+                      and str(f.get('destination') or '').strip().lower() == str(args.get('destination') or '').strip().lower())
+        if (same_number or (not fn and same_route)) and dep_date and f_date == dep_date:
+            return {"status": "error",
+                    "message": (f"That flight already exists on this trip: "
+                                f"{f.get('airline') or '?'} {f.get('flight_number') or ''} "
+                                f"{f.get('origin')}->{f.get('destination')} departing "
+                                f"{_flight_time_label(f.get('departure_time'), metadata)} "
+                                f"(id {f.get('id')}). Use edit_trip_flight to change it.")}
+
+    flight = {
+        "id": uuid.uuid4().hex,
+        "airline": args.get('airline'),
+        "flight_number": args.get('flight_number'),
+        "origin": args.get('origin'),
+        "destination": args.get('destination'),
+        "departure_time": dep_iso,
+        "arrival_time": arr_iso,
+        "class_type": args.get('class_type'),
+        "estimated_price_usd": args.get('estimated_price_usd'),
+        "is_live_price": False,
+        "notes": args.get('notes', ''),
+    }
+    if 'flights' not in metadata:
+        metadata['flights'] = []
+    metadata['flights'].append(flight)
+    storage.set_trip_metadata(event_id, metadata)
+
+    msg = (f"Added flight {args.get('origin')} -> {args.get('destination')} "
+           f"(departs {_flight_time_label(dep_iso, metadata)}).")
+    assumed = [w for w, d, t in (("departure", args.get('departure_day'), args.get('departure_time')),
+                                 ("arrival", args.get('arrival_day'), args.get('arrival_time')))
+               if d is not None and not t]
+    if assumed:
+        msg += f" Note: {' and '.join(assumed)} time assumed 12:00 — give the real time to correct it."
+    return {"status": "success", "message": msg}
+
+
+def handle_edit_trip_flight(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('flights'):
+        return {"status": "error", "message": "Trip not found or has no flights."}
+
+    f, err = _find_trip_flight(args, metadata['flights'])
+    if err:
+        return {"status": "error", "message": err}
+
+    # resolve and validate time changes BEFORE mutating anything, so a rejected
+    # edit leaves the flight untouched
+    dep_iso = arr_iso = None
+    if args.get('departure_day') is not None or args.get('departure_time'):
+        dep_iso, err = _resolve_flight_dt(args.get('departure_day'), args.get('departure_time'),
+                                          metadata, existing_iso=f.get('departure_time'))
+        if err:
+            return {"status": "error", "message": err}
+    if args.get('arrival_day') is not None or args.get('arrival_time'):
+        arr_iso, err = _resolve_flight_dt(args.get('arrival_day'), args.get('arrival_time'),
+                                          metadata, existing_iso=f.get('arrival_time'))
+        if err:
+            return {"status": "error", "message": err}
+    err = _validate_flight_times(dep_iso or f.get('departure_time'), arr_iso or f.get('arrival_time'))
+    if err:
+        return {"status": "error", "message": err}
+
+    if args.get('airline') is not None:
+        f['airline'] = args['airline']
+    if args.get('class_type') is not None:
+        f['class_type'] = args['class_type']
+    if args.get('notes') is not None:
+        f['notes'] = args['notes']
+    if args.get('new_flight_number'):
+        f['flight_number'] = args['new_flight_number']
+    if args.get('new_origin'):
+        f['origin'] = args['new_origin']
+    if args.get('new_destination'):
+        f['destination'] = args['new_destination']
+    if args.get('estimated_price_usd') is not None:
+        f['estimated_price_usd'] = args['estimated_price_usd']
+        # a hand-edited price is an estimate again, not a SerpApi live quote
+        f['is_live_price'] = False
+    if dep_iso:
+        f['departure_time'] = dep_iso
+    if arr_iso:
+        f['arrival_time'] = arr_iso
+
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success",
+            "message": (f"Updated flight {f.get('origin')} -> {f.get('destination')} "
+                        f"(departs {_flight_time_label(f.get('departure_time'), metadata)}).")}
+
+
+def handle_delete_trip_flight(args: dict) -> dict:
+    from services import storage
+    event_id = args.get('event_id')
+    metadata = storage.get_trip_metadata(event_id)
+    if not metadata or not metadata.get('flights'):
+        return {"status": "error", "message": "Trip not found or has no flights."}
+
+    f, err = _find_trip_flight(args, metadata['flights'])
+    if err:
+        return {"status": "error", "message": err}
+
+    metadata['flights'] = [x for x in metadata['flights'] if x.get('id') != f.get('id')]
+    storage.set_trip_metadata(event_id, metadata)
+    return {"status": "success",
+            "message": (f"Deleted flight {f.get('airline') or ''} {f.get('flight_number') or ''} "
+                        f"{f.get('origin')} -> {f.get('destination')}.").replace("  ", " ")}
+
+
 def handle_start_drive(args: dict) -> dict:
     from services import storage
     import urllib.parse
@@ -980,6 +1341,10 @@ TOOL_HANDLERS = {
     "add_trip_accommodation": handle_add_trip_accommodation,
     "edit_trip_accommodation": handle_edit_trip_accommodation,
     "edit_trip_poi": handle_edit_trip_poi,
+    "generate_trip_flights": handle_generate_trip_flights,
+    "add_trip_flight": handle_add_trip_flight,
+    "edit_trip_flight": handle_edit_trip_flight,
+    "delete_trip_flight": handle_delete_trip_flight,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

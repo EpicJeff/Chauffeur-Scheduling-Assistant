@@ -1189,8 +1189,135 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         total = sum((a.estimated_price_usd or 0) for a in accs)
         if total > trip.budget_max_usd and not budget_warning:
             budget_warning = f"Warning: The total estimated cost of these accommodations (${total:,.2f}) exceeds your maximum budget of ${trip.budget_max_usd:,.2f}. Please review and let me know where you'd like to compromise."
-            
+
     return budget_warning, accs
+
+
+def generate_trip_flights(trip: 'TripMetadata', user_prompt: str) -> Tuple[Optional[str], List['TripFlight']]:
+    """Generate round-trip flight suggestions for a trip in ONE LLM request.
+
+    Exists so a bare "add flights to my trip" doesn't depend on the chat agent
+    hand-authoring flights (it reliably interrogates the user instead) and
+    doesn't require rerunning full plan generation (which churns POIs). Origin
+    comes from the global home_location setting unless the user states one.
+    """
+    from services.llm import _call_llm_json
+    from models.schemas import TripFlight
+    import datetime
+
+    settings = storage.get_settings()
+    provider = settings.get('llm_provider', 'gemini')
+    if provider == 'ollama':
+        url = settings.get('llm_ollama_url', 'http://localhost:11434')
+        model = settings.get('llm_ollama_model', 'qwen2.5:7b')
+        api_key = None
+    else:
+        url = ""
+        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        api_key = settings.get('llm_gemini_api_key')
+
+    home_location = settings.get('home_location')
+    if not home_location and not user_prompt:
+        return ("No flights were suggested because no origin is configured — set your Home Location "
+                "in Settings (or mention your departure city in the request) to get flight suggestions."), []
+
+    system_prompt = """You are an expert travel agent.
+The user wants flight suggestions for their trip. Suggest realistic round-trip flights: an outbound flight ARRIVING on the trip start date and a return flight DEPARTING on the trip end date, using plausible airlines and times for the route. Add connecting legs only if the route realistically requires them. Do NOT invent flight numbers — leave flight_number null unless the user provided one.
+
+You MUST respond with a single valid JSON object of the following exact structure:
+{
+  "budget_warning": "Optional string. If you cannot meet the user's budget, explain why here. Still generate best-effort suggestions.",
+  "flights": [
+    {
+      "airline": "Delta",
+      "flight_number": null,
+      "origin": "JFK",
+      "destination": "CDG",
+      "departure_time": "2026-08-01T18:00:00",
+      "arrival_time": "2026-08-02T07:30:00",
+      "class_type": "Economy",
+      "estimated_price_usd": 850.0,
+      "notes": "Estimated times — confirm with the airline."
+    }
+  ]
+}
+`estimated_price_usd` is the TOTAL for the entire travel party, not per person.
+If you have NO origin at all (no home location and none stated by the user), return an empty flights array.
+Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return raw JSON.
+"""
+
+    if trip.is_draft and trip.mock_start_date:
+        trip_start_dt = datetime.datetime.fromtimestamp(trip.mock_start_date, tz=datetime.timezone.utc)
+        if trip.mock_end_date:
+            trip_end_dt = datetime.datetime.fromtimestamp(trip.mock_end_date, tz=datetime.timezone.utc)
+        else:
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=getattr(trip, 'draft_duration_nights', None) or 1)
+        date_bounds_str = (f"NOTE: This is a draft trip on a mock future calendar. The outbound flight MUST "
+                           f"arrive on {trip_start_dt.strftime('%Y-%m-%d')} and the return MUST depart on "
+                           f"{trip_end_dt.strftime('%Y-%m-%d')} so it plots correctly, but estimate prices "
+                           f"at TODAY'S rates.")
+    else:
+        from services.calendar import get_event_dates
+        trip_start_dt, trip_end_dt = get_event_dates(trip.event_id)
+        if not trip_start_dt or not trip_end_dt:
+            trip_start_dt = datetime.datetime.now(datetime.timezone.utc)
+            trip_end_dt = trip_start_dt + datetime.timedelta(days=1)
+        date_bounds_str = (f"The outbound flight MUST arrive on {trip_start_dt.strftime('%Y-%m-%d')} "
+                           f"(trip start) and the return flight MUST depart on {trip_end_dt.strftime('%Y-%m-%d')} "
+                           f"(trip end).")
+
+    existing = [f"{f.origin}->{f.destination} departing {str(f.departure_time or '?').split('T')[0]}"
+                for f in (trip.flights or [])]
+    existing_str = "; ".join(existing) if existing else "None"
+
+    budget_context = ""
+    if getattr(trip, 'budget_max_usd', None) is not None:
+        budget_min = getattr(trip, 'budget_min_usd', 0) or 0
+        budget_context = f"The user's target trip budget is between ${budget_min} and ${trip.budget_max_usd}.\n"
+    if getattr(trip, 'flight_preferences', None):
+        budget_context += f"Flight Preferences: {trip.flight_preferences}\n"
+    travelers = getattr(trip, 'travelers', 1)
+    budget_context += f"This trip is for {travelers} traveler(s); prices are for the ENTIRE group.\n"
+
+    home_str = f"User's Home Location (flight origin unless they say otherwise): {home_location}\n" if home_location else ""
+    user_req = (
+        f"Trip Title: {trip.title or 'Unknown'}\n"
+        f"{home_str}"
+        f"Trip Destination: {trip.location or 'Unknown'}\n"
+        f"{date_bounds_str}\n"
+        f"{budget_context}"
+        f"Existing flights on the trip (do NOT suggest these again): {existing_str}\n"
+        f"User Request: {user_prompt or 'Suggest round-trip flights for this trip.'}\n"
+        f"Generate the flight suggestions."
+    )
+
+    try:
+        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+    except Exception as e:
+        print(f"Error generating trip flights: {e}")
+        return None, []
+
+    budget_warning = response_json.get('budget_warning')
+    flights = []
+    for s in response_json.get('flights', []):
+        flights.append(TripFlight(
+            id=uuid.uuid4().hex,
+            airline=s.get('airline'),
+            flight_number=s.get('flight_number'),
+            origin=s.get('origin'),
+            destination=s.get('destination'),
+            departure_time=s.get('departure_time'),
+            arrival_time=s.get('arrival_time'),
+            class_type=s.get('class_type'),
+            estimated_price_usd=s.get('estimated_price_usd'),
+            notes=s.get('notes')
+        ))
+
+    if not flights and not home_location:
+        note = ("No flights were suggested because no origin is configured — set your Home Location "
+                "in Settings (or mention your departure city in the request) to get flight suggestions.")
+        budget_warning = f"{budget_warning}\n{note}" if budget_warning else note
+    return budget_warning, flights
 
 
 def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = ""):
@@ -1222,7 +1349,8 @@ def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: 
     system_prompt = f"""You are an expert travel agent.
 The user's trip is {duration_nights} nights long. Your job is to suggest a comprehensive itinerary that fills this trip, including flights, accommodations, and Points of Interest (POIs).
 If the user asks for a specific number of places or specific items, you MUST generate exactly what they asked for.
-If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary, 1 or more accommodations based on the trip length, and logical flights if applicable.
+If their request is open-ended, suggest approximately {num_pois} POIs to ensure a full itinerary and 1 or more accommodations based on the trip length.
+FLIGHTS: when a home location / origin is provided (or the user states where they travel from), you MUST include round-trip flights — an outbound flight arriving on the trip start date and a return flight departing on the trip end date — unless the user explicitly says they are not flying (driving, train, cruise) or the destination is within ~4 hours' drive of the origin. Only when you have no origin at all may the flights array be empty.
 CRITICAL: Do NOT put accommodations (like hotels, resorts, or Airbnbs) in the 'pois' array. They MUST go in the 'accommodations' array.
 
 You MUST respond with a single valid JSON object of the following exact structure:
@@ -1354,6 +1482,14 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     sugg_pois = response_json.get('pois', [])
     sugg_accs = response_json.get('accommodations', [])
     sugg_flights = response_json.get('flights', [])
+
+    # An empty flights array with no configured origin is expected, not a bug —
+    # but silently omitting flights looks like one, so tell the user why.
+    if not sugg_flights and not settings.get('home_location'):
+        no_origin_note = ("No flights were suggested because no origin is configured — set your "
+                          "Home Location in Settings (or mention your departure city in the request) "
+                          "to get flight suggestions.")
+        budget_warning = f"{budget_warning}\n{no_origin_note}" if budget_warning else no_origin_note
 
     # Safety net, NOT the primary mechanism: a healthy single request returns
     # >= min_pois and costs exactly one call. Top-ups fire only on a genuine
