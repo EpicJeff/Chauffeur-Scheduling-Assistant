@@ -932,11 +932,11 @@ function closeChatHelpModal() {
         if (input) {
             const path = window.location.pathname;
             if (path.includes('/trip')) {
-                input.placeholder = "Ask Argyle... (e.g. 'Add dinner at Chef Mickey\\'s tonight')";
+                input.placeholder = "Ask Argyle... (e.g. 'Add dinner at Chef Mickey\'s tonight')";
             } else if (path.includes('/errands')) {
                 input.placeholder = "Ask Argyle... (e.g. 'I need to go to Home Depot this afternoon')";
             } else if (path.includes('/calendar')) {
-                input.placeholder = "Ask Argyle... (e.g. 'Move James\\'s piano lesson to 4pm')";
+                input.placeholder = "Ask Argyle... (e.g. 'Move James\'s piano lesson to 4pm')";
             } else {
                 input.placeholder = "Ask Argyle... (e.g. 'What is my driving schedule today?')";
             }
@@ -1040,6 +1040,23 @@ function closeChatHelpModal() {
         pendingCCConfirmCallback = null;
     }
     window.closeCCConfirmModal = closeCCConfirmModal;
+
+    // --- Global Alert Modal ---
+    // Restored after a chat-bubble refactor (commit f21f14a) removed these two
+    // functions but left the #cc-alert-modal markup above and ~30 callers across
+    // trip/dashboard/config/errands/trips pages calling showGlobalAlert().
+    function showGlobalAlert(message) {
+        document.getElementById('cc-alert-message').textContent = message;
+        document.getElementById('cc-alert-modal').classList.remove('hidden');
+        document.getElementById('cc-alert-modal').classList.add('flex');
+    }
+    window.showGlobalAlert = showGlobalAlert;
+
+    function closeGlobalAlert() {
+        document.getElementById('cc-alert-modal').classList.add('hidden');
+        document.getElementById('cc-alert-modal').classList.remove('flex');
+    }
+    window.closeGlobalAlert = closeGlobalAlert;
 
     window.promptConfirm = function(title, message, trueText="OK", falseText="Cancel") {
         return new Promise(resolve => {
