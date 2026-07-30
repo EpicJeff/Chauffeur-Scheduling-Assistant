@@ -2371,9 +2371,13 @@
                 // Step 2: Removed filtering of driver-only events
 
                 // Get all columns that should be rendered in the timeline
+                // Ghost (suggested extra driver) ids are exactly "ghost_N".
+                // A bare 'g' prefix check misclassified real drivers whose id
+                // happens to start with g, hiding their column on empty days.
+                const isGhostCol = (id) => id.startsWith('ghost_');
                 let colIds = Object.keys(driversMap).sort((a, b) => {
-                    if (a.startsWith('g') && !b.startsWith('g')) return 1;
-                    if (b.startsWith('g') && !a.startsWith('g')) return -1;
+                    if (isGhostCol(a) && !isGhostCol(b)) return 1;
+                    if (isGhostCol(b) && !isGhostCol(a)) return -1;
                     return a.localeCompare(b);
                 }).filter(id => {
                     // Background-trip banners are injected into EVERY column for
@@ -2382,7 +2386,7 @@
                     // events) pop back into view on trip days.
                     const hasRealEvents = colsObj[id] && colsObj[id].some(e => e.event_type !== 'background_trip');
                     // Always hide ghost drivers if they have zero events for this day
-                    if (id.startsWith('g')) {
+                    if (isGhostCol(id)) {
                         return hasRealEvents;
                     }
                     // For regular drivers in read-only mode, hide empty columns
