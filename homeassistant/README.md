@@ -32,7 +32,9 @@ Add it via **Settings → Devices & Services → Add Integration → Chauffeur
 Conversation**. The default URL `http://local-chauffeur:8000` is correct for a
 locally built add-on; if you installed Chauffeur from an add-on repository, use
 the hostname shown on the add-on's info page (looks like
-`http://<repo-hash>-chauffeur:8000`). Do **not** map port 8000 to the host —
+`http://<repo-hash>-chauffeur:8000`). Enter it as a full URL with scheme and
+port, not a bare hostname. The URL can be changed later via the integration's
+**Configure** button. Do **not** map port 8000 to the host —
 the add-on has no auth of its own; keep it reachable only on the internal
 Docker network.
 

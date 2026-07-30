@@ -35,7 +35,9 @@ class ChauffeurConversationEntity(conversation.ConversationEntity):
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._entry = entry
-        self._base_url: str = entry.data[CONF_BASE_URL]
+        self._base_url: str = entry.options.get(
+            CONF_BASE_URL, entry.data[CONF_BASE_URL]
+        )
         self._attr_unique_id = entry.entry_id
 
     @property
