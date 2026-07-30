@@ -172,6 +172,23 @@ Never ask them which driver they are — you already know.
     request_start = _time.time()
     llm_calls = 0
 
+    # Tools that complete the user's request on their own and return a spoken
+    # confirmation. When a round of tool calls consists only of these and they
+    # all succeeded, the request is done: skip the concluding LLM round-trip.
+    # Timing data showed each Gemma call costs 40-80s, and given the chance the
+    # model re-issues the same action instead of concluding (observed writing a
+    # duplicate override), so the extra round is both slow and harmful.
+    TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "add_trip_poi",
+                             "clear_trip_itinerary", "auto_schedule_trip_itinerary",
+                             "manage_trip_rules", "manage_trip_flights",
+                             "start_route", "complete_route"}
+
+    def _is_terminal_success(func_name, res):
+        return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
+                and res.get("status") == "success" and bool(res.get("message")))
+
+    executed_results = {}
+
     agent_scratchpad = ""
     max_iterations = 3
 
@@ -237,12 +254,24 @@ Never ask them which driver they are — you already know.
         # We have tool calls, execute them and append to scratchpad
         if llm_response.get("message"):
             agent_scratchpad += f"\nAssistant Message: {llm_response['message']}\n"
-            
+
+        round_all_terminal = True
         for tool_call in tool_calls:
             func_name = tool_call.get("name")
             args = tool_call.get("arguments", {})
             agent_scratchpad += f"\nTool Call: {func_name}({json.dumps(args)})"
-            
+
+            sig = f"{func_name}:{json.dumps(args, sort_keys=True, default=str)}"
+            if sig in executed_results:
+                # The model repeated an identical call instead of concluding —
+                # reuse the result rather than executing (and mutating) twice.
+                res = executed_results[sig]
+                logger.info(f"[agent-timing] tool {func_name} repeated verbatim — reused previous result")
+                agent_scratchpad += f"\nTool Result (already executed, NOT re-run — do not call again): {json.dumps(res)}\n"
+                if not _is_terminal_success(func_name, res):
+                    round_all_terminal = False
+                continue
+
             res = {"error": f"Unknown tool: {func_name}"}
             tool_start = _time.time()
 
@@ -262,6 +291,7 @@ Never ask them which driver they are — you already know.
                 elif func_name == "add_trip_poi":
                     res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("message"): agent_message = res["message"]
                     if res.get("status") == "success": ui_action = "sync"
                 elif func_name == "clear_trip_itinerary":
                     res = clear_trip_itinerary(args.get("trip_id"), args.get("action", "unlink"))
@@ -300,6 +330,16 @@ Never ask them which driver they are — you already know.
 
             logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s")
             agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
+            executed_results[sig] = res
+            if not _is_terminal_success(func_name, res):
+                round_all_terminal = False
+
+        if round_all_terminal:
+            # Every tool call this round was a completed action with its own
+            # spoken confirmation — the request is done. Query tools (e.g.
+            # get_calendar_events) keep looping so the model can use the data.
+            logger.info("[agent-timing] round contained only completed actions — skipping concluding LLM call")
+            break
 
     logger.info(f"[agent-timing] process_agent_request total {_time.time() - request_start:.1f}s "
                 f"({llm_calls} LLM call(s))")
