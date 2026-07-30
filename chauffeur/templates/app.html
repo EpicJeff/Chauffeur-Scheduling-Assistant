@@ -270,6 +270,21 @@
             });
         }
 
+        function showGlobalAlert(msg) {
+            let el = document.getElementById('global-alert');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'global-alert';
+                el.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 border border-gray-600 text-white text-sm font-bold px-4 py-3 rounded-xl shadow-2xl max-w-[90vw] text-center transition-opacity duration-300 opacity-0 pointer-events-none';
+                document.body.appendChild(el);
+            }
+            el.textContent = msg;
+            clearTimeout(el._hideTimer);
+            void el.offsetWidth;
+            el.classList.remove('opacity-0');
+            el._hideTimer = setTimeout(() => el.classList.add('opacity-0'), 3500);
+        }
+
         async function init() {
             updateTabBar();
             await fetchDrivers();
@@ -741,6 +756,62 @@
             }
         }
 
+        const CLAIM_BTN_LABEL = `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg> Assign to Me`;
+
+        // Creates a ManualOverride pinning this event to the logged-in driver
+        // (same api/overrides contract as the dashboard's driver dropdown). The
+        // backend re-solves in the background and the SSE stream refreshes the UI.
+        async function claimEvent(ev) {
+            if (!selectedDriverId) return;
+            const btn = document.getElementById('em-claim-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Checking...';
+
+            try {
+                // Dry-run: warn if the solver would normally refuse this pairing.
+                // The override still wins if the driver confirms.
+                try {
+                    const chkRes = await fetch(`${apiBase}api/overrides/check`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ event_id: ev.id, driver_id: selectedDriverId })
+                    });
+                    const chk = await chkRes.json();
+                    if (chk.conflicts && chk.conflicts.length > 0) {
+                        const proceed = confirm("The solver would normally not assign you this event:\n\n• " + chk.conflicts.join("\n• ") + "\n\nOverride anyway?");
+                        if (!proceed) {
+                            btn.disabled = false;
+                            btn.innerHTML = CLAIM_BTN_LABEL;
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Override conflict check failed, proceeding without it', e);
+                }
+
+                btn.innerHTML = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Assigning...';
+                const res = await fetch(`${apiBase}api/overrides`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event_id: ev.id,
+                        driver_id: selectedDriverId,
+                        event_title: ev.title,
+                        date_str: ev.dateStr || null
+                    })
+                });
+                if (!res.ok) throw new Error('Override request failed');
+
+                closeEventModal();
+                showGlobalAlert("Assigned to you — rebuilding the schedule…");
+            } catch (e) {
+                console.error('Failed to claim event', e);
+                showGlobalAlert('Failed to assign. Check your connection.');
+                btn.disabled = false;
+                btn.innerHTML = CLAIM_BTN_LABEL;
+            }
+        }
+
         function openEventModal(titleStr) {
             const ev = JSON.parse(decodeURIComponent(titleStr));
             document.getElementById('em-title').textContent = ev.title;
@@ -754,6 +825,18 @@
                 document.getElementById('em-driver').innerHTML = ev.driverHtml;
             } else {
                 driverRow.style.display = 'none';
+            }
+
+            const claimBtn = document.getElementById('em-claim-btn');
+            if (claimBtn) {
+                if (ev.canClaim && selectedDriverId) {
+                    claimBtn.style.display = 'flex';
+                    claimBtn.disabled = false;
+                    claimBtn.innerHTML = CLAIM_BTN_LABEL;
+                    claimBtn.onclick = () => claimEvent(ev);
+                } else {
+                    claimBtn.style.display = 'none';
+                }
             }
 
             const mapBtn = document.getElementById('em-map-btn');
@@ -1000,7 +1083,9 @@
                 location: card.location,
                 passengerHtml: paxBadges,
                 driverHtml: driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>',
-                isErrand: card.isErrand
+                isErrand: card.isErrand,
+                dateStr: (card.start || '').split('T')[0],
+                canClaim: !card.isErrand && !card.suppressed && !card.driverIds.has(selectedDriverId)
             };
             const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
@@ -1591,6 +1676,7 @@
                 </svg>
                 Open in Maps
             </button>
+            <button id="em-claim-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md mb-3" style="display: none"></button>
             <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold shadow-md hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg>
                 Mark Errand Completed
