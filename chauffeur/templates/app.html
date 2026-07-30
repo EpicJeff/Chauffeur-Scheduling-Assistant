@@ -437,7 +437,7 @@
                     list.innerHTML = events.map(ev => {
                         const dName = driversData.find(d => d.id === ev.driver_id)?.name || 'Unknown Driver';
                         const timeStr = new Date(ev.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                        const colorClass = ev.action === 'arrived' ? 'text-blue-400' : 'text-green-400';
+                        const colorClass = ev.action === 'arrived' ? 'text-blue-400' : (ev.action === 'removed' ? 'text-red-400' : 'text-green-400');
                         return `
                             <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
                                 <div>
@@ -811,7 +811,8 @@
                             event_id: id,
                             driver_id: selectedDriverId,
                             event_title: ev.title,
-                            date_str: ev.dateStr || null
+                            date_str: ev.dateStr || null,
+                            source: 'pwa'
                         })
                     });
                     if (!res.ok) throw new Error('Override request failed');

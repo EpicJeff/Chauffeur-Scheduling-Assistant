@@ -116,16 +116,17 @@ async def push_notification_loop():
             
         await asyncio.sleep(30)
 
-def send_push(d_id, subs, title, body, leg_id, location=None):
+def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
     from pywebpush import webpush, WebPushException
     import json
     import urllib.parse
-    
-    actions = [{"action": "complete", "title": "Mark Completed"}]
+
     navigate_url = None
-    if location:
-        navigate_url = f"/app?navigate_dest={urllib.parse.quote(location)}&navigate_title={urllib.parse.quote(title)}&navigate_leg={leg_id}"
-        actions.insert(0, {"action": "navigate", "title": "Navigate"})
+    if actions is None:
+        actions = [{"action": "complete", "title": "Mark Completed"}]
+        if location:
+            navigate_url = f"/app?navigate_dest={urllib.parse.quote(location)}&navigate_title={urllib.parse.quote(title)}&navigate_leg={leg_id}"
+            actions.insert(0, {"action": "navigate", "title": "Navigate"})
 
     for sub in subs:
         if sub.get("driver_id") == d_id:
@@ -144,6 +145,87 @@ def send_push(d_id, subs, title, body, leg_id, location=None):
                 print(f"Sent push to {d_id}: {title} - {body}")
             except Exception as ex:
                 print(f"Push failed: {repr(ex)}")
+
+def _notify_assignment_changes(old_cache, new_payload, overrides):
+    """After a re-solve, push-notify drivers whose upcoming assignments changed.
+
+    Diffs the previous combined-cache assignments against the new payload.
+    Only events present in BOTH snapshots count — calendar adds/removals are
+    not assignment changes — and only upcoming events. A gain caused by the
+    driver's own PWA Assign-to-Me override is suppressed (they made the
+    change; only the drivers affected downstream need to hear about it).
+    Losses are always sent, including to the claiming driver, since the
+    solver may rebalance events away from them as a side effect.
+    """
+    import datetime as _dt
+    from services import storage
+
+    old_assign = old_cache.get("assignments") or {}
+    new_assign = new_payload.get("assignments") or {}
+    if not old_assign:
+        return  # first-ever solve: everything would look "gained"
+
+    old_event_ids = {e.get("id") for e in old_cache.get("events", [])}
+    new_events = {e.get("id"): e for e in new_payload.get("events", [])}
+    now = _dt.datetime.now()
+
+    def _fmt(ev):
+        title = ev.get("title") or "Event"
+        try:
+            start = _dt.datetime.fromisoformat(ev["start"])
+            return f"{title} ({start.strftime('%a %I:%M %p').replace(' 0', ' ')})"
+        except Exception:
+            return title
+
+    def _own_pwa_override(ev, d_id):
+        ev_keys = {ev.get("id"), ev.get("original_event_id"), ev.get("recurring_event_id")}
+        ev_keys.discard(None)
+        for o in overrides:
+            if getattr(o, "event_id", None) in ev_keys \
+                    and getattr(o, "driver_id", None) == d_id \
+                    and getattr(o, "source", None) == "pwa":
+                return True
+        return False
+
+    changes = {}
+    for ev_id in set(old_assign) | set(new_assign):
+        old_d = old_assign.get(ev_id)
+        new_d = new_assign.get(ev_id)
+        if old_d == new_d:
+            continue
+        ev = new_events.get(ev_id)
+        if ev is None or ev_id not in old_event_ids:
+            continue
+        try:
+            start = _dt.datetime.fromisoformat(ev["start"])
+            if start.replace(tzinfo=None) < now:
+                continue
+        except Exception:
+            continue
+        if old_d and not str(old_d).startswith("ghost_"):
+            changes.setdefault(old_d, {"gained": [], "lost": []})["lost"].append(ev)
+        if new_d and not str(new_d).startswith("ghost_") and not _own_pwa_override(ev, new_d):
+            changes.setdefault(new_d, {"gained": [], "lost": []})["gained"].append(ev)
+
+    if not changes:
+        return
+
+    subs = storage.get_push_subscriptions()
+    for d_id, ch in changes.items():
+        lines = [f"+ {_fmt(e)}" for e in ch["gained"]] + [f"- {_fmt(e)}" for e in ch["lost"]]
+        shown = lines[:5]
+        if len(lines) > 5:
+            shown.append(f"...and {len(lines) - 5} more")
+        send_push(d_id, subs, "Schedule Updated", "\n".join(shown),
+                  f"sched_change_{int(time.time())}", actions=[])
+        for e in ch["gained"]:
+            storage.add_telemetry_event(TelemetryEvent(
+                driver_id=d_id, event_id=e.get("id") or "",
+                action="assigned", details=_fmt(e)).model_dump())
+        for e in ch["lost"]:
+            storage.add_telemetry_event(TelemetryEvent(
+                driver_id=d_id, event_id=e.get("id") or "",
+                action="removed", details=_fmt(e)).model_dump())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -4178,7 +4260,13 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         })
 
         if not start_date_str and not end_date_str:
+            old_cache = storage.get_cached_schedule() or {}
             storage.set_cached_schedule(data_payload)
+            if not draft:
+                try:
+                    _notify_assignment_changes(old_cache, data_payload, overrides)
+                except Exception as notify_err:
+                    logger.error(f"Assignment-change notification failed: {notify_err}", exc_info=True)
         else:
             storage.save_custom_schedule(start_date_str, end_date_str, data_payload, "")
 

@@ -136,6 +136,9 @@ class ManualOverride(BaseModel):
     event_title: Optional[str] = None
     date_str: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
+    # 'pwa' when a driver self-assigned via the PWA Assign-to-Me button.
+    # Used to suppress the redundant "you gained this" push for that driver.
+    source: Optional[str] = None
 
 class Settings(BaseModel):
     calendar_ids: List[str]
