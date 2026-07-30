@@ -44,23 +44,6 @@ def compute_event_trip_entities(events, passengers):
     return e_entities_map
 
 
-def is_trip_boundary_day(event, trip) -> bool:
-    """True if the event falls on the trip's first or last calendar day (or
-    before/after the trip proper — reachable because trip windows are padded
-    with travel time). Boundary days are transition days: the send-off and
-    pickup logistics (drive the kids to the camp bus) happen then, so the
-    "passengers are away" suppression/bans must not apply. Uses the trip's
-    raw (unpadded) dates when present."""
-    r_start = trip.get('raw_start') or trip['start']
-    r_end = trip.get('raw_end') or trip['end']
-    d_first = r_start.date()
-    d_last = r_end.date()
-    # An all-day trip ends at midnight of the day AFTER its last real day
-    if d_last > d_first and (r_end.hour, r_end.minute) == (0, 0):
-        d_last = d_last - timedelta(days=1)
-    return event.start.date() <= d_first or event.end.date() >= d_last
-
-
 def get_event_passenger_ids(event, passengers):
     if not passengers: return set()
     result = set()
@@ -413,10 +396,6 @@ def solve_schedule(
                         # A manual override on this exact pair always wins — every
                         # other hard ban in the model has the same escape hatch.
                         if (e.id, d.id) in overridden_pairs:
-                            continue
-                        # Departure/return days are transition days: send-off and
-                        # pickup drives are real work, never banned.
-                        if is_trip_boundary_day(e, trip):
                             continue
                         if driver_on_trip:
                             # Driver on trip CANNOT take events that are far away from the trip location
@@ -1000,8 +979,6 @@ def explain_assignment_conflicts(event: Event, driver: Driver, rules: List[Rule]
             is_global = 'global' in trip_ents
             if not (event.start < trip['end'] and event.end > trip['start']):
                 continue
-            if is_trip_boundary_day(event, trip):
-                continue
             trip_name = trip.get('title') or 'a trip'
             driver_on_trip = (f"driver_{driver.id}" in trip_ents) or is_global
             pax_on_trip = is_global or (bool(e_ents) and e_ents.issubset(trip_ents))
@@ -1110,8 +1087,6 @@ def solve_ghost_routes(events: List[Event], assigned_events: List[Event] = None,
             for trip in trip_metadata:
                 trip_ents = trip.get('entities', set())
                 if e.start < trip['end'] and e.end > trip['start']:
-                    if is_trip_boundary_day(e, trip):
-                        continue
                     if 'global' in trip_ents or (e_ents and e_ents.issubset(trip_ents)):
                         is_impossible = True
                         break

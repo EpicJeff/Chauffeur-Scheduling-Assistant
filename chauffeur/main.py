@@ -2561,14 +2561,10 @@ def check_override_conflicts(payload: OverrideCheckPayload):
     trips = []
     for tm in cache.get("trip_metadata", []):
         try:
-            parsed = {**tm,
-                      "start": _dt.datetime.fromisoformat(tm["start"]),
-                      "end": _dt.datetime.fromisoformat(tm["end"]),
-                      "entities": set(tm.get("entities") or [])}
-            for k in ("raw_start", "raw_end"):
-                if tm.get(k):
-                    parsed[k] = _dt.datetime.fromisoformat(tm[k])
-            trips.append(parsed)
+            trips.append({**tm,
+                          "start": _dt.datetime.fromisoformat(tm["start"]),
+                          "end": _dt.datetime.fromisoformat(tm["end"]),
+                          "entities": set(tm.get("entities") or [])})
         except Exception:
             continue
 
@@ -3760,11 +3756,6 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 "id": e.id,
                 "start": trip_start,
                 "end": trip_end,
-                # Unpadded calendar window: boundary-day (departure/return)
-                # exemptions must use the trip's real dates, not the
-                # travel-time-padded ones.
-                "raw_start": e.start,
-                "raw_end": e.end,
                 "title": e.title,
                 "location": e.location,
                 "entities": applicable_entities,
@@ -3842,21 +3833,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                                 pass
                                 
                         if not is_near_trip and max(trip_start, e.start) < min(trip_end, e.end):
-                            # Departure/return days stay visible: the send-off and
-                            # pickup drives (e.g. camp bus drop-off) are events the
-                            # family must see and schedule, not away-noise.
-                            if matcher.is_trip_boundary_day(e, tm):
-                                continue
                             on_trip = True
                             break
                 if not on_trip:
                     kept_cids.append(cid)
             
             if not kept_cids:
-                # Everyone attending is away on a trip: skip solving, but KEEP
-                # the event visible — the calendar must show everything, and
-                # silently vanishing events (camp-bus drop-offs before the
-                # boundary-day exemption existed) are impossible to debug.
+                # Everyone attending is away on a trip (window = trip times
+                # padded with travel): skip solving, but KEEP the event visible —
+                # the calendar must show everything, and a silently vanishing
+                # event is impossible to debug. The gray calendar banner is how
+                # a mis-timed trip window (e.g. an all-day trip event swallowing
+                # the morning bus drop-off) gets noticed and corrected.
                 e.trip_suppressed = True
                 continue
 
