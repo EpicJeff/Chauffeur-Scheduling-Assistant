@@ -2376,13 +2376,18 @@
                     if (b.startsWith('g') && !a.startsWith('g')) return -1;
                     return a.localeCompare(b);
                 }).filter(id => {
+                    // Background-trip banners are injected into EVERY column for
+                    // context, so they must not count as "having a schedule" —
+                    // otherwise drivers made unavailable by a rule (zero real
+                    // events) pop back into view on trip days.
+                    const hasRealEvents = colsObj[id] && colsObj[id].some(e => e.event_type !== 'background_trip');
                     // Always hide ghost drivers if they have zero events for this day
                     if (id.startsWith('g')) {
-                        return colsObj[id] && colsObj[id].length > 0;
+                        return hasRealEvents;
                     }
                     // For regular drivers in read-only mode, hide empty columns
                     if (isReadOnly) {
-                        return colsObj[id] && colsObj[id].length > 0;
+                        return hasRealEvents;
                     }
                     return true;
                 });
