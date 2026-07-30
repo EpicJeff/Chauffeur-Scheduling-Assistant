@@ -174,6 +174,7 @@ Never ask them which driver they are — you already know.
     target_id = None
     ui_action = None
     target_driver_id = None
+    schedule_dirty = False
     agent_message = "I have processed your request."
     
     for iteration in range(max_iterations):
@@ -205,7 +206,8 @@ Never ask them which driver they are — you already know.
                 "message": agent_message,
                 "target_element_id": target_id,
                 "ui_action": ui_action,
-                "target_driver_id": target_driver_id
+                "target_driver_id": target_driver_id,
+                "schedule_dirty": schedule_dirty
             }
 
         # Check for Delegation to Gemini
@@ -242,6 +244,9 @@ Never ask them which driver they are — you already know.
                 elif func_name == "assign_driver_to_event_fuzzy":
                     from services.agent_tools_v2 import assign_driver_to_event_fuzzy
                     res = assign_driver_to_event_fuzzy(args.get("event_name"), args.get("driver_name"), args.get("target_date"))
+                    # The override was written straight to storage — the caller
+                    # must re-solve or dashboards keep serving the stale cache.
+                    if res.get("status") == "success": schedule_dirty = True
                     if res.get("target_element_id"): target_id = res["target_element_id"]
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
@@ -292,5 +297,6 @@ Never ask them which driver they are — you already know.
         "message": agent_message,
         "target_element_id": target_id,
         "ui_action": ui_action,
-        "target_driver_id": target_driver_id
+        "target_driver_id": target_driver_id,
+        "schedule_dirty": schedule_dirty
     }

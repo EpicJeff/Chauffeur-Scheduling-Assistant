@@ -2214,7 +2214,13 @@ def converse_ha_assist(req: ConverseRequest):
         if res.get("target_element_id"):
             global LAST_UPDATE_TIME
             LAST_UPDATE_TIME = time.time()
-            
+
+        # Agent tools write overrides straight to storage; without a re-solve
+        # the dashboard would refetch the stale cached schedule until the next
+        # Sync Now / poll. Non-blocking, so the spoken reply isn't delayed.
+        if res.get("schedule_dirty"):
+            trigger_background_refresh()
+
         # Push to SSE stream for frontend
         import json
         event_data = {
@@ -2962,7 +2968,11 @@ def handle_chat(payload: ChatMessagePayload, background_tasks: BackgroundTasks):
         if target_id:
             global LAST_UPDATE_TIME
             LAST_UPDATE_TIME = time.time()
-            
+
+        # Same as /api/v2/converse: agent overrides need a re-solve to show up.
+        if res.get("schedule_dirty"):
+            background_tasks.add_task(trigger_background_refresh)
+
         if payload.conversation_id:
             storage.add_message_to_conversation(payload.conversation_id, {'role': 'assistant', 'content': reply, 'timestamp': time.time()})
             
