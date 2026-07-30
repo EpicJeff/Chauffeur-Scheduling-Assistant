@@ -193,23 +193,40 @@ def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
             navigate_url = f"/app?navigate_dest={urllib.parse.quote(location)}&navigate_title={urllib.parse.quote(title)}&navigate_leg={leg_id}"
             actions.insert(0, {"action": "navigate", "title": "Navigate"})
 
+    matched = 0
     for sub in subs:
         if sub.get("driver_id") == d_id:
+            matched += 1
             try:
                 webpush(
                     subscription_info=sub["subscription"],
                     data=json.dumps({
-                        "title": title, 
-                        "body": body, 
-                        "actions": actions, 
+                        "title": title,
+                        "body": body,
+                        "actions": actions,
                         "data": {"leg_id": leg_id, "navigate_url": navigate_url}
                     }),
                     vapid_private_key=VAPID_PRIVATE_KEY_PATH,
                     vapid_claims={"sub": "mailto:admin@example.com"}
                 )
                 print(f"Sent push to {d_id}: {title} - {body}")
+            except WebPushException as ex:
+                code = getattr(getattr(ex, 'response', None), 'status_code', None)
+                if code in (404, 410):
+                    endpoint = (sub.get("subscription") or {}).get("endpoint")
+                    print(f"Pruning dead push subscription for {d_id} (HTTP {code})")
+                    if endpoint:
+                        try:
+                            from services import storage
+                            storage.delete_push_subscription_by_endpoint(endpoint)
+                        except Exception as prune_ex:
+                            print(f"Failed to prune subscription: {prune_ex}")
+                else:
+                    print(f"Push failed for {d_id} (HTTP {code}): {repr(ex)}")
             except Exception as ex:
-                print(f"Push failed: {repr(ex)}")
+                print(f"Push failed for {d_id}: {repr(ex)}")
+    if matched == 0:
+        print(f"No push subscription for driver {d_id}; dropping push '{title}'")
 
 import threading as _notif_threading
 # Assignment changes buffered across a progressive re-solve run. The solver
@@ -4839,6 +4856,21 @@ def get_vapid_public_key():
 def push_subscribe(sub: PushSubscription):
     storage.save_push_subscription(sub.driver_id, sub.subscription)
     return {"status": "ok"}
+
+@app.get("/api/push_subscriptions/debug")
+def debug_push_subscriptions():
+    """Who is subscribed on which device — for diagnosing missing pushes."""
+    drivers = {d.get('id'): d.get('name') for d in storage.get_all_drivers()}
+    out = []
+    for s in storage.get_push_subscriptions():
+        ep = (s.get('subscription') or {}).get('endpoint') or ''
+        host = ep.split('/')[2] if '://' in ep else (ep[:40] or 'unknown')
+        out.append({
+            "driver_id": s.get('driver_id'),
+            "driver_name": drivers.get(s.get('driver_id'), 'unknown'),
+            "endpoint_host": host
+        })
+    return out
 
 @app.get("/api/debug_db")
 def debug_db():

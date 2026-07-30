@@ -177,9 +177,6 @@
                         All</button>
                 </div>
 
-                <!--<button onclick="testPushNotification()"
-                    class="mb-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg active:scale-95 transition-all">Send
-                    Test Push Notification</button>-->
                 <button onclick="toggleNotifications()"
                     class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -187,6 +184,9 @@
                         </path>
                     </svg></button>
             </div>
+            <button onclick="testPushNotification()"
+                class="mb-4 shrink-0 w-full border-2 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/20 active:bg-indigo-600 active:text-white font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
+                Send Test Push Notification</button>
             <div id="notif-list" class="flex-1 overflow-y-auto space-y-3 no-scrollbar pb-6">
                 <p class="text-center text-gray-500 italic py-4">No recent notifications</p>
             </div>
@@ -473,6 +473,7 @@
             document.getElementById('btn-switch-driver').classList.remove('hidden');
             document.getElementById('btn-notif').classList.remove('hidden');
             await checkNotificationStatus();
+            syncPushSubscription();
 
             await fetchSchedule();
             fetchNotifications();
@@ -530,6 +531,31 @@
             selectedDriverId = null;
             localStorage.removeItem('chauffeur_driver_id');
             showDriverSelection();
+        }
+
+        // If permission is already granted, quietly refresh the server-side
+        // subscription for this device+driver on every app load. Heals stale
+        // registrations (e.g. after a VAPID key change or a pruned endpoint)
+        // and keeps multiple devices per driver registered.
+        async function syncPushSubscription() {
+            try {
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+                if (Notification.permission !== 'granted' || !selectedDriverId) return;
+                const reg = await navigator.serviceWorker.register('/sw.js');
+                const response = await fetch(`${apiBase}api/vapid_public_key`);
+                const data = await response.json();
+                const subscription = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlB64ToUint8Array(data.public_key)
+                });
+                await fetch(`${apiBase}api/push_subscribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ driver_id: selectedDriverId, subscription: subscription })
+                });
+            } catch (e) {
+                console.warn('Push subscription re-sync failed', e);
+            }
         }
 
         async function fetchSchedule(refresh = false, skipLocal = false) {

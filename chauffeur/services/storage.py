@@ -1011,8 +1011,33 @@ def get_rolling_usage(endpoint: str, seconds: int) -> int:
 
 # Push Subscriptions
 def save_push_subscription(driver_id: str, subscription_info: dict):
+    # Keyed by endpoint, NOT driver_id: one row per device/browser, so a
+    # driver can receive pushes on several devices. (Keying by driver_id
+    # meant enabling push on a second device silently replaced the first.)
     with db_lock:
-        push_subscriptions_table.upsert({'driver_id': driver_id, 'subscription': subscription_info}, Query().driver_id == driver_id)
+        endpoint = (subscription_info or {}).get('endpoint')
+        if endpoint:
+            push_subscriptions_table.upsert(
+                {'driver_id': driver_id, 'subscription': subscription_info, 'endpoint': endpoint},
+                Query().endpoint == endpoint)
+        else:
+            push_subscriptions_table.upsert(
+                {'driver_id': driver_id, 'subscription': subscription_info},
+                Query().driver_id == driver_id)
+
+def delete_push_subscription_by_endpoint(endpoint: str):
+    """Prune a dead subscription (push service returned 404/410 for it)."""
+    with db_lock:
+        q = Query()
+        try:
+            push_subscriptions_table.remove(q.endpoint == endpoint)
+        except Exception:
+            pass
+        try:
+            # Legacy rows saved before the endpoint column existed
+            push_subscriptions_table.remove(q.subscription.endpoint == endpoint)
+        except Exception:
+            pass
 
 def get_push_subscriptions(driver_id: str = None):
     with db_lock:

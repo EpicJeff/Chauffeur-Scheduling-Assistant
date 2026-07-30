@@ -607,13 +607,18 @@ def scenario_api_request_log():
 # --- push subscriptions / drive status / notifications ------------------------
 
 def scenario_push_subscriptions():
+    # One row per device endpoint: a driver may hold several devices, and
+    # re-registering the same endpoint updates (not duplicates) it.
     storage.save_push_subscription("d1", {"endpoint": "https://a"})
     storage.save_push_subscription("d1", {"endpoint": "https://b"})
     storage.save_push_subscription("d2", {"endpoint": "https://c"})
-    check(len(storage.push_subscriptions_table.all()) == 2, "upsert per driver")
-    subs = storage.get_push_subscriptions("d1")
-    check(len(subs) == 1 and subs[0]["subscription"] == {"endpoint": "https://b"},
-          "get by driver returns latest")
+    check(len(storage.push_subscriptions_table.all()) == 3, "one row per endpoint")
+    check(len(storage.get_push_subscriptions("d1")) == 2, "driver keeps both devices")
+    storage.save_push_subscription("d2", {"endpoint": "https://a"})
+    check(len(storage.push_subscriptions_table.all()) == 3, "same endpoint upserts")
+    check(len(storage.get_push_subscriptions("d2")) == 2, "endpoint re-assigned to d2")
+    storage.delete_push_subscription_by_endpoint("https://a")
+    check(len(storage.push_subscriptions_table.all()) == 2, "dead endpoint pruned")
     check(len(storage.get_push_subscriptions()) == 2, "get all")
 
 
