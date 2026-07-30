@@ -54,6 +54,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None)
         if res.get("error") and "429" in str(res.get("error")):
             raise RateLimitException("429 Too Many Requests")
+        res["_model"] = primary_model
         return res
     except RateLimitException:
         logger.warning(f"{primary_model} rate limited, falling back to {fallback_model}...")
@@ -66,7 +67,9 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         logger.warning(f"{primary_model} unavailable ({e}), falling back to {fallback_model}...")
 
     try:
-        return _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None)
+        res = _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None)
+        res["_model"] = fallback_model
+        return res
     except Exception as e:
         logger.error(f"Error calling Gemma fallback model: {e}")
         return {"error": str(e), "transient": _is_transient(str(e))}
@@ -206,7 +209,8 @@ Never ask them which driver they are — you already know.
         call_start = _time.time()
         llm_response = call_gemma_with_fallback(user_prompt, tools, current_system_prompt)
         llm_calls += 1
-        logger.info(f"[agent-timing] LLM call {llm_calls} took {_time.time() - call_start:.1f}s")
+        logger.info(f"[agent-timing] LLM call {llm_calls} ({llm_response.get('_model', 'unknown-model')}) "
+                    f"took {_time.time() - call_start:.1f}s")
 
         # An LLM failure must never masquerade as success ("I have processed
         # your request") — tell the user what actually happened.
