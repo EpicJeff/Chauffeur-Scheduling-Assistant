@@ -2375,10 +2375,20 @@
                 // A bare 'g' prefix check misclassified real drivers whose id
                 // happens to start with g, hiding their column on empty days.
                 const isGhostCol = (id) => id.startsWith('ghost_');
+                // Column order: ghosts last; otherwise driver priority
+                // (1 = highest first), alphabetical by name within a priority.
+                const colSortKey = (id) => {
+                    const d = driversMap[id] || {};
+                    return {
+                        pri: Number.isFinite(d.priority_index) ? d.priority_index : 999,
+                        name: (d.name || id).toLowerCase()
+                    };
+                };
                 let colIds = Object.keys(driversMap).sort((a, b) => {
-                    if (isGhostCol(a) && !isGhostCol(b)) return 1;
-                    if (isGhostCol(b) && !isGhostCol(a)) return -1;
-                    return a.localeCompare(b);
+                    if (isGhostCol(a) !== isGhostCol(b)) return isGhostCol(a) ? 1 : -1;
+                    const ka = colSortKey(a), kb = colSortKey(b);
+                    if (ka.pri !== kb.pri) return ka.pri - kb.pri;
+                    return ka.name.localeCompare(kb.name);
                 }).filter(id => {
                     // Background-trip banners are injected into EVERY column for
                     // context, so they must not count as "having a schedule" —
