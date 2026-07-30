@@ -146,6 +146,24 @@ def scenario_overrides_beat_balancing():
               f"overrides pin everything to d1 under '{metric}' balancing, got {assignments}")
 
 
+def scenario_boundary_day_dropoff_assignable():
+    # Departure-day logistics need no override at all: the trip ban does not
+    # apply on the trip's first/last calendar day, so the camp-bus drop-off is
+    # assignable to a stay-home driver like any normal event.
+    import datetime as dt
+    from models.schemas import Passenger
+    drivers = [mk_driver(2, 1)]
+    pax = Passenger(id="p1", name="James", hashtags=["#james"])
+    ev = mk_event(0, 8)
+    ev.title = "Bus Drop off #james"
+    trip = {"id": "t1", "start": ev.start.replace(hour=0), "end": ev.start.replace(hour=0) + dt.timedelta(days=4),
+            "location": None, "entities": {"passenger_p1"}}
+
+    assignments, unassigned, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip])
+    check(assignments.get(ev.id) == "d2",
+          f"departure-day drop-off assigns normally without an override, got {assignments}, {unassigned}")
+
+
 def scenario_override_beats_trip_ban():
     # d2 is NOT on the trip and the event's passenger IS: normally hard-banned
     # for d2 (event goes unassigned) — but a manual override must still win.
@@ -175,6 +193,7 @@ SCENARIOS = [
     scenario_metric_driving_time_spreads,
     scenario_metric_driving_time_prefers_local,
     scenario_overrides_beat_balancing,
+    scenario_boundary_day_dropoff_assignable,
     scenario_override_beats_trip_ban,
 ]
 

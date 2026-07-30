@@ -39,6 +39,9 @@ class Event(BaseModel):
     app_config: Optional[dict] = None
     trip_id: Optional[str] = None
     poi_id: Optional[str] = None
+    # Set by the refresh when every passenger on the event is away on a
+    # background trip: excluded from solving but still shown on the calendar.
+    trip_suppressed: bool = False
 
 class Driver(BaseModel):
     id: str

@@ -276,6 +276,14 @@
                 </div>
 
                 <!-- Description -->
+                <div class="flex justify-end pt-1" id="modal-config-container">
+                    <button id="modal-config-btn"
+                        onclick="window.location.href='dashboard_v2?open_event=' + encodeURIComponent(window._modalEventId || '')"
+                        class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600/80 hover:bg-blue-500 text-white text-sm font-bold rounded-lg transition-colors shadow-md">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Event Configuration
+                    </button>
+                </div>
                 <div id="modal-description-container" class="flex items-start text-gray-300 bg-white/5 rounded-xl p-4 border border-white/5">
                     <div class="bg-white/10 p-2 rounded-lg mr-3">
                         <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -501,9 +509,12 @@
                                         rawTitle = rawTitle.replace('Pickup: ', '');
                                     }
 
-                                    let color = '#3B82F6'; 
+                                    let color = '#3B82F6';
                                     if (ev.calendar_ids && ev.calendar_ids.length > 0 && data.calendar_metadata && data.calendar_metadata[ev.calendar_ids[0]]) {
                                         color = data.calendar_metadata[ev.calendar_ids[0]].backgroundColor;
+                                    }
+                                    if (ev.trip_suppressed) {
+                                        color = '#6B7280'; // grayed: ignored for the driving schedule
                                     }
                                     
                                     let paxMap = {};
@@ -589,6 +600,7 @@
                                                 isUnassigned: isUnassigned,
                                                 driverName: driverName,
                                                 isErrand: false,
+                                                tripSuppressed: !!ev.trip_suppressed,
                                                 rawColor: color
                                             }
                                         });
@@ -676,12 +688,16 @@
                 
                 eventClick: function(info) {
                     const props = info.event.extendedProps;
-                    
+
                     if (props.isTrip) {
                         window.location.href = props.tripUrl;
                         return;
                     }
-                    
+
+                    window._modalEventId = info.event.id;
+                    // Errands are auto-scheduled; they have no event configuration
+                    const cfgContainer = document.getElementById('modal-config-container');
+                    if (cfgContainer) cfgContainer.style.display = props.isErrand ? 'none' : '';
                     document.getElementById('modal-title').textContent = info.event.title;
                     document.getElementById('modal-header-bg').style.backgroundColor = props.rawColor || info.event.backgroundColor;
                     
@@ -733,7 +749,10 @@
                     
                     // Status Banner
                     const banner = document.getElementById('modal-status-banner');
-                    if (props.isUnassigned) {
+                    if (props.tripSuppressed) {
+                        banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-gray-500/20 text-gray-300 border border-gray-500/30 mb-4';
+                        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Ignored for the driving schedule — everyone attending is away on a trip during this event.';
+                    } else if (props.isUnassigned) {
                         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-red-500/20 text-red-400 border border-red-500/30 mb-4';
                         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> This event has a scheduling conflict and needs a driver assigned.';
                     } else if (props.isErrand) {

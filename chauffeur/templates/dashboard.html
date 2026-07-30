@@ -497,6 +497,27 @@
                 const inboxContainer = document.getElementById('inbox-container');
                 if (inboxContainer) inboxContainer.classList.add('hidden');
             }
+
+            // Deep link from the calendar's "Event Configuration" button:
+            // wait for the schedule data, then open the event modal. The id may
+            // be a recurring base id — fall back to the first matching instance.
+            const openEventParam = urlParams.get('open_event');
+            if (openEventParam) {
+                let tries = 0;
+                const waiter = setInterval(() => {
+                    tries++;
+                    if (typeof currentEventsMap === 'object' && currentEventsMap) {
+                        const key = currentEventsMap[openEventParam] ? openEventParam
+                            : Object.keys(currentEventsMap).find(k => k.startsWith(openEventParam + '_'));
+                        if (key) {
+                            clearInterval(waiter);
+                            openEventModal(key);
+                            return;
+                        }
+                    }
+                    if (tries > 60) clearInterval(waiter);
+                }, 500);
+            }
         });
 
         const localSolvingDates = new Set();

@@ -34,14 +34,27 @@ def mk_trip(day_start, day_end, entities):
 
 def scenario_pax_on_trip_gets_no_ghost():
     # James is on the trip (matched via #james hashtag in the event title, the
-    # path the upstream calendar-id filter misses); his event during the trip
-    # window must not produce a suggested route.
+    # path the upstream calendar-id filter misses); his event on an INTERIOR
+    # trip day must not produce a suggested route.
     pax = Passenger(id="p1", name="James", hashtags=["#james"])
-    ev = mk_event(0, day_offset=0, title="Soccer #james")
+    ev = mk_event(0, day_offset=1, title="Soccer #james")
     trip = mk_trip(0, 3, {"passenger_p1"})
 
     ga, gd = matcher.solve_ghost_routes([ev], [], [], [pax], trip_metadata=[trip])
     check(ga == {} and gd == [], f"no ghost route for a passenger away on the trip, got {ga}, {gd}")
+
+
+def scenario_boundary_days_still_ghost():
+    # Departure-day and return-day logistics (camp bus drop-off / pickup) are
+    # real driving work: the passengers-away suppression must not apply there.
+    pax = Passenger(id="p1", name="James", hashtags=["#james"])
+    ev_departure = mk_event(0, day_offset=0, title="Bus Drop off #james")
+    ev_return = mk_event(1, day_offset=3, title="Bus Pickup #james")
+    trip = mk_trip(0, 3, {"passenger_p1"})
+
+    ga, gd = matcher.solve_ghost_routes([ev_departure, ev_return], [], [], [pax], trip_metadata=[trip])
+    check(ev_departure.id in ga, f"departure-day drop-off still gets a suggested route, got {ga}")
+    check(ev_return.id in ga, f"return-day pickup still gets a suggested route, got {ga}")
 
 
 def scenario_event_outside_trip_window_still_ghosts():
@@ -99,6 +112,7 @@ def scenario_mixed_passengers_kept():
 
 SCENARIOS = [
     scenario_pax_on_trip_gets_no_ghost,
+    scenario_boundary_days_still_ghost,
     scenario_event_outside_trip_window_still_ghosts,
     scenario_pax_not_on_trip_still_ghosts,
     scenario_global_trip_blocks_all_in_window,
