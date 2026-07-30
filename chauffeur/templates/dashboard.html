@@ -3298,16 +3298,43 @@
         initDashboard();
 
         // Listen for real-time updates from the backend
-        const evtSource = new EventSource("api/stream");
-        evtSource.onmessage = function (event) {
-            if (event.data === "update") {
-                if (currentStartDate && currentEndDate) {
-                    fetchSchedule(true, false, false, true);
-                } else {
-                    fetchSchedule(false, false, false, true);
-                }
+        let evtSource = null;
+        function handleServerUpdate() {
+            if (currentStartDate && currentEndDate) {
+                fetchSchedule(true, false, false, true);
+            } else {
+                fetchSchedule(false, false, false, true);
             }
-        };
+        }
+        function connectStream() {
+            if (evtSource) { try { evtSource.close(); } catch (e) { } }
+            evtSource = new EventSource("api/stream");
+            evtSource.onmessage = function (event) {
+                if (event.data === "update") handleServerUpdate();
+            };
+            // EventSource auto-retries transient errors, but gives up
+            // PERMANENTLY when a reconnect gets a non-200 (e.g. an expired
+            // ingress session after laptop sleep). Recreate it ourselves,
+            // otherwise the page silently never updates again.
+            evtSource.onerror = function () {
+                if (evtSource.readyState === EventSource.CLOSED) {
+                    setTimeout(connectStream, 5000);
+                }
+            };
+        }
+        connectStream();
+
+        // Safety net: even if the stream is dead, a quiet refetch every
+        // 5 minutes keeps the now-line and past-event fading current.
+        setInterval(() => { if (!document.hidden) handleServerUpdate(); }, 300000);
+        // And returning to the tab refreshes immediately (stale dashboards
+        // were exactly the "came back hours later" scenario).
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                handleServerUpdate();
+                if (!evtSource || evtSource.readyState === EventSource.CLOSED) connectStream();
+            }
+        });
 
         async function createRule(driverId, keyword, constraintType, toleranceMins, toleranceType = 'both', btnElement = null, duplicateAction = null, groupingPeriod = null, passengerIdsStr = null) {
             if (btnElement) {
