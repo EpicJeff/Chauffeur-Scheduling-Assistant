@@ -1336,7 +1336,8 @@
             const tabContentRules = document.getElementById('tab-content-rules');
             const tabContentDiag = document.getElementById('tab-content-diagnostics');
 
-            if (mRules.length === 0 && !hasDiagnostics) {
+            // Kiosk mode is a display-only surface: show event details, never rules or diagnostics
+            if (isKiosk || (mRules.length === 0 && !hasDiagnostics)) {
                 tabsContainer.classList.add('hidden');
                 tabContentRules.classList.add('hidden');
                 tabContentDiag.classList.add('hidden');
