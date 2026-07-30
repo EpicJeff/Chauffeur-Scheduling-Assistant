@@ -1367,14 +1367,18 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "travel_mins": travel_to_pickup + travel_to_ev,
                         "delay_mins": delay_to_pickup + delay_to_ev,
                         "buffer_before_mins": e_buffer_before.get(first_ev.id, 0),
-                        "pickup_waypoint": {
+                        "driver_home_location": driver_home
+                    }
+                    # A zero-minute leg means the pickup point is the driver's home or the
+                    # event itself (e.g. split pickup events) - show a single drive instead.
+                    if travel_to_pickup > 0 and travel_to_ev > 0:
+                        initial_edges[d_id][first_ev.id]["pickup_waypoint"] = {
                             "from_driver_home_mins": travel_to_pickup,
                             "from_global_home_mins": travel_to_ev,
                             "pickup_location": pax_home,
                             "pickup_event_title": pickup_title,
                             "driver_home_location": driver_home
                         }
-                    }
                 else:
                     travel, delay = get_travel_time_minutes(driver_home, first_ev.location, departure_time=int(start_ts), return_traffic=True)
                     initial_edges[d_id][first_ev.id] = {
@@ -1410,13 +1414,17 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         "travel_mins": travel_to_dropoff + travel_to_home,
                         "delay_mins": delay_to_dropoff + delay_to_home,
                         "buffer_after_mins": e_buffer_after.get(last_ev.id, 0),
-                        "dropoff_waypoint": {
+                        "driver_home_location": driver_home_at_end
+                    }
+                    # A zero-minute leg means the dropoff point is the event itself or the
+                    # driver's home (e.g. split dropoff events) - show a single drive instead.
+                    if travel_to_dropoff > 0 and travel_to_home > 0:
+                        final_edges[d_id][last_ev.id]["dropoff_waypoint"] = {
                             "to_global_home_mins": travel_to_dropoff,
                             "travel_mins": travel_to_home,
                             "dropoff_location": pax_home,
                             "driver_home_location": driver_home_at_end
                         }
-                    }
                 else:
                     travel_home, delay_home = get_travel_time_minutes(last_ev.location, driver_home_at_end, departure_time=int(end_ts), return_traffic=True)
                     final_edges[d_id][last_ev.id] = {
@@ -1481,12 +1489,15 @@ def compute_route_edges(assignments: Dict[str, str], events: List[Event], driver
                         drive_to_pickup, delay_to = get_travel_time_minutes(e1.location, pickup_location, departure_time=int(dep_time), return_traffic=True)
                         drive_from_pickup, delay_from = get_travel_time_minutes(pickup_location, e2.location, departure_time=int(dep_time + drive_to_pickup*60), return_traffic=True)
                         
-                        pickup_waypoint = {
-                            "to_pickup_mins": drive_to_pickup,
-                            "from_pickup_mins": drive_from_pickup,
-                            "pickup_location": pickup_location,
-                            "pickup_event_title": pickup_title
-                        }
+                        # A zero-minute leg means the pickup point is e1 or e2 itself
+                        # (e.g. split pickup events) - show a single drive instead.
+                        if drive_to_pickup > 0 and drive_from_pickup > 0:
+                            pickup_waypoint = {
+                                "to_pickup_mins": drive_to_pickup,
+                                "from_pickup_mins": drive_from_pickup,
+                                "pickup_location": pickup_location,
+                                "pickup_event_title": pickup_title
+                            }
                         travel = drive_to_pickup + drive_from_pickup
                         delay = delay_to + delay_from
                     else:
