@@ -2182,6 +2182,7 @@ def converse_ha_assist(req: ConverseRequest):
     """
     from services.agent_router import process_agent_request
 
+    converse_start = time.time()
     try:
         conv_history = []
         conv_id = None
@@ -2230,6 +2231,7 @@ def converse_ha_assist(req: ConverseRequest):
         CHAT_EVENTS.append(event_data)
             
         # Return format expected by Home Assistant Conversation integration
+        logger.info(f"[agent-timing] /api/v2/converse total {time.time() - converse_start:.1f}s")
         return {
             "response": {
                 "speech": {

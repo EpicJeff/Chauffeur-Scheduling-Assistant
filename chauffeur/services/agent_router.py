@@ -168,9 +168,13 @@ Never ask them which driver they are — you already know.
         from services.agent_tools_v2 import get_driver_tools
         tools = tools + get_driver_tools()
 
+    import time as _time
+    request_start = _time.time()
+    llm_calls = 0
+
     agent_scratchpad = ""
     max_iterations = 3
-    
+
     target_id = None
     ui_action = None
     target_driver_id = None
@@ -182,7 +186,10 @@ Never ask them which driver they are — you already know.
         if agent_scratchpad:
             current_system_prompt += "\n\nTOOL EXECUTION SCRATCHPAD:\n" + agent_scratchpad
             
+        call_start = _time.time()
         llm_response = call_gemma_with_fallback(user_prompt, tools, current_system_prompt)
+        llm_calls += 1
+        logger.info(f"[agent-timing] LLM call {llm_calls} took {_time.time() - call_start:.1f}s")
 
         # An LLM failure must never masquerade as success ("I have processed
         # your request") — tell the user what actually happened.
@@ -237,7 +244,8 @@ Never ask them which driver they are — you already know.
             agent_scratchpad += f"\nTool Call: {func_name}({json.dumps(args)})"
             
             res = {"error": f"Unknown tool: {func_name}"}
-            
+            tool_start = _time.time()
+
             try:
                 if func_name == "get_calendar_events":
                     res = get_calendar_events(args.get("start_date"), args.get("end_date"))
@@ -289,9 +297,12 @@ Never ask them which driver they are — you already know.
                     if res.get("message"): agent_message = res["message"]
             except Exception as e:
                 res = {"error": str(e)}
-                
+
+            logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s")
             agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
-            
+
+    logger.info(f"[agent-timing] process_agent_request total {_time.time() - request_start:.1f}s "
+                f"({llm_calls} LLM call(s))")
     return {
         "status": "success",
         "message": agent_message,
