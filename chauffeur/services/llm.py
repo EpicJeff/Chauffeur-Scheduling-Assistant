@@ -535,7 +535,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return 0, "Failed to parse LLM evaluation."
 
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180) -> dict:
     import json
     import urllib.request
     
@@ -561,9 +561,9 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=180) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                
+
                 # Check if it returned a tool call
                 message = data.get('message', {})
                 if 'tool_calls' in message:
@@ -612,7 +612,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             data = None
             for attempt in range(3):
                 try:
-                    with urllib.request.urlopen(req, timeout=180) as resp:
+                    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                         data = json.loads(resp.read().decode('utf-8'))
                     break
                 except urllib.error.HTTPError as e:

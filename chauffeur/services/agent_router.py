@@ -19,14 +19,17 @@ class RateLimitException(Exception):
 
 def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Dict[str, Any]:
     """
-    Implements the Dual-Gemma fallback. 
-    Tries 31B first, falls back to 26B on HTTP 429 (Rate Limit).
+    Agent LLM call with a fallback model.
+    Primary defaults to gemini-3.5-flash: gemma-4-31b-it measured 44-180s per
+    call on the free API (2026-07-30), which cannot live under HA Assist's
+    120s conversation budget; Flash answers the same JSON-tool prompt in
+    seconds. Both models are overridable via the agent_primary_model /
+    agent_fallback_model settings keys (no UI — set via /api/settings).
     """
-    primary_model = "gemma-4-31b-it"
-    fallback_model = "gemma-4-26b-it"
-    
     from services.storage import get_settings
     settings = get_settings()
+    primary_model = settings.get('agent_primary_model') or "gemini-3.5-flash"
+    fallback_model = settings.get('agent_fallback_model') or "gemma-4-31b-it"
     api_key = settings.get('llm_gemini_api_key', '')
     provider = 'gemini'
     url = ''
@@ -51,7 +54,9 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         return any(code in err_str for code in ("429", "500", "502", "503", "504"))
 
     try:
-        res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None)
+        # 60s cap: an agent call slower than that is already useless to the
+        # 120s HA pipeline — fail fast to the fallback instead of hanging 180s.
+        res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None, timeout_s=60)
         if res.get("error") and "429" in str(res.get("error")):
             raise RateLimitException("429 Too Many Requests")
         res["_model"] = primary_model
@@ -67,7 +72,7 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         logger.warning(f"{primary_model} unavailable ({e}), falling back to {fallback_model}...")
 
     try:
-        res = _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None)
+        res = _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None, timeout_s=60)
         res["_model"] = fallback_model
         return res
     except Exception as e:
@@ -332,7 +337,10 @@ Never ask them which driver they are — you already know.
             except Exception as e:
                 res = {"error": str(e)}
 
-            logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s")
+            tool_status = res.get("status", "ok") if isinstance(res, dict) else "?"
+            if isinstance(res, dict) and (res.get("error") or res.get("status") == "error"):
+                logger.warning(f"[agent] tool {func_name} error: {res.get('message') or res.get('error')}")
+            logger.info(f"[agent-timing] tool {func_name} took {_time.time() - tool_start:.1f}s (status={tool_status})")
             agent_scratchpad += f"\nTool Result: {json.dumps(res)}\n"
             executed_results[sig] = res
             if not _is_terminal_success(func_name, res):
