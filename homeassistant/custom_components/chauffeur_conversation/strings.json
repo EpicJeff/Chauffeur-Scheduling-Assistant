@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Chauffeur",
+        "data": {
+          "base_url": "Chauffeur add-on base URL"
+        },
+        "description": "Internal URL of the Chauffeur add-on. For a locally built add-on this is http://local-chauffeur:8000; if installed from an add-on repository, use the hostname shown on the add-on's info page."
+      }
+    }
+  }
+}

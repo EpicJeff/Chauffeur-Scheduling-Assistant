@@ -2169,17 +2169,46 @@ CHAT_EVENTS = []
 class ConverseRequest(BaseModel):
     text: str
     language: str = "en"
+    conversation_id: Optional[str] = None
 
 @app.post("/api/v2/converse")
 def converse_ha_assist(req: ConverseRequest):
     """
     Endpoint for Home Assistant Assist Pipeline to send transcribed text.
-    Acts as a Custom Conversation Agent webhook.
+    Acts as a Custom Conversation Agent webhook. When HA supplies a
+    conversation_id (stable across follow-up turns of one voice session),
+    history is threaded through the same conversation store as /api/chat so
+    voice gets multi-turn memory. Titles are set without an LLM call.
     """
     from services.agent_router import process_agent_request
-    
+
     try:
-        res = process_agent_request(req.text)
+        conv_history = []
+        conv_id = None
+        if req.conversation_id:
+            # Namespace HA's id so it can never collide with widget conversations.
+            conv_id = f"voice-{req.conversation_id}"
+            conv = storage.get_conversation(conv_id)
+            if not conv:
+                title = req.text if len(req.text) <= 60 else req.text[:57] + "..."
+                storage.create_conversation({
+                    "id": conv_id,
+                    "type": "voice",
+                    "mode": "standard",
+                    "title": f"🎙️ {title}",
+                    "context_id": None,
+                    "messages": [],
+                    "created_at": time.time(),
+                    "updated_at": time.time(),
+                })
+            else:
+                conv_history = conv.get("messages", [])
+            storage.add_message_to_conversation(conv_id, {'role': 'user', 'content': req.text, 'timestamp': time.time()})
+
+        res = process_agent_request(req.text, history=conv_history)
+
+        if conv_id:
+            storage.add_message_to_conversation(conv_id, {'role': 'assistant', 'content': res.get("message", "Done."), 'timestamp': time.time()})
         
         # Trigger global dashboard update event if a target was modified
         if res.get("target_element_id"):
