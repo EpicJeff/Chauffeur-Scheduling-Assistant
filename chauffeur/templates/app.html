@@ -142,6 +142,26 @@
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
             <!-- Day panes injected here -->
         </div>
+
+        <!-- Bottom Tab Bar -->
+        <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
+            style="padding-bottom: env(safe-area-inset-bottom)">
+            <button id="tab-drives" onclick="setView('drives')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-blue-400 transition-colors">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5S17.33 13 16.5 13 15 13.67 15 14.5s.67 1.5 1.5 1.5z"/>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">My Drives</span>
+            </button>
+            <button id="tab-family" onclick="setView('family')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">Family</span>
+            </button>
+        </div>
     </div>
 
     <!-- Notifications Modal -->
@@ -231,8 +251,27 @@
         let currentDates = [];
         let activeDateIndex = 0;
         let routeContext = null;
+        let currentView = localStorage.getItem('chauffeur_view') || 'drives';
+
+        function setView(view) {
+            if (view === currentView) return;
+            currentView = view;
+            localStorage.setItem('chauffeur_view', view);
+            updateTabBar();
+            buildTimeline();
+        }
+
+        function updateTabBar() {
+            ['drives', 'family'].forEach(v => {
+                const tab = document.getElementById(`tab-${v}`);
+                if (!tab) return;
+                tab.classList.toggle('text-blue-400', v === currentView);
+                tab.classList.toggle('text-gray-500', v !== currentView);
+            });
+        }
 
         async function init() {
+            updateTabBar();
             await fetchDrivers();
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
                 selectDriver(selectedDriverId);
@@ -709,6 +748,14 @@
             document.getElementById('em-location').textContent = ev.location || 'No location provided';
             document.getElementById('em-passengers').innerHTML = ev.passengerHtml || '<span class="text-gray-500 italic">None</span>';
 
+            const driverRow = document.getElementById('em-driver-row');
+            if (ev.driverHtml) {
+                driverRow.style.display = 'block';
+                document.getElementById('em-driver').innerHTML = ev.driverHtml;
+            } else {
+                driverRow.style.display = 'none';
+            }
+
             const mapBtn = document.getElementById('em-map-btn');
             if (ev.location) {
                 mapBtn.style.display = 'flex';
@@ -811,6 +858,184 @@
             `;
         }
 
+        // --- Family Day View (agenda of ALL family events, like the calendar) ---
+        // Rebuilds calendar.html's dedupe: pickup/dropoff/unrolled variants merge
+        // back into one base event; background_trip slices merge into one banner.
+        function buildFamilyCards() {
+            const { events, assignments, ghost_assignments } = scheduleData;
+            const trueUnassigned = scheduleData.true_unassigned || [];
+            const cards = new Map();
+
+            (events || []).forEach(ev => {
+                let baseId = ev.id;
+                let title = ev.title;
+                const isTrip = ev.event_type === 'background_trip';
+                if (isTrip) {
+                    if (baseId.includes('_slice_')) baseId = baseId.split('_slice_')[0];
+                } else if (baseId.includes('_unrolled_')) {
+                    baseId = baseId.split('_unrolled_')[0];
+                } else if (baseId.includes('_dropoff')) {
+                    baseId = baseId.split('_dropoff')[0];
+                    title = title.replace('Dropoff: ', '');
+                } else if (baseId.includes('_pickup')) {
+                    baseId = baseId.split('_pickup')[0];
+                    title = title.replace('Pickup: ', '');
+                }
+
+                let card = cards.get(baseId);
+                if (!card) {
+                    card = {
+                        id: baseId, title, isTrip,
+                        start: ev.start, end: ev.end,
+                        allDay: !!ev.all_day || isTrip,
+                        location: ev.location,
+                        calendarIds: [...(ev.calendar_ids || [])],
+                        driverIds: new Set(),
+                        isUnassigned: false,
+                        suppressed: !!ev.trip_suppressed,
+                        isErrand: false
+                    };
+                    cards.set(baseId, card);
+                } else {
+                    if (new Date(ev.start) < new Date(card.start)) card.start = ev.start;
+                    if (new Date(ev.end) > new Date(card.end)) card.end = ev.end;
+                    (ev.calendar_ids || []).forEach(c => {
+                        if (!card.calendarIds.includes(c)) card.calendarIds.push(c);
+                    });
+                }
+                const assigned = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
+                if (assigned) card.driverIds.add(assigned);
+                if (trueUnassigned.includes(ev.id)) card.isUnassigned = true;
+            });
+
+            return Array.from(cards.values());
+        }
+
+        function buildFamilyByDate() {
+            const byDate = {};
+            const push = (d, item) => {
+                const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                if (!byDate[dStr]) byDate[dStr] = [];
+                byDate[dStr].push(item);
+            };
+
+            buildFamilyCards().forEach(card => {
+                let currDate = new Date(card.start);
+                currDate.setHours(0, 0, 0, 0);
+                let endDate = new Date(card.end);
+                endDate.setHours(0, 0, 0, 0);
+                const endRaw = new Date(card.end);
+                if (endRaw.getHours() === 0 && endRaw.getMinutes() === 0 && currDate < endDate) {
+                    endDate.setDate(endDate.getDate() - 1);
+                }
+                while (currDate <= endDate) {
+                    push(new Date(currDate), card);
+                    currDate.setDate(currDate.getDate() + 1);
+                }
+            });
+
+            (scheduleData.scheduled_errands || []).forEach(er => {
+                push(new Date(er.start_time), {
+                    id: er.id, title: er.title, isTrip: false,
+                    start: er.start_time, end: er.end_time, allDay: false,
+                    location: er.errand ? er.errand.location : er.location,
+                    calendarIds: [],
+                    driverIds: new Set(er.driver ? [er.driver.id] : []),
+                    isUnassigned: false, suppressed: false, isErrand: true
+                });
+            });
+
+            return byDate;
+        }
+
+        function familyPaxBadges(calendarIds) {
+            const meta = scheduleData.calendar_metadata || {};
+            return (calendarIds || []).map(c => meta[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' })
+                .map(m => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border truncate max-w-[90px]" style="background-color: ${m.backgroundColor}20; color: ${m.backgroundColor}; border-color: ${m.backgroundColor}50;" title="${m.summary}">${m.summary}</span>`)
+                .join('');
+        }
+
+        function familyDriverChips(card) {
+            if (card.isUnassigned) {
+                return `<span class="px-2 py-0.5 text-[10px] font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ NEEDS DRIVER</span>`;
+            }
+            return [...card.driverIds].map(id => {
+                const d = driversData.find(x => x.id === id);
+                if (!d) return '';
+                return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5z"/></svg>${d.name}</span>`;
+            }).join('');
+        }
+
+        function renderFamilyCard(card) {
+            const now = new Date();
+
+            if (card.isTrip) {
+                return `
+                    <div class="mb-3 rounded-xl border border-blue-500/40 bg-blue-900/20 px-4 py-3 flex items-center gap-3">
+                        <span class="text-xl">✈️</span>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-blue-200 font-bold leading-tight truncate">${card.title}</div>
+                            <div class="text-[11px] text-blue-400 font-bold uppercase tracking-wider">Trip · All Day</div>
+                        </div>
+                    </div>`;
+            }
+
+            let color = '#3B82F6';
+            if (card.isErrand) color = '#F59E0B';
+            else if (card.suppressed) color = '#6B7280';
+            else if (card.calendarIds.length > 0) {
+                const meta = (scheduleData.calendar_metadata || {})[card.calendarIds[0]];
+                if (meta) color = meta.backgroundColor;
+            }
+
+            const timeStr = card.allDay ? 'All Day' : `${formatTime(card.start)} - ${formatTime(card.end)}`;
+            const isPast = !card.allDay && new Date(card.end) < now;
+            const paxBadges = familyPaxBadges(card.calendarIds);
+            const driverChips = familyDriverChips(card);
+
+            const eventData = {
+                id: card.id,
+                title: card.title,
+                timeStr: timeStr,
+                location: card.location,
+                passengerHtml: paxBadges,
+                driverHtml: driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>',
+                isErrand: card.isErrand
+            };
+            const evDataStr = encodeURIComponent(JSON.stringify(eventData));
+
+            return `
+                <div class="mb-3 rounded-xl border bg-gray-900 border-gray-800 active:bg-gray-800 cursor-pointer relative overflow-hidden transition-colors ${isPast ? 'opacity-40' : ''} ${card.suppressed ? 'border-dashed' : ''}"
+                    onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
+                    <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color: ${color}"></div>
+                    <div class="p-4 pl-5">
+                        <div class="text-sm font-bold mb-1 uppercase tracking-wider" style="color: ${color}">${timeStr}</div>
+                        <div class="text-white font-bold text-lg leading-tight mb-2">
+                            ${card.isErrand ? '<span class="text-[10px] tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
+                            ${card.title}
+                        </div>
+                        ${(paxBadges || driverChips) ? `<div class="flex flex-wrap items-center gap-1 mb-2">${paxBadges}${driverChips}</div>` : ''}
+                        ${card.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${card.location}</span></div>` : ''}
+                    </div>
+                </div>`;
+        }
+
+        function renderFamilyDay(items) {
+            if (!items || items.length === 0) {
+                return `
+                    <div class="flex flex-col items-center justify-center h-full opacity-50 text-center">
+                        <div class="text-6xl mb-4">📅</div>
+                        <h3 class="text-xl font-bold mb-2">No Events</h3>
+                        <p class="text-gray-400">Nothing on the family calendar today.</p>
+                    </div>`;
+            }
+            const sorted = [...items].sort((a, b) => {
+                if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
+                return new Date(a.start) - new Date(b.start);
+            });
+            return `<div class="flex flex-col pb-20">${sorted.map(renderFamilyCard).join('')}</div>`;
+        }
+
         function buildTimeline() {
             const container = document.getElementById('days-container');
             const dId = selectedDriverId;
@@ -892,6 +1117,8 @@
 
             container.innerHTML = '';
 
+            const familyByDate = currentView === 'family' ? buildFamilyByDate() : null;
+
             currentDates.forEach((dateStr, index) => {
                 const evs = byDate[dateStr] || [];
                 evs.sort((a, b) => new Date(a.start) - new Date(b.start));
@@ -899,6 +1126,12 @@
                 const pane = document.createElement('div');
                 pane.className = "min-w-full w-full h-full snap-center overflow-y-auto px-4 py-6";
                 pane.id = `pane-${index}`;
+
+                if (familyByDate) {
+                    pane.innerHTML = renderFamilyDay(familyByDate[dateStr]);
+                    container.appendChild(pane);
+                    return;
+                }
 
                 if (evs.length === 0) {
                     pane.innerHTML = `
@@ -1342,6 +1575,10 @@
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Passengers</p>
                 <div id="em-passengers" class="flex flex-wrap gap-2"></div>
             </div>
+            <div class="mb-4" id="em-driver-row" style="display: none">
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Driver</p>
+                <div id="em-driver" class="flex flex-wrap gap-2"></div>
+            </div>
             <div class="mb-6">
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Location</p>
                 <p id="em-location" class="text-gray-300 text-sm break-words"></p>
@@ -1362,7 +1599,7 @@
     </div>
 
     <!-- Argyle Chat Popup -->
-    <div id="kiosk-chat-popup" class="hidden fixed bottom-24 right-4 w-80 h-[30rem] max-h-[70vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
+    <div id="kiosk-chat-popup" class="hidden fixed bottom-40 right-4 w-80 h-[30rem] max-h-[65vh] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex-col z-50 overflow-hidden">
         <div class="bg-indigo-600 px-4 py-3 flex justify-between items-center text-white shrink-0 shadow-sm border-b border-indigo-700">
             <span class="font-bold flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1392,7 +1629,7 @@
     </div>
 
     <!-- Floating Action Button -->
-    <button id="kiosk-chat-fab" onclick="toggleKioskChat()" class="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
+    <button id="kiosk-chat-fab" onclick="toggleKioskChat()" class="fixed bottom-24 right-4 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-110 z-50 focus:outline-none">
         <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
         </svg>
