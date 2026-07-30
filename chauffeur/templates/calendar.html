@@ -278,7 +278,7 @@
                 <!-- Description -->
                 <div class="flex justify-end pt-1" id="modal-config-container">
                     <button id="modal-config-btn"
-                        onclick="window.location.href='dashboard_v2?open_event=' + encodeURIComponent(window._modalEventId || '')"
+                        onclick="closeModal(); openCalConfigModal(window._modalEventId)"
                         class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600/80 hover:bg-blue-500 text-white text-sm font-bold rounded-lg transition-colors shadow-md">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                         Event Configuration
@@ -299,6 +299,71 @@
         </div>
     </div>
     
+    <!-- Event Configuration Modal (in-page; sibling of the dashboard's edit
+         mode — same api/events/config + api/events PATCH contracts) -->
+    <div id="cal-config-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 border-b border-gray-700 flex justify-between items-center shrink-0">
+                <div>
+                    <h3 id="cal-config-title" class="text-xl font-bold text-blue-200">Event Configuration</h3>
+                    <p id="cal-config-subtitle" class="text-xs text-gray-400 mt-0.5"></p>
+                </div>
+                <button onclick="closeCalConfigModal()" class="text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-sm">Start Time Override</label>
+                        <input type="datetime-local" id="cal-edit-start" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 mb-1 text-sm">End Time Override</label>
+                        <input type="datetime-local" id="cal-edit-end" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-1 text-sm">Location Override</label>
+                    <input type="text" id="cal-edit-location" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Attendance Mode</label>
+                    <select id="cal-edit-attendance-mode" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-blue-500">
+                        <option value="scheduler">Let scheduler decide</option>
+                        <option value="dropoff_pickup">Drop off and Pick up</option>
+                        <option value="stay">Stay for entire event</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Passengers</label>
+                    <div id="cal-edit-passengers" class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3"></div>
+                </div>
+                <div>
+                    <label class="block text-gray-400 mb-2 text-sm font-bold tracking-wider">Drivers</label>
+                    <div id="cal-edit-drivers" class="grid grid-cols-2 gap-3 bg-gray-900 border border-gray-600 rounded-lg p-3"></div>
+                </div>
+                <div class="flex flex-col bg-gray-900 border border-gray-600 rounded-lg p-3">
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" id="cal-edit-is-trip" class="w-5 h-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer">
+                        <label for="cal-edit-is-trip" class="ml-3 text-gray-300 font-bold cursor-pointer">Mark as pure Background Trip (No destination)</label>
+                    </div>
+                    <label for="cal-edit-trip-id" class="text-gray-400 mb-1 text-sm font-bold tracking-wider">Associated Trip</label>
+                    <select id="cal-edit-trip-id" class="bg-gray-800 border border-gray-600 rounded p-2 text-white text-sm focus:border-blue-500">
+                        <option value="">None</option>
+                    </select>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-700 flex justify-between items-center shrink-0">
+                <button id="cal-ignore-btn" onclick="calIgnoreEvent()" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-red-400 hover:text-red-300 font-bold transition-colors text-sm">Ignore Event</button>
+                <div class="space-x-3">
+                    <button onclick="closeCalConfigModal()" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm">Cancel</button>
+                    <button id="cal-save-config-btn" onclick="saveCalEventConfig()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-md transition-colors text-sm">Save Configuration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         function closeModal() {
             const modal = document.getElementById('simple-event-modal');
@@ -308,6 +373,197 @@
             setTimeout(() => {
                 modal.classList.add('hidden');
             }, 300);
+        }
+
+        // --- In-page Event Configuration (sibling of dashboard.html's edit mode:
+        // same endpoints and payload shape; keep them in sync) ---
+        let calConfigEvent = null;
+
+        function _calFindRawEvent(baseId) {
+            const evs = (window._schedData && window._schedData.events) || [];
+            return evs.find(e => e.id === baseId) || evs.find(e => e.id.startsWith(baseId + '_')) || null;
+        }
+
+        function _calToDateTimeLocal(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
+
+        async function openCalConfigModal(baseId) {
+            const ev = _calFindRawEvent(baseId);
+            if (!ev) { showGlobalAlert('Could not load this event\'s data. Try refreshing.'); return; }
+            calConfigEvent = ev;
+            const data = window._schedData || {};
+            const appConfig = ev.app_config || {};
+            const calMeta = data.calendar_metadata || {};
+
+            document.getElementById('cal-config-subtitle').textContent = ev.title;
+            document.getElementById('cal-edit-start').value = _calToDateTimeLocal(ev.start);
+            document.getElementById('cal-edit-end').value = _calToDateTimeLocal(ev.end);
+            document.getElementById('cal-edit-location').value = ev.location || '';
+            document.getElementById('cal-edit-attendance-mode').value = appConfig.driver_attendance_mode || 'scheduler';
+            document.getElementById('cal-edit-is-trip').checked = appConfig.is_trip || false;
+
+            // Passengers (checked: on-calendar > saved config > hashtag heuristic)
+            const passengers = data.passengers || [];
+            document.getElementById('cal-edit-passengers').innerHTML = passengers.map(p => {
+                const isOnCalendar = ev.original_calendar_ids && p.calendar_ids && ev.original_calendar_ids.some(cid => p.calendar_ids.includes(cid));
+                let isChecked = isOnCalendar;
+                if (!isOnCalendar) {
+                    if (appConfig.passenger_ids) {
+                        isChecked = appConfig.passenger_ids.includes(String(p.id));
+                    } else if (p.hashtags && p.hashtags.length > 0) {
+                        isChecked = p.hashtags.some(tag => {
+                            const t = tag.toLowerCase();
+                            return (ev.title || '').toLowerCase().includes(t) || (ev.description || '').toLowerCase().includes(t);
+                        });
+                    }
+                }
+                const times = (appConfig.passenger_times || {})[p.id] || {};
+                return `
+                    <div class="flex flex-col space-y-1">
+                        <label class="cursor-pointer inline-flex w-max items-center">
+                            <input type="checkbox" value="${p.id}" class="cal-pax-checkbox w-4 h-4 rounded bg-gray-800 border-gray-600 text-blue-500" ${isChecked ? 'checked' : ''} ${isOnCalendar ? 'disabled' : ''}>
+                            <span class="ml-2 text-sm font-semibold ${isOnCalendar ? 'text-blue-300' : 'text-gray-300'}">${p.name}${isOnCalendar ? ' <span class="text-[10px] uppercase font-bold">(On Calendar)</span>' : ''}</span>
+                        </label>
+                        <div class="flex items-center gap-2 ml-6 text-xs text-gray-400">
+                            <input type="time" data-pax="${p.id}" data-kind="start" value="${times.start || ''}" class="cal-pax-time bg-gray-800 border border-gray-600 rounded p-1 text-gray-200">
+                            <span>–</span>
+                            <input type="time" data-pax="${p.id}" data-kind="end" value="${times.end || ''}" class="cal-pax-time bg-gray-800 border border-gray-600 rounded p-1 text-gray-200">
+                        </div>
+                    </div>`;
+            }).join('') || '<span class="text-gray-500 italic text-sm">No passengers configured.</span>';
+
+            // Drivers (attendees)
+            const drivers = data.drivers || [];
+            document.getElementById('cal-edit-drivers').innerHTML = drivers.map(d => {
+                const isChecked = appConfig.driver_ids ? appConfig.driver_ids.includes(String(d.id)) : false;
+                return `
+                    <label class="cursor-pointer inline-flex w-max items-center">
+                        <input type="checkbox" value="${d.id}" class="cal-drv-checkbox w-4 h-4 rounded bg-gray-800 border-gray-600 text-blue-500" ${isChecked ? 'checked' : ''}>
+                        <span class="ml-2 text-sm font-semibold text-gray-300">${d.name}</span>
+                    </label>`;
+            }).join('') || '<span class="text-gray-500 italic text-sm">No drivers configured.</span>';
+
+            // Trips dropdown (canonical non-draft trip list, like the dashboard)
+            const tripSel = document.getElementById('cal-edit-trip-id');
+            const keepSel = appConfig.trip_id ? `<option value="${appConfig.trip_id}" selected>Loading trips…</option>` : '';
+            tripSel.innerHTML = `<option value="">None</option>${keepSel}`;
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const res = await fetch(`${apiBase}api/trips`);
+                const tdata = await res.json();
+                const trips = (tdata.trips || []).filter(t => !t.is_draft);
+                let html = '<option value="">None</option>';
+                let matched = false;
+                trips.forEach(t => {
+                    const sel = String(t.id) === String(appConfig.trip_id || '');
+                    if (sel) matched = true;
+                    html += `<option value="${t.id}" ${sel ? 'selected' : ''}>${t.title || t.id}</option>`;
+                });
+                if (appConfig.trip_id && !matched) {
+                    html += `<option value="${appConfig.trip_id}" selected>${appConfig.trip_id} (unknown trip)</option>`;
+                }
+                tripSel.innerHTML = html;
+            } catch (e) { console.warn('Failed to load trips for config dialog', e); }
+
+            document.getElementById('cal-config-modal').classList.remove('hidden');
+        }
+
+        function closeCalConfigModal() {
+            document.getElementById('cal-config-modal').classList.add('hidden');
+            calConfigEvent = null;
+        }
+
+        async function _calResolveGoogleId(ev) {
+            const parts = ev.source_event_ids[0].split('::');
+            let googleId = parts[parts.length - 1];
+            if (ev.recurring_event_id) {
+                const applyToSeries = await promptConfirm("Recurring Event", "This is a recurring event. Do you want to apply this configuration to ALL instances in the series?", "Entire Series", "This Instance");
+                if (applyToSeries) googleId = ev.recurring_event_id;
+            }
+            return googleId;
+        }
+
+        async function saveCalEventConfig() {
+            const ev = calConfigEvent;
+            if (!ev) return;
+            const btn = document.getElementById('cal-save-config-btn');
+            btn.disabled = true; btn.textContent = 'Saving…';
+            try {
+                const passengerTimes = {};
+                document.querySelectorAll('#cal-edit-passengers .cal-pax-time').forEach(inp => {
+                    if (!inp.value) return;
+                    const pId = inp.dataset.pax;
+                    const cb = document.querySelector(`#cal-edit-passengers .cal-pax-checkbox[value="${pId}"]`);
+                    if (!cb || (!cb.checked && !cb.disabled)) return;
+                    if (!passengerTimes[pId]) passengerTimes[pId] = {};
+                    passengerTimes[pId][inp.dataset.kind] = inp.value;
+                });
+                const configData = {
+                    passenger_ids: Array.from(document.querySelectorAll('#cal-edit-passengers .cal-pax-checkbox:checked, #cal-edit-passengers .cal-pax-checkbox:disabled')).map(cb => cb.value),
+                    passenger_times: passengerTimes,
+                    driver_ids: Array.from(document.querySelectorAll('#cal-edit-drivers .cal-drv-checkbox:checked')).map(cb => cb.value),
+                    driver_attendance_mode: document.getElementById('cal-edit-attendance-mode').value,
+                    is_trip: document.getElementById('cal-edit-is-trip').checked,
+                    trip_id: document.getElementById('cal-edit-trip-id').value,
+                    location_override: document.getElementById('cal-edit-location').value
+                };
+                const googleId = await _calResolveGoogleId(ev);
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                await fetch(`${apiBase}api/events/config/${googleId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(configData)
+                });
+
+                // Time override if changed
+                const newStart = document.getElementById('cal-edit-start').value;
+                const newEnd = document.getElementById('cal-edit-end').value;
+                const newStartIso = newStart ? new Date(newStart).toISOString() : null;
+                const newEndIso = newEnd ? new Date(newEnd).toISOString() : null;
+                if ((newStartIso && newStartIso !== new Date(ev.start).toISOString()) ||
+                    (newEndIso && newEndIso !== new Date(ev.end).toISOString())) {
+                    await fetch(`${apiBase}api/events`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source_event_ids: ev.source_event_ids,
+                            start: newStartIso || ev.start,
+                            end: newEndIso || ev.end,
+                            location: configData.location_override || ev.location
+                        })
+                    });
+                }
+                closeCalConfigModal();
+                if (window.calendar) window.calendar.refetchEvents();
+            } catch (e) {
+                showGlobalAlert('Failed to save configuration.');
+            } finally {
+                btn.disabled = false; btn.textContent = 'Save Configuration';
+            }
+        }
+
+        async function calIgnoreEvent() {
+            const ev = calConfigEvent;
+            if (!ev) return;
+            const proceed = await promptConfirm('Ignore Event', 'Hide this event from the driving schedule entirely?', 'Ignore', 'Cancel');
+            if (!proceed) return;
+            try {
+                const googleId = await _calResolveGoogleId(ev);
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                await fetch(`${apiBase}api/events/config/${googleId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_ignored: true })
+                });
+                closeCalConfigModal();
+                if (window.calendar) window.calendar.refetchEvents();
+            } catch (e) {
+                showGlobalAlert('Failed to ignore event.');
+            }
         }
 
         window.hiddenMembers = new Set();
@@ -453,9 +709,12 @@
                     try {
                         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                         const res = await fetch(`${apiBase}api/schedule?start_date=${encodeURIComponent(info.startStr)}&end_date=${encodeURIComponent(info.endStr)}&force_refresh=false`);
+
                         if (!res.ok) throw new Error('Network response was not ok');
                         const data = await res.json();
-                        
+                        // Stash for the in-page Event Configuration modal
+                        window._schedData = data;
+
                         let eventsMap = new Map();
                         const assignments = data.assignments || {};
                         const true_unassigned = data.true_unassigned || [];
