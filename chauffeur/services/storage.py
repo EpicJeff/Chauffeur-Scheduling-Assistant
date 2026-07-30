@@ -124,6 +124,7 @@ with db_lock:
     errands_table = db.table('errands')
     errand_rules_table = db.table('errand_rules')
     trip_metadata_table = db.table('trip_metadata')
+    app_state_table = db.table('app_state')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1018,6 +1019,17 @@ def get_push_subscriptions(driver_id: str = None):
         if driver_id:
             return push_subscriptions_table.search(Query().driver_id == driver_id)
         return push_subscriptions_table.all()
+
+# --- Generic app state (small persistent key/value markers, e.g. the
+# "tomorrow digest already sent today" date so restarts don't re-send) ---
+def get_app_state(key: str, default=None):
+    with db_lock:
+        rows = app_state_table.search(Query().key == key)
+        return rows[0].get('value') if rows else default
+
+def set_app_state(key: str, value):
+    with db_lock:
+        app_state_table.upsert({'key': key, 'value': value}, Query().key == key)
 
 # Drive Status
 def mark_drive_status(leg_id: str, status: str):

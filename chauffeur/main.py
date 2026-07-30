@@ -110,11 +110,76 @@ async def push_notification_loop():
                 elif now_ts > trigger_ts + 600:
                     # Expired, mark it fired
                     storage.mark_notification_fired(notif_id)
-                    
+
+            # --- Evening "tomorrow" digest (once per day after the set time) ---
+            try:
+                settings = storage.get_settings() or {}
+                if settings.get("tomorrow_digest_enabled", True):
+                    now_dt = datetime.now()
+                    hh, mm = [int(x) for x in str(settings.get("tomorrow_digest_time", "20:00")).split(":")[:2]]
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    if (now_dt.hour, now_dt.minute) >= (hh, mm) \
+                            and storage.get_app_state("tomorrow_digest_last_sent") != today_str:
+                        _send_tomorrow_digests(subs)
+                        storage.set_app_state("tomorrow_digest_last_sent", today_str)
+            except Exception as de:
+                print(f"Tomorrow digest error: {de}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
-            
+
         await asyncio.sleep(30)
+
+def _send_tomorrow_digests(subs):
+    """One evening push per subscribed driver listing tomorrow's assignments
+    (events via the combined cache's assignments map, plus scheduled errands).
+    Drivers with nothing tomorrow get no push."""
+    import datetime as _dt
+    from services import storage
+
+    cache = storage.get_cached_schedule() or {}
+    events = {e.get("id"): e for e in cache.get("events", [])}
+    assignments = cache.get("assignments") or {}
+    tomorrow = _dt.date.today() + _dt.timedelta(days=1)
+
+    per_driver = {}
+    for ev_id, d_id in assignments.items():
+        if not d_id or str(d_id).startswith("ghost_"):
+            continue
+        ev = events.get(ev_id)
+        if not ev:
+            continue
+        try:
+            start = _dt.datetime.fromisoformat(ev["start"])
+        except Exception:
+            continue
+        if start.date() != tomorrow:
+            continue
+        per_driver.setdefault(d_id, []).append((start, ev.get("title") or "Event"))
+
+    for er in cache.get("scheduled_errands", []):
+        d_id = (er.get("driver") or {}).get("id")
+        if not d_id:
+            continue
+        try:
+            start = _dt.datetime.fromisoformat(er["start_time"])
+        except Exception:
+            continue
+        if start.date() != tomorrow:
+            continue
+        per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
+
+    subscribed = {s.get("driver_id") for s in subs}
+    for d_id, items in per_driver.items():
+        if d_id not in subscribed:
+            continue
+        items.sort(key=lambda x: x[0])
+        lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}" for start, title in items[:6]]
+        if len(items) > 6:
+            lines.append(f"...and {len(items) - 6} more")
+        n = len(items)
+        send_push(d_id, subs, f"Tomorrow: {n} drive{'s' if n != 1 else ''}",
+                  "\n".join(lines), f"digest_{tomorrow.isoformat()}", actions=[])
 
 def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
     from pywebpush import webpush, WebPushException
@@ -146,19 +211,44 @@ def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
             except Exception as ex:
                 print(f"Push failed: {repr(ex)}")
 
-def _notify_assignment_changes(old_cache, new_payload, overrides):
-    """After a re-solve, push-notify drivers whose upcoming assignments changed.
+import threading as _notif_threading
+# Assignment changes buffered across a progressive re-solve run. The solver
+# writes the combined cache once per solved day, so pushing per write would
+# spam one notification per day — instead each write COLLECTS its diff here
+# and the run's end (or a fallback timer) FLUSHES one push per driver.
+_pending_assignment_changes = {}
+_pending_changes_lock = _notif_threading.Lock()
+_pending_flush_timer = None
 
-    Diffs the previous combined-cache assignments against the new payload.
+def _fmt_change_event(ev):
+    title = ev.get("title") or "Event"
+    try:
+        import datetime as _dt
+        start = _dt.datetime.fromisoformat(ev["start"])
+        return f"{title} ({start.strftime('%I:%M %p').lstrip('0')})"
+    except Exception:
+        return title
+
+def _own_pwa_override(ev, d_id, overrides):
+    ev_keys = {ev.get("id"), ev.get("original_event_id"), ev.get("recurring_event_id")}
+    ev_keys.discard(None)
+    for o in overrides:
+        if getattr(o, "event_id", None) in ev_keys \
+                and getattr(o, "driver_id", None) == d_id \
+                and getattr(o, "source", None) == "pwa":
+            return True
+    return False
+
+def _collect_assignment_changes(old_cache, new_payload, overrides):
+    """Buffer assignment diffs from one cache write of a progressive re-solve.
+
     Only events present in BOTH snapshots count — calendar adds/removals are
-    not assignment changes — and only upcoming events. A gain caused by the
-    driver's own PWA Assign-to-Me override is suppressed (they made the
-    change; only the drivers affected downstream need to hear about it).
-    Losses are always sent, including to the claiming driver, since the
-    solver may rebalance events away from them as a side effect.
+    not assignment changes — and only upcoming events. Per event we keep the
+    first old driver and the latest new driver, so churn within a run
+    (A→B then B→A) nets out to nothing at flush time.
     """
     import datetime as _dt
-    from services import storage
+    global _pending_flush_timer
 
     old_assign = old_cache.get("assignments") or {}
     new_assign = new_payload.get("assignments") or {}
@@ -169,63 +259,118 @@ def _notify_assignment_changes(old_cache, new_payload, overrides):
     new_events = {e.get("id"): e for e in new_payload.get("events", [])}
     now = _dt.datetime.now()
 
-    def _fmt(ev):
-        title = ev.get("title") or "Event"
-        try:
-            start = _dt.datetime.fromisoformat(ev["start"])
-            return f"{title} ({start.strftime('%a %I:%M %p').replace(' 0', ' ')})"
-        except Exception:
-            return title
-
-    def _own_pwa_override(ev, d_id):
-        ev_keys = {ev.get("id"), ev.get("original_event_id"), ev.get("recurring_event_id")}
-        ev_keys.discard(None)
-        for o in overrides:
-            if getattr(o, "event_id", None) in ev_keys \
-                    and getattr(o, "driver_id", None) == d_id \
-                    and getattr(o, "source", None) == "pwa":
-                return True
-        return False
-
-    changes = {}
-    for ev_id in set(old_assign) | set(new_assign):
-        old_d = old_assign.get(ev_id)
-        new_d = new_assign.get(ev_id)
-        if old_d == new_d:
-            continue
-        ev = new_events.get(ev_id)
-        if ev is None or ev_id not in old_event_ids:
-            continue
-        try:
-            start = _dt.datetime.fromisoformat(ev["start"])
-            if start.replace(tzinfo=None) < now:
+    with _pending_changes_lock:
+        for ev_id in set(old_assign) | set(new_assign):
+            old_d = old_assign.get(ev_id)
+            new_d = new_assign.get(ev_id)
+            if old_d == new_d:
                 continue
+            ev = new_events.get(ev_id)
+            if ev is None or ev_id not in old_event_ids:
+                continue
+            try:
+                start = _dt.datetime.fromisoformat(ev["start"])
+                if start.replace(tzinfo=None) < now:
+                    continue
+            except Exception:
+                continue
+            entry = _pending_assignment_changes.get(ev_id)
+            if entry is None:
+                entry = {"first_old": old_d, "pwa_claimer": None}
+                _pending_assignment_changes[ev_id] = entry
+            entry["last_new"] = new_d
+            entry["ev"] = ev
+            if new_d and _own_pwa_override(ev, new_d, overrides):
+                entry["pwa_claimer"] = new_d
+
+        # Fallback flush for any solve path that never reaches the
+        # end-of-run flush in trigger_background_refresh.
+        if _pending_assignment_changes:
+            if _pending_flush_timer:
+                _pending_flush_timer.cancel()
+            _pending_flush_timer = _notif_threading.Timer(300, flush_assignment_notifications)
+            _pending_flush_timer.daemon = True
+            _pending_flush_timer.start()
+
+def flush_assignment_notifications():
+    """Send at most ONE Schedule Updated push per driver for a whole re-solve
+    run: detailed +/- lines for TODAY's changes, a single summary line naming
+    the affected dates for future days."""
+    import datetime as _dt
+    from services import storage
+    global _pending_flush_timer
+
+    with _pending_changes_lock:
+        buffered = dict(_pending_assignment_changes)
+        _pending_assignment_changes.clear()
+        if _pending_flush_timer:
+            _pending_flush_timer.cancel()
+            _pending_flush_timer = None
+    if not buffered:
+        return
+
+    today = _dt.date.today()
+    changes = {}
+    def _bucket(d_id):
+        return changes.setdefault(d_id, {"today_gained": [], "today_lost": [], "future_dates": set()})
+
+    for ev_id, entry in buffered.items():
+        old_d = entry.get("first_old")
+        new_d = entry.get("last_new")
+        ev = entry.get("ev") or {}
+        if old_d == new_d:
+            continue  # churned back within the run — no net change
+        try:
+            start_date = _dt.datetime.fromisoformat(ev["start"]).date()
         except Exception:
             continue
+        is_today = start_date == today
         if old_d and not str(old_d).startswith("ghost_"):
-            changes.setdefault(old_d, {"gained": [], "lost": []})["lost"].append(ev)
-        if new_d and not str(new_d).startswith("ghost_") and not _own_pwa_override(ev, new_d):
-            changes.setdefault(new_d, {"gained": [], "lost": []})["gained"].append(ev)
+            if is_today:
+                _bucket(old_d)["today_lost"].append(ev)
+            else:
+                _bucket(old_d)["future_dates"].add(start_date)
+        if new_d and not str(new_d).startswith("ghost_") and entry.get("pwa_claimer") != new_d:
+            if is_today:
+                _bucket(new_d)["today_gained"].append(ev)
+            else:
+                _bucket(new_d)["future_dates"].add(start_date)
 
     if not changes:
         return
 
     subs = storage.get_push_subscriptions()
     for d_id, ch in changes.items():
-        lines = [f"+ {_fmt(e)}" for e in ch["gained"]] + [f"- {_fmt(e)}" for e in ch["lost"]]
+        lines = [f"+ {_fmt_change_event(e)}" for e in ch["today_gained"]] \
+              + [f"- {_fmt_change_event(e)}" for e in ch["today_lost"]]
         shown = lines[:5]
         if len(lines) > 5:
-            shown.append(f"...and {len(lines) - 5} more")
-        send_push(d_id, subs, "Schedule Updated", "\n".join(shown),
+            shown.append(f"...and {len(lines) - 5} more today")
+
+        fdates = sorted(ch["future_dates"])
+        if fdates:
+            dates_str = ", ".join(d.strftime('%a %m/%d') for d in fdates[:4])
+            if len(fdates) > 4:
+                dates_str += f" +{len(fdates) - 4} more"
+            prefix = "Also changes on: " if lines else "Your upcoming schedule changed: "
+            shown.append(prefix + dates_str)
+
+        title = "Schedule Updated Today" if lines else "Schedule Updated"
+        send_push(d_id, subs, title, "\n".join(shown),
                   f"sched_change_{int(time.time())}", actions=[])
-        for e in ch["gained"]:
+
+        for e in ch["today_gained"]:
             storage.add_telemetry_event(TelemetryEvent(
                 driver_id=d_id, event_id=e.get("id") or "",
-                action="assigned", details=_fmt(e)).model_dump())
-        for e in ch["lost"]:
+                action="assigned", details=_fmt_change_event(e)).model_dump())
+        for e in ch["today_lost"]:
             storage.add_telemetry_event(TelemetryEvent(
                 driver_id=d_id, event_id=e.get("id") or "",
-                action="removed", details=_fmt(e)).model_dump())
+                action="removed", details=_fmt_change_event(e)).model_dump())
+        if fdates:
+            storage.add_telemetry_event(TelemetryEvent(
+                driver_id=d_id, event_id="schedule", action="updated",
+                details="Upcoming schedule changed: " + ", ".join(d.strftime('%a %m/%d') for d in fdates)).model_dump())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -3460,6 +3605,12 @@ def trigger_background_refresh(start_date_str=None, end_date_str=None, force_ref
                     schedule_coordinator.clear_solving_dates()
                 current = schedule_coordinator.take_pending()
             held = False
+            # The whole run (all progressively solved days, including any
+            # coalesced re-requests) is done — send the batched notifications.
+            try:
+                flush_assignment_notifications()
+            except Exception as e:
+                logger.error(f"Assignment-change notification flush failed: {e}", exc_info=True)
         finally:
             # take_pending() releases the slot by returning None; anything else
             # leaving this thread must release it too, or refreshes wedge
@@ -4264,9 +4415,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             storage.set_cached_schedule(data_payload)
             if not draft:
                 try:
-                    _notify_assignment_changes(old_cache, data_payload, overrides)
+                    _collect_assignment_changes(old_cache, data_payload, overrides)
                 except Exception as notify_err:
-                    logger.error(f"Assignment-change notification failed: {notify_err}", exc_info=True)
+                    logger.error(f"Assignment-change collection failed: {notify_err}", exc_info=True)
         else:
             storage.save_custom_schedule(start_date_str, end_date_str, data_payload, "")
 

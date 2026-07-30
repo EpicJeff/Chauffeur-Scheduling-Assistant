@@ -141,6 +141,9 @@ class ManualOverride(BaseModel):
     source: Optional[str] = None
 
 class Settings(BaseModel):
+    # Evening push digest listing each driver's assignments for tomorrow.
+    tomorrow_digest_enabled: bool = True
+    tomorrow_digest_time: str = "20:00"  # HH:MM, server-local time
     calendar_ids: List[str]
     # How many days the kiosk/dashboard renders. Display only.
     days_to_show: int = 7
