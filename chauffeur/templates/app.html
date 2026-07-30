@@ -756,59 +756,73 @@
             }
         }
 
-        const CLAIM_BTN_LABEL = `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg> Assign to Me`;
+        const CLAIM_ICON = `<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>`;
+        const CLAIM_SPINNER = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg>';
 
-        // Creates a ManualOverride pinning this event to the logged-in driver
-        // (same api/overrides contract as the dashboard's driver dropdown). The
+        // Creates ManualOverride(s) pinning the given event/leg ids to the
+        // logged-in driver (same api/overrides contract as the dashboard's
+        // driver dropdown). Split dropoff/pickup halves are claimed by their
+        // exact variant id so the other leg stays solver-controlled. The
         // backend re-solves in the background and the SSE stream refreshes the UI.
-        async function claimEvent(ev) {
-            if (!selectedDriverId) return;
-            const btn = document.getElementById('em-claim-btn');
-            btn.disabled = true;
-            btn.innerHTML = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Checking...';
+        async function claimEvent(ev, ids, btn) {
+            if (!selectedDriverId || !ids || ids.length === 0) return;
+            const wrap = document.getElementById('em-claim-container');
+            const allBtns = wrap ? Array.from(wrap.querySelectorAll('button')) : [btn];
+            allBtns.forEach(b => b.disabled = true);
+            const origHtml = btn.innerHTML;
+            const reset = () => {
+                allBtns.forEach(b => b.disabled = false);
+                btn.innerHTML = origHtml;
+            };
+            btn.innerHTML = `${CLAIM_SPINNER} Checking...`;
 
             try {
-                // Dry-run: warn if the solver would normally refuse this pairing.
-                // The override still wins if the driver confirms.
-                try {
-                    const chkRes = await fetch(`${apiBase}api/overrides/check`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ event_id: ev.id, driver_id: selectedDriverId })
-                    });
-                    const chk = await chkRes.json();
-                    if (chk.conflicts && chk.conflicts.length > 0) {
-                        const proceed = confirm("The solver would normally not assign you this event:\n\n• " + chk.conflicts.join("\n• ") + "\n\nOverride anyway?");
-                        if (!proceed) {
-                            btn.disabled = false;
-                            btn.innerHTML = CLAIM_BTN_LABEL;
-                            return;
-                        }
+                // Dry-run per leg: warn if the solver would normally refuse this
+                // pairing. The override still wins if the driver confirms.
+                let conflicts = [];
+                for (const id of ids) {
+                    try {
+                        const chkRes = await fetch(`${apiBase}api/overrides/check`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ event_id: id, driver_id: selectedDriverId })
+                        });
+                        const chk = await chkRes.json();
+                        if (chk.conflicts) conflicts.push(...chk.conflicts);
+                    } catch (e) {
+                        console.warn('Override conflict check failed, proceeding without it', e);
                     }
-                } catch (e) {
-                    console.warn('Override conflict check failed, proceeding without it', e);
+                }
+                conflicts = [...new Set(conflicts)];
+                if (conflicts.length > 0) {
+                    const proceed = confirm("The solver would normally not assign you this:\n\n• " + conflicts.join("\n• ") + "\n\nOverride anyway?");
+                    if (!proceed) {
+                        reset();
+                        return;
+                    }
                 }
 
-                btn.innerHTML = '<svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"/></svg> Assigning...';
-                const res = await fetch(`${apiBase}api/overrides`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        event_id: ev.id,
-                        driver_id: selectedDriverId,
-                        event_title: ev.title,
-                        date_str: ev.dateStr || null
-                    })
-                });
-                if (!res.ok) throw new Error('Override request failed');
+                btn.innerHTML = `${CLAIM_SPINNER} Assigning...`;
+                for (const id of ids) {
+                    const res = await fetch(`${apiBase}api/overrides`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            event_id: id,
+                            driver_id: selectedDriverId,
+                            event_title: ev.title,
+                            date_str: ev.dateStr || null
+                        })
+                    });
+                    if (!res.ok) throw new Error('Override request failed');
+                }
 
                 closeEventModal();
                 showGlobalAlert("Assigned to you — rebuilding the schedule…");
             } catch (e) {
                 console.error('Failed to claim event', e);
                 showGlobalAlert('Failed to assign. Check your connection.');
-                btn.disabled = false;
-                btn.innerHTML = CLAIM_BTN_LABEL;
+                reset();
             }
         }
 
@@ -827,15 +841,30 @@
                 driverRow.style.display = 'none';
             }
 
-            const claimBtn = document.getElementById('em-claim-btn');
-            if (claimBtn) {
+            const claimWrap = document.getElementById('em-claim-container');
+            if (claimWrap) {
+                claimWrap.innerHTML = '';
                 if (ev.canClaim && selectedDriverId) {
-                    claimBtn.style.display = 'flex';
-                    claimBtn.disabled = false;
-                    claimBtn.innerHTML = CLAIM_BTN_LABEL;
-                    claimBtn.onclick = () => claimEvent(ev);
+                    claimWrap.style.display = 'flex';
+                    const mkBtn = (label, ids) => {
+                        const b = document.createElement('button');
+                        b.className = 'w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md';
+                        b.innerHTML = `${CLAIM_ICON} ${label}`;
+                        b.onclick = () => claimEvent(ev, ids, b);
+                        claimWrap.appendChild(b);
+                    };
+                    const openLegs = (ev.legs || []).filter(l => !l.mine);
+                    if (ev.legs && ev.legs.length > 0) {
+                        openLegs.forEach(l => {
+                            const legName = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
+                            mkBtn(`Take ${legName} (${l.timeStr})`, [l.id]);
+                        });
+                        if (openLegs.length > 1) mkBtn('Take Both', openLegs.map(l => l.id));
+                    } else {
+                        mkBtn('Assign to Me', [ev.id]);
+                    }
                 } else {
-                    claimBtn.style.display = 'none';
+                    claimWrap.style.display = 'none';
                 }
             }
 
@@ -952,6 +981,7 @@
             (events || []).forEach(ev => {
                 let baseId = ev.id;
                 let title = ev.title;
+                let legType = null;
                 const isTrip = ev.event_type === 'background_trip';
                 if (isTrip) {
                     if (baseId.includes('_slice_')) baseId = baseId.split('_slice_')[0];
@@ -960,9 +990,11 @@
                 } else if (baseId.includes('_dropoff')) {
                     baseId = baseId.split('_dropoff')[0];
                     title = title.replace('Dropoff: ', '');
+                    legType = 'dropoff';
                 } else if (baseId.includes('_pickup')) {
                     baseId = baseId.split('_pickup')[0];
                     title = title.replace('Pickup: ', '');
+                    legType = 'pickup';
                 }
 
                 let card = cards.get(baseId);
@@ -974,6 +1006,7 @@
                         location: ev.location,
                         calendarIds: [...(ev.calendar_ids || [])],
                         driverIds: new Set(),
+                        legs: [],
                         isUnassigned: false,
                         suppressed: !!ev.trip_suppressed,
                         isErrand: false
@@ -989,6 +1022,19 @@
                 const assigned = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
                 if (assigned) card.driverIds.add(assigned);
                 if (trueUnassigned.includes(ev.id)) card.isUnassigned = true;
+
+                // Split dropoff/pickup halves are independently overridable by
+                // their exact variant id (instance overrides beat base-id ones),
+                // so remember each leg for the per-leg Assign-to-Me buttons.
+                if (legType) {
+                    card.legs.push({
+                        id: ev.id,
+                        type: legType,
+                        start: ev.start,
+                        driverId: assigned || null,
+                        isUnassigned: trueUnassigned.includes(ev.id)
+                    });
+                }
             });
 
             return Array.from(cards.values());
@@ -1022,7 +1068,7 @@
                     id: er.id, title: er.title, isTrip: false,
                     start: er.start_time, end: er.end_time, allDay: false,
                     location: er.errand ? er.errand.location : er.location,
-                    calendarIds: [],
+                    calendarIds: [], legs: [],
                     driverIds: new Set(er.driver ? [er.driver.id] : []),
                     isUnassigned: false, suppressed: false, isErrand: true
                 });
@@ -1039,14 +1085,24 @@
         }
 
         function familyDriverChips(card) {
-            if (card.isUnassigned) {
-                return `<span class="px-2 py-0.5 text-[10px] font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ NEEDS DRIVER</span>`;
-            }
-            return [...card.driverIds].map(id => {
+            const carIcon = `<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5z"/></svg>`;
+            const driverChip = (id, label) => {
                 const d = driversData.find(x => x.id === id);
                 if (!d) return '';
-                return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5z"/></svg>${d.name}</span>`;
-            }).join('');
+                return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;">${carIcon}${label ? label + ': ' : ''}${d.name}</span>`;
+            };
+            const needsChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ ${label}</span>`;
+            const grayChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-gray-700/40 text-gray-400 border border-gray-600">${label}</span>`;
+
+            if (card.legs && card.legs.length > 0) {
+                return [...card.legs].sort((a, b) => new Date(a.start) - new Date(b.start)).map(l => {
+                    const label = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
+                    if (l.driverId) return driverChip(l.driverId, label) || grayChip(`${label}: ?`);
+                    return l.isUnassigned ? needsChip(`${label}: Needs Driver`) : grayChip(`${label}: Unassigned`);
+                }).join('');
+            }
+            if (card.isUnassigned) return needsChip('NEEDS DRIVER');
+            return [...card.driverIds].map(id => driverChip(id, '')).join('');
         }
 
         function renderFamilyCard(card) {
@@ -1076,6 +1132,15 @@
             const paxBadges = familyPaxBadges(card.calendarIds);
             const driverChips = familyDriverChips(card);
 
+            const legsData = [...(card.legs || [])]
+                .sort((a, b) => new Date(a.start) - new Date(b.start))
+                .map(l => ({
+                    id: l.id,
+                    type: l.type,
+                    timeStr: formatTime(l.start),
+                    mine: l.driverId === selectedDriverId
+                }));
+
             const eventData = {
                 id: card.id,
                 title: card.title,
@@ -1085,7 +1150,10 @@
                 driverHtml: driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>',
                 isErrand: card.isErrand,
                 dateStr: (card.start || '').split('T')[0],
-                canClaim: !card.isErrand && !card.suppressed && !card.driverIds.has(selectedDriverId)
+                legs: legsData,
+                canClaim: !card.isErrand && !card.suppressed && (legsData.length > 0
+                    ? legsData.some(l => !l.mine)
+                    : !card.driverIds.has(selectedDriverId))
             };
             const evDataStr = encodeURIComponent(JSON.stringify(eventData));
 
@@ -1676,7 +1744,7 @@
                 </svg>
                 Open in Maps
             </button>
-            <button id="em-claim-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-blue-500/50 hover:bg-blue-900/20 active:bg-blue-600 text-blue-400 font-bold shadow-md mb-3" style="display: none"></button>
+            <div id="em-claim-container" class="flex-col gap-2 mb-3" style="display: none"></div>
             <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold shadow-md hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg>
                 Mark Errand Completed
