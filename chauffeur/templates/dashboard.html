@@ -2375,11 +2375,14 @@
                 // A bare 'g' prefix check misclassified real drivers whose id
                 // happens to start with g, hiding their column on empty days.
                 const isGhostCol = (id) => id.startsWith('ghost_');
-                // Column order: ghosts last; otherwise driver priority
-                // (1 = highest first), alphabetical by name within a priority.
+                // Column order: primary drivers first, then secondary, ghosts
+                // always last; priority (1 = highest) within each group,
+                // alphabetical by name within the same priority.
                 const colSortKey = (id) => {
                     const d = driversMap[id] || {};
+                    const group = (d.group || 'primary').toLowerCase();
                     return {
+                        group: group === 'primary' ? 0 : (group === 'secondary' ? 1 : 2),
                         pri: Number.isFinite(d.priority_index) ? d.priority_index : 999,
                         name: (d.name || id).toLowerCase()
                     };
@@ -2387,6 +2390,7 @@
                 let colIds = Object.keys(driversMap).sort((a, b) => {
                     if (isGhostCol(a) !== isGhostCol(b)) return isGhostCol(a) ? 1 : -1;
                     const ka = colSortKey(a), kb = colSortKey(b);
+                    if (ka.group !== kb.group) return ka.group - kb.group;
                     if (ka.pri !== kb.pri) return ka.pri - kb.pri;
                     return ka.name.localeCompare(kb.name);
                 }).filter(id => {
