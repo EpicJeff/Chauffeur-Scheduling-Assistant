@@ -56,9 +56,22 @@ def _seed():
             {"id": "otherday", "title": "Soccer", "event_type": "standard",
              "start": "2026-08-01T15:00:00", "end": "2026-08-01T16:00:00",
              "location": None, "calendar_ids": ["ben@cal"]},
+            # Family-calendar event bound to Ben only via a rule's passenger_ids
+            {"id": "scouts", "title": "Scouts", "event_type": "standard",
+             "start": "2026-07-31T18:00:00", "end": "2026-07-31T19:00:00",
+             "location": None, "calendar_ids": ["family@cal"]},
+            # Recurring instance: rule matched on the base id, event id unrolled
+            {"id": "swim_unrolled_2", "title": "Swim", "event_type": "standard",
+             "start": "2026-07-31T07:00:00", "end": "2026-07-31T08:00:00",
+             "location": None, "calendar_ids": ["family@cal"]},
         ],
         "assignments": {"soccer": "jeff"},
         "ghost_assignments": {"piano_dropoff": "jeff"},
+        "matched_rules": {
+            "scouts": [{"constraint_type": "required", "passenger_ids": ["p-ben"]}],
+            "swim": [{"constraint_type": "required", "passenger_ids": ["p-ben"]}],
+            "not_bens": [{"constraint_type": "required", "passenger_ids": ["p-mom"]}],
+        },
     })
     return storage.get_member_by_passenger_id("p-ben")
 
@@ -70,8 +83,8 @@ def scenario_day_assembly():
 
     day = main.member_day(ben["id"], date="2026-07-31")
     ids = [r["id"] for r in day["rides"]]
-    check(ids == ["piano_dropoff", "tagged", "soccer"],
-          f"calendar + hashtag matches, sorted by start, errands/other-day excluded; got {ids}")
+    check(ids == ["swim_unrolled_2", "piano_dropoff", "tagged", "soccer", "scouts"],
+          f"calendar + hashtag + rule-bound (incl. unrolled base-id) matches, sorted; got {ids}")
 
     soccer = next(r for r in day["rides"] if r["id"] == "soccer")
     check(soccer["driver"] and soccer["driver"]["name"] == "Jeff",

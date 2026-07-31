@@ -351,6 +351,7 @@
                 initFamilyMap(focusMemberId);
                 startFamilyMapPolling();
             } else if (view === 'myday') {
+                mydayOffset = 0;
                 renderMyDay();
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
@@ -369,7 +370,8 @@
             const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic;
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
-            if (nav) nav.style.display = isTimeline ? 'flex' : 'none';
+            if (nav) nav.style.display = (isTimeline || isMyDay) ? 'flex' : 'none';
+            if (isMyDay) updateMyDayLabel();
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -438,6 +440,8 @@
             else renderMyDay();
         }
 
+        let mydayOffset = 0;
+
         function _mydayLocalDate(offsetDays) {
             const d = new Date();
             d.setDate(d.getDate() + offsetDays);
@@ -445,26 +449,39 @@
             return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
         }
 
+        function updateMyDayLabel() {
+            const label = document.getElementById('current-day-label');
+            if (!label) return;
+            if (mydayOffset === 0) { label.textContent = 'Today'; return; }
+            if (mydayOffset === 1) { label.textContent = 'Tomorrow'; return; }
+            const d = new Date();
+            d.setDate(d.getDate() + mydayOffset);
+            label.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+        }
+
+        function mydayShift(delta) {
+            mydayOffset = Math.max(0, Math.min(13, mydayOffset + delta));
+            updateMyDayLabel();
+            renderMyDay();
+        }
+
         async function renderMyDay() {
             const wrap = document.getElementById('myday-content');
             if (!wrap || !selectedMemberId) return;
+            updateMyDayLabel();
             wrap.innerHTML = '<p class="text-center text-gray-500 animate-pulse mt-6">Loading your day...</p>';
-            const sections = [];
-            for (const [label, offset] of [['Today', 0], ['Tomorrow', 1]]) {
-                try {
-                    const res = await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${_mydayLocalDate(offset)}`);
-                    if (!res.ok) continue;
-                    const data = await res.json();
-                    sections.push(`<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">${label}</div>`);
-                    if (!data.rides.length) {
-                        sections.push('<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">Nothing scheduled 🎉</div>');
-                        continue;
-                    }
-                    data.rides.forEach(r => sections.push(renderMyDayCard(r)));
-                } catch (e) { }
+            const requestedOffset = mydayOffset;
+            try {
+                const res = await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${_mydayLocalDate(requestedOffset)}`);
+                if (requestedOffset !== mydayOffset) return; // user already navigated on
+                if (!res.ok) throw new Error('bad response');
+                const data = await res.json();
+                wrap.innerHTML = data.rides.length
+                    ? data.rides.map(renderMyDayCard).join('')
+                    : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">Nothing scheduled 🎉</div>';
+            } catch (e) {
+                wrap.innerHTML = '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
             }
-            wrap.innerHTML = sections.join('') ||
-                '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
         }
 
         function renderMyDayCard(r) {
@@ -2204,6 +2221,7 @@
         }
 
         function prevDay() {
+            if (currentView === 'myday') { mydayShift(-1); return; }
             if (activeDateIndex > 0) {
                 const container = document.getElementById('days-container');
                 const paneWidth = container.clientWidth;
@@ -2214,6 +2232,7 @@
         }
 
         function nextDay() {
+            if (currentView === 'myday') { mydayShift(1); return; }
             if (activeDateIndex < currentDates.length - 1) {
                 const container = document.getElementById('days-container');
                 const paneWidth = container.clientWidth;

@@ -2661,10 +2661,11 @@ def member_day(member_id: str, date: Optional[str] = None):
         raise HTTPException(status_code=404, detail="Member not found")
     date_str = date or _dt.date.today().isoformat()
 
+    p_id = member.get('passenger_id')
     p_cals, p_tags = set(), set()
-    if member.get('passenger_id'):
+    if p_id:
         for p in storage.get_all_passengers():
-            if p.get('id') == member['passenger_id']:
+            if p.get('id') == p_id:
                 p_cals = set(p.get('calendar_ids') or [])
                 p_tags = {t.lower() for t in (p.get('hashtags') or [])}
                 break
@@ -2672,6 +2673,17 @@ def member_day(member_id: str, date: Optional[str] = None):
     sched = storage.get_cached_schedule() or {}
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
+    matched_rules = sched.get('matched_rules', {}) or {}
+
+    def _rule_bound(event_ids):
+        # Rules can bind passengers to events the child's calendar doesn't
+        # own (family-calendar events) — same resolution calendar.html uses.
+        for eid in event_ids:
+            for r in matched_rules.get(eid, []) or []:
+                pax = r.get('passenger_ids') if isinstance(r, dict) else None
+                if pax and str(p_id) in [str(x) for x in pax]:
+                    return True
+        return False
 
     status_by_event = {}
     for leg in storage.get_in_progress_drives():
@@ -2698,14 +2710,16 @@ def member_day(member_id: str, date: Optional[str] = None):
             continue
         if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
             continue
-        cals = set(ev.get('calendar_ids') or [])
-        title_l = (ev.get('title') or '').lower()
-        if not (cals & p_cals) and not any(t in title_l for t in p_tags):
-            continue
-        base_id = str(ev.get('id', ''))
+        ev_id = str(ev.get('id', ''))
+        base_id = ev_id.split('_unrolled_')[0]
         for suffix in ('_dropoff', '_pickup'):
             if base_id.endswith(suffix):
                 base_id = base_id[:-len(suffix)]
+        cals = set(ev.get('calendar_ids') or [])
+        title_l = (ev.get('title') or '').lower()
+        if not (cals & p_cals) and not any(t in title_l for t in p_tags) \
+                and not _rule_bound({ev_id, base_id}):
+            continue
         rides.append({
             'id': ev.get('id'),
             'title': ev.get('title'),
