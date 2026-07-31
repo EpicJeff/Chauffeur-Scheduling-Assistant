@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Map - Chauffeur</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' };
+        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+    </script>
+</head>
+
+<body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 min-h-0 flex flex-col">
+        {% include 'components/family_map.html' %}
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            initFamilyMap();
+            startFamilyMapPolling();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') refreshFamilyMap();
+        });
+    </script>
+</body>
+
+</html>

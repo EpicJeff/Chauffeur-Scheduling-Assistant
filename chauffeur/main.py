@@ -474,6 +474,10 @@ def calendar_view(request: Request):
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
 
+@app.get("/map")
+def family_map_page(request: Request):
+    return templates.TemplateResponse(request=request, name="map.html")
+
 @app.get("/trips")
 def trips_list_view(request: Request):
     response = templates.TemplateResponse(request=request, name="trips.html", context={})
@@ -2518,6 +2522,70 @@ def _fanout_message_notifications(channel, message):
                 ha_api.call_service('notify', svc_name, payload)
     except Exception as e:
         print(f"Message notification fan-out failed: {e}")
+
+# --- Family map API ---
+
+def _leg_event_id(leg_id):
+    """Collapse a drive-leg id (init_{ev}, route_{ev}_1..3, final_{ev}) back
+    to its event id."""
+    import re as _re
+    s = str(leg_id)
+    s = _re.sub(r'^(init_|route_|final_)', '', s)
+    s = _re.sub(r'_[123]$', '', s)
+    return s
+
+@app.get("/api/family/locations")
+def family_locations():
+    """Every member with map-relevant data: HA person state/coords (absent
+    for router-based trackers -> zone chip only) plus 'driving' context from
+    in-progress drive legs joined to the cached schedule's assignments."""
+    from services import ha_api
+    driving_by_driver = {}
+    try:
+        sched = storage.get_cached_schedule() or {}
+        events_by_id = {e.get('id'): e for e in sched.get('events', [])}
+        assignments = dict(sched.get('assignments', {}))
+        assignments.update(sched.get('ghost_assignments', {}))
+        for leg in storage.get_in_progress_drives():
+            ev_id = _leg_event_id(leg)
+            ev = events_by_id.get(ev_id)
+            drv = assignments.get(ev_id)
+            if ev and drv and drv not in driving_by_driver:
+                driving_by_driver[drv] = ev.get('title') or 'a drive'
+    except Exception as e:
+        print(f"family_locations: en-route enrichment failed: {e}")
+
+    out = []
+    for m in storage.get_all_members():
+        entry = {
+            'member_id': m['id'],
+            'name': m.get('name'),
+            'color_code': m.get('color_code'),
+            'avatar': m.get('avatar'),
+            'is_child': m.get('is_child', False),
+            'state': None,
+            'latitude': None,
+            'longitude': None,
+            'gps_accuracy': None,
+            'last_updated': None,
+            'driving': None,
+        }
+        if m.get('driver_id') and m['driver_id'] in driving_by_driver:
+            entry['driving'] = {'leg_title': driving_by_driver[m['driver_id']]}
+        ent = m.get('ha_person_entity')
+        if ent:
+            s = ha_api.get_state(ent)
+            if s:
+                attrs = s.get('attributes') or {}
+                entry.update(
+                    state=s.get('state'),
+                    latitude=attrs.get('latitude'),
+                    longitude=attrs.get('longitude'),
+                    gps_accuracy=attrs.get('gps_accuracy'),
+                    last_updated=s.get('last_updated'),
+                )
+        out.append(entry)
+    return out
 
 @app.get("/api/channels")
 def list_channels(member_id: str):

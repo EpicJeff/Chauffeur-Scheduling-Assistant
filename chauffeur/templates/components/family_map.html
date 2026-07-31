@@ -1,0 +1,130 @@
+<!-- Shared family map (Leaflet + OSM). Included by map.html (dashboard page)
+     and app.html (PWA Map tab). Leaflet is lazy-loaded from CDN on first
+     initFamilyMap() call so pages that never open the map pay nothing. -->
+<div class="w-full h-full flex flex-col min-h-0">
+    <div id="family-map-chips" class="flex gap-2 flex-wrap p-2 bg-gray-900 border-b border-gray-800 shrink-0 empty:hidden"></div>
+    <div id="family-map" class="flex-1 min-h-[300px] z-0 bg-gray-800"></div>
+</div>
+<script>
+    let _fmMap = null;
+    let _fmMarkers = {};
+    let _fmTimer = null;
+    let _fmDidFit = false;
+    // Computed independently of the including page's script order.
+    const _fmApiBase = window.location.pathname.endsWith('/') ? '../' : '';
+
+    function _fmEscape(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function ensureLeaflet() {
+        if (window.L) return Promise.resolve();
+        if (window._fmLeafletLoading) return window._fmLeafletLoading;
+        window._fmLeafletLoading = new Promise((resolve, reject) => {
+            const css = document.createElement('link');
+            css.rel = 'stylesheet';
+            css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+            document.head.appendChild(css);
+            const js = document.createElement('script');
+            js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+            js.onload = resolve;
+            js.onerror = reject;
+            document.head.appendChild(js);
+        });
+        return window._fmLeafletLoading;
+    }
+
+    async function initFamilyMap(focusMemberId = null) {
+        await ensureLeaflet();
+        if (!_fmMap) {
+            _fmMap = L.map('family-map', { zoomControl: true }).setView([39.5, -98.35], 4);
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(_fmMap);
+        }
+        // The container may have just become visible (PWA tab switch).
+        setTimeout(() => { if (_fmMap) _fmMap.invalidateSize(); }, 50);
+        await refreshFamilyMap(focusMemberId);
+    }
+
+    async function refreshFamilyMap(focusMemberId = null) {
+        if (!_fmMap) return;
+        let locations;
+        try {
+            const res = await fetch(`${_fmApiBase}api/family/locations`);
+            locations = await res.json();
+        } catch (e) { return; }
+
+        const chips = document.getElementById('family-map-chips');
+        const chipHtml = [];
+        const seen = new Set();
+
+        locations.forEach(loc => {
+            const hasCoords = typeof loc.latitude === 'number' && typeof loc.longitude === 'number';
+            const drivingLine = loc.driving ? `🚗 Driving: ${_fmEscape(loc.driving.leg_title)}` : '';
+            if (!hasCoords) {
+                if (loc.state) {
+                    chipHtml.push(`<span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-xs font-bold text-gray-300">
+                        <span class="w-2.5 h-2.5 rounded-full" style="background-color:${loc.color_code || '#6b7280'}"></span>
+                        ${_fmEscape(loc.name)}: ${_fmEscape(loc.state)}${drivingLine ? ' · 🚗' : ''}</span>`);
+                }
+                return;
+            }
+            seen.add(loc.member_id);
+            const label = loc.avatar || (loc.name || '?').charAt(0).toUpperCase();
+            const icon = L.divIcon({
+                className: '',
+                html: `<div style="width:38px;height:38px;border-radius:50%;background:#171717;border:3px solid ${loc.color_code || '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.5)">${_fmEscape(label)}</div>`,
+                iconSize: [38, 38],
+                iconAnchor: [19, 19],
+                popupAnchor: [0, -20]
+            });
+            const canMessage = typeof messageMember === 'function'
+                && typeof selectedMemberId !== 'undefined' && selectedMemberId
+                && selectedMemberId !== loc.member_id;
+            const popup = `<div style="min-width:140px">
+                <div style="font-weight:800">${_fmEscape(loc.name)}</div>
+                <div style="color:#666;text-transform:capitalize">${_fmEscape(loc.state || '')}</div>
+                ${drivingLine ? `<div style="margin-top:4px">${drivingLine}</div>` : ''}
+                ${canMessage ? `<button onclick="messageMember('${loc.member_id}')" style="margin-top:6px;background:#2563eb;color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 10px;width:100%;cursor:pointer">Message</button>` : ''}
+            </div>`;
+            if (_fmMarkers[loc.member_id]) {
+                _fmMarkers[loc.member_id].setLatLng([loc.latitude, loc.longitude]);
+                _fmMarkers[loc.member_id].setPopupContent(popup);
+                _fmMarkers[loc.member_id].setIcon(icon);
+            } else {
+                _fmMarkers[loc.member_id] = L.marker([loc.latitude, loc.longitude], { icon: icon })
+                    .addTo(_fmMap).bindPopup(popup);
+            }
+        });
+
+        // Drop markers for members that lost coords
+        Object.keys(_fmMarkers).forEach(id => {
+            if (!seen.has(id)) { _fmMap.removeLayer(_fmMarkers[id]); delete _fmMarkers[id]; }
+        });
+
+        if (chips) chips.innerHTML = chipHtml.join('');
+
+        if (focusMemberId && _fmMarkers[focusMemberId]) {
+            _fmMap.setView(_fmMarkers[focusMemberId].getLatLng(), 15);
+            _fmMarkers[focusMemberId].openPopup();
+        } else if (!_fmDidFit && seen.size > 0) {
+            _fmDidFit = true;
+            const group = L.featureGroup(Object.values(_fmMarkers));
+            _fmMap.fitBounds(group.getBounds().pad(0.3), { maxZoom: 15 });
+        }
+    }
+
+    function startFamilyMapPolling() {
+        stopFamilyMapPolling();
+        _fmTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') refreshFamilyMap();
+        }, 20000);
+    }
+
+    function stopFamilyMapPolling() {
+        if (_fmTimer) { clearInterval(_fmTimer); _fmTimer = null; }
+    }
+</script>

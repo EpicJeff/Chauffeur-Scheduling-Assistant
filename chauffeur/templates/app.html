@@ -177,6 +177,11 @@
             </div>
         </div>
 
+        <!-- Family Map -->
+        <div id="map-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
+            {% include 'components/family_map.html' %}
+        </div>
+
         <!-- Bottom Tab Bar -->
         <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
             style="padding-bottom: env(safe-area-inset-bottom)">
@@ -205,6 +210,14 @@
                 <span id="tab-messages-badge"
                     class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold items-center justify-center"
                     style="display: none">0</span>
+            </button>
+            <button id="tab-map" onclick="setView('map')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">Map</span>
             </button>
         </div>
     </div>
@@ -300,29 +313,35 @@
         let routeContext = null;
         let currentView = localStorage.getItem('chauffeur_view') || 'drives';
 
-        function setView(view) {
-            if (view === currentView) return;
+        function setView(view, focusMemberId = null) {
+            if (view === currentView && !focusMemberId) return;
             currentView = view;
             localStorage.setItem('chauffeur_view', view);
             updateTabBar();
             applyViewVisibility();
             if (view === 'messages') {
                 fetchChannels();
+            } else if (view === 'map') {
+                initFamilyMap(focusMemberId);
+                startFamilyMapPolling();
             } else {
                 buildTimeline();
             }
+            if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
 
         function applyViewVisibility() {
             const isMessages = currentView === 'messages';
-            document.getElementById('days-container').style.display = isMessages ? 'none' : 'flex';
+            const isMap = currentView === 'map';
+            document.getElementById('days-container').style.display = (isMessages || isMap) ? 'none' : 'flex';
             const nav = document.getElementById('day-nav');
-            if (nav) nav.style.display = isMessages ? 'none' : 'flex';
+            if (nav) nav.style.display = (isMessages || isMap) ? 'none' : 'flex';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
+            document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
         }
 
         function updateTabBar() {
-            ['drives', 'family', 'messages'].forEach(v => {
+            ['drives', 'family', 'messages', 'map'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
@@ -359,6 +378,10 @@
                     openChannel(openChannelParam);
                 } else if (params.get('view') === 'messages' && selectedMemberId) {
                     setView('messages');
+                } else if (currentView === 'map') {
+                    // restored from localStorage: setView() would early-return
+                    initFamilyMap();
+                    startFamilyMapPolling();
                 }
             } else {
                 showDriverSelection();
