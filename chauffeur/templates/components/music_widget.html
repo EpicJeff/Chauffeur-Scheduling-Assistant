@@ -83,10 +83,14 @@
         }
         _mwPhone.connecting = true;
         try {
-            let pid = localStorage.getItem('chauffeur_sendspin_id');
+            // Player identity is per member-per-device: "Lily's phone" and
+            // "Dad's phone" are distinct MA players on the same handset.
+            const memberKey = (typeof selectedMemberId !== 'undefined' && selectedMemberId) || 'device';
+            const idKey = 'chauffeur_sendspin_id::' + memberKey;
+            let pid = localStorage.getItem(idKey);
             if (!pid) {
                 pid = 'chauffeur-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
-                localStorage.setItem('chauffeur_sendspin_id', pid);
+                localStorage.setItem(idKey, pid);
             }
             const wsUrl = new URL(`${_mwApiBase}api/sendspin/ws`, location.href)
                 .href.replace(/^http/, 'ws');
@@ -514,12 +518,29 @@
         }, 10000);
     }
 
-    window.addEventListener('pagehide', () => {
+    function _mwStopPhonePlayer() {
         const p = _mwPhone.player;
+        _mwPhone.player = null;
+        _mwPhone.active = false;
+        _mwPhone.state = null;
         if (p) {
             try { if (typeof p.disconnect === 'function') p.disconnect(); } catch (e) { }
         }
-    });
+    }
+
+    // Called by app.html when the logged-in member changes: the phone's MA
+    // identity follows the member, so re-register under the new name/id.
+    function mwOnMemberChanged() {
+        if (!_mwPhone.player && !_mwPhone.connecting && _mwSelected !== MW_PHONE) return;
+        _mwStopPhonePlayer();
+        if (_mwSelected === MW_PHONE) {
+            mwStartPhonePlayer();
+        } else {
+            mwRefresh();
+        }
+    }
+
+    window.addEventListener('pagehide', () => _mwStopPhonePlayer());
 </script>
 <script type="module">
     // sendspin-js (Apache-2.0) — the official browser client MA's own web

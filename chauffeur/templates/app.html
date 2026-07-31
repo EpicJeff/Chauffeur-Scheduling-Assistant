@@ -432,11 +432,15 @@
         async function selectPassengerMember(memberId) {
             const m = membersData.find(x => x.id === memberId);
             if (!m) return;
+            const previousMemberId = selectedMemberId;
             selectedDriverId = null;
             currentDriverId = null;
             localStorage.removeItem('chauffeur_driver_id');
             selectedMemberId = memberId;
             localStorage.setItem('chauffeur_member_id', memberId);
+            if (previousMemberId !== selectedMemberId && typeof mwOnMemberChanged === 'function') {
+                mwOnMemberChanged();
+            }
 
             document.getElementById('driver-name').textContent = m.name;
             document.getElementById('driver-avatar').textContent = m.avatar || (m.name || '?').charAt(0).toUpperCase();
@@ -1042,10 +1046,14 @@
         }
 
         async function selectDriver(id) {
+            const previousMemberId = selectedMemberId;
             currentDriverId = id;
             selectedDriverId = id;
             localStorage.setItem('chauffeur_driver_id', id);
             syncMemberIdentity(id);
+            if (previousMemberId !== selectedMemberId && typeof mwOnMemberChanged === 'function') {
+                mwOnMemberChanged();
+            }
 
             const d = driversData.find(d => d.id === id);
             if (d) {
@@ -1124,6 +1132,7 @@
             localStorage.removeItem('chauffeur_driver_id');
             localStorage.removeItem('chauffeur_member_id');
             if (messagesStream) { try { messagesStream.close(); } catch (e) { } messagesStream = null; }
+            if (typeof mwOnMemberChanged === 'function') mwOnMemberChanged();
             applyRoleTabs();
             showDriverSelection();
         }
