@@ -35,18 +35,32 @@ def scenario_media_players_listing():
         {"entity_id": "media_player.kitchen", "state": "playing",
          "attributes": {"friendly_name": "Kitchen", "media_title": "Song A",
                         "media_artist": "Artist", "volume_level": 0.4,
-                        "entity_picture": "/api/media/x", "supported_features": 12345}},
+                        "entity_picture": "/api/media/x", "supported_features": 12345,
+                        "mass_player_type": "player"}},
         {"entity_id": "media_player.attic", "state": "idle",
-         "attributes": {"friendly_name": "Attic"}},
+         "attributes": {"friendly_name": "Attic", "mass_player_type": "player"}},
+        {"entity_id": "media_player.random_tv", "state": "off",
+         "attributes": {"friendly_name": "Random TV", "device_class": "tv"}},
         {"entity_id": "person.jeff", "state": "home", "attributes": {}},
     ]
     with mock.patch.object(ha_api, 'get_states', return_value=states):
         players = main.ha_media_players()
-    check([p['entity_id'] for p in players] == ['media_player.attic', 'media_player.kitchen'],
-          "media_player domain only, sorted by name")
+        check([p['entity_id'] for p in players] == ['media_player.attic', 'media_player.kitchen'],
+              "default: only MA players (mass_player_type), sorted by name")
+        everything = main.ha_media_players(ma_only=False)
+        check(len(everything) == 3 and everything[2]['device_class'] == 'tv',
+              "ma_only=false returns all with device_class")
     kitchen = players[1]
     check(kitchen['media_title'] == 'Song A' and kitchen['volume_level'] == 0.4,
           "now-playing attributes surfaced")
+    check(kitchen['is_ma_player'] is True, "MA marker surfaced")
+
+    # No MA players at all -> graceful fallback to the full list
+    no_ma = [{"entity_id": "media_player.tv", "state": "off",
+              "attributes": {"friendly_name": "TV"}}]
+    with mock.patch.object(ha_api, 'get_states', return_value=no_ma):
+        players = main.ha_media_players()
+    check(len(players) == 1, "fallback to all players when MA has none")
 
 
 def scenario_command_mapping():

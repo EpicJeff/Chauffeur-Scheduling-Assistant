@@ -2535,7 +2535,11 @@ def _ma_entry_id():
     return _MA_CONFIG_ENTRY['id']
 
 @app.get("/api/ha/media_players")
-def ha_media_players():
+def ha_media_players(ma_only: bool = True):
+    """media_player entities. By default only Music Assistant's own players
+    (identified by the mass_player_type attribute MA stamps on its entities)
+    — HA instances accumulate dozens of cast/TV/receiver players that MA
+    can't target. Falls back to the full list if no MA players are found."""
     from services import ha_api
     out = []
     for s in ha_api.get_states(ttl=5):
@@ -2552,7 +2556,13 @@ def ha_media_players():
             'entity_picture': attrs.get('entity_picture'),
             'volume_level': attrs.get('volume_level'),
             'supported_features': attrs.get('supported_features'),
+            'device_class': attrs.get('device_class'),
+            'is_ma_player': 'mass_player_type' in attrs,
         })
+    if ma_only:
+        ma_players = [p for p in out if p['is_ma_player']]
+        if ma_players:
+            out = ma_players
     return sorted(out, key=lambda e: (e['name'] or '').lower())
 
 class MediaCommandRequest(BaseModel):

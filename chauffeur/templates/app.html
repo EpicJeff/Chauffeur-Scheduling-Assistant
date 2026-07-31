@@ -145,8 +145,8 @@
             </button>
         </div>
 
-        <!-- Music (Family / My Day views) -->
-        <div id="music-widget-wrap" class="p-3 pb-0 shrink-0" style="display: none">
+        <!-- Music (dedicated tab) -->
+        <div id="music-container" class="flex-1 flex-col min-h-0 overflow-y-auto p-3" style="display: none">
             {% include 'components/music_widget.html' %}
         </div>
 
@@ -236,6 +236,14 @@
                         d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
                 </svg>
                 <span class="text-[11px] font-bold tracking-wide">Map</span>
+            </button>
+            <button id="tab-music" onclick="setView('music')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">Music</span>
             </button>
         </div>
     </div>
@@ -344,6 +352,8 @@
                 startFamilyMapPolling();
             } else if (view === 'myday') {
                 renderMyDay();
+            } else if (view === 'music') {
+                if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else {
                 buildTimeline();
             }
@@ -355,26 +365,23 @@
             const isMessages = currentView === 'messages';
             const isMap = currentView === 'map';
             const isMyDay = currentView === 'myday';
-            const isTimeline = !isMessages && !isMap && !isMyDay;
+            const isMusic = currentView === 'music';
+            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic;
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
             if (nav) nav.style.display = isTimeline ? 'flex' : 'none';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
-            const showMusic = currentView === 'family' || isMyDay;
-            const musicWrap = document.getElementById('music-widget-wrap');
-            if (musicWrap) {
-                musicWrap.style.display = showMusic ? 'block' : 'none';
-                if (showMusic && !musicWidgetStarted && typeof startMusicWidget === 'function') {
-                    musicWidgetStarted = true;
-                    startMusicWidget();
-                }
+            document.getElementById('music-container').style.display = isMusic ? 'flex' : 'none';
+            if (isMusic && !musicWidgetStarted && typeof startMusicWidget === 'function') {
+                musicWidgetStarted = true;
+                startMusicWidget();
             }
         }
 
         function updateTabBar() {
-            ['myday', 'drives', 'family', 'messages', 'map'].forEach(v => {
+            ['myday', 'drives', 'family', 'messages', 'map', 'music'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);

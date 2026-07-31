@@ -1,22 +1,24 @@
-<!-- Compact Music Assistant control card. Included by app.html (shown on the
-     Family / My Day views) and map.html. Control + search only — playback
-     stays on HA/MA players; the page is never an audio endpoint. -->
-<div id="music-widget" class="bg-gray-900 border border-gray-800 rounded-xl p-3 shadow-lg">
-    <div class="flex items-center gap-2 mb-2">
+<!-- Music Assistant control surface. Included by app.html (dedicated Music
+     tab) and map.html. Control + search only — playback stays on HA/MA
+     players; the page is never an audio endpoint. -->
+<div id="music-widget" class="bg-gray-900 border border-gray-800 rounded-xl p-3 shadow-lg flex flex-col min-h-0">
+    <div class="flex items-center gap-2 mb-3">
         <span class="text-lg">🎵</span>
         <select id="mw-player" onchange="mwSelectPlayer(this.value)"
             class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white font-bold focus:outline-none">
             <option value="">No players found</option>
         </select>
     </div>
-    <div id="mw-nowplaying" class="flex items-center gap-3 mb-2" style="display: none">
-        <img id="mw-art" class="w-12 h-12 rounded-lg object-cover bg-gray-800" alt="">
+
+    <div id="mw-nowplaying" class="flex items-center gap-3 mb-3" style="display: none">
+        <img id="mw-art" class="w-16 h-16 rounded-xl object-cover bg-gray-800 shadow-md" alt="">
         <div class="flex-1 min-w-0">
-            <div id="mw-title" class="text-white font-bold text-sm truncate"></div>
-            <div id="mw-artist" class="text-gray-400 text-xs truncate"></div>
+            <div id="mw-title" class="text-white font-bold text-base truncate"></div>
+            <div id="mw-artist" class="text-gray-400 text-sm truncate"></div>
         </div>
     </div>
-    <div class="flex items-center gap-2">
+
+    <div class="flex items-center gap-2 mb-1">
         <button onclick="mwCommand('previous')" class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
             <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
         </button>
@@ -30,11 +32,17 @@
         <input id="mw-volume" type="range" min="0" max="1" step="0.01" oninput="mwVolume(this.value)"
             class="flex-1 accent-blue-500">
     </div>
-    <div class="mt-2 relative">
-        <input id="mw-search" type="text" placeholder="Play something…" autocomplete="off"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();mwSearch();}"
+
+    <div class="mt-2">
+        <input id="mw-search" type="text" placeholder="Search music…" autocomplete="off"
+            oninput="mwSearchDebounced()" onkeydown="if(event.key==='Enter'){event.preventDefault();mwSearch();}"
             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
-        <div id="mw-results" class="absolute left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-30 max-h-60 overflow-y-auto" style="display: none"></div>
+    </div>
+    <div id="mw-results" class="mt-2 rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800 max-h-[45vh] overflow-y-auto" style="display: none"></div>
+
+    <div id="mw-favorites-section" style="display: none">
+        <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorites</div>
+        <div id="mw-favorites" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
     </div>
 </div>
 <script>
@@ -42,12 +50,41 @@
     let _mwSelected = localStorage.getItem('chauffeur_music_player') || '';
     let _mwTimer = null;
     let _mwVolDebounce = null;
+    let _mwSearchDebounce = null;
 
     const _mwApiBase = window.location.pathname.endsWith('/') ? '../' : '';
+    const _MW_TYPE_ICON = { track: '🎵', album: '💿', artist: '🎤', playlist: '📻', radio: '📡' };
+
+    function _mwPlayerIcon(p) {
+        if (p.device_class === 'tv') return '📺';
+        if (p.device_class === 'receiver') return '🎚️';
+        if (p.device_class === 'speaker') return '🔊';
+        const n = `${p.entity_id} ${p.name}`.toLowerCase();
+        if (/\btv\b|television|shield|roku|apple_tv|appletv/.test(n)) return '📺';
+        if (/echo|alexa|nest|home_mini|homepod|sonos|speaker/.test(n)) return '🔊';
+        if (/group|everywhere|all\b/.test(n)) return '🏠';
+        return '🔊';
+    }
 
     function _mwEsc(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _mwImage(item) {
+        // MA serializes an image url on most items; only trust absolute urls.
+        const img = item.image || item.image_url ||
+            (item.metadata && item.metadata.images && item.metadata.images[0] && item.metadata.images[0].path);
+        return (typeof img === 'string' && img.startsWith('http')) ? img : null;
+    }
+
+    function _mwSubtitle(item) {
+        const artists = (item.artists || []).map(a => a.name).join(', ');
+        const album = item.album && item.album.name;
+        if (artists && album) return `${artists} · ${album}`;
+        if (artists) return artists;
+        if (item.owner) return item.owner;
+        return '';
     }
 
     function _mwCurrent() {
@@ -68,10 +105,14 @@
         }
         if (!_mwSelected && _mwPlayers.length) _mwSelected = _mwPlayers[0].entity_id;
 
+        // Selected player may have been filtered out (e.g. MA-only list).
+        if (_mwSelected && _mwPlayers.length && !_mwPlayers.some(p => p.entity_id === _mwSelected)) {
+            _mwSelected = _mwPlayers[0].entity_id;
+        }
         const sel = document.getElementById('mw-player');
         if (sel) {
             sel.innerHTML = _mwPlayers.length
-                ? _mwPlayers.map(p => `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwEsc(p.name)}</option>`).join('')
+                ? _mwPlayers.map(p => `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwPlayerIcon(p)} ${_mwEsc(p.name)}</option>`).join('')
                 : '<option value="">No players found</option>';
         }
         const cur = _mwCurrent();
@@ -125,37 +166,84 @@
         _mwVolDebounce = setTimeout(() => mwCommand('volume_set', { volume: parseFloat(v) }), 500);
     }
 
+    function mwSearchDebounced() {
+        clearTimeout(_mwSearchDebounce);
+        const q = document.getElementById('mw-search').value.trim();
+        if (!q) { document.getElementById('mw-results').style.display = 'none'; return; }
+        _mwSearchDebounce = setTimeout(mwSearch, 450);
+    }
+
+    function _mwResultRow(item, fallbackType) {
+        const type = item.media_type || fallbackType;
+        const img = _mwImage(item);
+        const sub = _mwSubtitle(item);
+        const artHtml = img
+            ? `<img src="${_mwEsc(img)}" loading="lazy" class="w-12 h-12 rounded-lg object-cover bg-gray-800 shrink-0" alt="">`
+            : `<div class="w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center text-xl shrink-0">${_MW_TYPE_ICON[type] || '🎵'}</div>`;
+        return `<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')"
+            class="w-full text-left px-3 py-2.5 bg-gray-900 hover:bg-gray-800 active:bg-gray-700 flex items-center gap-3">
+            ${artHtml}
+            <span class="min-w-0 flex-1">
+                <span class="block text-[15px] text-white font-bold truncate">${_mwEsc(item.name)}</span>
+                ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}
+            </span>
+            <span class="text-[10px] font-black uppercase tracking-wider text-gray-500 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 shrink-0">${_mwEsc(type)}</span>
+        </button>`;
+    }
+
     async function mwSearch() {
         const input = document.getElementById('mw-search');
         const box = document.getElementById('mw-results');
         const q = input.value.trim();
         if (!q) { box.style.display = 'none'; return; }
         box.style.display = 'block';
-        box.innerHTML = '<div class="p-3 text-gray-500 text-sm">Searching…</div>';
+        box.innerHTML = '<div class="p-3 text-gray-500 text-sm bg-gray-900">Searching…</div>';
         try {
-            const res = await fetch(`${_mwApiBase}api/music/search?q=${encodeURIComponent(q)}&limit=6`);
+            const res = await fetch(`${_mwApiBase}api/music/search?q=${encodeURIComponent(q)}&limit=8`);
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                box.innerHTML = `<div class="p-3 text-red-400 text-sm">${_mwEsc(err.detail || 'Search failed')}</div>`;
+                box.innerHTML = `<div class="p-3 text-red-400 text-sm bg-gray-900">${_mwEsc(err.detail || 'Search failed')}</div>`;
                 return;
             }
             const data = await res.json();
+            if (input.value.trim() !== q) return; // stale response
             const rows = [];
-            [['tracks', '🎵'], ['albums', '💿'], ['artists', '🎤'], ['playlists', '📻']].forEach(([key, icon]) => {
-                (data[key] || []).slice(0, 4).forEach(item => {
-                    const sub = (item.artists || []).map(a => a.name).join(', ');
-                    rows.push(`<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc((item.media_type || key.replace(/s$/, '')))}')"
-                        class="w-full text-left px-3 py-2 hover:bg-gray-700 active:bg-gray-600 flex items-center gap-2 border-b border-gray-700/60 last:border-0">
-                        <span>${icon}</span>
-                        <span class="min-w-0"><span class="block text-sm text-white font-bold truncate">${_mwEsc(item.name)}</span>
-                        ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}</span>
-                    </button>`);
-                });
+            [['tracks', 'track'], ['albums', 'album'], ['playlists', 'playlist'], ['artists', 'artist'], ['radio', 'radio']].forEach(([key, type]) => {
+                (data[key] || []).slice(0, 5).forEach(item => rows.push(_mwResultRow(item, type)));
             });
-            box.innerHTML = rows.join('') || '<div class="p-3 text-gray-500 text-sm">No results</div>';
+            box.innerHTML = rows.join('') || '<div class="p-3 text-gray-500 text-sm bg-gray-900">No results</div>';
         } catch (e) {
-            box.innerHTML = '<div class="p-3 text-red-400 text-sm">Search failed</div>';
+            box.innerHTML = '<div class="p-3 text-red-400 text-sm bg-gray-900">Search failed</div>';
         }
+    }
+
+    async function mwLoadFavorites() {
+        const section = document.getElementById('mw-favorites-section');
+        const shelf = document.getElementById('mw-favorites');
+        if (!section || !shelf) return;
+        try {
+            let items = [];
+            for (const type of ['playlist', 'album']) {
+                const res = await fetch(`${_mwApiBase}api/music/favorites?media_type=${type}&limit=12`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                items = items.concat(data.items || data[type + 's'] || []);
+                if (items.length >= 12) break;
+            }
+            if (!items.length) { section.style.display = 'none'; return; }
+            section.style.display = 'block';
+            shelf.innerHTML = items.slice(0, 12).map(item => {
+                const img = _mwImage(item);
+                const type = item.media_type || 'playlist';
+                const artHtml = img
+                    ? `<img src="${_mwEsc(img)}" loading="lazy" class="w-20 h-20 rounded-xl object-cover bg-gray-800 shadow-md" alt="">`
+                    : `<div class="w-20 h-20 rounded-xl bg-gray-800 flex items-center justify-center text-2xl shadow-md">${_MW_TYPE_ICON[type] || '📻'}</div>`;
+                return `<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')" class="w-20 shrink-0 text-left active:opacity-70">
+                    ${artHtml}
+                    <span class="block text-[11px] text-gray-300 font-bold truncate mt-1">${_mwEsc(item.name)}</span>
+                </button>`;
+            }).join('');
+        } catch (e) { section.style.display = 'none'; }
     }
 
     async function mwPlay(uri, mediaType) {
@@ -174,6 +262,7 @@
 
     function startMusicWidget() {
         mwRefresh();
+        mwLoadFavorites();
         if (_mwTimer) clearInterval(_mwTimer);
         _mwTimer = setInterval(() => {
             const el = document.getElementById('music-widget');
