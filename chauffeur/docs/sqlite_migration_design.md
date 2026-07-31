@@ -1,6 +1,6 @@
 # SQLite Migration — Design & Execution Plan
 
-Status: **EXECUTED through step 5 (local default = sqlite) on 2026-07-16 — soak in progress**
+Status: **EXECUTED — sqlite is the live default on local and the HA add-on (shipped with v2.8.28, 2026-07-30)**
 Companion: `docs/trip_scheduler_design.md` (same "tests first, seam-preserving swap" playbook)
 
 Execution results (2026-07-16):
@@ -17,8 +17,8 @@ Execution results (2026-07-16):
   get_settings 5s memo cache (§3.1) was deferred to keep the swap
   zero-behavior-change; `/api/download_db` zips the data dir and now snapshots
   the .sqlite3 member via the backup API.
-- Remaining: local soak (watch [SLOW REQUEST]), then HA ship (config.yaml
-  version bump), then §8 cleanups (drop TinyDB + toggle, db_lock audit).
+- Remaining: §8 cleanups only (drop TinyDB + toggle, db_lock audit). Local
+  soak and the HA ship (v2.8.28) are done.
 
 ## 1. Why (measured, not vibes)
 
