@@ -248,6 +248,24 @@
         </div>
     </div>
 
+    <!-- PIN Modal -->
+    <div id="pin-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-xs">
+            <h3 id="pin-modal-title" class="text-xl font-bold text-white mb-1">Enter PIN</h3>
+            <p id="pin-modal-subtitle" class="text-sm text-gray-400 mb-4"></p>
+            <input id="pin-modal-input" type="password" inputmode="numeric" pattern="[0-9]*"
+                autocomplete="off" maxlength="8"
+                class="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-blue-500">
+            <p id="pin-modal-error" class="text-red-400 text-sm font-bold mt-2" style="display: none"></p>
+            <div class="flex gap-2 mt-4">
+                <button id="pin-modal-cancel"
+                    class="flex-1 py-3 rounded-xl bg-gray-800 text-gray-300 font-bold active:bg-gray-700">Cancel</button>
+                <button id="pin-modal-ok"
+                    class="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Notifications Modal -->
     <div id="notif-modal"
         class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
@@ -415,15 +433,20 @@
 
         function applyRoleTabs() {
             const passenger = isPassengerMode();
-            document.getElementById('tab-myday').style.display = passenger ? 'flex' : 'none';
+            const helper = currentMemberRole() === 'helper';
+            document.getElementById('tab-myday').style.display = (passenger && !helper) ? 'flex' : 'none';
             document.getElementById('tab-drives').style.display = passenger ? 'none' : 'flex';
-            document.getElementById('tab-family').style.display = passenger ? 'none' : 'flex';
-            if (passenger && (currentView === 'drives' || currentView === 'family')) {
-                currentView = 'myday';
-                localStorage.setItem('chauffeur_view', 'myday');
-            } else if (!passenger && currentView === 'myday') {
-                currentView = 'drives';
-                localStorage.setItem('chauffeur_view', 'drives');
+            document.getElementById('tab-family').style.display = (passenger || helper) ? 'none' : 'flex';
+            // Helpers (external drivers) get their driving world + parent DMs
+            // only: no family agenda, map, or music.
+            document.getElementById('tab-map').style.display = helper ? 'none' : 'flex';
+            document.getElementById('tab-music').style.display = helper ? 'none' : 'flex';
+            const hiddenNow = helper
+                ? ['family', 'map', 'music', 'myday']
+                : (passenger ? ['drives', 'family'] : ['myday']);
+            if (hiddenNow.includes(currentView)) {
+                currentView = passenger && !helper ? 'myday' : 'drives';
+                localStorage.setItem('chauffeur_view', currentView);
             }
             updateTabBar();
             applyViewVisibility();
@@ -432,6 +455,8 @@
         async function selectPassengerMember(memberId) {
             const m = membersData.find(x => x.id === memberId);
             if (!m) return;
+            const authToken = await ensureMemberAuth(m);
+            if (authToken === null) return;  // backed out of PIN entry
             const previousMemberId = selectedMemberId;
             selectedDriverId = null;
             currentDriverId = null;
@@ -566,6 +591,16 @@
                 ? formatTime(r.start)
                 : `${formatTime(r.start)} - ${formatTime(r.end)}`;
             let driverRow;
+            const driverButtons = (d, rideTitle) => {
+                const isHelper = d.role === 'helper';
+                // Helpers have no HA person entity, so no live map dot; kid
+                // contact is relayed through the family channel.
+                const whereBtn = isHelper ? '' : `<button onclick="setView('map', '${d.member_id}')"
+                    class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>`;
+                return `${whereBtn}
+                    <button onclick="messageMember('${d.member_id}', 'driving ${mfEscape(rideTitle).replace(/'/g, '&#39;')}')"
+                        class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>`;
+            };
             if (r.legs && r.legs.length) {
                 const legRow = (l) => {
                     const lbl = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
@@ -582,12 +617,7 @@
                                 style="border-color:${l.driver.color_code || '#3b82f6'};color:${l.driver.color_code || '#3b82f6'}">${mfEscape(l.driver.avatar || (l.driver.name || '?').charAt(0).toUpperCase())}</span>
                             <span class="truncate">🚗 <b>${mfEscape(l.driver.name)}</b> — ${lbl} ${t}${l.status === 'in_progress' ? ' · <span class="text-blue-300 font-bold">on the way</span>' : ''}</span>
                         </div>
-                        <div class="flex gap-2 shrink-0">
-                            <button onclick="setView('map', '${l.driver.member_id}')"
-                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>
-                            <button onclick="messageMember('${l.driver.member_id}')"
-                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>
-                        </div>
+                        <div class="flex gap-2 shrink-0">${driverButtons(l.driver, r.title)}</div>
                     </div>`;
                 };
                 driverRow = `<div class="mt-3 pt-1 border-t border-gray-800">${r.legs.map(legRow).join('')}</div>`;
@@ -599,12 +629,7 @@
                             style="border-color:${r.driver.color_code || '#3b82f6'};color:${r.driver.color_code || '#3b82f6'}">${mfEscape(r.driver.avatar || (r.driver.name || '?').charAt(0).toUpperCase())}</span>
                         🚗 <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you
                     </div>
-                    <div class="flex gap-2">
-                        <button onclick="setView('map', '${r.driver.member_id}')"
-                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>
-                        <button onclick="messageMember('${r.driver.member_id}')"
-                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>
-                    </div>
+                    <div class="flex gap-2">${driverButtons(r.driver, r.title)}</div>
                 </div>`;
             } else {
                 driverRow = `
@@ -696,6 +721,99 @@
                 selectedMemberId = m.id;
                 localStorage.setItem('chauffeur_member_id', m.id);
             }
+        }
+
+        function currentMemberRole() {
+            const m = membersData.find(x => x.id === selectedMemberId);
+            return m ? (m.role || 'adult') : 'adult';
+        }
+
+        // --- PIN auth (identity switching) ---
+        function promptForPin(title, subtitle) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('pin-modal');
+                const input = document.getElementById('pin-modal-input');
+                const error = document.getElementById('pin-modal-error');
+                document.getElementById('pin-modal-title').textContent = title;
+                document.getElementById('pin-modal-subtitle').textContent = subtitle || '';
+                error.style.display = 'none';
+                input.value = '';
+                modal.classList.remove('hidden');
+                modal.style.display = 'flex';
+                setTimeout(() => input.focus(), 50);
+                const done = (value) => {
+                    modal.style.display = 'none';
+                    modal.classList.add('hidden');
+                    okBtn.onclick = null;
+                    cancelBtn.onclick = null;
+                    input.onkeydown = null;
+                    resolve(value);
+                };
+                const okBtn = document.getElementById('pin-modal-ok');
+                const cancelBtn = document.getElementById('pin-modal-cancel');
+                okBtn.onclick = () => done(input.value.trim());
+                cancelBtn.onclick = () => done(null);
+                input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value.trim()); };
+            });
+        }
+
+        function showPinError(msg) {
+            const error = document.getElementById('pin-modal-error');
+            if (error) { error.textContent = msg; error.style.display = 'block'; }
+        }
+
+        // Verify identity (PIN when set) and mint a device token. Returns the
+        // token, or null if the user backed out.
+        async function ensureMemberAuth(member) {
+            if (!member) return 'no-member';
+            const storedFor = localStorage.getItem('chauffeur_member_token_for');
+            const stored = localStorage.getItem('chauffeur_member_token');
+            if (stored && storedFor === member.id) return stored;
+            let pin = null;
+            while (true) {
+                if (member.has_pin) {
+                    pin = await promptForPin(`Hi ${member.name}!`, 'Enter your PIN');
+                    if (pin === null) return null;
+                }
+                try {
+                    const res = await fetch(`${apiBase}api/members/${member.id}/auth`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: pin })
+                    });
+                    if (res.status === 403) { showGlobalAlert('Wrong PIN'); continue; }
+                    if (res.status === 429) { showGlobalAlert('Too many tries — wait a moment'); return null; }
+                    if (!res.ok) return null;
+                    const data = await res.json();
+                    localStorage.setItem('chauffeur_member_token', data.token);
+                    localStorage.setItem('chauffeur_member_token_for', member.id);
+                    if (!member.has_pin) offerPinSetup(member);
+                    return data.token;
+                } catch (e) {
+                    showGlobalAlert('Could not verify — check connection');
+                    return null;
+                }
+            }
+        }
+
+        async function offerPinSetup(member) {
+            if (localStorage.getItem(`chauffeur_pin_offered_${member.id}`)) return;
+            localStorage.setItem(`chauffeur_pin_offered_${member.id}`, '1');
+            const pin = await promptForPin(`Set a PIN, ${member.name}?`,
+                'Keeps others from using your identity. 4-8 digits, or Cancel to skip.');
+            if (!pin) return;
+            if (!/^\d{4,8}$/.test(pin)) { showGlobalAlert('PIN must be 4-8 digits — not set'); return; }
+            try {
+                const res = await fetch(`${apiBase}api/members/${member.id}/pin`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: pin })
+                });
+                if (res.ok) {
+                    member.has_pin = true;
+                    showGlobalAlert('PIN set ✓');
+                }
+            } catch (e) { }
         }
 
         // --- Family messaging ---
@@ -870,18 +988,41 @@
         }
 
         // DM deep link used by member chips / driver rows (and later the map).
-        async function messageMember(otherMemberId) {
+        // Helpers can only DM parents — anyone else contacting a helper is
+        // relayed through the family channel where parents coordinate.
+        async function messageMember(otherMemberId, context) {
             if (!selectedMemberId || otherMemberId === selectedMemberId) return;
+            const target = membersData.find(m => m.id === otherMemberId);
+            if (target && target.role === 'helper' && currentMemberRole() !== 'parent') {
+                relayViaFamilyChannel(target.name, context);
+                return;
+            }
             try {
                 const res = await fetch(`${apiBase}api/channels/dm`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ member_id: selectedMemberId, other_member_id: otherMemberId })
                 });
+                if (!res.ok) throw new Error('dm refused');
                 const ch = await res.json();
                 setView('messages');
                 openChannel(ch.id);
             } catch (e) { showGlobalAlert('Failed to open chat'); }
+        }
+
+        async function relayViaFamilyChannel(helperName, context) {
+            setView('messages');
+            if (!channelsData.length) await fetchChannels();
+            const fam = channelsData.find(c => c.kind === 'family');
+            if (!fam) { showGlobalAlert('Family chat unavailable'); return; }
+            await openChannel(fam.id);
+            const input = document.getElementById('thread-input');
+            if (input) {
+                input.value = context
+                    ? `To ${helperName} (${context}): `
+                    : `To ${helperName}: `;
+                input.focus();
+            }
         }
 
         async function markErrandCompleted(id, btnElement = null) {
@@ -1047,6 +1188,11 @@
 
         async function selectDriver(id) {
             const previousMemberId = selectedMemberId;
+            const member = membersData.find(m => m.driver_id === id);
+            if (member) {
+                const token = await ensureMemberAuth(member);
+                if (token === null) return;  // backed out of PIN entry
+            }
             currentDriverId = id;
             selectedDriverId = id;
             localStorage.setItem('chauffeur_driver_id', id);
@@ -1131,6 +1277,8 @@
             selectedMemberId = null;
             localStorage.removeItem('chauffeur_driver_id');
             localStorage.removeItem('chauffeur_member_id');
+            localStorage.removeItem('chauffeur_member_token');
+            localStorage.removeItem('chauffeur_member_token_for');
             if (messagesStream) { try { messagesStream.close(); } catch (e) { } messagesStream = null; }
             if (typeof mwOnMemberChanged === 'function') mwOnMemberChanged();
             applyRoleTabs();

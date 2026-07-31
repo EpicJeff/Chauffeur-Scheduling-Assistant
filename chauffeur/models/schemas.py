@@ -78,13 +78,18 @@ class FamilyMember(BaseModel):
     avatar: Optional[str] = None  # emoji or static path; None -> initials
     bio: Optional[str] = ""
     can_drive: bool = False
-    is_child: bool = False
+    is_child: bool = False  # legacy display flag, kept in sync with role
+    # parent: admin powers (verify chores, reset PINs). adult: full family
+    # participation, no admin. child: family + kid lens + points economy.
+    # helper: external (hired driver/nanny) — driving surfaces only.
+    role: str = 'adult'
     driver_id: Optional[str] = None
     passenger_id: Optional[str] = None
     ha_person_entity: Optional[str] = None    # e.g. person.jeff
     notify_service: Optional[str] = None      # e.g. notify.mobile_app_jeffs_iphone
     media_player_entity: Optional[str] = None
-    pin: Optional[str] = None  # reserved for future kid-lock, unused
+    pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
+    pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class ChatChannel(BaseModel):

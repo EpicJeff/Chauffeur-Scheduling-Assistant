@@ -206,8 +206,57 @@ def scenario_fanout_recipients():
         check(push.call_args_list[0].args[1] == "Jeff", "dm title is the sender name")
 
 
+def scenario_helper_restrictions():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("mom", "Mom", role="parent")
+    _member("kid", "Kid", role="child")
+    _member("uber", "Hired Driver", role="helper")
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+    bt = BackgroundTasks()
+
+    # visibility: helper sees only their DMs — no family channel/event threads
+    storage.get_or_create_event_channel("evt1", "Soccer", "2126-01-01T18:00:00")
+    helper_dm = storage.get_or_create_dm("uber", "mom")
+    kinds = {c["kind"] for c in storage.get_channels_for_member("uber")}
+    check(kinds == {"dm"}, f"helper sees DMs only, got {kinds}")
+    kid_kinds = {c["kind"] for c in storage.get_channels_for_member("kid")}
+    check("family" in kid_kinds and "event" in kid_kinds, "family members unaffected")
+
+    # dm creation: helper<->parent ok (above), helper<->child refused both ways
+    for a, b in (("uber", "kid"), ("kid", "uber")):
+        try:
+            main.create_dm_channel(main.DmChannelRequest(member_id=a, other_member_id=b))
+            check(False, "expected 403 for helper-child dm")
+        except HTTPException as e:
+            check(e.status_code == 403, f"helper-child dm refused ({a}->{b})")
+    ok = main.create_dm_channel(main.DmChannelRequest(member_id="mom", other_member_id="uber"))
+    check(ok["id"] == helper_dm["id"], "parent-helper dm allowed (get-or-create)")
+
+    # posting: helper can post in their dm, not in the family channel
+    main.send_message(helper_dm["id"], main.SendMessageRequest(
+        sender_member_id="uber", body="on my way"), bt)
+    try:
+        main.send_message(fam["id"], main.SendMessageRequest(
+            sender_member_id="uber", body="hi fam"), bt)
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "helper cannot post in family channel")
+
+    # fan-out: family messages never notify helpers
+    from services import ha_api
+    with mock.patch.object(main, 'send_push_to_member') as push, \
+         mock.patch.object(ha_api, 'call_service'):
+        main._fanout_message_notifications(fam, {"sender_member_id": "mom", "body": "dinner"})
+        pushed = sorted(c.args[0] for c in push.call_args_list)
+        check(pushed == ["kid"], f"family fan-out excludes helpers, got {pushed}")
+
+
 SCENARIOS = [
     scenario_family_channel_singleton,
+    scenario_helper_restrictions,
     scenario_dm_get_or_create,
     scenario_event_channel_lifecycle,
     scenario_dm_visibility,

@@ -2317,15 +2317,24 @@ def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
 
 # --- Family Members API (overlay over drivers/passengers) ---
 
+def _public_member(m: dict) -> dict:
+    """Strip PIN secrets; expose has_pin instead."""
+    out = {k: v for k, v in m.items() if k not in ('pin_hash', 'pin_salt', 'pin')}
+    out['has_pin'] = bool(m.get('pin_hash'))
+    return out
+
 @app.get("/api/members")
 def get_members():
     members = storage.get_all_members()
     drivers = {d.get('id'): d for d in storage.get_all_drivers()}
     passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    out = []
     for m in members:
-        m['driver'] = drivers.get(m.get('driver_id'))
-        m['passenger'] = passengers.get(m.get('passenger_id'))
-    return members
+        pub = _public_member(m)
+        pub['driver'] = drivers.get(m.get('driver_id'))
+        pub['passenger'] = passengers.get(m.get('passenger_id'))
+        out.append(pub)
+    return out
 
 @app.post("/api/members")
 def create_member(member: FamilyMember):
@@ -2335,11 +2344,14 @@ def create_member(member: FamilyMember):
 
 @app.put("/api/members/{member_id}")
 def update_member_endpoint(member_id: str, updates: dict):
-    # Partial update; id/links are managed via merge/split, not blind PUT.
-    updates.pop('id', None)
-    updates.pop('doc_id', None)
-    updates.pop('driver', None)
-    updates.pop('passenger', None)
+    # Partial update; id/links are managed via merge/split, PINs via the pin
+    # endpoints — never via blind PUT.
+    for field in ('id', 'doc_id', 'driver', 'passenger', 'pin_hash', 'pin_salt', 'has_pin', 'pin'):
+        updates.pop(field, None)
+    if 'role' in updates:
+        if updates['role'] not in ('parent', 'adult', 'child', 'helper'):
+            raise HTTPException(status_code=400, detail="Invalid role")
+        updates['is_child'] = updates['role'] == 'child'
     if not storage.update_member(member_id, updates):
         raise HTTPException(status_code=404, detail="Member not found")
     return {"status": "updated"}
@@ -2364,7 +2376,7 @@ def merge_members_endpoint(req: MergeMembersRequest):
     result = storage.merge_members(req.keep_id, req.absorb_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Member not found")
-    return result
+    return _public_member(result)
 
 class SplitMemberRequest(BaseModel):
     link: str  # 'driver' | 'passenger'
@@ -2377,7 +2389,7 @@ def split_member_endpoint(member_id: str, req: SplitMemberRequest):
     if result is None:
         raise HTTPException(status_code=400,
                             detail="Member not found, link empty, or it is the member's only link")
-    return result
+    return _public_member(result)
 
 @app.get("/api/members/resolve")
 def resolve_member(driver_id: Optional[str] = None, passenger_id: Optional[str] = None):
@@ -2388,6 +2400,89 @@ def resolve_member(driver_id: Optional[str] = None, passenger_id: Optional[str] 
         member = storage.get_member_by_passenger_id(passenger_id)
     if not member:
         raise HTTPException(status_code=404, detail="No member for that identity")
+    return _public_member(member)
+
+# --- Member PIN auth (identity switching + privileged actions) ---
+
+_PIN_ATTEMPTS = {}  # member_id -> {'fails': int, 'locked_until': ts}
+
+def _pin_rate_check(member_id: str):
+    entry = _PIN_ATTEMPTS.get(member_id)
+    if entry and time.time() < entry.get('locked_until', 0):
+        raise HTTPException(status_code=429,
+                            detail="Too many attempts — try again in a moment")
+
+def _pin_rate_record(member_id: str, ok: bool):
+    if ok:
+        _PIN_ATTEMPTS.pop(member_id, None)
+        return
+    entry = _PIN_ATTEMPTS.setdefault(member_id, {'fails': 0, 'locked_until': 0})
+    entry['fails'] += 1
+    if entry['fails'] >= 5:
+        entry['fails'] = 0
+        entry['locked_until'] = time.time() + 30
+
+def _valid_pin_format(pin: str) -> bool:
+    return isinstance(pin, str) and pin.isdigit() and 4 <= len(pin) <= 8
+
+class MemberAuthRequest(BaseModel):
+    pin: Optional[str] = None
+
+@app.post("/api/members/{member_id}/auth")
+def member_auth(member_id: str, req: MemberAuthRequest):
+    """Verify PIN (when set) and mint a per-device token. Members without a
+    PIN authenticate freely — same household trust as before, hardened only
+    where someone chose to be hardened."""
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('pin_hash'):
+        _pin_rate_check(member_id)
+        ok = storage.verify_member_pin(member_id, req.pin or '')
+        _pin_rate_record(member_id, ok)
+        if not ok:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+    token = storage.create_member_token(member_id)
+    return {"token": token, "member": _public_member(member)}
+
+class SetPinRequest(BaseModel):
+    pin: str
+    current_pin: Optional[str] = None
+
+@app.post("/api/members/{member_id}/pin")
+def set_pin(member_id: str, req: SetPinRequest):
+    """Set/change own PIN. First set is open (self-serve on first login);
+    changing requires the current PIN. Parent resets go via /pin/clear."""
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if not _valid_pin_format(req.pin):
+        raise HTTPException(status_code=400, detail="PIN must be 4-8 digits")
+    if member.get('pin_hash'):
+        _pin_rate_check(member_id)
+        ok = storage.verify_member_pin(member_id, req.current_pin or '')
+        _pin_rate_record(member_id, ok)
+        if not ok:
+            raise HTTPException(status_code=403, detail="Current PIN is wrong")
+    storage.set_member_pin(member_id, req.pin)
+    return {"status": "ok"}
+
+@app.post("/api/members/{member_id}/pin/clear")
+def clear_pin(member_id: str):
+    """Parent reset from the (dashboard-trusted) config page: clears the PIN
+    and revokes that member's device tokens."""
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    storage.clear_member_pin(member_id)
+    storage.delete_member_tokens(member_id)
+    return {"status": "cleared"}
+
+def require_parent_token(token: Optional[str]):
+    """Guard for privileged actions (chore verification, rewards admin...).
+    Returns the parent member or raises."""
+    member = storage.get_member_by_token(token or '')
+    if not member or member.get('role') != 'parent':
+        raise HTTPException(status_code=403, detail="Parent authorization required")
     return member
 
 # --- Home Assistant bridge API (services/ha_api.py) ---
@@ -2495,7 +2590,8 @@ def _channel_recipient_members(channel):
     if channel.get('kind') == 'dm':
         ids = set(channel.get('member_ids') or [])
         return [m for m in members if m['id'] in ids]
-    return members  # family + event channels are household-wide
+    # family + event channels are household-wide; helpers are outside it
+    return [m for m in members if m.get('role') != 'helper']
 
 def _fanout_message_notifications(channel, message):
     """Web push + HA notify to every recipient except the sender. A member
@@ -2874,6 +2970,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             driver_members[driver_id] = {
                 'member_id': m['id'], 'name': m.get('name'),
                 'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+                'role': m.get('role', 'adult'),
             } if m else None
         return driver_members[driver_id]
 
@@ -2978,6 +3075,8 @@ def family_locations():
 
     out = []
     for m in storage.get_all_members():
+        if m.get('role') == 'helper':
+            continue  # outside the family bubble; no HA person entity anyway
         entry = {
             'member_id': m['id'],
             'name': m.get('name'),
@@ -3031,9 +3130,17 @@ class DmChannelRequest(BaseModel):
 def create_dm_channel(req: DmChannelRequest):
     if req.member_id == req.other_member_id:
         raise HTTPException(status_code=400, detail="Cannot DM yourself")
+    pair = []
     for mid in (req.member_id, req.other_member_id):
-        if not storage.get_member(mid):
+        member = storage.get_member(mid)
+        if not member:
             raise HTTPException(status_code=404, detail=f"Member {mid} not found")
+        pair.append(member)
+    # Helpers (external drivers/nannies) may only DM parents.
+    for a, b in ((pair[0], pair[1]), (pair[1], pair[0])):
+        if a.get('role') == 'helper' and b.get('role') != 'parent':
+            raise HTTPException(status_code=403,
+                                detail="Helpers can only exchange messages with parents")
     return storage.get_or_create_dm(req.member_id, req.other_member_id)
 
 class EventChannelRequest(BaseModel):
@@ -3065,10 +3172,13 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     body = (req.body or '').strip()
     if not body:
         raise HTTPException(status_code=400, detail="Empty message")
-    if not storage.get_member(req.sender_member_id):
+    sender = storage.get_member(req.sender_member_id)
+    if not sender:
         raise HTTPException(status_code=404, detail="Sender member not found")
     if channel.get('kind') == 'dm' and req.sender_member_id not in (channel.get('member_ids') or []):
         raise HTTPException(status_code=403, detail="Not a member of this DM")
+    if sender.get('role') == 'helper' and channel.get('kind') != 'dm':
+        raise HTTPException(status_code=403, detail="Helpers can only post in their DMs")
 
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,

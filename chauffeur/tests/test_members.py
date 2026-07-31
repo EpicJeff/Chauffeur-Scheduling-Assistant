@@ -132,8 +132,52 @@ def scenario_merge_and_split():
           "splitting a member's only link is refused")
 
 
+def scenario_roles():
+    storage.drivers_table.insert({"id": "jeff", "name": "Jeff"})
+    storage.passengers_table.insert({"id": "p-ben", "name": "Ben"})
+    storage.ensure_members()
+    check(storage.get_member_by_driver_id("jeff")["role"] == "adult",
+          "driver members default to adult")
+    check(storage.get_member_by_passenger_id("p-ben")["role"] == "child",
+          "passenger-only members default to child")
+    # legacy members without role get backfilled from is_child
+    storage.add_member({"id": "legacy1", "name": "Old Kid", "is_child": True})
+    storage.add_member({"id": "legacy2", "name": "Old Adult", "is_child": False})
+    storage.ensure_member_roles()
+    check(storage.get_member("legacy1")["role"] == "child", "is_child -> child backfill")
+    check(storage.get_member("legacy2")["role"] == "adult", "default -> adult backfill")
+    storage.ensure_member_roles()
+    check(storage.get_member("legacy1")["role"] == "child", "backfill idempotent")
+
+
+def scenario_pins_and_tokens():
+    storage.add_member({"id": "mom", "name": "Mom", "role": "parent"})
+    check(not storage.verify_member_pin("mom", "1234"), "no PIN set -> verify False")
+    check(storage.set_member_pin("mom", "4321"), "set pin")
+    mom = storage.get_member("mom")
+    check(mom["pin_hash"] and mom["pin_salt"] and mom["pin_hash"] != "4321",
+          "pin stored hashed with salt")
+    check(storage.verify_member_pin("mom", "4321"), "correct pin verifies")
+    check(not storage.verify_member_pin("mom", "1111"), "wrong pin fails")
+    check(not storage.verify_member_pin("mom", ""), "empty pin fails")
+
+    t1 = storage.create_member_token("mom")
+    t2 = storage.create_member_token("mom")
+    check(t1 != t2 and len(t1) >= 32, "unique long tokens")
+    check(storage.get_member_by_token(t1)["id"] == "mom", "token resolves member")
+    check(storage.get_member_by_token("bogus") is None, "unknown token -> None")
+    check(storage.get_member_by_token("") is None, "empty token -> None")
+    storage.delete_member_tokens("mom")
+    check(storage.get_member_by_token(t1) is None, "tokens revocable")
+
+    storage.clear_member_pin("mom")
+    check(not storage.get_member("mom")["pin_hash"], "pin cleared")
+
+
 SCENARIOS = [
     scenario_migration_links_drivers_and_passengers,
+    scenario_roles,
+    scenario_pins_and_tokens,
     scenario_migration_idempotent,
     scenario_passenger_id_backfill,
     scenario_add_driver_and_passenger_backfill,

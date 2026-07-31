@@ -129,6 +129,7 @@ with db_lock:
     chat_channels_table = db.table('chat_channels')
     chat_messages_table = db.table('chat_messages')
     channel_reads_table = db.table('channel_reads')
+    member_tokens_table = db.table('member_tokens')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -229,15 +230,19 @@ def ensure_members():
                 'bio': '',
                 'can_drive': False,
                 'is_child': False,
+                'role': 'adult',
                 'driver_id': None,
                 'passenger_id': None,
                 'ha_person_entity': None,
                 'notify_service': None,
                 'media_player_entity': None,
-                'pin': None,
+                'pin_hash': None,
+                'pin_salt': None,
                 'created_at': time.time(),
             }
             member.update(overrides)
+            if member.get('is_child'):
+                member['role'] = 'child'
             members_table.insert(member)
             by_name.setdefault(member['name'].strip().lower(), member)
             return member
@@ -273,6 +278,19 @@ def ensure_members():
             linked_passengers.add(p_id)
 
 ensure_members()
+
+def ensure_member_roles():
+    """Backfill `role` on members created before the role field existed:
+    is_child -> child, everyone else -> adult. Parents are promoted manually
+    in Config -> Family. Idempotent."""
+    with db_lock:
+        for m in members_table.all():
+            if not m.get('role'):
+                members_table.update(
+                    {'role': 'child' if m.get('is_child') else 'adult'},
+                    doc_ids=[m.doc_id])
+
+ensure_member_roles()
 
 def ensure_family_channel():
     """Singleton all-family chat channel (kind='family', empty member_ids =
@@ -738,6 +756,62 @@ def split_member(member_id: str, link: str) -> Optional[dict]:
         members_table.insert(new)
         return new
 
+# --- Member PINs and device tokens ---
+# PINs gate identity switching in the PWA and (with parent role) privileged
+# actions like chore verification. pbkdf2 with per-member salt; a successful
+# auth mints a per-device token stored client-side.
+
+def _hash_pin(pin: str, salt: str) -> str:
+    import hashlib
+    return hashlib.pbkdf2_hmac('sha256', pin.encode('utf-8'),
+                               bytes.fromhex(salt), 100_000).hex()
+
+def set_member_pin(member_id: str, pin: str) -> bool:
+    import os as _os
+    salt = _os.urandom(16).hex()
+    with db_lock:
+        return bool(members_table.update(
+            {'pin_hash': _hash_pin(pin, salt), 'pin_salt': salt},
+            Query().id == member_id))
+
+def clear_member_pin(member_id: str) -> bool:
+    with db_lock:
+        return bool(members_table.update(
+            {'pin_hash': None, 'pin_salt': None}, Query().id == member_id))
+
+def verify_member_pin(member_id: str, pin: str) -> bool:
+    import hmac
+    member = get_member(member_id)
+    if not member or not member.get('pin_hash') or not member.get('pin_salt'):
+        return False
+    return hmac.compare_digest(member['pin_hash'],
+                               _hash_pin(pin or '', member['pin_salt']))
+
+def create_member_token(member_id: str) -> str:
+    import uuid as _uuid
+    import time
+    token = _uuid.uuid4().hex + _uuid.uuid4().hex
+    with db_lock:
+        member_tokens_table.insert({
+            'token': token, 'member_id': member_id, 'created_at': time.time()})
+        # Housekeeping: keep the newest ~20 tokens per member.
+        rows = sorted(member_tokens_table.search(Query().member_id == member_id),
+                      key=lambda r: r.get('created_at', 0))
+        if len(rows) > 20:
+            member_tokens_table.remove(doc_ids=[r.doc_id for r in rows[:len(rows) - 20]])
+    return token
+
+def get_member_by_token(token: str) -> Optional[dict]:
+    if not token:
+        return None
+    with db_lock:
+        rows = member_tokens_table.search(Query().token == token)
+    return get_member(rows[0]['member_id']) if rows else None
+
+def delete_member_tokens(member_id: str):
+    with db_lock:
+        member_tokens_table.remove(Query().member_id == member_id)
+
 # --- Family messaging (chat_channels / chat_messages / channel_reads) ---
 
 _MESSAGES_PER_CHANNEL_CAP = 500
@@ -809,14 +883,18 @@ def get_or_create_event_channel(event_id: str, title: str = '',
 
 def get_channels_for_member(member_id: str) -> List[dict]:
     """Family channel + this member's DMs + non-archived event threads.
-    Event threads whose event ended >7 days ago are archived on the way out."""
-    import time
+    Helpers (external drivers/nannies) see only their DMs — no family channel
+    or event threads. Event threads whose event ended >7 days ago are
+    archived on the way out."""
     from datetime import datetime, timedelta, timezone
-    now = time.time()
+    member = get_member(member_id)
+    is_helper = bool(member) and member.get('role') == 'helper'
     with db_lock:
         out = []
         for c in chat_channels_table.all():
             c = dict(c)
+            if is_helper and c.get('kind') != 'dm':
+                continue
             if c.get('kind') == 'dm' and member_id not in (c.get('member_ids') or []):
                 continue
             if c.get('kind') == 'event' and not c.get('archived') and c.get('event_end'):
