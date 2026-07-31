@@ -123,7 +123,11 @@
             document.getElementById('mw-artist').textContent = cur.media_artist || '';
             const art = document.getElementById('mw-art');
             if (cur.entity_picture) {
-                art.src = cur.entity_picture.startsWith('http') ? cur.entity_picture : `${_mwApiBase.replace(/\/$/, '')}${cur.entity_picture}`;
+                // HA-relative entity_picture paths only resolve on the HA
+                // origin — route them through the add-on's image proxy.
+                art.src = cur.entity_picture.startsWith('http')
+                    ? cur.entity_picture
+                    : `${_mwApiBase}api/ha/image?path=${encodeURIComponent(cur.entity_picture)}`;
                 art.style.display = 'block';
             } else { art.style.display = 'none'; }
         } else if (np) {

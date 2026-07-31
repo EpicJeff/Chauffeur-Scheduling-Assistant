@@ -142,8 +142,46 @@ def scenario_favorites_and_play():
         check(not kwargs.get('return_response'), "play_media needs no response")
 
 
+def scenario_image_proxy():
+    import main
+    from fastapi import HTTPException
+    with mock.patch.object(ha_api, 'fetch_binary',
+                           return_value=(b'\x89PNG', 'image/png')) as fetch:
+        resp = main.ha_image(path='/api/media_player_proxy/media_player.kitchen?token=x')
+        check(resp.body == b'\x89PNG' and resp.media_type == 'image/png',
+              "artwork bytes + content type proxied")
+        check(fetch.call_args.args[0].startswith('/api/media_player_proxy/'),
+              "path passed through")
+    for bad in ('/api/states', '/api/media_player_proxy/../states', 'http://evil'):
+        try:
+            main.ha_image(path=bad)
+            check(False, f"expected 400 for {bad}")
+        except HTTPException as e:
+            check(e.status_code == 400, f"allowlist rejects {bad}")
+    with mock.patch.object(ha_api, 'fetch_binary', return_value=None):
+        try:
+            main.ha_image(path='/api/image_proxy/x')
+            check(False, "expected 502")
+        except HTTPException as e:
+            check(e.status_code == 502, "HA failure -> 502")
+
+
+def scenario_fetch_binary_url():
+    os.environ["SUPERVISOR_TOKEN"] = "t"
+    resp = mock.Mock(status_code=200, content=b'img',
+                     headers={'Content-Type': 'image/jpeg'})
+    with mock.patch.object(ha_api.requests, 'get', return_value=resp) as req:
+        result = ha_api.fetch_binary('/api/media_player_proxy/x')
+        check(result == (b'img', 'image/jpeg'), "content + type returned")
+        check(req.call_args.args[0] == 'http://supervisor/core/api/media_player_proxy/x',
+              f"'/api' base collapses against the api-prefixed path, got {req.call_args.args[0]}")
+    os.environ.pop("SUPERVISOR_TOKEN", None)
+
+
 SCENARIOS = [
     scenario_media_players_listing,
+    scenario_image_proxy,
+    scenario_fetch_binary_url,
     scenario_command_mapping,
     scenario_search_uses_config_entry_and_unwraps,
     scenario_favorites_and_play,

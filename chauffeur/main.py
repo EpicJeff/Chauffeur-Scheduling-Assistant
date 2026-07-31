@@ -2565,6 +2565,23 @@ def ha_media_players(ma_only: bool = True):
             out = ma_players
     return sorted(out, key=lambda e: (e['name'] or '').lower())
 
+_HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/', '/api/image/')
+
+@app.get("/api/ha/image")
+def ha_image(path: str):
+    """Proxy HA-relative artwork (entity_picture) so browsers on the
+    Chauffeur origin can render it. Allowlisted image paths only — this must
+    not become a generic authenticated proxy into HA."""
+    from services import ha_api
+    if not path.startswith(_HA_IMAGE_PREFIXES) or '..' in path:
+        raise HTTPException(status_code=400, detail="Path not allowed")
+    result = ha_api.fetch_binary(path)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Could not fetch image from Home Assistant")
+    content, content_type = result
+    return Response(content=content, media_type=content_type,
+                    headers={'Cache-Control': 'max-age=30'})
+
 class MediaCommandRequest(BaseModel):
     command: str  # play | pause | next | previous | volume_set | volume_mute
     volume: Optional[float] = None

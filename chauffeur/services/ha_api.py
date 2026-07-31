@@ -132,6 +132,27 @@ def has_service(domain: str, service: str) -> bool:
     return False
 
 
+def fetch_binary(path: str):
+    """Fetch a binary asset (entity_picture / media proxy image) from HA with
+    our token. Paths like /api/media_player_proxy/... resolve only against
+    the HA origin, which browsers hitting the Chauffeur origin can't reach.
+    Returns (content, content_type) or None."""
+    base, token = _base_and_token()
+    if not base:
+        return None
+    root = base[:-len('/api')] if base.endswith('/api') else base
+    try:
+        resp = requests.get(f"{root}{path}",
+                            headers={'Authorization': f'Bearer {token}'},
+                            timeout=10)
+        if resp.status_code >= 400:
+            return None
+        return resp.content, resp.headers.get('Content-Type', 'image/jpeg')
+    except Exception as e:
+        print(f"[ha_api] GET {path} (binary) failed: {e}")
+        return None
+
+
 def get_config_entry_id(domain: str):
     """Config entry id for an integration (e.g. 'music_assistant') — required
     by MA's search/get_library services. Uses HA's config-entries HTTP view
