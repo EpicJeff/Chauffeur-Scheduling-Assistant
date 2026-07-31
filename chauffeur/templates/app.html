@@ -260,6 +260,8 @@
             <div class="flex gap-2 mt-4">
                 <button id="pin-modal-cancel"
                     class="flex-1 py-3 rounded-xl bg-gray-800 text-gray-300 font-bold active:bg-gray-700">Cancel</button>
+                <button id="pin-modal-skip" style="display: none"
+                    class="flex-1 py-3 rounded-xl bg-gray-800 text-amber-300 font-bold active:bg-gray-700">Skip</button>
                 <button id="pin-modal-ok"
                     class="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700">OK</button>
             </div>
@@ -729,7 +731,9 @@
         }
 
         // --- PIN auth (identity switching) ---
-        function promptForPin(title, subtitle) {
+        // Resolves {action: 'ok'|'skip'|'cancel', value}. Skip button only
+        // shows when showSkip (the first-run setup offer).
+        function promptForPin(title, subtitle, showSkip = false) {
             return new Promise((resolve) => {
                 const modal = document.getElementById('pin-modal');
                 const input = document.getElementById('pin-modal-input');
@@ -741,19 +745,23 @@
                 modal.classList.remove('hidden');
                 modal.style.display = 'flex';
                 setTimeout(() => input.focus(), 50);
-                const done = (value) => {
+                const okBtn = document.getElementById('pin-modal-ok');
+                const cancelBtn = document.getElementById('pin-modal-cancel');
+                const skipBtn = document.getElementById('pin-modal-skip');
+                skipBtn.style.display = showSkip ? 'block' : 'none';
+                const done = (action) => {
                     modal.style.display = 'none';
                     modal.classList.add('hidden');
                     okBtn.onclick = null;
                     cancelBtn.onclick = null;
+                    skipBtn.onclick = null;
                     input.onkeydown = null;
-                    resolve(value);
+                    resolve({ action: action, value: input.value.trim() });
                 };
-                const okBtn = document.getElementById('pin-modal-ok');
-                const cancelBtn = document.getElementById('pin-modal-cancel');
-                okBtn.onclick = () => done(input.value.trim());
-                cancelBtn.onclick = () => done(null);
-                input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value.trim()); };
+                okBtn.onclick = () => done('ok');
+                cancelBtn.onclick = () => done('cancel');
+                skipBtn.onclick = () => done('skip');
+                input.onkeydown = (e) => { if (e.key === 'Enter') done('ok'); };
             });
         }
 
@@ -772,8 +780,9 @@
             let pin = null;
             while (true) {
                 if (member.has_pin) {
-                    pin = await promptForPin(`Hi ${member.name}!`, 'Enter your PIN');
-                    if (pin === null) return null;
+                    const entry = await promptForPin(`Hi ${member.name}!`, 'Enter your PIN');
+                    if (entry.action !== 'ok') return null;
+                    pin = entry.value;
                 }
                 try {
                     const res = await fetch(`${apiBase}api/members/${member.id}/auth`, {
@@ -787,7 +796,16 @@
                     const data = await res.json();
                     localStorage.setItem('chauffeur_member_token', data.token);
                     localStorage.setItem('chauffeur_member_token_for', member.id);
-                    if (!member.has_pin) offerPinSetup(member);
+                    if (!member.has_pin && !localStorage.getItem(`chauffeur_pin_offered_${member.id}`)) {
+                        const choice = await offerPinSetup(member);
+                        if (choice === 'cancel') {
+                            // Back out of the whole selection — and leave the
+                            // offer unburned so it appears again next time.
+                            localStorage.removeItem('chauffeur_member_token');
+                            localStorage.removeItem('chauffeur_member_token_for');
+                            return null;
+                        }
+                    }
                     return data.token;
                 } catch (e) {
                     showGlobalAlert('Could not verify — check connection');
@@ -796,24 +814,40 @@
             }
         }
 
+        // First-run offer: OK = set the PIN, Skip = proceed without one (and
+        // stop offering on this device), Cancel = back to the person picker.
         async function offerPinSetup(member) {
-            if (localStorage.getItem(`chauffeur_pin_offered_${member.id}`)) return;
-            localStorage.setItem(`chauffeur_pin_offered_${member.id}`, '1');
-            const pin = await promptForPin(`Set a PIN, ${member.name}?`,
-                'Keeps others from using your identity. 4-8 digits, or Cancel to skip.');
-            if (!pin) return;
-            if (!/^\d{4,8}$/.test(pin)) { showGlobalAlert('PIN must be 4-8 digits — not set'); return; }
-            try {
-                const res = await fetch(`${apiBase}api/members/${member.id}/pin`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: pin })
-                });
-                if (res.ok) {
-                    member.has_pin = true;
-                    showGlobalAlert('PIN set ✓');
+            while (true) {
+                const res = await promptForPin(`Set a PIN, ${member.name}?`,
+                    'Keeps others from using your identity (4-8 digits). Skip = no PIN.', true);
+                if (res.action === 'cancel') return 'cancel';
+                if (res.action === 'skip') {
+                    localStorage.setItem(`chauffeur_pin_offered_${member.id}`, '1');
+                    return 'skip';
                 }
-            } catch (e) { }
+                if (!/^\d{4,8}$/.test(res.value)) {
+                    showGlobalAlert('PIN must be 4-8 digits');
+                    continue;
+                }
+                try {
+                    const resp = await fetch(`${apiBase}api/members/${member.id}/pin`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: res.value })
+                    });
+                    if (resp.ok) {
+                        member.has_pin = true;
+                        localStorage.setItem(`chauffeur_pin_offered_${member.id}`, '1');
+                        showGlobalAlert('PIN set ✓');
+                        return 'ok';
+                    }
+                    showGlobalAlert('Could not set PIN');
+                    return 'skip';
+                } catch (e) {
+                    showGlobalAlert('Could not set PIN — check connection');
+                    return 'skip';
+                }
+            }
         }
 
         // --- Family messaging ---

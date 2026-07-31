@@ -912,6 +912,9 @@
                                         <button x-show="member.has_pin" @click="resetMemberPin(member)"
                                             class="text-red-400 hover:text-red-300 bg-red-500/10 px-3 py-3 rounded-lg transition-colors font-bold text-sm">Reset
                                             PIN</button>
+                                        <button x-show="!member.has_pin" @click="setMemberPin(member)"
+                                            class="text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-3 rounded-lg transition-colors font-bold text-sm">Set
+                                            PIN</button>
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Merge another member into
                                                 this one</label>
@@ -3165,6 +3168,18 @@
                 async resetMemberPin(member) {
                     if (!confirm(`Reset ${member.name}'s PIN? They can set a new one next time they sign in.`)) return;
                     await fetch(`${this.apiBase}api/members/${member.id}/pin/clear`, { method: 'POST' });
+                    await this.loadMembers();
+                },
+                async setMemberPin(member) {
+                    const pin = prompt(`Set a PIN for ${member.name} (4-8 digits):`);
+                    if (!pin) return;
+                    if (!/^\d{4,8}$/.test(pin.trim())) { alert('PIN must be 4-8 digits.'); return; }
+                    const res = await fetch(`${this.apiBase}api/members/${member.id}/pin`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: pin.trim() })
+                    });
+                    if (!res.ok) alert('Could not set PIN.');
                     await this.loadMembers();
                 },
                 async saveMember(member) {
