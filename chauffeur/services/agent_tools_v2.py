@@ -73,9 +73,10 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     target_date_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', target_date).strip()
     target_dt = None
     try:
-        if target_date_clean.lower() == 'today':
+        low = target_date_clean.lower()
+        if low in ('today', 'tonight', 'this evening', 'evening', 'now'):
             target_dt = datetime.datetime.now()
-        elif target_date_clean.lower() == 'tomorrow':
+        elif low in ('tomorrow', 'tomorrow night', 'tomorrow evening', 'tomorrow morning'):
             target_dt = datetime.datetime.now() + datetime.timedelta(days=1)
         else:
             target_dt = parse(target_date_clean, default=datetime.datetime.now())
@@ -359,7 +360,7 @@ def get_available_tools() -> List[Dict]:
                 "properties": {
                     "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
                     "driver_name": {"type": "string", "description": "The name or role of the driver to assign."},
-                    "target_date": {"type": "string", "description": "The date the event occurs, e.g. 'Wednesday' or 'July 15'."}
+                    "target_date": {"type": "string", "description": "The date the event occurs as YYYY-MM-DD, resolved from the CURRENT DATE in your context (relative terms like 'tonight' or 'tomorrow' are also accepted)."}
                 },
                 "required": ["event_name", "driver_name", "target_date"]
             }

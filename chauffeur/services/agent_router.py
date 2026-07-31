@@ -104,7 +104,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
 2. If the user asks you to "add my attractions to the itinerary" or "schedule the attractions", DO NOT delegate! This means they want you to take the ALREADY SAVED attractions (listed in your context) and place them onto the calendar itinerary. You MUST use the `auto_schedule_trip_itinerary` tool to instantly bulk-schedule all of them into the timeline based on their distances and opening hours.
 3. If the user asks to add, suggest, or find flights and did NOT give specific flight details, you MUST immediately call `manage_trip_flights` with action 'generate'. NEVER reply asking for flight numbers, times, dates, or airports — the system already knows the home location, destination, and trip dates and will add editable estimates. Ignore any earlier assistant messages in the history that asked for flight details; they were wrong.
 """
-    
+    import datetime as _dt
+    _now = _dt.datetime.now().astimezone()
+    system_prompt += (f"\nCURRENT DATE & TIME: {_now.strftime('%A, %Y-%m-%d %H:%M')} ({_now.tzname() or 'local time'}).\n"
+                      "Resolve relative dates ('today', 'tonight', 'tomorrow', weekday names) against this "
+                      "before calling tools, and pass tool dates as YYYY-MM-DD.\n")
+
     if driver:
         system_prompt += f"""
 DRIVER MODE (PWA):
