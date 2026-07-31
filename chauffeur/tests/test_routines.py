@@ -1,0 +1,203 @@
+"""Tests for daily routines/streaks and the rewards store.
+
+Run from chauffeur/:  python tests/test_routines.py
+"""
+import atexit
+import os
+import shutil
+import sys
+import tempfile
+import time
+from datetime import date, timedelta
+
+_TMP = tempfile.mkdtemp(prefix="chauffeur_routines_test_")
+os.environ["CHAUFFEUR_DATA_DIR"] = _TMP
+atexit.register(lambda: shutil.rmtree(_TMP, ignore_errors=True))
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services import storage  # noqa: E402
+
+
+def check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+def reset_db():
+    with storage.db_lock:
+        for name, val in list(vars(storage).items()):
+            if name.endswith("_table"):
+                val.truncate()
+    storage._distance_mem_cache = None
+
+
+def _member(mid, name, role):
+    storage.add_member({"id": mid, "name": name, "role": role,
+                        "color_code": "#3b82f6", "is_child": role == "child",
+                        "created_at": time.time()})
+
+
+def _routine(rid, member_id, title="Teeth", days=None, tod=None):
+    storage.add_routine({"id": rid, "member_id": member_id, "title": title,
+                         "time_of_day": tod, "days_of_week": days or [],
+                         "created_at": time.time()})
+
+
+def scenario_day_masks_and_checks():
+    _member("kid", "Kid", "child")
+    today = date.today()
+    _routine("r1", "kid", "Brush teeth", tod="07:30")
+    _routine("r2", "kid", "Homework", days=[today.weekday()])
+    _routine("r3", "kid", "Never today", days=[(today.weekday() + 1) % 7])
+
+    items = storage.routines_for_day("kid", today.isoformat())
+    ids = [i["id"] for i in items]
+    check("r1" in ids and "r2" in ids and "r3" not in ids,
+          f"day-of-week mask filters, got {ids}")
+    check(items[0]["id"] == "r1", "timed items sort before untimed")
+    check(all(not i["checked"] for i in items), "unchecked by default")
+
+    check(storage.set_routine_check("r1", "kid", today.isoformat(), True), "check own")
+    check(not storage.set_routine_check("r1", "other", today.isoformat(), True),
+          "cannot check someone else's routine")
+    items = storage.routines_for_day("kid", today.isoformat())
+    check(next(i for i in items if i["id"] == "r1")["checked"], "check persisted")
+    storage.set_routine_check("r1", "kid", today.isoformat(), False)
+    items = storage.routines_for_day("kid", today.isoformat())
+    check(not next(i for i in items if i["id"] == "r1")["checked"], "uncheck works")
+
+
+def scenario_streaks():
+    _member("kid", "Kid", "child")
+    today = date.today()
+    _routine("r1", "kid", "Teeth")
+    _routine("r2", "kid", "Beds")
+
+    def complete_day(offset):
+        d = (today - timedelta(days=offset)).isoformat()
+        storage.set_routine_check("r1", "kid", d, True)
+        storage.set_routine_check("r2", "kid", d, True)
+
+    # 3 complete days ending yesterday; today incomplete (1 of 2)
+    for off in (1, 2, 3):
+        complete_day(off)
+    storage.set_routine_check("r1", "kid", today.isoformat(), True)
+    s = storage.compute_streak("kid")
+    check(s["current"] == 3, f"incomplete today doesn't break streak, got {s['current']}")
+    check(s["today_done"] == 1 and s["today_total"] == 2 and not s["today_complete"],
+          "today progress reported")
+
+    # completing today extends to 4
+    storage.set_routine_check("r2", "kid", today.isoformat(), True)
+    s = storage.compute_streak("kid")
+    check(s["current"] == 4 and s["today_complete"], f"today completes -> 4, got {s['current']}")
+
+    # a gap two days further back caps best; older run separated by miss
+    for off in (6, 7, 8, 9):
+        complete_day(off)
+    s = storage.compute_streak("kid")
+    check(s["current"] == 4, "missed day 5 stops the current streak")
+    check(s["best"] == 4, f"best = max(run lengths) = 4, got {s['best']}")
+
+
+def scenario_streak_neutral_days():
+    _member("kid", "Kid", "child")
+    today = date.today()
+    # Only scheduled on today's weekday -> all other days are neutral
+    _routine("r1", "kid", "Practice", days=[today.weekday()])
+    storage.set_routine_check("r1", "kid", today.isoformat(), True)
+    storage.set_routine_check("r1", "kid", (today - timedelta(days=7)).isoformat(), True)
+    s = storage.compute_streak("kid")
+    check(s["current"] == 2, f"neutral days bridge the streak, got {s['current']}")
+
+
+def scenario_rewards_flow():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    bt = BackgroundTasks()
+    _member("kid", "Kid", "child")
+    _member("gran", "Gran", "adult")
+    _member("mom", "Mom", "parent")
+
+    # bank 100 points
+    with storage.db_lock:
+        storage.points_ledger_table.insert({"id": "seed", "member_id": "kid",
+                                            "delta": 100, "reason": "chore", "ts": time.time()})
+    reward = main.create_reward(main.RewardRequest(title="Movie night", cost=60))
+
+    try:
+        main.redeem_reward(reward["id"], main.ChoreMemberRequest(member_id="gran"), bt)
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "only children redeem")
+
+    main.redeem_reward(reward["id"], main.ChoreMemberRequest(member_id="kid"), bt)
+    try:
+        main.redeem_reward(reward["id"], main.ChoreMemberRequest(member_id="kid"), bt)
+        check(False, "expected 409")
+    except HTTPException as e:
+        check(e.status_code == 409, "pending request reserves points (100-60 < 60)")
+
+    pending = storage.get_redemptions(state="pending")
+    check(len(pending) == 1, "one pending redemption")
+
+    try:
+        main.decide_redemption_endpoint(pending[0]["id"], main.RedemptionDecision(approve=True),
+                                        bt, x_member_token=None)
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "decision requires parent token")
+
+    mom_token = storage.create_member_token("mom")
+    red = main.decide_redemption_endpoint(pending[0]["id"], main.RedemptionDecision(approve=True),
+                                          bt, x_member_token=mom_token)
+    check(red["state"] == "approved", "approved")
+    check(storage.get_points_balance("kid") == 40, "cost deducted via ledger")
+    check(storage.get_points_ledger("kid")[0]["reason"] == "redeem", "ledger reason redeem")
+
+    # deny path: no deduction (cheaper reward — only 40 pts left)
+    reward2 = main.create_reward(main.RewardRequest(title="Ice cream", cost=30))
+    main.redeem_reward(reward2["id"], main.ChoreMemberRequest(member_id="kid"), bt)
+    check(storage.get_points_balance("kid") == 40, "request alone deducts nothing")
+    p2 = storage.get_redemptions(state="pending")[0]
+    main.decide_redemption_endpoint(p2["id"], main.RedemptionDecision(approve=False),
+                                    bt, x_member_token=mom_token)
+    check(storage.get_points_balance("kid") == 40, "deny deducts nothing")
+    check(storage.decide_redemption(p2["id"], "mom", True) is None, "cannot re-decide")
+
+
+SCENARIOS = [
+    scenario_day_masks_and_checks,
+    scenario_streaks,
+    scenario_streak_neutral_days,
+    scenario_rewards_flow,
+]
+
+if __name__ == "__main__":
+    import traceback
+
+    if "CHAUFFEUR_STORAGE" not in os.environ:
+        import subprocess
+        worst = 0
+        for be in ("tinydb", "sqlite"):
+            env = dict(os.environ, CHAUFFEUR_STORAGE=be)
+            print(f"=== backend: {be} ===")
+            rc = subprocess.call([sys.executable, os.path.abspath(__file__)], env=env)
+            worst = max(worst, rc)
+        raise SystemExit(worst)
+
+    backend = getattr(storage, "BACKEND", "tinydb")
+    print(f"storage backend: {backend}  (data dir: {_TMP})")
+    failed = 0
+    for fn in SCENARIOS:
+        try:
+            reset_db()
+            fn()
+            print(f"PASS  {fn.__name__}")
+        except Exception:
+            failed += 1
+            print(f"FAIL  {fn.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(SCENARIOS) - failed}/{len(SCENARIOS)} scenarios passed")
+    raise SystemExit(1 if failed else 0)

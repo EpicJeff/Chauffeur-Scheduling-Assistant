@@ -2993,6 +2993,172 @@ def member_points(member_id: str, limit: int = 25):
         'ledger': storage.get_points_ledger(member_id, limit=limit),
     }
 
+# --- Routines API (personal daily checklists; no points, streaks instead) ---
+
+class RoutineRequest(BaseModel):
+    member_id: str
+    title: str
+    time_of_day: Optional[str] = None
+    days_of_week: list = []
+
+def _validate_routine(req):
+    if not (req.title or '').strip():
+        raise HTTPException(status_code=400, detail="Title required")
+    if req.time_of_day and not __import__('re').match(r'^\d{2}:\d{2}$', req.time_of_day):
+        raise HTTPException(status_code=400, detail="time_of_day must be HH:MM")
+    if any(not isinstance(d, int) or d < 0 or d > 6 for d in (req.days_of_week or [])):
+        raise HTTPException(status_code=400, detail="days_of_week must be 0-6 (Mon-Sun)")
+
+@app.get("/api/routines")
+def list_routines(member_id: Optional[str] = None):
+    routines = storage.get_routines(member_id)
+    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    for r in routines:
+        r['member_name'] = names.get(r.get('member_id'))
+    routines.sort(key=lambda r: (r.get('member_name') or '', r.get('time_of_day') or '99'))
+    return routines
+
+@app.post("/api/routines")
+def create_routine(req: RoutineRequest):
+    from models.schemas import RoutineItem
+    _validate_routine(req)
+    if not storage.get_member(req.member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    item = RoutineItem(member_id=req.member_id, title=req.title.strip(),
+                       time_of_day=req.time_of_day or None,
+                       days_of_week=sorted(set(req.days_of_week or []))).model_dump()
+    storage.add_routine(item)
+    return item
+
+@app.put("/api/routines/{routine_id}")
+def edit_routine(routine_id: str, req: RoutineRequest):
+    _validate_routine(req)
+    if not storage.update_routine(routine_id, {
+            'member_id': req.member_id, 'title': req.title.strip(),
+            'time_of_day': req.time_of_day or None,
+            'days_of_week': sorted(set(req.days_of_week or []))}):
+        raise HTTPException(status_code=404, detail="Routine not found")
+    return {"status": "updated"}
+
+@app.delete("/api/routines/{routine_id}")
+def remove_routine(routine_id: str):
+    storage.delete_routine(routine_id)
+    return {"status": "deleted"}
+
+@app.get("/api/routines/day")
+def routines_day(member_id: str, date: Optional[str] = None):
+    import datetime as _dt
+    date_str = date or _dt.date.today().isoformat()
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {
+        'date': date_str,
+        'items': storage.routines_for_day(member_id, date_str),
+        'streak': storage.compute_streak(member_id),
+    }
+
+class RoutineCheckRequest(BaseModel):
+    member_id: str
+    date: Optional[str] = None
+    checked: bool = True
+
+@app.post("/api/routines/{routine_id}/check")
+def check_routine(routine_id: str, req: RoutineCheckRequest):
+    import datetime as _dt
+    date_str = req.date or _dt.date.today().isoformat()
+    if not storage.set_routine_check(routine_id, req.member_id, date_str, req.checked):
+        raise HTTPException(status_code=403, detail="Not your routine")
+    return {'status': 'ok', 'streak': storage.compute_streak(req.member_id)}
+
+# --- Rewards + redemptions API ---
+
+class RewardRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    cost: int = 50
+
+@app.get("/api/rewards")
+def list_rewards():
+    rewards = storage.get_rewards()
+    rewards.sort(key=lambda r: r.get('cost', 0))
+    return rewards
+
+@app.post("/api/rewards")
+def create_reward(req: RewardRequest):
+    from models.schemas import Reward
+    if not (req.title or '').strip():
+        raise HTTPException(status_code=400, detail="Title required")
+    if not (1 <= int(req.cost) <= 100000):
+        raise HTTPException(status_code=400, detail="Cost must be positive")
+    reward = Reward(title=req.title.strip(), description=req.description or '',
+                    cost=int(req.cost)).model_dump()
+    storage.add_reward(reward)
+    return reward
+
+@app.put("/api/rewards/{reward_id}")
+def edit_reward(reward_id: str, req: RewardRequest):
+    if not storage.update_reward(reward_id, {
+            'title': req.title.strip(), 'description': req.description or '',
+            'cost': int(req.cost)}):
+        raise HTTPException(status_code=404, detail="Reward not found")
+    return {"status": "updated"}
+
+@app.delete("/api/rewards/{reward_id}")
+def remove_reward(reward_id: str):
+    storage.delete_reward(reward_id)
+    return {"status": "deleted"}
+
+@app.get("/api/redemptions")
+def list_redemptions(member_id: Optional[str] = None, state: Optional[str] = None):
+    rows = storage.get_redemptions(member_id, state)
+    names = {m['id']: m.get('name') for m in storage.get_all_members()}
+    for r in rows:
+        r['member_name'] = names.get(r.get('member_id'))
+    return rows
+
+@app.post("/api/rewards/{reward_id}/redeem")
+def redeem_reward(reward_id: str, req: ChoreMemberRequest, background_tasks: BackgroundTasks):
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('role') != 'child':
+        raise HTTPException(status_code=403, detail="Only children redeem rewards")
+    result = storage.request_redemption(reward_id, req.member_id)
+    if result == 'missing':
+        raise HTTPException(status_code=404, detail="Reward not found")
+    if result == 'insufficient':
+        raise HTTPException(status_code=409, detail="Not enough points (pending requests count)")
+    reward = next((r for r in storage.get_rewards() if r['id'] == reward_id), {})
+
+    def _notify_parents():
+        for m in storage.get_all_members():
+            if m.get('role') == 'parent':
+                _notify_member_lanes(m, 'Reward request',
+                                     f"{member.get('name')} wants: {reward.get('title')} ({reward.get('cost')} pts)",
+                                     '/app?view=chores')
+    background_tasks.add_task(_notify_parents)
+    return {"status": "requested", "redemption_id": result}
+
+class RedemptionDecision(BaseModel):
+    approve: bool
+
+@app.post("/api/redemptions/{redemption_id}/decide")
+def decide_redemption_endpoint(redemption_id: str, req: RedemptionDecision,
+                               background_tasks: BackgroundTasks,
+                               x_member_token: Optional[str] = Header(None)):
+    parent = require_parent_token(x_member_token)
+    red = storage.decide_redemption(redemption_id, parent['id'], req.approve)
+    if red is None:
+        raise HTTPException(status_code=409, detail="Redemption is not pending")
+    kid = storage.get_member(red['member_id'])
+    if kid:
+        body = f"{red['reward_title']} approved! -{red['cost']} points" if req.approve \
+            else f"{red['reward_title']} — not this time"
+        background_tasks.add_task(_notify_member_lanes, kid,
+                                  'Reward approved 🎁' if req.approve else 'Reward request declined',
+                                  body, '/app?view=chores')
+    return red
+
 # --- Sendspin phone-player relay ---
 # The PWA registers as a real Music Assistant player (sendspin-js in the
 # browser). Browsers on our https origin can't open MA's plain ws:// socket

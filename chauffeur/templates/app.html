@@ -570,6 +570,50 @@
             }, { passive: true });
         })();
 
+        function renderRoutineSection(routineData, offset) {
+            if (!routineData || !routineData.items || !routineData.items.length) return '';
+            const s = routineData.streak || {};
+            const streakChip = s.current > 0
+                ? `<span class="text-[11px] font-black text-orange-300 bg-orange-500/10 border border-orange-500/40 px-2 py-1 rounded-full">🔥 ${s.current} day${s.current === 1 ? '' : 's'}</span>`
+                : '';
+            const interactive = offset === 0;
+            const rows = routineData.items.map(item => `
+                <label class="flex items-center gap-3 py-2.5 px-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+                    <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
+                        onchange="toggleRoutine('${item.id}', this.checked)"
+                        class="w-6 h-6 rounded-lg accent-green-500 shrink-0">
+                    <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-white'}">${mfEscape(item.title)}</span>
+                    ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${item.time_of_day}</span>` : ''}
+                </label>`).join('');
+            return `
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-black uppercase tracking-widest text-gray-500">My Routine</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-500 font-bold">${s.today_done || 0}/${s.today_total || routineData.items.length}</span>
+                        ${streakChip}
+                    </div>
+                </div>
+                <div class="divide-y divide-gray-800">${rows}</div>
+            </div>`;
+        }
+
+        async function toggleRoutine(routineId, checked) {
+            try {
+                const res = await fetch(`${apiBase}api/routines/${routineId}/check`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, checked: checked })
+                });
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                if (data.streak && data.streak.today_complete && checked) {
+                    showGlobalAlert(`Routine complete! 🔥 ${data.streak.current} day streak`);
+                }
+                renderMyDay();
+            } catch (e) { showGlobalAlert('Could not update'); }
+        }
+
         async function renderMyDay() {
             const wrap = document.getElementById('myday-content');
             if (!wrap || !selectedMemberId) return;
@@ -577,13 +621,20 @@
             wrap.innerHTML = '<p class="text-center text-gray-500 animate-pulse mt-6">Loading your day...</p>';
             const requestedOffset = mydayOffset;
             try {
-                const res = await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${_mydayLocalDate(requestedOffset)}`);
+                const dateStr = _mydayLocalDate(requestedOffset);
+                const [res, routineRes] = await Promise.all([
+                    fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${dateStr}`),
+                    fetch(`${apiBase}api/routines/day?member_id=${selectedMemberId}&date=${dateStr}`),
+                ]);
                 if (requestedOffset !== mydayOffset) return; // user already navigated on
                 if (!res.ok) throw new Error('bad response');
                 const data = await res.json();
-                wrap.innerHTML = data.rides.length
+                const routineData = routineRes.ok ? await routineRes.json() : null;
+                const routineHtml = renderRoutineSection(routineData, requestedOffset);
+                wrap.innerHTML = routineHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
-                    : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">Nothing scheduled 🎉</div>';
+                    : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
+                      (routineHtml ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
                 if (mydaySlideDir !== 0) {
                     // Slide the new day in from the direction of travel.
                     wrap.style.transition = 'none';
@@ -1048,6 +1099,8 @@
 
         // --- Chores ---
         let choresData = [];
+        let rewardsData = [];
+        let redemptionsData = [];
 
         function memberToken() {
             return localStorage.getItem('chauffeur_member_token') || '';
@@ -1056,11 +1109,15 @@
         async function fetchChores() {
             if (!selectedMemberId) return;
             try {
-                const [choresRes, pointsRes] = await Promise.all([
+                const [choresRes, pointsRes, rewardsRes, redRes] = await Promise.all([
                     fetch(`${apiBase}api/chores`),
                     fetch(`${apiBase}api/points`),
+                    fetch(`${apiBase}api/rewards`),
+                    fetch(`${apiBase}api/redemptions?state=pending`),
                 ]);
                 choresData = await choresRes.json();
+                rewardsData = rewardsRes.ok ? await rewardsRes.json() : [];
+                redemptionsData = redRes.ok ? await redRes.json() : [];
                 renderChores(await pointsRes.json());
                 updateChoresBadge();
             } catch (e) { console.error('Failed to fetch chores', e); }
@@ -1072,7 +1129,7 @@
             const role = currentMemberRole();
             let n = 0;
             if (role === 'parent') {
-                n = choresData.filter(c => c.state === 'done').length;
+                n = choresData.filter(c => c.state === 'done').length + redemptionsData.length;
             } else {
                 n = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
             }
@@ -1128,13 +1185,47 @@
 
             if (role === 'parent') {
                 const toVerify = choresData.filter(c => c.state === 'done');
-                if (toVerify.length) {
+                if (toVerify.length || redemptionsData.length) {
                     parts.push('<div class="text-xs font-black uppercase tracking-widest text-amber-400 pt-2">Needs your OK</div>');
                     toVerify.forEach(c => parts.push(choreCard(c,
                         btn('✓ Verify', 'bg-green-600 text-white active:bg-green-700', `verifyChore('${c.id}')`) +
                         btn('✗', 'bg-red-600/80 text-white active:bg-red-700', `rejectChore('${c.id}')`),
                         `done by ${mfEscape(c.claimed_by_name || '?')}`)));
+                    redemptionsData.forEach(r => parts.push(`
+                        <div class="bg-gray-900 border border-indigo-800/60 rounded-xl p-4 flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="text-white font-bold truncate">🎁 ${mfEscape(r.reward_title)}</div>
+                                <div class="text-xs text-gray-500 mt-0.5">${mfEscape(r.member_name || '?')} · ${r.cost} pts</div>
+                            </div>
+                            <div class="flex gap-2 shrink-0">
+                                ${btn('✓ Grant', 'bg-green-600 text-white active:bg-green-700', `decideRedemption('${r.id}', true)`)}
+                                ${btn('✗', 'bg-red-600/80 text-white active:bg-red-700', `decideRedemption('${r.id}', false)`)}
+                            </div>
+                        </div>`));
                 }
+            }
+
+            // Rewards store (children see redeem buttons; pending shown)
+            if (rewardsData.length && role === 'child') {
+                const myBalance = ((balances || []).find(b => b.member_id === selectedMemberId) || {}).balance || 0;
+                const myPendingCost = redemptionsData.filter(r => r.member_id === selectedMemberId)
+                    .reduce((s, r) => s + r.cost, 0);
+                const spendable = myBalance - myPendingCost;
+                parts.push('<div class="text-xs font-black uppercase tracking-widest text-indigo-400 pt-2">Rewards</div>');
+                parts.push(`<div class="grid grid-cols-2 gap-2">${rewardsData.map(rw => {
+                    const pending = redemptionsData.some(r => r.member_id === selectedMemberId && r.reward_id === rw.id);
+                    const afford = spendable >= rw.cost;
+                    const btnHtml = pending
+                        ? '<span class="text-[10px] font-black uppercase text-amber-300">Asked ⏳</span>'
+                        : `<button onclick="redeemReward('${rw.id}')" ${afford ? '' : 'disabled'}
+                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${afford ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-600'}">Redeem</button>`;
+                    return `<div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex flex-col gap-1.5">
+                        <div class="text-white font-bold text-sm leading-tight">${mfEscape(rw.title)}</div>
+                        <div class="flex items-center justify-between mt-auto">
+                            <span class="text-xs font-black text-indigo-300">${rw.cost} ⭐</span>${btnHtml}
+                        </div>
+                    </div>`;
+                }).join('')}</div>`);
             }
 
             const mine = choresData.filter(c => c.claimed_by === selectedMemberId && (c.state === 'claimed' || c.state === 'done'));
@@ -1189,6 +1280,34 @@
         function rejectChore(id) {
             const reason = prompt('What needs fixing?') || '';
             _chorePost(`${id}/reject`, { reason: reason }, { 'X-Member-Token': memberToken() });
+        }
+
+        async function redeemReward(id) {
+            const res = await fetch(`${apiBase}api/rewards/${id}/redeem`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ member_id: selectedMemberId })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Could not request reward');
+            } else {
+                showGlobalAlert('Asked! A parent will approve it 🤞');
+            }
+            fetchChores();
+        }
+
+        async function decideRedemption(id, approve) {
+            const res = await fetch(`${apiBase}api/redemptions/${id}/decide`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                body: JSON.stringify({ approve: approve })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Could not decide');
+            }
+            fetchChores();
         }
 
         // DM deep link used by member chips / driver rows (and later the map).

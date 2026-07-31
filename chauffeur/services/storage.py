@@ -132,6 +132,10 @@ with db_lock:
     member_tokens_table = db.table('member_tokens')
     chores_table = db.table('chores')
     points_ledger_table = db.table('points_ledger')
+    routines_table = db.table('routines')
+    routine_checks_table = db.table('routine_checks')
+    rewards_table = db.table('rewards')
+    redemptions_table = db.table('redemptions')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1004,6 +1008,189 @@ def get_all_point_balances() -> List[dict]:
         })
     balances.sort(key=lambda b: -b['balance'])
     return balances
+
+# --- Daily routines + streaks ---
+# Personal templates checked off per day. A day is "complete" when every item
+# scheduled for that day is checked; days with nothing scheduled are neutral
+# (they neither extend nor break streaks). No points by design.
+
+def get_routines(member_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = routines_table.search(Query().member_id == member_id) if member_id \
+            else routines_table.all()
+        return [dict(r) for r in rows]
+
+def add_routine(data: dict) -> str:
+    with db_lock:
+        routines_table.insert(data)
+        return data['id']
+
+def update_routine(routine_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(routines_table.update(data, Query().id == routine_id))
+
+def delete_routine(routine_id: str):
+    with db_lock:
+        routines_table.remove(Query().id == routine_id)
+        routine_checks_table.remove(Query().routine_id == routine_id)
+
+def _routine_scheduled_on(routine: dict, date_obj) -> bool:
+    days = routine.get('days_of_week') or []
+    return not days or date_obj.weekday() in days
+
+def routines_for_day(member_id: str, date_str: str) -> List[dict]:
+    from datetime import date
+    d = date.fromisoformat(date_str)
+    items = [r for r in get_routines(member_id) if _routine_scheduled_on(r, d)]
+    with db_lock:
+        checked = {c['routine_id'] for c in routine_checks_table.search(
+            (Query().member_id == member_id) & (Query().date_str == date_str))}
+    for r in items:
+        r['checked'] = r['id'] in checked
+    items.sort(key=lambda r: (r.get('time_of_day') is None, r.get('time_of_day') or '', r.get('title', '')))
+    return items
+
+def set_routine_check(routine_id: str, member_id: str, date_str: str, checked: bool) -> bool:
+    import time
+    with db_lock:
+        routine = routines_table.search(Query().id == routine_id)
+        if not routine or routine[0].get('member_id') != member_id:
+            return False
+        q = (Query().routine_id == routine_id) & (Query().date_str == date_str)
+        if checked:
+            routine_checks_table.upsert(
+                {'routine_id': routine_id, 'member_id': member_id,
+                 'date_str': date_str, 'ts': time.time()}, q)
+        else:
+            routine_checks_table.remove(q)
+        return True
+
+def compute_streak(member_id: str, window_days: int = 90) -> dict:
+    """{current, best, today_complete, today_total, today_done} over the
+    window. current counts back from today (today included only once
+    complete, otherwise from yesterday)."""
+    from datetime import date, timedelta
+    routines = get_routines(member_id)
+    if not routines:
+        return {'current': 0, 'best': 0, 'today_complete': False,
+                'today_total': 0, 'today_done': 0}
+    today = date.today()
+    with db_lock:
+        all_checks = routine_checks_table.search(Query().member_id == member_id)
+    checks_by_day = {}
+    for c in all_checks:
+        checks_by_day.setdefault(c['date_str'], set()).add(c['routine_id'])
+
+    def day_state(d):
+        scheduled = {r['id'] for r in routines if _routine_scheduled_on(r, d)}
+        if not scheduled:
+            return 'neutral'
+        return 'complete' if scheduled <= checks_by_day.get(d.isoformat(), set()) else 'incomplete'
+
+    # current streak: walk back from today; an incomplete today doesn't
+    # break it (the day isn't over), it just doesn't count yet.
+    current = 0
+    d = today
+    if day_state(d) == 'incomplete':
+        d = d - timedelta(days=1)
+    steps = 0
+    while steps < window_days:
+        state = day_state(d)
+        if state == 'complete':
+            current += 1
+        elif state == 'incomplete':
+            break
+        d = d - timedelta(days=1)
+        steps += 1
+
+    best = run = 0
+    for i in range(window_days, -1, -1):
+        state = day_state(today - timedelta(days=i))
+        if state == 'complete':
+            run += 1
+            best = max(best, run)
+        elif state == 'incomplete':
+            run = 0
+    today_sched = {r['id'] for r in routines if _routine_scheduled_on(r, today)}
+    today_done = len(today_sched & checks_by_day.get(today.isoformat(), set()))
+    return {'current': current, 'best': best,
+            'today_complete': bool(today_sched) and today_done == len(today_sched),
+            'today_total': len(today_sched), 'today_done': today_done}
+
+# --- Rewards + redemptions ---
+
+def get_rewards() -> List[dict]:
+    with db_lock:
+        return [dict(r) for r in rewards_table.all()]
+
+def add_reward(data: dict) -> str:
+    with db_lock:
+        rewards_table.insert(data)
+        return data['id']
+
+def update_reward(reward_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(rewards_table.update(data, Query().id == reward_id))
+
+def delete_reward(reward_id: str):
+    with db_lock:
+        rewards_table.remove(Query().id == reward_id)
+
+def get_redemptions(member_id: str = None, state: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in redemptions_table.all()]
+    if member_id:
+        rows = [r for r in rows if r.get('member_id') == member_id]
+    if state:
+        rows = [r for r in rows if r.get('state') == state]
+    rows.sort(key=lambda r: r.get('requested_at', 0), reverse=True)
+    return rows
+
+def request_redemption(reward_id: str, member_id: str) -> str:
+    """Returns redemption id | 'missing' | 'insufficient'. Pending requests
+    count against the spendable balance so a kid can't double-spend."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        reward = rewards_table.search(Query().id == reward_id)
+        if not reward:
+            return 'missing'
+        reward = dict(reward[0])
+    balance = get_points_balance(member_id)
+    pending = sum(r['cost'] for r in get_redemptions(member_id, 'pending'))
+    if balance - pending < reward.get('cost', 0):
+        return 'insufficient'
+    redemption = {
+        'id': _uuid.uuid4().hex, 'reward_id': reward_id,
+        'reward_title': reward.get('title'), 'cost': int(reward.get('cost', 0)),
+        'member_id': member_id, 'state': 'pending',
+        'requested_at': time.time(), 'decided_by': None, 'decided_at': None,
+    }
+    with db_lock:
+        redemptions_table.insert(redemption)
+    return redemption['id']
+
+def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool) -> Optional[dict]:
+    """Approve deducts points via the ledger; deny just closes it."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        rows = redemptions_table.search(Query().id == redemption_id)
+        if not rows or rows[0].get('state') != 'pending':
+            return None
+        red = dict(rows[0])
+        updates = {'state': 'approved' if approve else 'denied',
+                   'decided_by': decider_member_id, 'decided_at': time.time()}
+        redemptions_table.update(updates, Query().id == redemption_id)
+        red.update(updates)
+        if approve:
+            points_ledger_table.insert({
+                'id': _uuid.uuid4().hex, 'member_id': red['member_id'],
+                'delta': -int(red['cost']), 'reason': 'redeem',
+                'chore_id': None, 'chore_title': red['reward_title'],
+                'by_member_id': decider_member_id, 'ts': time.time(),
+            })
+    return red
 
 # --- Family messaging (chat_channels / chat_messages / channel_reads) ---
 

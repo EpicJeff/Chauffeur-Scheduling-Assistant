@@ -139,6 +139,35 @@ class Chore(BaseModel):
     reopens_on: Optional[str] = None  # ISO date; recurring verified reopen
     created_at: float = Field(default_factory=time.time)
 
+class RoutineItem(BaseModel):
+    # Personal daily-routine template ("brush teeth", "homework"): per member,
+    # optional time of day, day-of-week mask. No points — streaks instead.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    title: str
+    time_of_day: Optional[str] = None      # "HH:MM" -> plotted on My Day
+    days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
+    created_at: float = Field(default_factory=time.time)
+
+class Reward(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str
+    description: Optional[str] = ""
+    cost: int = 50
+    created_at: float = Field(default_factory=time.time)
+
+class Redemption(BaseModel):
+    # Kid requests, parent approves (ledger deduction) or denies.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    reward_id: str
+    reward_title: str
+    cost: int
+    member_id: str
+    state: str = 'pending'  # pending | approved | denied
+    requested_at: float = Field(default_factory=time.time)
+    decided_by: Optional[str] = None
+    decided_at: Optional[float] = None
+
 class PointsEntry(BaseModel):
     # Append-only ledger: balances are sums, history is the table.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
