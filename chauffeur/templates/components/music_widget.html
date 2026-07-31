@@ -167,11 +167,20 @@
         }
     }
 
+    function _mwNorm(s) {
+        // MA->HA naming normalizes apostrophes/case/punctuation differently
+        // per version; compare on letters+digits only.
+        return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
     function _mwPhoneEntity() {
-        // Once registered, MA exposes the phone to HA as a media_player whose
-        // friendly name matches our clientName.
-        const name = _mwPhoneName().toLowerCase();
-        return _mwPlayers.find(p => (p.name || '').toLowerCase() === name) || null;
+        // Once registered, MA exposes the phone to HA as a media_player named
+        // after our clientName (possibly normalized).
+        const want = _mwNorm(_mwPhoneName());
+        return _mwPlayers.find(p => {
+            const got = _mwNorm(p.name) || _mwNorm(p.entity_id.replace('media_player.', ''));
+            return got === want || got.includes(want) || want.includes(got);
+        }) || null;
     }
 
     // Broken artwork: hide the ugly broken-image icon and surface WHY once
@@ -468,7 +477,16 @@
             // which appears shortly after the Sendspin client registers.
             const ent = _mwPhoneEntity();
             if (!ent) {
-                _mwToast('This phone is still registering with Music Assistant — try again in a few seconds.');
+                if (!_mwPhone.active) {
+                    _mwToast('Phone player is not connected — re-select "This phone" from the player list.');
+                } else {
+                    // Registered over Sendspin but no matching HA entity yet.
+                    const all = await fetch(`${_mwApiBase}api/ha/media_players?ma_only=false`)
+                        .then(r => r.json()).catch(() => []);
+                    console.warn('[phone-player] looking for', _mwPhoneName(),
+                        'among players:', all.map(p => `${p.name} (${p.entity_id})`));
+                    _mwToast(`Connected to MA as "${_mwPhoneName()}" but no matching player entity found yet — check MA's UI for the player, then try again.`);
+                }
                 return;
             }
             target = ent.entity_id;
