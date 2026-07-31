@@ -5476,6 +5476,13 @@ from fastapi.responses import FileResponse
 def get_service_worker():
     return FileResponse(os.path.join(STATIC_DIR, "sw.js"), media_type="application/javascript")
 
+@app.get("/manifest.json")
+def get_manifest():
+    # Served from the root, NOT /static: relative URLs in a web app manifest
+    # resolve against the manifest's own URL, so at /static/manifest.json the
+    # start_url "./app" resolved to /static/app (a 404 on installed PWAs).
+    return FileResponse(os.path.join(STATIC_DIR, "manifest.json"), media_type="application/manifest+json")
+
 @app.get("/api/vapid_public_key")
 def get_vapid_public_key():
     # Return the URL-safe base64 VAPID public key
