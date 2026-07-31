@@ -132,6 +132,17 @@ def has_service(domain: str, service: str) -> bool:
     return False
 
 
+def get_config_entry_id(domain: str):
+    """Config entry id for an integration (e.g. 'music_assistant') — required
+    by MA's search/get_library services. Uses HA's config-entries HTTP view
+    (admin; the supervisor/long-lived token qualifies)."""
+    data = _request('GET', f'/config/config_entries/entry?domain={domain}')
+    if isinstance(data, list) and data:
+        entry = data[0]
+        return entry.get('entry_id')
+    return None
+
+
 def call_service(domain: str, service: str, data: dict = None,
                  return_response: bool = False):
     """POST /api/services/{domain}/{service}. With return_response=True the

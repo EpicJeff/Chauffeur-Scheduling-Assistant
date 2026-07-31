@@ -19,10 +19,15 @@
         {% include 'components/family_map.html' %}
     </div>
 
+    <div class="shrink-0 p-3 max-w-md w-full mx-auto">
+        {% include 'components/music_widget.html' %}
+    </div>
+
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             initFamilyMap();
             startFamilyMapPolling();
+            startMusicWidget();
         });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') refreshFamilyMap();

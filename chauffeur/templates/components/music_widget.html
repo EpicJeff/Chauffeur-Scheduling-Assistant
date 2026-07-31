@@ -1,0 +1,183 @@
+<!-- Compact Music Assistant control card. Included by app.html (shown on the
+     Family / My Day views) and map.html. Control + search only — playback
+     stays on HA/MA players; the page is never an audio endpoint. -->
+<div id="music-widget" class="bg-gray-900 border border-gray-800 rounded-xl p-3 shadow-lg">
+    <div class="flex items-center gap-2 mb-2">
+        <span class="text-lg">🎵</span>
+        <select id="mw-player" onchange="mwSelectPlayer(this.value)"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white font-bold focus:outline-none">
+            <option value="">No players found</option>
+        </select>
+    </div>
+    <div id="mw-nowplaying" class="flex items-center gap-3 mb-2" style="display: none">
+        <img id="mw-art" class="w-12 h-12 rounded-lg object-cover bg-gray-800" alt="">
+        <div class="flex-1 min-w-0">
+            <div id="mw-title" class="text-white font-bold text-sm truncate"></div>
+            <div id="mw-artist" class="text-gray-400 text-xs truncate"></div>
+        </div>
+    </div>
+    <div class="flex items-center gap-2">
+        <button onclick="mwCommand('previous')" class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+        <button id="mw-playpause" onclick="mwTogglePlay()" class="p-2.5 rounded-full bg-blue-600 text-white active:bg-blue-700">
+            <svg id="mw-icon-play" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="mw-icon-pause" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" style="display: none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+        <button onclick="mwCommand('next')" class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+        <input id="mw-volume" type="range" min="0" max="1" step="0.01" oninput="mwVolume(this.value)"
+            class="flex-1 accent-blue-500">
+    </div>
+    <div class="mt-2 relative">
+        <input id="mw-search" type="text" placeholder="Play something…" autocomplete="off"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();mwSearch();}"
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
+        <div id="mw-results" class="absolute left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-30 max-h-60 overflow-y-auto" style="display: none"></div>
+    </div>
+</div>
+<script>
+    let _mwPlayers = [];
+    let _mwSelected = localStorage.getItem('chauffeur_music_player') || '';
+    let _mwTimer = null;
+    let _mwVolDebounce = null;
+
+    const _mwApiBase = window.location.pathname.endsWith('/') ? '../' : '';
+
+    function _mwEsc(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _mwCurrent() {
+        return _mwPlayers.find(p => p.entity_id === _mwSelected) || null;
+    }
+
+    async function mwRefresh() {
+        try {
+            const res = await fetch(`${_mwApiBase}api/ha/media_players`);
+            if (!res.ok) return;
+            _mwPlayers = await res.json();
+        } catch (e) { return; }
+
+        // Prefer the logged-in member's configured player on first load.
+        if (!_mwSelected && typeof membersData !== 'undefined' && typeof selectedMemberId !== 'undefined') {
+            const me = (membersData || []).find(m => m.id === selectedMemberId);
+            if (me && me.media_player_entity) _mwSelected = me.media_player_entity;
+        }
+        if (!_mwSelected && _mwPlayers.length) _mwSelected = _mwPlayers[0].entity_id;
+
+        const sel = document.getElementById('mw-player');
+        if (sel) {
+            sel.innerHTML = _mwPlayers.length
+                ? _mwPlayers.map(p => `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwEsc(p.name)}</option>`).join('')
+                : '<option value="">No players found</option>';
+        }
+        const cur = _mwCurrent();
+        const np = document.getElementById('mw-nowplaying');
+        if (cur && (cur.media_title || cur.media_artist)) {
+            np.style.display = 'flex';
+            document.getElementById('mw-title').textContent = cur.media_title || '';
+            document.getElementById('mw-artist').textContent = cur.media_artist || '';
+            const art = document.getElementById('mw-art');
+            if (cur.entity_picture) {
+                art.src = cur.entity_picture.startsWith('http') ? cur.entity_picture : `${_mwApiBase.replace(/\/$/, '')}${cur.entity_picture}`;
+                art.style.display = 'block';
+            } else { art.style.display = 'none'; }
+        } else if (np) {
+            np.style.display = 'none';
+        }
+        const playing = cur && cur.state === 'playing';
+        document.getElementById('mw-icon-play').style.display = playing ? 'none' : 'block';
+        document.getElementById('mw-icon-pause').style.display = playing ? 'block' : 'none';
+        const vol = document.getElementById('mw-volume');
+        if (vol && cur && typeof cur.volume_level === 'number' && document.activeElement !== vol) {
+            vol.value = cur.volume_level;
+        }
+    }
+
+    function mwSelectPlayer(entityId) {
+        _mwSelected = entityId;
+        localStorage.setItem('chauffeur_music_player', entityId);
+        mwRefresh();
+    }
+
+    async function mwCommand(command, extra = {}) {
+        if (!_mwSelected) return;
+        try {
+            await fetch(`${_mwApiBase}api/ha/media_players/${encodeURIComponent(_mwSelected)}/command`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command, ...extra })
+            });
+            setTimeout(mwRefresh, 600);
+        } catch (e) { }
+    }
+
+    function mwTogglePlay() {
+        const cur = _mwCurrent();
+        mwCommand(cur && cur.state === 'playing' ? 'pause' : 'play');
+    }
+
+    function mwVolume(v) {
+        clearTimeout(_mwVolDebounce);
+        _mwVolDebounce = setTimeout(() => mwCommand('volume_set', { volume: parseFloat(v) }), 500);
+    }
+
+    async function mwSearch() {
+        const input = document.getElementById('mw-search');
+        const box = document.getElementById('mw-results');
+        const q = input.value.trim();
+        if (!q) { box.style.display = 'none'; return; }
+        box.style.display = 'block';
+        box.innerHTML = '<div class="p-3 text-gray-500 text-sm">Searching…</div>';
+        try {
+            const res = await fetch(`${_mwApiBase}api/music/search?q=${encodeURIComponent(q)}&limit=6`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                box.innerHTML = `<div class="p-3 text-red-400 text-sm">${_mwEsc(err.detail || 'Search failed')}</div>`;
+                return;
+            }
+            const data = await res.json();
+            const rows = [];
+            [['tracks', '🎵'], ['albums', '💿'], ['artists', '🎤'], ['playlists', '📻']].forEach(([key, icon]) => {
+                (data[key] || []).slice(0, 4).forEach(item => {
+                    const sub = (item.artists || []).map(a => a.name).join(', ');
+                    rows.push(`<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc((item.media_type || key.replace(/s$/, '')))}')"
+                        class="w-full text-left px-3 py-2 hover:bg-gray-700 active:bg-gray-600 flex items-center gap-2 border-b border-gray-700/60 last:border-0">
+                        <span>${icon}</span>
+                        <span class="min-w-0"><span class="block text-sm text-white font-bold truncate">${_mwEsc(item.name)}</span>
+                        ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}</span>
+                    </button>`);
+                });
+            });
+            box.innerHTML = rows.join('') || '<div class="p-3 text-gray-500 text-sm">No results</div>';
+        } catch (e) {
+            box.innerHTML = '<div class="p-3 text-red-400 text-sm">Search failed</div>';
+        }
+    }
+
+    async function mwPlay(uri, mediaType) {
+        document.getElementById('mw-results').style.display = 'none';
+        document.getElementById('mw-search').value = '';
+        if (!_mwSelected) return;
+        try {
+            await fetch(`${_mwApiBase}api/music/play`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entity_id: _mwSelected, media_id: uri, media_type: mediaType })
+            });
+            setTimeout(mwRefresh, 1200);
+        } catch (e) { }
+    }
+
+    function startMusicWidget() {
+        mwRefresh();
+        if (_mwTimer) clearInterval(_mwTimer);
+        _mwTimer = setInterval(() => {
+            const el = document.getElementById('music-widget');
+            if (document.visibilityState === 'visible' && el && el.offsetParent !== null) mwRefresh();
+        }, 10000);
+    }
+</script>

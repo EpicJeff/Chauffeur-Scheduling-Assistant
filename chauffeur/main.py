@@ -2523,6 +2523,121 @@ def _fanout_message_notifications(channel, message):
     except Exception as e:
         print(f"Message notification fan-out failed: {e}")
 
+# --- Music Assistant bridge API (control + search over REST; no WebSocket) ---
+
+_MA_CONFIG_ENTRY = {'id': None, 'checked': False}
+
+def _ma_entry_id():
+    from services import ha_api
+    if not _MA_CONFIG_ENTRY['checked']:
+        _MA_CONFIG_ENTRY['id'] = ha_api.get_config_entry_id('music_assistant')
+        _MA_CONFIG_ENTRY['checked'] = True
+    return _MA_CONFIG_ENTRY['id']
+
+@app.get("/api/ha/media_players")
+def ha_media_players():
+    from services import ha_api
+    out = []
+    for s in ha_api.get_states(ttl=5):
+        eid = s.get('entity_id', '')
+        if not eid.startswith('media_player.'):
+            continue
+        attrs = s.get('attributes') or {}
+        out.append({
+            'entity_id': eid,
+            'name': attrs.get('friendly_name') or eid,
+            'state': s.get('state'),
+            'media_title': attrs.get('media_title'),
+            'media_artist': attrs.get('media_artist'),
+            'entity_picture': attrs.get('entity_picture'),
+            'volume_level': attrs.get('volume_level'),
+            'supported_features': attrs.get('supported_features'),
+        })
+    return sorted(out, key=lambda e: (e['name'] or '').lower())
+
+class MediaCommandRequest(BaseModel):
+    command: str  # play | pause | next | previous | volume_set | volume_mute
+    volume: Optional[float] = None
+    mute: Optional[bool] = None
+
+@app.post("/api/ha/media_players/{entity_id}/command")
+def ha_media_command(entity_id: str, req: MediaCommandRequest):
+    from services import ha_api
+    service_map = {
+        'play': ('media_play', {}),
+        'pause': ('media_pause', {}),
+        'next': ('media_next_track', {}),
+        'previous': ('media_previous_track', {}),
+        'volume_set': ('volume_set', {'volume_level': req.volume}),
+        'volume_mute': ('volume_mute', {'is_volume_muted': bool(req.mute)}),
+    }
+    if req.command not in service_map:
+        raise HTTPException(status_code=400, detail=f"Unknown command {req.command}")
+    service, extra = service_map[req.command]
+    if req.command == 'volume_set' and req.volume is None:
+        raise HTTPException(status_code=400, detail="volume required for volume_set")
+    result = ha_api.call_service('media_player', service,
+                                 {'entity_id': entity_id, **extra})
+    if result is None:
+        raise HTTPException(status_code=502, detail="Home Assistant service call failed")
+    return {"status": "ok"}
+
+@app.get("/api/music/search")
+def music_search(q: str, media_type: Optional[str] = None, limit: int = 8):
+    from services import ha_api
+    entry = _ma_entry_id()
+    if not entry:
+        raise HTTPException(status_code=503, detail="Music Assistant integration not found")
+    payload = {'config_entry_id': entry, 'name': q, 'limit': limit}
+    if media_type:
+        payload['media_type'] = [media_type]
+    result = ha_api.call_service('music_assistant', 'search', payload, return_response=True)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Music Assistant search failed")
+    return result.get('service_response', result)
+
+@app.get("/api/music/favorites")
+def music_favorites(media_type: str = 'playlist', limit: int = 25):
+    from services import ha_api
+    entry = _ma_entry_id()
+    if not entry:
+        raise HTTPException(status_code=503, detail="Music Assistant integration not found")
+    result = ha_api.call_service('music_assistant', 'get_library', {
+        'config_entry_id': entry, 'media_type': media_type,
+        'favorite': True, 'limit': limit,
+    }, return_response=True)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Music Assistant get_library failed")
+    return result.get('service_response', result)
+
+@app.get("/api/music/queue")
+def music_queue(entity_id: str):
+    from services import ha_api
+    result = ha_api.call_service('music_assistant', 'get_queue',
+                                 {'entity_id': entity_id}, return_response=True)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Music Assistant get_queue failed")
+    return result.get('service_response', result)
+
+class MusicPlayRequest(BaseModel):
+    entity_id: str
+    media_id: str
+    media_type: Optional[str] = None
+    enqueue: Optional[str] = None  # play | next | add | replace
+
+@app.post("/api/music/play")
+def music_play(req: MusicPlayRequest):
+    from services import ha_api
+    payload = {'entity_id': req.entity_id, 'media_id': req.media_id}
+    if req.media_type:
+        payload['media_type'] = req.media_type
+    if req.enqueue:
+        payload['enqueue'] = req.enqueue
+    result = ha_api.call_service('music_assistant', 'play_media', payload)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Music Assistant play_media failed")
+    return {"status": "ok"}
+
 # --- Passenger day view API ---
 
 @app.get("/api/members/{member_id}/day")

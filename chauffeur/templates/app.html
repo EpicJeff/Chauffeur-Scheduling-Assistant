@@ -145,6 +145,11 @@
             </button>
         </div>
 
+        <!-- Music (Family / My Day views) -->
+        <div id="music-widget-wrap" class="p-3 pb-0 shrink-0" style="display: none">
+            {% include 'components/music_widget.html' %}
+        </div>
+
         <!-- Schedule Container (Swipeable) -->
         <div id="days-container"
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
@@ -345,6 +350,7 @@
             if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
 
+        let musicWidgetStarted = false;
         function applyViewVisibility() {
             const isMessages = currentView === 'messages';
             const isMap = currentView === 'map';
@@ -356,6 +362,15 @@
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
+            const showMusic = currentView === 'family' || isMyDay;
+            const musicWrap = document.getElementById('music-widget-wrap');
+            if (musicWrap) {
+                musicWrap.style.display = showMusic ? 'block' : 'none';
+                if (showMusic && !musicWidgetStarted && typeof startMusicWidget === 'function') {
+                    musicWidgetStarted = true;
+                    startMusicWidget();
+                }
+            }
         }
 
         function updateTabBar() {
