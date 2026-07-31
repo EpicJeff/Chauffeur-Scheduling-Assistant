@@ -142,13 +142,15 @@
             document.getElementById('mw-artist').textContent = cur.media_artist || '';
             const art = document.getElementById('mw-art');
             if (cur.entity_picture) {
-                // HA-relative entity_picture paths only resolve on the HA
-                // origin — route them through the add-on's image proxy.
-                // base64url path segment: a '?path=%2Fapi%2F...' query looked
-                // like a traversal probe to some middleboxes and got dropped.
-                const src = cur.entity_picture.startsWith('http')
-                    ? cur.entity_picture
-                    : `${_mwApiBase}api/ha/image64/${btoa(cur.entity_picture).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+                // Only absolute https URLs load directly. HA-relative paths
+                // resolve on the wrong origin, and absolute http:// URLs
+                // (MA's LAN image proxy) are blocked as mixed content on an
+                // https page (iOS Safari blocks silently) — both go through
+                // the add-on's image proxy, base64url-encoded.
+                const pic = cur.entity_picture;
+                const src = pic.startsWith('https://')
+                    ? pic
+                    : `${_mwApiBase}api/ha/image64/${btoa(pic).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
                 if (art.getAttribute('src') !== src) {
                     art.src = src;
                     art.style.display = 'block';

@@ -193,6 +193,43 @@ def scenario_image64_roundtrip():
         check(e.status_code == 400, "allowlist enforced post-decode")
 
 
+def scenario_absolute_url_artwork():
+    import base64
+    import main
+    from fastapi import HTTPException
+    req = mock.Mock()
+    req.headers = {}
+
+    def enc(u):
+        return base64.urlsafe_b64encode(u.encode()).decode().rstrip('=')
+
+    with mock.patch.object(ha_api, 'fetch_binary',
+                           return_value=(b'img', 'image/png')) as fetch:
+        for ok_url in ('http://192.168.1.5:8095/imageproxy/x',
+                       'http://homeassistant.local:8095/imageproxy/x',
+                       'http://127.0.0.1:8095/x'):
+            resp = main.ha_image64(enc(ok_url), req)
+            check(resp.body == b'img', f"LAN absolute url allowed: {ok_url}")
+        check(fetch.call_args.args[0] == 'http://127.0.0.1:8095/x', "url passed verbatim")
+
+    for bad_url in ('http://evil.example.com/x', 'http://8.8.8.8/x'):
+        try:
+            main.ha_image64(enc(bad_url), req)
+            check(False, f"expected 400 for {bad_url}")
+        except HTTPException as e:
+            check(e.status_code == 400, f"non-LAN host rejected: {bad_url}")
+
+    # absolute fetch must NOT carry the HA token
+    os.environ["SUPERVISOR_TOKEN"] = "secret"
+    resp = mock.Mock(status_code=200, content=b'x', headers={'Content-Type': 'image/png'})
+    with mock.patch.object(ha_api.requests, 'get', return_value=resp) as get:
+        ha_api.fetch_binary('http://192.168.1.5:8095/imageproxy/x')
+        check('headers' not in get.call_args.kwargs
+              or 'Authorization' not in (get.call_args.kwargs.get('headers') or {}),
+              "HA token never sent to non-HA hosts")
+    os.environ.pop("SUPERVISOR_TOKEN", None)
+
+
 def scenario_fetch_binary_url():
     os.environ["SUPERVISOR_TOKEN"] = "t"
     resp = mock.Mock(status_code=200, content=b'img',
@@ -209,6 +246,7 @@ SCENARIOS = [
     scenario_media_players_listing,
     scenario_image_proxy,
     scenario_image64_roundtrip,
+    scenario_absolute_url_artwork,
     scenario_fetch_binary_url,
     scenario_command_mapping,
     scenario_search_uses_config_entry_and_unwraps,

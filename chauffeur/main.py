@@ -2596,7 +2596,21 @@ def ha_image(path: str, request: Request = None):
     ua = ''
     if request is not None:
         ua = (request.headers.get('user-agent') or '')[:60]
-    if not path.startswith(_HA_IMAGE_PREFIXES) or '..' in path:
+    if path.startswith(('http://', 'https://')):
+        # Absolute artwork URLs (MA's own image proxy on the LAN, blocked in
+        # browsers as mixed content). LAN/private hosts only — this must not
+        # become an open proxy to the internet.
+        from urllib.parse import urlparse
+        import ipaddress
+        host = urlparse(path).hostname or ''
+        try:
+            lan = ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            lan = host == 'localhost' or host.endswith('.local')
+        if not lan:
+            print(f"[ha_image] REJECTED non-LAN url={path[:80]} ua={ua}")
+            raise HTTPException(status_code=400, detail="Host not allowed")
+    elif not path.startswith(_HA_IMAGE_PREFIXES) or '..' in path:
         print(f"[ha_image] REJECTED path={path[:80]} ua={ua}")
         raise HTTPException(status_code=400, detail="Path not allowed")
     started = _time.time()

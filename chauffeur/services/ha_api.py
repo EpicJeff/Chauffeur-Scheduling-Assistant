@@ -133,18 +133,22 @@ def has_service(domain: str, service: str) -> bool:
 
 
 def fetch_binary(path: str):
-    """Fetch a binary asset (entity_picture / media proxy image) from HA with
-    our token. Paths like /api/media_player_proxy/... resolve only against
-    the HA origin, which browsers hitting the Chauffeur origin can't reach.
-    Returns (content, content_type) or None."""
-    base, token = _base_and_token()
-    if not base:
-        return None
-    root = base[:-len('/api')] if base.endswith('/api') else base
+    """Fetch a binary asset (entity_picture / media proxy image). HA-relative
+    paths go to the HA origin with our token. Absolute URLs (e.g. Music
+    Assistant's http://<lan>:8095/imageproxy/...) are fetched directly and
+    WITHOUT the HA token — never leak it to non-HA hosts. Returns
+    (content, content_type) or None. Callers validate the target."""
     try:
-        resp = requests.get(f"{root}{path}",
-                            headers={'Authorization': f'Bearer {token}'},
-                            timeout=10)
+        if path.startswith(('http://', 'https://')):
+            resp = requests.get(path, timeout=10)
+        else:
+            base, token = _base_and_token()
+            if not base:
+                return None
+            root = base[:-len('/api')] if base.endswith('/api') else base
+            resp = requests.get(f"{root}{path}",
+                                headers={'Authorization': f'Bearer {token}'},
+                                timeout=10)
         if resp.status_code >= 400:
             return None
         return resp.content, resp.headers.get('Content-Type', 'image/jpeg')
