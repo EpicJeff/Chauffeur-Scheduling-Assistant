@@ -2379,6 +2379,60 @@ def resolve_member(driver_id: Optional[str] = None, passenger_id: Optional[str] 
         raise HTTPException(status_code=404, detail="No member for that identity")
     return member
 
+# --- Home Assistant bridge API (services/ha_api.py) ---
+
+@app.get("/api/ha/status")
+def ha_status():
+    from services import ha_api
+    available = ha_api.is_available()
+    result = {
+        "mode": ha_api.mode(),
+        "available": available,
+        "persons": 0,
+        "device_trackers": 0,
+        "media_players": 0,
+        "notify_services": 0,
+    }
+    if available:
+        result.update(
+            persons=len(ha_api.get_entities('person')),
+            device_trackers=len(ha_api.get_entities('device_tracker')),
+            media_players=len(ha_api.get_entities('media_player')),
+            notify_services=len(ha_api.list_notify_services()),
+        )
+    return result
+
+@app.get("/api/ha/entities")
+def ha_entities(domain: str):
+    from services import ha_api
+    return ha_api.get_entities(domain)
+
+@app.get("/api/ha/notify_services")
+def ha_notify_services():
+    from services import ha_api
+    return ha_api.list_notify_services()
+
+class TestNotifyRequest(BaseModel):
+    member_id: str
+
+@app.post("/api/ha/test_notify")
+def ha_test_notify(req: TestNotifyRequest):
+    from services import ha_api
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    svc = member.get('notify_service')
+    if not svc:
+        raise HTTPException(status_code=400, detail="Member has no notify_service configured")
+    svc_name = svc.split('.', 1)[1] if '.' in svc else svc
+    result = ha_api.call_service('notify', svc_name, {
+        "title": "Chauffeur",
+        "message": f"Test notification for {member.get('name', 'member')} 🚗",
+    })
+    if result is None:
+        raise HTTPException(status_code=502, detail="Home Assistant service call failed")
+    return {"status": "sent", "service": svc}
+
 # --- Rules API ---
 @app.get("/api/rules")
 def get_rules():

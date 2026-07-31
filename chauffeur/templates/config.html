@@ -357,6 +357,33 @@
                         <p class="text-gray-500 text-sm mt-1">Used to calculate layover routing logic.</p>
                     </div>
 
+                    <!-- Family Hub URL -->
+                    <div class="mb-6">
+                        <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Public App
+                            URL</label>
+                        <input type="text" x-model="publicBaseUrl" @change="saveSettings()"
+                            placeholder="https://chauffeur.example.com"
+                            class="w-full max-w-lg bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                        <p class="text-gray-500 text-sm mt-1">The HTTPS address the family's phones use to open the
+                            app. Used to build tap-through links in notifications.</p>
+                    </div>
+
+                    <!-- HA API dev fallback (add-on uses the supervisor token automatically) -->
+                    <div class="mb-6" x-show="!isHomeAssistant">
+                        <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Home
+                            Assistant API (dev fallback)</label>
+                        <div class="flex gap-2 max-w-lg flex-wrap">
+                            <input type="text" x-model="haBaseUrl" @change="saveSettings()"
+                                placeholder="http://homeassistant.local:8123"
+                                class="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                            <input type="password" x-model="haToken" @change="saveSettings()"
+                                placeholder="Long-lived access token"
+                                class="flex-1 bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                        </div>
+                        <p class="text-gray-500 text-sm mt-1">Only needed when running outside the add-on; the add-on
+                            authenticates via the supervisor automatically.</p>
+                    </div>
+
                     <!-- Trip Hashtags -->
                     <div class="mb-6">
                         <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Trip Hashtags
@@ -777,10 +804,19 @@
                 <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
                     <h2 class="text-3xl font-bold mb-2 text-blue-300">Family Members</h2>
-                    <p class="text-gray-400 text-sm mb-6">One entry per person. Members link the driver and
+                    <p class="text-gray-400 text-sm mb-4">One entry per person. Members link the driver and
                         passenger records the solver uses; this page manages hub-level identity (avatar, color,
-                        child flag). Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a
-                        bad merge.</p>
+                        child flag) and Home Assistant mappings. Use <b>Merge</b> if the same person appears
+                        twice, <b>Split</b> to undo a bad merge.</p>
+                    <div class="mb-6 flex items-center gap-2 text-sm" x-show="haStatus">
+                        <span class="px-3 py-1 rounded-full font-bold text-xs uppercase tracking-wide"
+                            :class="haStatus && haStatus.available ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'"
+                            x-text="haStatus && haStatus.available ? ('Home Assistant connected (' + haStatus.mode + ')') : 'Home Assistant unavailable'"></span>
+                        <span class="text-gray-500" x-show="haStatus && haStatus.available"
+                            x-text="haStatus.persons + ' persons · ' + haStatus.notify_services + ' notify services · ' + haStatus.media_players + ' media players'"></span>
+                        <button @click="loadHaOptions()"
+                            class="text-blue-400 hover:text-blue-300 font-bold text-xs">Refresh</button>
+                    </div>
                     <div class="space-y-4">
                         <template x-for="member in members" :key="member.id">
                             <div class="bg-gray-900 p-5 rounded-xl shadow-sm">
@@ -855,6 +891,42 @@
                                                 </template>
                                             </select>
                                         </div>
+                                    </div>
+                                    <div class="flex gap-4 items-end flex-wrap mt-4 pt-4 border-t border-gray-600/50">
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">HA Person (location)</label>
+                                            <select x-model="memberEdit.ha_person_entity"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white max-w-[220px]">
+                                                <option value="">— none —</option>
+                                                <template x-for="p in haPersons" :key="p.entity_id">
+                                                    <option :value="p.entity_id" x-text="p.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Notify Service (phone)</label>
+                                            <select x-model="memberEdit.notify_service"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white max-w-[220px]">
+                                                <option value="">— none —</option>
+                                                <template x-for="s in haNotifyServices" :key="s">
+                                                    <option :value="'notify.' + s" x-text="s"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Media Player</label>
+                                            <select x-model="memberEdit.media_player_entity"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white max-w-[220px]">
+                                                <option value="">— none —</option>
+                                                <template x-for="p in haMediaPlayers" :key="p.entity_id">
+                                                    <option :value="p.entity_id" x-text="p.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <button @click="testNotify(member)" x-show="member.notify_service"
+                                            class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
+                                            Notify</button>
+                                        <span class="text-sm text-gray-400 pb-3" x-text="testNotifyResult"></span>
                                         <button @click="saveMember(member)"
                                             class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-3 rounded transition-colors shadow-md">Save</button>
                                     </div>
@@ -2477,6 +2549,14 @@
                 editMemberId: null,
                 memberEdit: {},
                 memberMergeTarget: '',
+                publicBaseUrl: '',
+                haBaseUrl: '',
+                haToken: '',
+                haStatus: null,
+                haPersons: [],
+                haMediaPlayers: [],
+                haNotifyServices: [],
+                testNotifyResult: '',
                 editErrandRuleId: null,
                 editRuleId: null,
                 editPriorityRuleId: null,
@@ -2489,6 +2569,7 @@
                     await this.loadDrivers();
                     await this.loadPassengers();
                     await this.loadMembers();
+                    this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
                     await this.loadErrandRules();
@@ -2759,6 +2840,9 @@
                     this.enableMapboxMapLoads = data.enable_mapbox_map_loads !== false;
                     this.mapboxMapLoadsLimit = data.mapbox_map_loads_limit || 45000;
                     this.homeLocation = data.home_location || '';
+                    this.publicBaseUrl = data.public_base_url || '';
+                    this.haBaseUrl = data.ha_base_url || '';
+                    this.haToken = data.ha_token || '';
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
@@ -2830,6 +2914,9 @@
                             enable_mapbox_map_loads: this.enableMapboxMapLoads,
                             mapbox_map_loads_limit: parseInt(this.mapboxMapLoadsLimit) || 45000,
                             home_location: this.homeLocation || '',
+                            public_base_url: this.publicBaseUrl || '',
+                            ha_base_url: this.haBaseUrl || '',
+                            ha_token: this.haToken || '',
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,
@@ -3028,16 +3115,23 @@
                 startEditMember(member) {
                     this.editMemberId = member.id;
                     this.memberMergeTarget = '';
+                    this.testNotifyResult = '';
                     this.memberEdit = {
                         name: member.name,
                         color_code: member.color_code || '#3b82f6',
                         avatar: member.avatar || '',
                         is_child: !!member.is_child,
+                        ha_person_entity: member.ha_person_entity || '',
+                        notify_service: member.notify_service || '',
+                        media_player_entity: member.media_player_entity || '',
                     };
                 },
                 async saveMember(member) {
                     const updates = { ...this.memberEdit };
                     updates.avatar = updates.avatar ? updates.avatar.trim() : null;
+                    updates.ha_person_entity = updates.ha_person_entity || null;
+                    updates.notify_service = updates.notify_service || null;
+                    updates.media_player_entity = updates.media_player_entity || null;
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
@@ -3073,6 +3167,38 @@
                     if (!confirm(`Delete member "${member.name}"?`)) return;
                     await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
                     await this.loadMembers();
+                },
+                async loadHaOptions() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ha/status`);
+                        this.haStatus = await res.json();
+                        if (!this.haStatus.available) return;
+                        const [persons, players, notify] = await Promise.all([
+                            fetch(`${this.apiBase}api/ha/entities?domain=person`).then(r => r.json()),
+                            fetch(`${this.apiBase}api/ha/entities?domain=media_player`).then(r => r.json()),
+                            fetch(`${this.apiBase}api/ha/notify_services`).then(r => r.json()),
+                        ]);
+                        this.haPersons = persons;
+                        this.haMediaPlayers = players;
+                        this.haNotifyServices = notify;
+                    } catch (e) {
+                        console.error("Failed to load HA options", e);
+                        this.haStatus = { available: false, mode: 'error' };
+                    }
+                },
+                async testNotify(member) {
+                    this.testNotifyResult = '...';
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ha/test_notify`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ member_id: member.id })
+                        });
+                        const data = await res.json();
+                        this.testNotifyResult = res.ok ? `Sent via ${data.service}` : (data.detail || 'Failed');
+                    } catch (e) {
+                        this.testNotifyResult = 'Failed: ' + e.message;
+                    }
                 },
 
                 addPassengerCalendarId() {

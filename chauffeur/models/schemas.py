@@ -194,6 +194,13 @@ class Settings(BaseModel):
     llm_gemini_model: str = "gemini-3.5-flash"
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"
+    # Family-hub / HA bridge. public_base_url is the family-facing HTTPS
+    # origin (reverse proxy) used to build absolute deep links in
+    # notifications. ha_base_url/ha_token are the dev fallback for the HA
+    # API when not running as an add-on (supervisor token wins when present).
+    public_base_url: str = ""
+    ha_base_url: str = ""
+    ha_token: str = ""
     family_philosophy: str = ""
     enable_standard_rules: bool = True
     enable_ai_rules: bool = True

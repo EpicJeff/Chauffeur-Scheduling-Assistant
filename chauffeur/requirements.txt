@@ -12,3 +12,4 @@ ortools
 pywebpush
 cryptography
 google-search-results
+requests
