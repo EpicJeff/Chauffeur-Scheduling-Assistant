@@ -2574,7 +2574,7 @@ def ha_media_players(ma_only: bool = True):
 _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/', '/api/image/')
 
 @app.get("/api/ha/image64/{encoded}")
-def ha_image64(encoded: str):
+def ha_image64(encoded: str, request: Request):
     """Same as /api/ha/image but with the HA path base64url-encoded into a
     clean path segment — '?path=%2Fapi%2F...' (encoded slashes) reads like a
     traversal probe to WAFs/reverse proxies and got dropped on some client
@@ -2584,20 +2584,29 @@ def ha_image64(encoded: str):
         path = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode('utf-8')
     except Exception:
         raise HTTPException(status_code=400, detail="Bad encoding")
-    return ha_image(path=path)
+    return ha_image(path=path, request=request)
 
 @app.get("/api/ha/image")
-def ha_image(path: str):
+def ha_image(path: str, request: Request = None):
     """Proxy HA-relative artwork (entity_picture) so browsers on the
     Chauffeur origin can render it. Allowlisted image paths only — this must
     not become a generic authenticated proxy into HA."""
+    import time as _time
     from services import ha_api
+    ua = ''
+    if request is not None:
+        ua = (request.headers.get('user-agent') or '')[:60]
     if not path.startswith(_HA_IMAGE_PREFIXES) or '..' in path:
+        print(f"[ha_image] REJECTED path={path[:80]} ua={ua}")
         raise HTTPException(status_code=400, detail="Path not allowed")
+    started = _time.time()
     result = ha_api.fetch_binary(path)
+    ms = int((_time.time() - started) * 1000)
     if result is None:
+        print(f"[ha_image] UPSTREAM-FAIL {ms}ms path={path[:80]} ua={ua}")
         raise HTTPException(status_code=502, detail="Could not fetch image from Home Assistant")
     content, content_type = result
+    print(f"[ha_image] OK {len(content)}b {content_type} {ms}ms ua={ua}")
     return Response(content=content, media_type=content_type,
                     headers={'Cache-Control': 'max-age=30'})
 

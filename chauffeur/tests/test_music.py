@@ -172,20 +172,22 @@ def scenario_image64_roundtrip():
     from fastapi import HTTPException
     path = '/api/media_player_proxy/media_player.kitchen?token=abc123=='
     encoded = base64.urlsafe_b64encode(path.encode()).decode().rstrip('=')
+    req = mock.Mock()
+    req.headers = {}
     with mock.patch.object(ha_api, 'fetch_binary',
                            return_value=(b'img', 'image/png')) as fetch:
-        resp = main.ha_image64(encoded)
+        resp = main.ha_image64(encoded, req)
         check(resp.body == b'img', "decoded path fetches")
         check(fetch.call_args.args[0] == path, "base64url round-trips incl. padding")
     try:
-        main.ha_image64('!!!not-base64!!!')
+        main.ha_image64('!!!not-base64!!!', req)
         check(False, "expected 400")
     except HTTPException as e:
         check(e.status_code == 400, "bad encoding -> 400")
     # allowlist still applies after decode
     bad = base64.urlsafe_b64encode(b'/api/states').decode().rstrip('=')
     try:
-        main.ha_image64(bad)
+        main.ha_image64(bad, req)
         check(False, "expected 400 for disallowed decoded path")
     except HTTPException as e:
         check(e.status_code == 400, "allowlist enforced post-decode")
