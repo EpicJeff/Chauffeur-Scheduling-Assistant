@@ -45,6 +45,10 @@
         <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorites</div>
         <div id="mw-favorites" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
     </div>
+    <div id="mw-fav-tracks-section" style="display: none">
+        <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorite Songs</div>
+        <div id="mw-fav-tracks" class="rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800"></div>
+    </div>
 </div>
 <script>
     let _mwPlayers = [];
@@ -258,22 +262,30 @@
         }
     }
 
+    async function _mwFetchFavorites(type, limit) {
+        try {
+            const res = await fetch(`${_mwApiBase}api/music/favorites?media_type=${type}&limit=${limit}`);
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.items || data[type + 's'] || [];
+        } catch (e) { return []; }
+    }
+
     async function mwLoadFavorites() {
         const section = document.getElementById('mw-favorites-section');
         const shelf = document.getElementById('mw-favorites');
+        const tracksSection = document.getElementById('mw-fav-tracks-section');
+        const tracksBox = document.getElementById('mw-fav-tracks');
         if (!section || !shelf) return;
-        try {
-            let items = [];
-            for (const type of ['playlist', 'album']) {
-                const res = await fetch(`${_mwApiBase}api/music/favorites?media_type=${type}&limit=12`);
-                if (!res.ok) continue;
-                const data = await res.json();
-                items = items.concat(data.items || data[type + 's'] || []);
-                if (items.length >= 12) break;
-            }
-            if (!items.length) { section.style.display = 'none'; return; }
+        const [playlists, albums, tracks] = await Promise.all([
+            _mwFetchFavorites('playlist', 12),
+            _mwFetchFavorites('album', 12),
+            _mwFetchFavorites('track', 8),
+        ]);
+        const tiles = playlists.concat(albums).slice(0, 12);
+        if (tiles.length) {
             section.style.display = 'block';
-            shelf.innerHTML = items.slice(0, 12).map(item => {
+            shelf.innerHTML = tiles.map(item => {
                 const img = _mwImage(item);
                 const type = item.media_type || 'playlist';
                 const artHtml = img
@@ -284,7 +296,17 @@
                     <span class="block text-[11px] text-gray-300 font-bold truncate mt-1">${_mwEsc(item.name)}</span>
                 </button>`;
             }).join('');
-        } catch (e) { section.style.display = 'none'; }
+        } else {
+            section.style.display = 'none';
+        }
+        if (tracksSection && tracksBox) {
+            if (tracks.length) {
+                tracksSection.style.display = 'block';
+                tracksBox.innerHTML = tracks.map(t => _mwResultRow(t, 'track')).join('');
+            } else {
+                tracksSection.style.display = 'none';
+            }
+        }
     }
 
     async function mwPlay(uri, mediaType) {
