@@ -35,6 +35,9 @@ INDEX_SPEC = {
     "daily_schedules": [["date_str"]],
     "route_geometry": [["origin", "destination", "profile"]],
     "members": [["id"], ["driver_id"], ["passenger_id"]],
+    "chat_channels": [["id"], ["dm_key"], ["event_id"], ["kind"]],
+    "chat_messages": [["channel_id"]],
+    "channel_reads": [["channel_id", "member_id"], ["member_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

@@ -125,7 +125,7 @@
     <div id="screen-schedule" class="flex-1 flex flex-col hidden overflow-hidden relative">
 
         <!-- Day Navigation -->
-        <div
+        <div id="day-nav"
             class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
             <button onclick="prevDay()"
                 class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
@@ -151,6 +151,32 @@
             <!-- Day panes injected here -->
         </div>
 
+        <!-- Messages (family chat) -->
+        <div id="messages-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
+            <div id="channel-list" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
+            <div id="thread-view" class="absolute inset-0 bg-gray-950 flex-col z-20" style="display: none">
+                <div class="flex items-center gap-3 p-3 border-b border-gray-800 bg-gray-900 shrink-0">
+                    <button onclick="closeThread()"
+                        class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7">
+                            </path>
+                        </svg>
+                    </button>
+                    <div id="thread-title" class="font-bold text-white text-lg truncate">Chat</div>
+                </div>
+                <div id="thread-messages" class="flex-1 overflow-y-auto p-4 flex flex-col gap-2"></div>
+                <form id="thread-form" onsubmit="submitThreadMessage(event)"
+                    class="p-3 bg-gray-900 border-t border-gray-800 flex gap-2 shrink-0"
+                    style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))">
+                    <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
+                        class="flex-1 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
+                    <button type="submit"
+                        class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 rounded-full shrink-0">Send</button>
+                </form>
+            </div>
+        </div>
+
         <!-- Bottom Tab Bar -->
         <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
             style="padding-bottom: env(safe-area-inset-bottom)">
@@ -168,6 +194,17 @@
                         d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                 </svg>
                 <span class="text-[11px] font-bold tracking-wide">Family</span>
+            </button>
+            <button id="tab-messages" onclick="setView('messages')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors relative">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">Messages</span>
+                <span id="tab-messages-badge"
+                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold items-center justify-center"
+                    style="display: none">0</span>
             </button>
         </div>
     </div>
@@ -268,11 +305,24 @@
             currentView = view;
             localStorage.setItem('chauffeur_view', view);
             updateTabBar();
-            buildTimeline();
+            applyViewVisibility();
+            if (view === 'messages') {
+                fetchChannels();
+            } else {
+                buildTimeline();
+            }
+        }
+
+        function applyViewVisibility() {
+            const isMessages = currentView === 'messages';
+            document.getElementById('days-container').style.display = isMessages ? 'none' : 'flex';
+            const nav = document.getElementById('day-nav');
+            if (nav) nav.style.display = isMessages ? 'none' : 'flex';
+            document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
         }
 
         function updateTabBar() {
-            ['drives', 'family'].forEach(v => {
+            ['drives', 'family', 'messages'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
@@ -297,10 +347,19 @@
 
         async function init() {
             updateTabBar();
+            applyViewVisibility();
             await fetchDrivers();
             await fetchMembers();
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
-                selectDriver(selectedDriverId);
+                await selectDriver(selectedDriverId);
+                const params = new URLSearchParams(window.location.search);
+                const openChannelParam = params.get('open_channel');
+                if (openChannelParam && selectedMemberId) {
+                    setView('messages');
+                    openChannel(openChannelParam);
+                } else if (params.get('view') === 'messages' && selectedMemberId) {
+                    setView('messages');
+                }
             } else {
                 showDriverSelection();
             }
@@ -334,6 +393,192 @@
                 selectedMemberId = m.id;
                 localStorage.setItem('chauffeur_member_id', m.id);
             }
+        }
+
+        // --- Family messaging ---
+        let channelsData = [];
+        let activeChannelId = null;
+        let messagesStream = null;
+
+        function connectMessagesStream() {
+            if (!selectedMemberId) return;
+            if (messagesStream) { try { messagesStream.close(); } catch (e) { } }
+            messagesStream = new EventSource(`${apiBase}api/messages/stream?member_id=${selectedMemberId}`);
+            messagesStream.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (activeChannelId && data.channel_id === activeChannelId && currentView === 'messages') {
+                        refreshThread();
+                    } else {
+                        fetchChannels();
+                    }
+                } catch (err) { }
+            };
+            messagesStream.onerror = () => {
+                if (messagesStream.readyState === EventSource.CLOSED) {
+                    setTimeout(connectMessagesStream, 5000);
+                }
+            };
+        }
+
+        function mfEscape(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function channelDisplay(c) {
+            if (c.kind === 'family') return { name: 'Family', color: '#3b82f6', avatar: '👨‍👩‍👧‍👦' };
+            if (c.kind === 'event') return { name: c.title || 'Event chat', color: '#8b5cf6', avatar: '📅' };
+            const otherId = (c.member_ids || []).find(id => id !== selectedMemberId);
+            const other = membersData.find(m => m.id === otherId) || {};
+            return {
+                name: other.name || 'Chat',
+                color: other.color_code || '#6b7280',
+                avatar: other.avatar || (other.name || '?').charAt(0).toUpperCase()
+            };
+        }
+
+        async function fetchChannels() {
+            if (!selectedMemberId) return;
+            try {
+                const res = await fetch(`${apiBase}api/channels?member_id=${selectedMemberId}`);
+                channelsData = await res.json();
+                renderChannelList();
+                updateMessagesBadge();
+            } catch (e) { console.error('Failed to fetch channels', e); }
+        }
+
+        function updateMessagesBadge() {
+            const badge = document.getElementById('tab-messages-badge');
+            if (!badge) return;
+            const total = channelsData.reduce((s, c) => s + (c.unread || 0), 0);
+            badge.textContent = total > 99 ? '99+' : total;
+            badge.style.display = total > 0 ? 'flex' : 'none';
+        }
+
+        function renderChannelList() {
+            const list = document.getElementById('channel-list');
+            if (!list) return;
+            if (!channelsData.length) {
+                list.innerHTML = '<p class="text-center text-gray-500 mt-8">No conversations yet.</p>';
+                return;
+            }
+            list.innerHTML = channelsData.map(c => {
+                const d = channelDisplay(c);
+                const last = c.last_message;
+                const sender = last ? (membersData.find(m => m.id === last.sender_member_id) || {}) : {};
+                const preview = last
+                    ? `${last.sender_member_id === selectedMemberId ? 'You' : (sender.name || '?')}: ${last.body}`
+                    : 'No messages yet';
+                const t = last ? new Date(last.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                return `
+                <button onclick="openChannel('${c.id}')"
+                    class="w-full flex items-center gap-3 p-3.5 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 text-left">
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-white shrink-0"
+                        style="border-color: ${d.color}">${mfEscape(d.avatar)}</div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-bold text-white truncate">${mfEscape(d.name)}</span>
+                            <span class="text-[11px] text-gray-500 shrink-0">${t}</span>
+                        </div>
+                        <div class="text-sm text-gray-400 truncate">${mfEscape(preview)}</div>
+                    </div>
+                    ${c.unread ? `<span class="min-w-[20px] h-[20px] px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
+                </button>`;
+            }).join('');
+        }
+
+        async function openChannel(channelId) {
+            activeChannelId = channelId;
+            document.getElementById('thread-view').style.display = 'flex';
+            let c = channelsData.find(x => x.id === channelId);
+            if (!c) {
+                await fetchChannels();
+                c = channelsData.find(x => x.id === channelId);
+            }
+            document.getElementById('thread-title').textContent = c ? channelDisplay(c).name : 'Chat';
+            document.getElementById('thread-messages').innerHTML =
+                '<div class="text-center text-gray-500 text-sm mt-4">Loading…</div>';
+            await refreshThread();
+        }
+
+        async function refreshThread() {
+            if (!activeChannelId) return;
+            try {
+                const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages?limit=100`);
+                if (!res.ok) return;
+                const msgs = await res.json();
+                renderThread(msgs);
+                if (msgs.length) markRead(activeChannelId, msgs[msgs.length - 1].ts);
+            } catch (e) { }
+        }
+
+        function renderThread(msgs) {
+            const wrap = document.getElementById('thread-messages');
+            wrap.innerHTML = msgs.map(m => {
+                const mine = m.sender_member_id === selectedMemberId;
+                const sender = membersData.find(x => x.id === m.sender_member_id) || {};
+                const t = new Date(m.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return `<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
+                    ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
+                    <div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words">${mfEscape(m.body)}</div>
+                    <div class="text-[10px] text-gray-600 mt-0.5 ${mine ? 'text-right' : ''}">${t}</div>
+                </div>`;
+            }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
+            wrap.scrollTop = wrap.scrollHeight;
+        }
+
+        async function submitThreadMessage(e) {
+            e.preventDefault();
+            const input = document.getElementById('thread-input');
+            const body = input.value.trim();
+            if (!body || !activeChannelId || !selectedMemberId) return;
+            input.value = '';
+            try {
+                const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender_member_id: selectedMemberId, body: body })
+                });
+                if (!res.ok) throw new Error('send failed');
+                await refreshThread();
+            } catch (err) {
+                showGlobalAlert('Failed to send message');
+                input.value = body;
+            }
+        }
+
+        async function markRead(channelId, ts) {
+            try {
+                await fetch(`${apiBase}api/channels/${channelId}/read`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, ts: ts })
+                });
+            } catch (e) { }
+            const c = channelsData.find(x => x.id === channelId);
+            if (c) { c.unread = 0; updateMessagesBadge(); }
+        }
+
+        function closeThread() {
+            activeChannelId = null;
+            document.getElementById('thread-view').style.display = 'none';
+            fetchChannels();
+        }
+
+        // DM deep link used by member chips / driver rows (and later the map).
+        async function messageMember(otherMemberId) {
+            if (!selectedMemberId || otherMemberId === selectedMemberId) return;
+            try {
+                const res = await fetch(`${apiBase}api/channels/dm`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, other_member_id: otherMemberId })
+                });
+                const ch = await res.json();
+                setView('messages');
+                openChannel(ch.id);
+            } catch (e) { showGlobalAlert('Failed to open chat'); }
         }
 
         async function markErrandCompleted(id, btnElement = null) {
@@ -506,6 +751,8 @@
             document.getElementById('btn-notif').classList.remove('hidden');
             await checkNotificationStatus();
             syncPushSubscription();
+            connectMessagesStream();
+            fetchChannels();
 
             await fetchSchedule();
             fetchNotifications();
@@ -549,6 +796,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         driver_id: currentDriverId,
+                        member_id: selectedMemberId,
                         subscription: subscription
                     })
                 });
@@ -582,10 +830,10 @@
                     userVisibleOnly: true,
                     applicationServerKey: urlB64ToUint8Array(data.public_key)
                 });
-                await fetch(`${apiBase}api/push_subscribe`, {
+                await fetch(`${apiBase}api/push_subscribe`, {  // silent re-sync
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ driver_id: selectedDriverId, subscription: subscription })
+                    body: JSON.stringify({ driver_id: selectedDriverId, member_id: selectedMemberId, subscription: subscription })
                 });
             } catch (e) {
                 console.warn('Push subscription re-sync failed', e);
@@ -940,6 +1188,31 @@
                 mapBtn.style.display = 'none';
             }
 
+            const discussBtn = document.getElementById('em-discuss-btn');
+            if (discussBtn) {
+                if (!ev.isErrand && ev.id && selectedMemberId) {
+                    discussBtn.style.display = 'flex';
+                    discussBtn.onclick = async () => {
+                        closeEventModal();
+                        try {
+                            // Discuss the base event: one thread covers its dropoff/pickup legs.
+                            const baseId = String(ev.id).replace(/_(dropoff|pickup)$/, '');
+                            const baseTitle = (ev.title || '').replace(/^(Dropoff|Pickup): /, '');
+                            const res = await fetch(`${apiBase}api/channels/event`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ event_id: baseId, title: baseTitle, event_end: ev.end || null })
+                            });
+                            const ch = await res.json();
+                            setView('messages');
+                            openChannel(ch.id);
+                        } catch (e) { showGlobalAlert('Failed to open event chat'); }
+                    };
+                } else {
+                    discussBtn.style.display = 'none';
+                }
+            }
+
             const completeBtn = document.getElementById('em-complete-btn');
             if (completeBtn) {
                 if (ev.isErrand) {
@@ -1206,6 +1479,7 @@
                 id: card.id,
                 title: card.title,
                 timeStr: timeStr,
+                end: card.end,
                 location: card.location,
                 passengerHtml: paxBadges,
                 driverHtml: driverChips || '<span class="text-gray-500 italic text-sm">Not assigned</span>',
@@ -1433,6 +1707,7 @@
                         id: ev.id,
                         title: ev.event_type === 'dropoff' ? 'Dropoff: ' + ev.title : (ev.event_type === 'pickup' ? 'Pickup: ' + ev.title : ev.title),
                         timeStr: (ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : `${formatTime(ev.start)} - ${formatTime(ev.end)}`,
+                        end: ev.end,
                         location: ev.location,
                         passengerHtml: badges,
                         isErrand: ev.event_type === 'errand'
@@ -1830,6 +2105,14 @@
                         d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z" />
                 </svg>
                 Open in Maps
+            </button>
+            <button id="em-discuss-btn" style="display: none"
+                class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-indigo-500/50 hover:bg-indigo-900/20 active:bg-indigo-600 text-indigo-400 font-bold shadow-md mb-3">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                </svg>
+                Discuss
             </button>
             <div id="em-claim-container" class="flex-col gap-2 mb-3" style="display: none"></div>
             <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold shadow-md hidden">

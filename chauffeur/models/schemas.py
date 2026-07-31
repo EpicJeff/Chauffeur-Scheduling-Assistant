@@ -87,6 +87,33 @@ class FamilyMember(BaseModel):
     pin: Optional[str] = None  # reserved for future kid-lock, unused
     created_at: float = Field(default_factory=time.time)
 
+class ChatChannel(BaseModel):
+    # Family messaging. Table names are chat_* to stay clear of the agent's
+    # 'conversations' store.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    kind: str = 'dm'  # 'family' | 'dm' | 'event'
+    member_ids: List[str] = Field(default_factory=list)  # empty for 'family' = everyone
+    dm_key: Optional[str] = None       # sorted "a:b" pair for kind='dm' (indexed lookup)
+    event_id: Optional[str] = None     # kind='event': calendar event instance id
+    event_end: Optional[str] = None    # ISO end of the event; drives auto-archive
+    title: str = ""                    # event-title snapshot; dm/family titles render client-side
+    created_at: float = Field(default_factory=time.time)
+    archived: bool = False
+
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    channel_id: str
+    sender_member_id: str
+    ts: float = Field(default_factory=time.time)
+    type: str = 'text'  # 'text' | 'audio' | 'system' (audio reserved for voice memos)
+    body: str
+    attachment: Optional[dict] = None  # reserved: {kind, url, duration_s, mime}
+
+class ChannelRead(BaseModel):
+    channel_id: str
+    member_id: str
+    last_read_ts: float = 0.0
+
 class EventFilter(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False

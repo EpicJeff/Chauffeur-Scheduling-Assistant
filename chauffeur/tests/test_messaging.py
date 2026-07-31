@@ -1,0 +1,247 @@
+"""Tests for family messaging: chat storage (channels/messages/reads) and the
+main.py send/fan-out logic. Same harness as test_storage.py: temp data dir,
+runs once per storage backend.
+
+Run from chauffeur/:  python tests/test_messaging.py
+"""
+import atexit
+import os
+import shutil
+import sys
+import tempfile
+import time
+from unittest import mock
+
+_TMP = tempfile.mkdtemp(prefix="chauffeur_messaging_test_")
+os.environ["CHAUFFEUR_DATA_DIR"] = _TMP
+atexit.register(lambda: shutil.rmtree(_TMP, ignore_errors=True))
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services import storage  # noqa: E402
+
+
+def check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+def reset_db():
+    with storage.db_lock:
+        for name, val in list(vars(storage).items()):
+            if name.endswith("_table"):
+                val.truncate()
+    storage._distance_mem_cache = None
+
+
+def _member(mid, name, **kw):
+    doc = {"id": mid, "name": name, "color_code": "#3b82f6", "avatar": None,
+           "bio": "", "can_drive": False, "is_child": False, "driver_id": None,
+           "passenger_id": None, "ha_person_entity": None, "notify_service": None,
+           "media_player_entity": None, "pin": None, "created_at": time.time()}
+    doc.update(kw)
+    storage.add_member(doc)
+    return doc
+
+
+def scenario_family_channel_singleton():
+    storage.ensure_family_channel()
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+    check(fam and fam["kind"] == "family" and fam["member_ids"] == [],
+          "family channel exists, implicit-everyone")
+    check(len([c for c in storage.get_channels_for_member("anyone") if c["kind"] == "family"]) == 1,
+          "exactly one family channel")
+
+
+def scenario_dm_get_or_create():
+    a = storage.get_or_create_dm("m2", "m1")
+    b = storage.get_or_create_dm("m1", "m2")
+    check(a["id"] == b["id"], "dm is order-insensitive get-or-create")
+    check(a["member_ids"] == ["m1", "m2"] and a["dm_key"] == "m1:m2", "canonical pair")
+    c = storage.get_or_create_dm("m1", "m3")
+    check(c["id"] != a["id"], "different pair -> different channel")
+
+
+def scenario_event_channel_lifecycle():
+    ch = storage.get_or_create_event_channel("evt1", "Soccer", "2126-01-01T18:00:00")
+    same = storage.get_or_create_event_channel("evt1", "Soccer (moved)", None)
+    check(ch["id"] == same["id"], "event channel get-or-create by event id")
+    check(same["title"] == "Soccer (moved)", "title snapshot refreshes")
+
+    # ended long ago -> archived on the way out of the channel list
+    old = storage.get_or_create_event_channel("evt-old", "Old", "2020-01-01T10:00:00")
+    visible = storage.get_channels_for_member("m1")
+    check(all(c["id"] != old["id"] for c in visible), "stale event thread hidden")
+    check(storage.get_channel(old["id"])["archived"], "stale event thread archived")
+    check(any(c["id"] == ch["id"] for c in visible), "future event thread visible")
+
+
+def scenario_dm_visibility():
+    dm = storage.get_or_create_dm("m1", "m2")
+    check(any(c["id"] == dm["id"] for c in storage.get_channels_for_member("m1")),
+          "participant sees dm")
+    check(all(c["id"] != dm["id"] for c in storage.get_channels_for_member("m3")),
+          "non-participant does not see dm")
+
+
+def scenario_messages_order_limit_after():
+    for i in range(5):
+        storage.add_chat_message({"id": f"msg{i}", "channel_id": "ch1",
+                                  "sender_member_id": "m1", "ts": 100.0 + i,
+                                  "type": "text", "body": f"b{i}", "attachment": None})
+    msgs = storage.get_channel_messages("ch1")
+    check([m["id"] for m in msgs] == [f"msg{i}" for i in range(5)], "ascending by ts")
+    check([m["id"] for m in storage.get_channel_messages("ch1", limit=2)] == ["msg3", "msg4"],
+          "limit keeps the newest, still ascending")
+    check([m["id"] for m in storage.get_channel_messages("ch1", after_ts=102.0)] == ["msg3", "msg4"],
+          "after_ts filters strictly-greater")
+    check(storage.get_channel_messages("other") == [], "unknown channel -> []")
+
+
+def scenario_retention_cap():
+    cap = storage._MESSAGES_PER_CHANNEL_CAP
+    for i in range(cap + 10):
+        storage.add_chat_message({"id": f"m{i}", "channel_id": "big",
+                                  "sender_member_id": "m1", "ts": float(i),
+                                  "type": "text", "body": "x", "attachment": None})
+    msgs = storage.get_channel_messages("big", limit=0)
+    check(len(msgs) == cap, f"cap enforced, got {len(msgs)}")
+    check(msgs[0]["id"] == "m10", "oldest overflow trimmed first")
+
+
+def scenario_unread_counts_and_reads():
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+    for i in range(3):
+        storage.add_chat_message({"id": f"f{i}", "channel_id": fam["id"],
+                                  "sender_member_id": "m1", "ts": 100.0 + i,
+                                  "type": "text", "body": "hi", "attachment": None})
+    counts = storage.get_unread_counts("m2")
+    check(counts.get(fam["id"]) == 3, "all unread for m2")
+    check(storage.get_unread_counts("m1").get(fam["id"]) == 0,
+          "sender's own messages never count as unread")
+    storage.set_last_read(fam["id"], "m2", 101.0)
+    check(storage.get_unread_counts("m2").get(fam["id"]) == 1, "read cursor respected")
+    storage.set_last_read(fam["id"], "m2", 102.0)
+    check(storage.get_unread_counts("m2").get(fam["id"]) == 0, "fully read")
+
+
+def scenario_send_message_endpoint_validations():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("m1", "Jeff")
+    _member("m2", "Amy")
+    _member("m3", "Ben")
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+    bt = BackgroundTasks()
+
+    msg = main.send_message(fam["id"], main.SendMessageRequest(
+        sender_member_id="m1", body="  hello  "), bt)
+    check(msg["body"] == "hello" and msg["channel_id"] == fam["id"], "message stored trimmed")
+    check(storage.get_unread_counts("m1").get(fam["id"]) == 0,
+          "sender auto-marked read")
+    check(main.MESSAGE_EVENTS and main.MESSAGE_EVENTS[-1]["channel_id"] == fam["id"]
+          and main.MESSAGE_EVENTS[-1]["recipients"] is None,
+          "family message SSE event addressed to everyone")
+
+    dm = storage.get_or_create_dm("m1", "m2")
+    main.send_message(dm["id"], main.SendMessageRequest(
+        sender_member_id="m2", body="psst"), bt)
+    check(main.MESSAGE_EVENTS[-1]["recipients"] == ["m1", "m2"],
+          "dm SSE event addressed to the pair")
+
+    for bad_call, expect in [
+        (lambda: main.send_message("ghost", main.SendMessageRequest(
+            sender_member_id="m1", body="x"), bt), 404),
+        (lambda: main.send_message(fam["id"], main.SendMessageRequest(
+            sender_member_id="m1", body="   "), bt), 400),
+        (lambda: main.send_message(dm["id"], main.SendMessageRequest(
+            sender_member_id="m3", body="intrude"), bt), 403),
+        (lambda: main.send_message(fam["id"], main.SendMessageRequest(
+            sender_member_id="ghost", body="x"), bt), 404),
+    ]:
+        try:
+            bad_call()
+            check(False, f"expected HTTPException {expect}")
+        except HTTPException as e:
+            check(e.status_code == expect, f"expected {expect}, got {e.status_code}")
+
+
+def scenario_fanout_recipients():
+    import main
+    from services import ha_api
+
+    _member("m1", "Jeff")
+    _member("m2", "Amy", notify_service="notify.mobile_app_amy")
+    _member("m3", "Ben")
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+    message = {"sender_member_id": "m1", "body": "dinner!", "ts": time.time()}
+
+    with storage.db_lock:
+        storage.settings_table.insert({"public_base_url": "https://fam.example.com"})
+
+    with mock.patch.object(main, 'send_push_to_member') as push, \
+         mock.patch.object(ha_api, 'call_service') as ha_call:
+        main._fanout_message_notifications(fam, message)
+        pushed = sorted(c.args[0] for c in push.call_args_list)
+        check(pushed == ["m2", "m3"], f"family push to everyone but sender, got {pushed}")
+        check(ha_call.call_count == 1, "HA notify only for members with notify_service")
+        args, _ = ha_call.call_args
+        check(args[0] == 'notify' and args[1] == 'mobile_app_amy', "notify service parsed")
+        check(args[2]["data"]["url"].startswith("https://fam.example.com/app?open_channel="),
+              "deep link uses public_base_url")
+        _, first_push = push.call_args_list[0].args[0], push.call_args_list[0]
+        check(first_push.args[1] == "Jeff · Family", "family title includes sender")
+
+    dm = storage.get_or_create_dm("m1", "m2")
+    with mock.patch.object(main, 'send_push_to_member') as push, \
+         mock.patch.object(ha_api, 'call_service'):
+        main._fanout_message_notifications(dm, message)
+        check([c.args[0] for c in push.call_args_list] == ["m2"],
+              "dm push only to the other participant")
+        check(push.call_args_list[0].args[1] == "Jeff", "dm title is the sender name")
+
+
+SCENARIOS = [
+    scenario_family_channel_singleton,
+    scenario_dm_get_or_create,
+    scenario_event_channel_lifecycle,
+    scenario_dm_visibility,
+    scenario_messages_order_limit_after,
+    scenario_retention_cap,
+    scenario_unread_counts_and_reads,
+    scenario_send_message_endpoint_validations,
+    scenario_fanout_recipients,
+]
+
+if __name__ == "__main__":
+    import traceback
+
+    if "CHAUFFEUR_STORAGE" not in os.environ:
+        import subprocess
+        worst = 0
+        for be in ("tinydb", "sqlite"):
+            env = dict(os.environ, CHAUFFEUR_STORAGE=be)
+            print(f"=== backend: {be} ===")
+            rc = subprocess.call([sys.executable, os.path.abspath(__file__)], env=env)
+            worst = max(worst, rc)
+        raise SystemExit(worst)
+
+    backend = getattr(storage, "BACKEND", "tinydb")
+    print(f"storage backend: {backend}  (data dir: {_TMP})")
+    failed = 0
+    for fn in SCENARIOS:
+        try:
+            reset_db()
+            fn()
+            print(f"PASS  {fn.__name__}")
+        except Exception:
+            failed += 1
+            print(f"FAIL  {fn.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(SCENARIOS) - failed}/{len(SCENARIOS)} scenarios passed")
+    raise SystemExit(1 if failed else 0)

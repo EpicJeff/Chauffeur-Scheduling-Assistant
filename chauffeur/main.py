@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ LAST_UPDATE_TIME = time.time()
 class PushSubscription(BaseModel):
     driver_id: str
     subscription: Dict[str, Any]
+    member_id: Optional[str] = None  # hub identity; resolved from driver_id server-side when absent
 
 class DriveStatus(BaseModel):
     leg_id: str
@@ -2432,6 +2433,205 @@ def ha_test_notify(req: TestNotifyRequest):
     if result is None:
         raise HTTPException(status_code=502, detail="Home Assistant service call failed")
     return {"status": "sent", "service": svc}
+
+# --- Family Messaging API ---
+# Delivery has three lanes: an addressed SSE stream for foreground clients,
+# web push (VAPID, member-keyed subscriptions), and HA companion notify.
+# SSE is foreground-only on iOS by design — push is the background channel.
+
+MESSAGE_EVENTS = []  # ring buffer: {'seq', 'channel_id', 'recipients': [member ids] | None (=everyone)}
+_MESSAGE_SEQ = 0
+
+def _push_message_event(channel_id, recipients):
+    global _MESSAGE_SEQ
+    _MESSAGE_SEQ += 1
+    MESSAGE_EVENTS.append({'seq': _MESSAGE_SEQ, 'channel_id': channel_id,
+                           'recipients': recipients})
+    del MESSAGE_EVENTS[:-200]
+
+def send_push_to_member(member_id, title, body, url=None):
+    """Web push to every device subscribed for this member. Same VAPID keys
+    and dead-subscription pruning as the driver-keyed send_push."""
+    from pywebpush import webpush, WebPushException
+    import json as _json
+    for sub in storage.get_push_subscriptions_for_member(member_id):
+        try:
+            webpush(
+                subscription_info=sub["subscription"],
+                data=_json.dumps({
+                    "title": title,
+                    "body": body,
+                    "data": {"navigate_url": url},
+                }),
+                vapid_private_key=VAPID_PRIVATE_KEY_PATH,
+                vapid_claims={"sub": "mailto:admin@example.com"}
+            )
+        except WebPushException as ex:
+            code = getattr(getattr(ex, 'response', None), 'status_code', None)
+            if code in (404, 410):
+                endpoint = (sub.get("subscription") or {}).get("endpoint")
+                if endpoint:
+                    try:
+                        storage.delete_push_subscription_by_endpoint(endpoint)
+                    except Exception as prune_ex:
+                        print(f"Failed to prune subscription: {prune_ex}")
+            else:
+                print(f"Member push failed for {member_id} (HTTP {code}): {repr(ex)}")
+        except Exception as ex:
+            print(f"Member push failed for {member_id}: {repr(ex)}")
+
+def _channel_recipient_members(channel):
+    members = storage.get_all_members()
+    if channel.get('kind') == 'dm':
+        ids = set(channel.get('member_ids') or [])
+        return [m for m in members if m['id'] in ids]
+    return members  # family + event channels are household-wide
+
+def _fanout_message_notifications(channel, message):
+    """Web push + HA notify to every recipient except the sender. A member
+    with both configured gets both (accepted v1 tradeoff, no dedupe)."""
+    from services import ha_api
+    try:
+        sender = storage.get_member(message['sender_member_id']) or {}
+        sender_name = sender.get('name', 'Family')
+        kind = channel.get('kind')
+        if kind == 'dm':
+            title = sender_name
+        elif kind == 'event':
+            title = f"{sender_name} · {channel.get('title') or 'Event chat'}"
+        else:
+            title = f"{sender_name} · Family"
+        body = (message.get('body') or '')[:180]
+        base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+        url = f"{base}/app?open_channel={channel['id']}" if base \
+            else f"/app?open_channel={channel['id']}"
+        for m in _channel_recipient_members(channel):
+            if m['id'] == message['sender_member_id']:
+                continue
+            send_push_to_member(m['id'], title, body, url)
+            svc = m.get('notify_service')
+            if svc:
+                svc_name = svc.split('.', 1)[1] if '.' in svc else svc
+                payload = {"title": title, "message": body}
+                if base:
+                    payload["data"] = {"url": url}
+                ha_api.call_service('notify', svc_name, payload)
+    except Exception as e:
+        print(f"Message notification fan-out failed: {e}")
+
+@app.get("/api/channels")
+def list_channels(member_id: str):
+    channels = storage.get_channels_for_member(member_id)
+    unread = storage.get_unread_counts(member_id)
+    for c in channels:
+        msgs = storage.get_channel_messages(c['id'], limit=1)
+        c['last_message'] = msgs[-1] if msgs else None
+        c['unread'] = unread.get(c['id'], 0)
+    # family channel pinned first, then most recent activity
+    channels.sort(key=lambda c: (
+        0 if c.get('kind') == 'family' else 1,
+        -((c.get('last_message') or {}).get('ts') or c.get('created_at', 0)),
+    ))
+    return channels
+
+class DmChannelRequest(BaseModel):
+    member_id: str
+    other_member_id: str
+
+@app.post("/api/channels/dm")
+def create_dm_channel(req: DmChannelRequest):
+    if req.member_id == req.other_member_id:
+        raise HTTPException(status_code=400, detail="Cannot DM yourself")
+    for mid in (req.member_id, req.other_member_id):
+        if not storage.get_member(mid):
+            raise HTTPException(status_code=404, detail=f"Member {mid} not found")
+    return storage.get_or_create_dm(req.member_id, req.other_member_id)
+
+class EventChannelRequest(BaseModel):
+    event_id: str
+    title: str = ""
+    event_end: Optional[str] = None
+
+@app.post("/api/channels/event")
+def create_event_channel(req: EventChannelRequest):
+    return storage.get_or_create_event_channel(req.event_id, req.title, req.event_end)
+
+@app.get("/api/channels/{channel_id}/messages")
+def get_messages(channel_id: str, after_ts: Optional[float] = None, limit: int = 50):
+    if not storage.get_channel(channel_id):
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return storage.get_channel_messages(channel_id, after_ts=after_ts, limit=limit)
+
+class SendMessageRequest(BaseModel):
+    sender_member_id: str
+    body: str
+
+@app.post("/api/channels/{channel_id}/messages")
+def send_message(channel_id: str, req: SendMessageRequest, background_tasks: BackgroundTasks):
+    channel = storage.get_channel(channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.get('archived'):
+        raise HTTPException(status_code=409, detail="Channel is archived")
+    body = (req.body or '').strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty message")
+    if not storage.get_member(req.sender_member_id):
+        raise HTTPException(status_code=404, detail="Sender member not found")
+    if channel.get('kind') == 'dm' and req.sender_member_id not in (channel.get('member_ids') or []):
+        raise HTTPException(status_code=403, detail="Not a member of this DM")
+
+    from models.schemas import ChatMessage
+    message = ChatMessage(channel_id=channel_id,
+                          sender_member_id=req.sender_member_id,
+                          body=body).model_dump()
+    storage.add_chat_message(message)
+    # Sender has obviously read their own message.
+    storage.set_last_read(channel_id, req.sender_member_id, message['ts'])
+    recipients = channel.get('member_ids') if channel.get('kind') == 'dm' else None
+    _push_message_event(channel_id, recipients)
+    background_tasks.add_task(_fanout_message_notifications, channel, message)
+    return message
+
+class ChannelReadRequest(BaseModel):
+    member_id: str
+    ts: Optional[float] = None
+
+@app.post("/api/channels/{channel_id}/read")
+def mark_channel_read(channel_id: str, req: ChannelReadRequest):
+    storage.set_last_read(channel_id, req.member_id, req.ts or time.time())
+    return {"status": "ok"}
+
+@app.get("/api/messages/stream")
+async def stream_messages(member_id: str):
+    """Addressed SSE: yields {'channel_id'} whenever a message lands in a
+    channel this member can see. Clients refetch just that channel."""
+    import json as _json
+
+    async def event_generator():
+        last_seq = MESSAGE_EVENTS[-1]['seq'] if MESSAGE_EVENTS else 0
+        last_ping = time.time()
+        try:
+            while True:
+                await asyncio.sleep(1)
+                now = time.time()
+                sent = False
+                for ev in list(MESSAGE_EVENTS):
+                    if ev['seq'] <= last_seq:
+                        continue
+                    last_seq = ev['seq']
+                    if ev['recipients'] is None or member_id in ev['recipients']:
+                        yield f"data: {_json.dumps({'channel_id': ev['channel_id']})}\n\n"
+                        sent = True
+                if sent:
+                    last_ping = now
+                elif now - last_ping > 15:
+                    yield ": ping\n\n"
+                    last_ping = now
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # --- Rules API ---
 @app.get("/api/rules")
@@ -5024,7 +5224,7 @@ def get_vapid_public_key():
 
 @app.post("/api/push_subscribe")
 def push_subscribe(sub: PushSubscription):
-    storage.save_push_subscription(sub.driver_id, sub.subscription)
+    storage.save_push_subscription(sub.driver_id, sub.subscription, member_id=sub.member_id)
     return {"status": "ok"}
 
 @app.get("/api/push_subscriptions/debug")

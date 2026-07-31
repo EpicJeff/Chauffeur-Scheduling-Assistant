@@ -126,6 +126,9 @@ with db_lock:
     trip_metadata_table = db.table('trip_metadata')
     app_state_table = db.table('app_state')
     members_table = db.table('members')
+    chat_channels_table = db.table('chat_channels')
+    chat_messages_table = db.table('chat_messages')
+    channel_reads_table = db.table('channel_reads')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -270,6 +273,42 @@ def ensure_members():
             linked_passengers.add(p_id)
 
 ensure_members()
+
+def ensure_family_channel():
+    """Singleton all-family chat channel (kind='family', empty member_ids =
+    implicitly everyone). Idempotent."""
+    import uuid as _uuid
+    import time
+    with db_lock:
+        if chat_channels_table.search(Query().kind == 'family'):
+            return
+        chat_channels_table.insert({
+            'id': _uuid.uuid4().hex,
+            'kind': 'family',
+            'member_ids': [],
+            'dm_key': None,
+            'event_id': None,
+            'event_end': None,
+            'title': 'Family',
+            'created_at': time.time(),
+            'archived': False,
+        })
+
+ensure_family_channel()
+
+def stamp_member_on_push_subscriptions():
+    """One-time enrichment: legacy push subscription rows know only driver_id;
+    stamp the linked member_id so messaging can target members. Idempotent."""
+    with db_lock:
+        for sub in push_subscriptions_table.all():
+            if sub.get('member_id') or not sub.get('driver_id'):
+                continue
+            member = members_table.search(Query().driver_id == sub['driver_id'])
+            if member:
+                push_subscriptions_table.update(
+                    {'member_id': member[0]['id']}, doc_ids=[sub.doc_id])
+
+stamp_member_on_push_subscriptions()
 
 def cleanup_corrupted_travel_times():
     try:
@@ -698,6 +737,144 @@ def split_member(member_id: str, link: str) -> Optional[dict]:
         members_table.update(clear, Query().id == member_id)
         members_table.insert(new)
         return new
+
+# --- Family messaging (chat_channels / chat_messages / channel_reads) ---
+
+_MESSAGES_PER_CHANNEL_CAP = 500
+
+def get_channel(channel_id: str) -> Optional[dict]:
+    with db_lock:
+        res = chat_channels_table.search(Query().id == channel_id)
+        return dict(res[0]) if res else None
+
+def get_family_channel() -> Optional[dict]:
+    with db_lock:
+        res = chat_channels_table.search(Query().kind == 'family')
+        return dict(res[0]) if res else None
+
+def get_or_create_dm(member_a: str, member_b: str) -> dict:
+    import uuid as _uuid
+    import time
+    pair = sorted([member_a, member_b])
+    dm_key = ':'.join(pair)
+    with db_lock:
+        res = chat_channels_table.search(Query().dm_key == dm_key)
+        if res:
+            return dict(res[0])
+        channel = {
+            'id': _uuid.uuid4().hex,
+            'kind': 'dm',
+            'member_ids': pair,
+            'dm_key': dm_key,
+            'event_id': None,
+            'event_end': None,
+            'title': '',
+            'created_at': time.time(),
+            'archived': False,
+        }
+        chat_channels_table.insert(channel)
+        return channel
+
+def get_or_create_event_channel(event_id: str, title: str = '',
+                                event_end: str = None) -> dict:
+    import uuid as _uuid
+    import time
+    with db_lock:
+        res = chat_channels_table.search(Query().event_id == event_id)
+        if res:
+            existing = dict(res[0])
+            # keep the snapshot fresh if the event was renamed/moved
+            updates = {}
+            if title and title != existing.get('title'):
+                updates['title'] = title
+            if event_end and event_end != existing.get('event_end'):
+                updates['event_end'] = event_end
+            if updates:
+                chat_channels_table.update(updates, Query().id == existing['id'])
+                existing.update(updates)
+            return existing
+        channel = {
+            'id': _uuid.uuid4().hex,
+            'kind': 'event',
+            'member_ids': [],  # household-visible, like the family channel
+            'dm_key': None,
+            'event_id': event_id,
+            'event_end': event_end,
+            'title': title or 'Event chat',
+            'created_at': time.time(),
+            'archived': False,
+        }
+        chat_channels_table.insert(channel)
+        return channel
+
+def get_channels_for_member(member_id: str) -> List[dict]:
+    """Family channel + this member's DMs + non-archived event threads.
+    Event threads whose event ended >7 days ago are archived on the way out."""
+    import time
+    from datetime import datetime, timedelta, timezone
+    now = time.time()
+    with db_lock:
+        out = []
+        for c in chat_channels_table.all():
+            c = dict(c)
+            if c.get('kind') == 'dm' and member_id not in (c.get('member_ids') or []):
+                continue
+            if c.get('kind') == 'event' and not c.get('archived') and c.get('event_end'):
+                try:
+                    end = datetime.fromisoformat(c['event_end'])
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=timezone.utc)
+                    if (datetime.now(timezone.utc) - end) > timedelta(days=7):
+                        chat_channels_table.update({'archived': True}, Query().id == c['id'])
+                        c['archived'] = True
+                except Exception:
+                    pass
+            if c.get('archived'):
+                continue
+            out.append(c)
+        return out
+
+def add_chat_message(message: dict) -> dict:
+    with db_lock:
+        chat_messages_table.insert(message)
+        # Retention cap per channel: household chat, not an archive.
+        msgs = chat_messages_table.search(Query().channel_id == message['channel_id'])
+        if len(msgs) > _MESSAGES_PER_CHANNEL_CAP:
+            msgs.sort(key=lambda m: m.get('ts', 0))
+            stale_ids = [m.doc_id for m in msgs[:len(msgs) - _MESSAGES_PER_CHANNEL_CAP]]
+            chat_messages_table.remove(doc_ids=stale_ids)
+        return message
+
+def get_channel_messages(channel_id: str, after_ts: float = None,
+                         limit: int = 50) -> List[dict]:
+    """Ascending by ts; the LAST `limit` messages (optionally after after_ts)."""
+    with db_lock:
+        msgs = [dict(m) for m in chat_messages_table.search(Query().channel_id == channel_id)]
+    if after_ts is not None:
+        msgs = [m for m in msgs if m.get('ts', 0) > after_ts]
+    msgs.sort(key=lambda m: m.get('ts', 0))
+    return msgs[-limit:] if limit else msgs
+
+def set_last_read(channel_id: str, member_id: str, ts: float):
+    with db_lock:
+        channel_reads_table.upsert(
+            {'channel_id': channel_id, 'member_id': member_id, 'last_read_ts': ts},
+            (Query().channel_id == channel_id) & (Query().member_id == member_id))
+
+def get_unread_counts(member_id: str) -> dict:
+    """{channel_id: unread_count} for every channel visible to the member."""
+    with db_lock:
+        reads = {r['channel_id']: r.get('last_read_ts', 0)
+                 for r in channel_reads_table.search(Query().member_id == member_id)}
+    counts = {}
+    for c in get_channels_for_member(member_id):
+        last_read = reads.get(c['id'], 0)
+        with db_lock:
+            msgs = chat_messages_table.search(Query().channel_id == c['id'])
+            counts[c['id']] = sum(
+                1 for m in msgs
+                if m.get('ts', 0) > last_read and m.get('sender_member_id') != member_id)
+    return counts
 
 def add_telemetry_event(event_data: dict) -> int:
     with db_lock:
@@ -1187,20 +1364,25 @@ def get_rolling_usage(endpoint: str, seconds: int) -> int:
         return sum(r.get('count', 0) for r in records)
 
 # Push Subscriptions
-def save_push_subscription(driver_id: str, subscription_info: dict):
+def save_push_subscription(driver_id: str, subscription_info: dict, member_id: str = None):
     # Keyed by endpoint, NOT driver_id: one row per device/browser, so a
     # driver can receive pushes on several devices. (Keying by driver_id
     # meant enabling push on a second device silently replaced the first.)
+    # member_id is the hub identity used by messaging; resolved from
+    # driver_id when the caller doesn't supply it.
     with db_lock:
+        if not member_id and driver_id:
+            linked = members_table.search(Query().driver_id == driver_id)
+            if linked:
+                member_id = linked[0]['id']
         endpoint = (subscription_info or {}).get('endpoint')
+        row = {'driver_id': driver_id, 'member_id': member_id,
+               'subscription': subscription_info}
         if endpoint:
-            push_subscriptions_table.upsert(
-                {'driver_id': driver_id, 'subscription': subscription_info, 'endpoint': endpoint},
-                Query().endpoint == endpoint)
+            row['endpoint'] = endpoint
+            push_subscriptions_table.upsert(row, Query().endpoint == endpoint)
         else:
-            push_subscriptions_table.upsert(
-                {'driver_id': driver_id, 'subscription': subscription_info},
-                Query().driver_id == driver_id)
+            push_subscriptions_table.upsert(row, Query().driver_id == driver_id)
 
 def delete_push_subscription_by_endpoint(endpoint: str):
     """Prune a dead subscription (push service returned 404/410 for it)."""
@@ -1221,6 +1403,10 @@ def get_push_subscriptions(driver_id: str = None):
         if driver_id:
             return push_subscriptions_table.search(Query().driver_id == driver_id)
         return push_subscriptions_table.all()
+
+def get_push_subscriptions_for_member(member_id: str):
+    with db_lock:
+        return push_subscriptions_table.search(Query().member_id == member_id)
 
 # --- Generic app state (small persistent key/value markers, e.g. the
 # "tomorrow digest already sent today" date so restarts don't re-send) ---
