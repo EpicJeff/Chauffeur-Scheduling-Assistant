@@ -55,21 +55,21 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     return {"status": "success", "events": slim_events}
 
 
-def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date: str) -> Dict[str, Any]:
+def _find_event_fuzzy(event_name: str, target_date: str):
     """
-    Finds an event by name on a specific date and assigns a driver to it via a manual override.
-    target_date must be YYYY-MM-DD.
+    Shared fuzzy event lookup over the cached schedule.
+    Returns (event, None) on a match, or (None, error_message) when nothing fits.
     """
-    from services.storage import add_override, get_all_drivers, get_cached_schedule
+    from services.storage import get_cached_schedule
     import datetime
-    
+
     sched = get_cached_schedule()
     events = sched.get("events", [])
-    
+
     # Clean and parse the target date robustly
     import re
     from dateutil.parser import parse
-    
+
     target_date_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', target_date).strip()
     target_dt = None
     try:
@@ -125,8 +125,21 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
                         target_event = ev
             
     if not target_event:
-        return {"status": "error", "message": f"Could not find any event containing '{event_name}' on {target_date}."}
-        
+        return None, f"Could not find any event containing '{event_name}' on {target_date}."
+    return target_event, None
+
+
+def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date: str) -> Dict[str, Any]:
+    """
+    Finds an event by name on a specific date and assigns a driver to it via a manual override.
+    target_date must be YYYY-MM-DD.
+    """
+    from services.storage import add_override, get_all_drivers
+
+    target_event, err = _find_event_fuzzy(event_name, target_date)
+    if err:
+        return {"status": "error", "message": err}
+
     # Fuzzy match driver
     target_driver = None
     driver_name_lower = driver_name.lower().strip()
@@ -156,6 +169,40 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
         "ui_action": "jump_and_reload",
         "target_driver_id": target_driver["id"]
     }
+
+
+def remove_override_for_event_fuzzy(event_name: str, target_date: str) -> Dict[str, Any]:
+    """
+    Removes any manual driver override(s) for an event found by fuzzy name match
+    on a date, returning the event to solver control. Covers split-leg override
+    ids ({base}_dropoff / {base}_pickup) alongside the base event id.
+    """
+    from services.storage import delete_override_by_event, get_all_overrides
+
+    target_event, err = _find_event_fuzzy(event_name, target_date)
+    if err:
+        return {"status": "error", "message": err}
+
+    ev_id = target_event["id"]
+    base = ev_id
+    for suffix in ("_dropoff", "_pickup"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    candidates = {ev_id, base, f"{base}_dropoff", f"{base}_pickup"}
+
+    existing = {o.get("event_id") for o in get_all_overrides()}
+    removed = sorted(c for c in candidates if c in existing)
+    for c in removed:
+        delete_override_by_event(c)
+
+    if not removed:
+        return {"status": "success",
+                "message": f"'{target_event['title']}' has no manual overrides — it is already solver-controlled."}
+
+    return {"status": "success",
+            "message": f"Removed the manual override for '{target_event['title']}'. The solver will now choose the driver.",
+            "target_element_id": _get_target_element_id("event", ev_id),
+            "ui_action": "jump_and_reload"}
 
 # ==============================================================================
 # TRIP TOOLS
@@ -353,8 +400,20 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
+            "name": "remove_override_for_event_fuzzy",
+            "description": "Removes/clears any manual driver override for a specific event (found by fuzzy name match on a date), returning it to automatic solver control. This is the CORRECT tool when the user asks to remove, clear, undo, or reset an assignment or override. It does NOT assign anyone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_name": {"type": "string", "description": "The name of the event or a substring of it."},
+                    "target_date": {"type": "string", "description": "The date the event occurs as YYYY-MM-DD, resolved from the CURRENT DATE in your context (relative terms like 'tonight' or 'tomorrow' are also accepted)."}
+                },
+                "required": ["event_name", "target_date"]
+            }
+        },
+        {
             "name": "assign_driver_to_event_fuzzy",
-            "description": "Overrides the assigned driver for a specific event by finding it based on a fuzzy name match on a specific date. This is the CORRECT way to assign a driver or override an assignment.",
+            "description": "Overrides the assigned driver for a specific event by finding it based on a fuzzy name match on a specific date. This is the CORRECT way to assign a driver or override an assignment. Only use it when the user names a driver to assign — to remove/undo an override use remove_override_for_event_fuzzy.",
             "parameters": {
                 "type": "object",
                 "properties": {

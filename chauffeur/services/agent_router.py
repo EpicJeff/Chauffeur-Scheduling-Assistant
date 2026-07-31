@@ -191,7 +191,8 @@ Never ask them which driver they are — you already know.
     # Timing data showed each Gemma call costs 40-80s, and given the chance the
     # model re-issues the same action instead of concluding (observed writing a
     # duplicate override), so the extra round is both slow and harmful.
-    TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "add_trip_poi",
+    TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "remove_override_for_event_fuzzy",
+                             "add_trip_poi",
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
                              "start_route", "complete_route"}
@@ -302,6 +303,17 @@ Never ask them which driver they are — you already know.
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
                     if res.get("target_driver_id"): target_driver_id = res["target_driver_id"]
+                elif func_name == "remove_override_for_event_fuzzy":
+                    from services.agent_tools_v2 import remove_override_for_event_fuzzy
+                    res = remove_override_for_event_fuzzy(args.get("event_name"), args.get("target_date"))
+                    # target_element_id is only present when an override was
+                    # actually deleted — the found-but-no-override case needs
+                    # no re-solve.
+                    if res.get("status") == "success" and res.get("target_element_id"):
+                        schedule_dirty = True
+                    if res.get("target_element_id"): target_id = res["target_element_id"]
+                    if res.get("message"): agent_message = res["message"]
+                    if res.get("ui_action"): ui_action = res["ui_action"]
                 elif func_name == "add_trip_poi":
                     res = add_trip_poi(args.get("trip_id"), args.get("title"), args.get("start_time"), args.get("duration_mins"), args.get("location"))
                     if res.get("target_element_id"): target_id = res["target_element_id"]
