@@ -482,11 +482,39 @@
             label.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
         }
 
+        let mydaySlideDir = 0;
         function mydayShift(delta) {
-            mydayOffset = Math.max(0, Math.min(MYDAY_MAX_OFFSET, mydayOffset + delta));
+            const next = Math.max(0, Math.min(MYDAY_MAX_OFFSET, mydayOffset + delta));
+            if (next === mydayOffset) return;
+            mydayOffset = next;
+            mydaySlideDir = delta > 0 ? 1 : -1;
             updateMyDayLabel();
             renderMyDay();
         }
+
+        // Swipe left/right between days, mirroring the driver timeline.
+        (function () {
+            const el = document.getElementById('myday-container');
+            if (!el) return;
+            let sx = 0, sy = 0, tracking = false;
+            el.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                sx = e.touches[0].clientX;
+                sy = e.touches[0].clientY;
+                tracking = true;
+            }, { passive: true });
+            el.addEventListener('touchend', (e) => {
+                if (!tracking) return;
+                tracking = false;
+                const t = e.changedTouches[0];
+                const dx = t.clientX - sx;
+                const dy = t.clientY - sy;
+                // Horizontal-dominant swipes only; leave vertical scrolling alone.
+                if (Math.abs(dx) > 60 && Math.abs(dx) > 1.8 * Math.abs(dy)) {
+                    mydayShift(dx < 0 ? 1 : -1);
+                }
+            }, { passive: true });
+        })();
 
         async function renderMyDay() {
             const wrap = document.getElementById('myday-content');
@@ -502,6 +530,18 @@
                 wrap.innerHTML = data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">Nothing scheduled 🎉</div>';
+                if (mydaySlideDir !== 0) {
+                    // Slide the new day in from the direction of travel.
+                    wrap.style.transition = 'none';
+                    wrap.style.transform = `translateX(${mydaySlideDir * 24}px)`;
+                    wrap.style.opacity = '0.2';
+                    requestAnimationFrame(() => {
+                        wrap.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+                        wrap.style.transform = 'translateX(0)';
+                        wrap.style.opacity = '1';
+                    });
+                    mydaySlideDir = 0;
+                }
             } catch (e) {
                 wrap.innerHTML = '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
             }
