@@ -460,7 +460,11 @@ def dashboard(request: Request):
 
 @app.get("/app")
 def driver_app(request: Request):
-    return templates.TemplateResponse(request=request, name="app.html")
+    # no-store like the dashboard: iOS caches installed-PWA start pages hard,
+    # leaving phones on stale HTML for days after a release.
+    response = templates.TemplateResponse(request=request, name="app.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 @app.get("/config")
 def config(request: Request):
@@ -476,7 +480,9 @@ def errands(request: Request):
 
 @app.get("/map")
 def family_map_page(request: Request):
-    return templates.TemplateResponse(request=request, name="map.html")
+    response = templates.TemplateResponse(request=request, name="map.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 @app.get("/trips")
 def trips_list_view(request: Request):
