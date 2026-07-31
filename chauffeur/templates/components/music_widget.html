@@ -11,7 +11,8 @@
     </div>
 
     <div id="mw-nowplaying" class="flex items-center gap-3 mb-3" style="display: none">
-        <img id="mw-art" class="w-16 h-16 rounded-xl object-cover bg-gray-800 shadow-md" alt="">
+        <img id="mw-art" class="w-16 h-16 rounded-xl object-cover bg-gray-800 shadow-md" alt=""
+            onerror="_mwArtError(this)">
         <div class="flex-1 min-w-0">
             <div id="mw-title" class="text-white font-bold text-base truncate"></div>
             <div id="mw-artist" class="text-gray-400 text-sm truncate"></div>
@@ -51,6 +52,24 @@
     let _mwTimer = null;
     let _mwVolDebounce = null;
     let _mwSearchDebounce = null;
+    const _mwArtErrorsShown = new Set();
+
+    // Broken artwork: hide the ugly broken-image icon and surface WHY once
+    // per URL (phones have no devtools; this is the field diagnostic).
+    async function _mwArtError(img) {
+        img.style.display = 'none';
+        const url = img.src;
+        if (_mwArtErrorsShown.has(url)) return;
+        _mwArtErrorsShown.add(url);
+        let msg = 'Artwork failed: network error';
+        try {
+            const r = await fetch(url);
+            const txt = (await r.text()).slice(0, 140);
+            msg = `Artwork failed (HTTP ${r.status}): ${txt}`;
+        } catch (e) { }
+        console.warn(msg, url);
+        if (typeof showGlobalAlert === 'function') showGlobalAlert(msg);
+    }
 
     const _mwApiBase = window.location.pathname.endsWith('/') ? '../' : '';
     const _MW_TYPE_ICON = { track: '🎵', album: '💿', artist: '🎤', playlist: '📻', radio: '📡' };
@@ -125,10 +144,15 @@
             if (cur.entity_picture) {
                 // HA-relative entity_picture paths only resolve on the HA
                 // origin — route them through the add-on's image proxy.
-                art.src = cur.entity_picture.startsWith('http')
+                const src = cur.entity_picture.startsWith('http')
                     ? cur.entity_picture
                     : `${_mwApiBase}api/ha/image?path=${encodeURIComponent(cur.entity_picture)}`;
-                art.style.display = 'block';
+                if (art.getAttribute('src') !== src) {
+                    art.src = src;
+                    art.style.display = 'block';
+                } else if (!_mwArtErrorsShown.has(art.src)) {
+                    art.style.display = 'block';
+                }
             } else { art.style.display = 'none'; }
         } else if (np) {
             np.style.display = 'none';
