@@ -58,6 +58,122 @@
     let _mwSearchDebounce = null;
     const _mwArtErrorsShown = new Set();
 
+    // --- "This phone" Sendspin player (the PWA as a real MA endpoint) ---
+    const MW_PHONE = '__phone__';
+    const _mwPhone = { player: null, active: false, state: null, connecting: false };
+
+    function _mwPhoneName() {
+        if (typeof membersData !== 'undefined' && typeof selectedMemberId !== 'undefined') {
+            const me = (membersData || []).find(m => m.id === selectedMemberId);
+            if (me && me.name) return `${me.name}'s phone`;
+        }
+        return 'Chauffeur phone';
+    }
+
+    function _mwToast(msg) {
+        console.warn('[phone-player]', msg);
+        if (typeof showGlobalAlert === 'function') showGlobalAlert(msg);
+    }
+
+    async function mwStartPhonePlayer() {
+        if (_mwPhone.player || _mwPhone.connecting) return;
+        if (!window.SendspinPlayer) {
+            _mwToast('Phone player library not loaded yet — try again in a moment.');
+            return;
+        }
+        _mwPhone.connecting = true;
+        try {
+            let pid = localStorage.getItem('chauffeur_sendspin_id');
+            if (!pid) {
+                pid = 'chauffeur-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+                localStorage.setItem('chauffeur_sendspin_id', pid);
+            }
+            const wsUrl = new URL(`${_mwApiBase}api/sendspin/ws`, location.href)
+                .href.replace(/^http/, 'ws');
+            const socket = new WebSocket(wsUrl);
+            socket.binaryType = 'arraybuffer';
+            socket.addEventListener('close', (e) => {
+                if (_mwPhone.active) {
+                    _mwPhone.active = false;
+                    _mwPhone.player = null;
+                    _mwToast(e.reason ? `Phone player disconnected: ${e.reason}` : 'Phone player disconnected');
+                    mwRefresh();
+                }
+            });
+            const player = new window.SendspinPlayer({
+                playerId: pid,
+                clientName: _mwPhoneName(),
+                baseUrl: location.origin,
+                webSocket: socket,
+                correctionMode: 'quality-local',
+                onStateChange: (state) => {
+                    _mwPhone.state = state;
+                    if (_mwSelected === MW_PHONE) mwRenderPhoneState();
+                },
+            });
+            // unlock() needs the user gesture that selected the option.
+            if (typeof player.unlock === 'function') await player.unlock();
+            if (typeof player.connect === 'function') await player.connect();
+            _mwPhone.player = player;
+            _mwPhone.active = true;
+            _mwToast('This phone is now a Music Assistant player 🎉');
+        } catch (e) {
+            _mwPhone.player = null;
+            _mwPhone.active = false;
+            _mwToast('Phone player failed: ' + (e && e.message ? e.message : e));
+        } finally {
+            _mwPhone.connecting = false;
+            mwRefresh();
+        }
+    }
+
+    function _mwPhonePlaying() {
+        const s = _mwPhone.state || {};
+        const pb = s.playbackState || s.playback_state || s.state
+            || (s.group && (s.group.playback_state || s.group.playbackState));
+        return String(pb || '').toLowerCase() === 'playing';
+    }
+
+    function mwRenderPhoneState() {
+        const s = _mwPhone.state || {};
+        const md = s.metadata || (s.group && s.group.metadata) || {};
+        const np = document.getElementById('mw-nowplaying');
+        const title = md.title || md.track || '';
+        const artist = md.artist || md.artists || '';
+        if (np) {
+            if (title || artist) {
+                np.style.display = 'flex';
+                document.getElementById('mw-title').textContent = title;
+                document.getElementById('mw-artist').textContent = Array.isArray(artist) ? artist.join(', ') : artist;
+                const art = document.getElementById('mw-art');
+                const pic = md.artworkUrl || md.artwork_url || md.artUrl || md.art_url || md.image;
+                if (pic && typeof pic === 'string') {
+                    art.src = _mwProxied(pic);
+                    art.style.display = 'block';
+                } else {
+                    art.style.display = 'none';
+                }
+            } else {
+                np.style.display = 'none';
+            }
+        }
+        const playing = _mwPhonePlaying();
+        document.getElementById('mw-icon-play').style.display = playing ? 'none' : 'block';
+        document.getElementById('mw-icon-pause').style.display = playing ? 'block' : 'none';
+        const vol = document.getElementById('mw-volume');
+        const v = (typeof s.volume === 'number') ? s.volume : null;
+        if (vol && v !== null && document.activeElement !== vol) {
+            vol.value = v > 1 ? v / 100 : v;
+        }
+    }
+
+    function _mwPhoneEntity() {
+        // Once registered, MA exposes the phone to HA as a media_player whose
+        // friendly name matches our clientName.
+        const name = _mwPhoneName().toLowerCase();
+        return _mwPlayers.find(p => (p.name || '').toLowerCase() === name) || null;
+    }
+
     // Broken artwork: hide the ugly broken-image icon and surface WHY once
     // per URL (phones have no devtools; this is the field diagnostic).
     async function _mwArtError(img) {
@@ -138,14 +254,29 @@
         if (!_mwSelected && _mwPlayers.length) _mwSelected = _mwPlayers[0].entity_id;
 
         // Selected player may have been filtered out (e.g. MA-only list).
-        if (_mwSelected && _mwPlayers.length && !_mwPlayers.some(p => p.entity_id === _mwSelected)) {
+        if (_mwSelected && _mwSelected !== MW_PHONE && _mwPlayers.length
+            && !_mwPlayers.some(p => p.entity_id === _mwSelected)) {
             _mwSelected = _mwPlayers[0].entity_id;
         }
         const sel = document.getElementById('mw-player');
         if (sel) {
-            sel.innerHTML = _mwPlayers.length
-                ? _mwPlayers.map(p => `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwPlayerIcon(p)} ${_mwEsc(p.name)}</option>`).join('')
-                : '<option value="">No players found</option>';
+            // Hide the phone's own HA entity from the remote list — "This
+            // phone" is its canonical entry.
+            const phoneEnt = _mwPhoneEntity();
+            const remote = _mwPlayers.filter(p => !phoneEnt || p.entity_id !== phoneEnt.entity_id);
+            const phoneLabel = _mwPhone.connecting ? '📱 This phone (connecting…)'
+                : `📱 This phone (${_mwPhoneName().replace(/'s phone$/, '')})${_mwPhone.active ? ' ●' : ''}`;
+            const phoneOption = window.SendspinPlayer
+                ? `<option value="${MW_PHONE}" ${_mwSelected === MW_PHONE ? 'selected' : ''}>${phoneLabel}</option>`
+                : '';
+            const remoteOptions = remote.map(p =>
+                `<option value="${_mwEsc(p.entity_id)}" ${p.entity_id === _mwSelected ? 'selected' : ''}>${_mwPlayerIcon(p)} ${_mwEsc(p.name)}</option>`).join('');
+            sel.innerHTML = (phoneOption + remoteOptions)
+                || '<option value="">No players found</option>';
+        }
+        if (_mwSelected === MW_PHONE) {
+            mwRenderPhoneState();
+            return;
         }
         const cur = _mwCurrent();
         const np = document.getElementById('mw-nowplaying');
@@ -186,11 +317,25 @@
     function mwSelectPlayer(entityId) {
         _mwSelected = entityId;
         localStorage.setItem('chauffeur_music_player', entityId);
+        if (entityId === MW_PHONE) mwStartPhonePlayer();
         mwRefresh();
     }
 
     async function mwCommand(command, extra = {}) {
         if (!_mwSelected) return;
+        if (_mwSelected === MW_PHONE) {
+            const p = _mwPhone.player;
+            if (!p) { mwStartPhonePlayer(); return; }
+            try {
+                if (command === 'volume_set' && typeof p.setVolume === 'function') {
+                    p.setVolume(Math.round((extra.volume || 0) * 100));
+                } else if (typeof p.sendCommand === 'function') {
+                    p.sendCommand(command === 'previous' ? 'previous'
+                        : command === 'next' ? 'next' : command);
+                }
+            } catch (e) { _mwToast('Command failed: ' + e.message); }
+            return;
+        }
         try {
             await fetch(`${_mwApiBase}api/ha/media_players/${encodeURIComponent(_mwSelected)}/command`, {
                 method: 'POST',
@@ -202,6 +347,10 @@
     }
 
     function mwTogglePlay() {
+        if (_mwSelected === MW_PHONE) {
+            mwCommand(_mwPhonePlaying() ? 'pause' : 'play');
+            return;
+        }
         const cur = _mwCurrent();
         mwCommand(cur && cur.state === 'playing' ? 'pause' : 'play');
     }
@@ -313,11 +462,22 @@
         document.getElementById('mw-results').style.display = 'none';
         document.getElementById('mw-search').value = '';
         if (!_mwSelected) return;
+        let target = _mwSelected;
+        if (target === MW_PHONE) {
+            // Play requests go through MA targeting the phone's HA entity,
+            // which appears shortly after the Sendspin client registers.
+            const ent = _mwPhoneEntity();
+            if (!ent) {
+                _mwToast('This phone is still registering with Music Assistant — try again in a few seconds.');
+                return;
+            }
+            target = ent.entity_id;
+        }
         try {
             await fetch(`${_mwApiBase}api/music/play`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entity_id: _mwSelected, media_id: uri, media_type: mediaType })
+                body: JSON.stringify({ entity_id: target, media_id: uri, media_type: mediaType })
             });
             setTimeout(mwRefresh, 1200);
         } catch (e) { }
@@ -331,5 +491,23 @@
             const el = document.getElementById('music-widget');
             if (document.visibilityState === 'visible' && el && el.offsetParent !== null) mwRefresh();
         }, 10000);
+    }
+
+    window.addEventListener('pagehide', () => {
+        const p = _mwPhone.player;
+        if (p) {
+            try { if (typeof p.disconnect === 'function') p.disconnect(); } catch (e) { }
+        }
+    });
+</script>
+<script type="module">
+    // sendspin-js (Apache-2.0) — the official browser client MA's own web
+    // player uses. Loaded as ESM from CDN, consistent with the no-build stack.
+    try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/@sendspin/sendspin-js@3.2.1/+esm');
+        window.SendspinPlayer = mod.SendspinPlayer || mod.default;
+        if (window.SendspinPlayer && typeof mwRefresh === 'function') mwRefresh();
+    } catch (e) {
+        console.warn('sendspin-js failed to load; "This phone" player unavailable', e);
     }
 </script>

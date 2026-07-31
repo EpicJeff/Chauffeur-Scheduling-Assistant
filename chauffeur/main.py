@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -2706,6 +2706,116 @@ def music_play(req: MusicPlayRequest):
     if result is None:
         raise HTTPException(status_code=502, detail="Music Assistant play_media failed")
     return {"status": "ok"}
+
+# --- Sendspin phone-player relay ---
+# The PWA registers as a real Music Assistant player (sendspin-js in the
+# browser). Browsers on our https origin can't open MA's plain ws:// socket
+# (mixed content), so this endpoint relays: browser <-wss same-origin->
+# add-on <-ws LAN-> MA's Sendspin server (port 8927).
+
+_MA_WS_CACHE = {'url': None}
+
+def _ma_ws_candidates():
+    out = []
+    configured = (storage.get_settings().get('ma_server_url') or '').strip()
+    if configured:
+        url = configured
+        if url.startswith(('http://', 'https://')):
+            url = 'ws' + url[4:]
+        if not url.startswith(('ws://', 'wss://')):
+            url = f'ws://{url}'
+        hostpart = url.split('://', 1)[1]
+        if ':' not in hostpart.split('/', 1)[0]:
+            url = url.replace(hostpart.split('/', 1)[0],
+                              hostpart.split('/', 1)[0] + ':8927', 1)
+        if '/sendspin' not in url:
+            url = url.rstrip('/') + '/sendspin'
+        out.append(url)
+    # Official MA add-on hostname on HA's internal docker network
+    out.append('ws://d5369777-music-assistant:8927/sendspin')
+    # MA commonly runs on the HA host itself
+    ha_base = os.environ.get('HA_BASE_URL', '') or storage.get_settings().get('ha_base_url', '')
+    if ha_base:
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(ha_base).hostname
+            if host:
+                out.append(f'ws://{host}:8927/sendspin')
+        except Exception:
+            pass
+    out.append('ws://homeassistant.local:8927/sendspin')
+    seen = set()
+    return [u for u in out if not (u in seen or seen.add(u))]
+
+async def _resolve_ma_ws_url():
+    import websockets as _ws
+    if _MA_WS_CACHE['url']:
+        return _MA_WS_CACHE['url']
+    for candidate in _ma_ws_candidates():
+        try:
+            # Outer wait_for: open_timeout does not reliably bound stalled
+            # DNS lookups (Windows mDNS/LLMNR) — without it a bad hostname
+            # hangs the whole relay handshake.
+            conn = await asyncio.wait_for(
+                _ws.connect(candidate, open_timeout=4, max_size=None), timeout=5)
+            await conn.close()
+            print(f"[sendspin] MA server found at {candidate}")
+            _MA_WS_CACHE['url'] = candidate
+            return candidate
+        except Exception as e:
+            print(f"[sendspin] candidate {candidate} unreachable: {type(e).__name__}")
+    return None
+
+@app.websocket("/api/sendspin/ws")
+async def sendspin_relay(websocket: WebSocket):
+    import websockets as _ws
+    await websocket.accept()
+    url = await _resolve_ma_ws_url()
+    if not url:
+        await websocket.close(code=1011, reason="Music Assistant Sendspin server not found")
+        return
+    try:
+        upstream = await _ws.connect(url, open_timeout=5, max_size=None)
+    except Exception as e:
+        _MA_WS_CACHE['url'] = None  # stale cache; re-resolve next attempt
+        print(f"[sendspin] upstream connect failed: {e}")
+        await websocket.close(code=1011, reason="Could not reach Music Assistant")
+        return
+
+    async def pump_to_ma():
+        while True:
+            msg = await websocket.receive()
+            if msg.get('type') == 'websocket.disconnect':
+                break
+            if msg.get('text') is not None:
+                await upstream.send(msg['text'])
+            elif msg.get('bytes') is not None:
+                await upstream.send(msg['bytes'])
+
+    async def pump_to_browser():
+        async for message in upstream:
+            if isinstance(message, str):
+                await websocket.send_text(message)
+            else:
+                await websocket.send_bytes(message)
+
+    tasks = [asyncio.create_task(pump_to_ma()),
+             asyncio.create_task(pump_to_browser())]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+    except Exception as e:
+        print(f"[sendspin] relay error: {e}")
+    finally:
+        try:
+            await upstream.close()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 # --- Passenger day view API ---
 

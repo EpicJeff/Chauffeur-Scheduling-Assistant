@@ -368,6 +368,18 @@
                             app. Used to build tap-through links in notifications.</p>
                     </div>
 
+                    <!-- Music Assistant server (Sendspin phone player) -->
+                    <div class="mb-6">
+                        <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Music
+                            Assistant Server</label>
+                        <input type="text" x-model="maServerUrl" @change="saveSettings()"
+                            placeholder="ws://192.168.1.50:8927 (blank = auto-discover)"
+                            class="w-full max-w-lg bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono">
+                        <p class="text-gray-500 text-sm mt-1">Only needed if the "This phone" music player can't find
+                            Music Assistant automatically. Host (and optional port) of the MA server's Sendspin
+                            endpoint.</p>
+                    </div>
+
                     <!-- HA API dev fallback (add-on uses the supervisor token automatically) -->
                     <div class="mb-6" x-show="!isHomeAssistant">
                         <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Home
@@ -2552,6 +2564,7 @@
                 publicBaseUrl: '',
                 haBaseUrl: '',
                 haToken: '',
+                maServerUrl: '',
                 haStatus: null,
                 haPersons: [],
                 haMediaPlayers: [],
@@ -2843,6 +2856,7 @@
                     this.publicBaseUrl = data.public_base_url || '';
                     this.haBaseUrl = data.ha_base_url || '';
                     this.haToken = data.ha_token || '';
+                    this.maServerUrl = data.ma_server_url || '';
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
                     this.isHomeAssistant = data.is_home_assistant || false;
@@ -2917,6 +2931,7 @@
                             public_base_url: this.publicBaseUrl || '',
                             ha_base_url: this.haBaseUrl || '',
                             ha_token: this.haToken || '',
+                            ma_server_url: this.maServerUrl || '',
                             trip_hashtags: this.tripHashtags || [],
                             llm_provider: this.llmProvider,
                             llm_gemini_api_key: this.llmGeminiApiKey,

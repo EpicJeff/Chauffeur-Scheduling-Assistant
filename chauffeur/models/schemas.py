@@ -228,6 +228,10 @@ class Settings(BaseModel):
     public_base_url: str = ""
     ha_base_url: str = ""
     ha_token: str = ""
+    # Music Assistant server for the Sendspin phone-player relay, e.g.
+    # "ws://192.168.1.50:8927". Empty = auto-discover (official add-on
+    # hostname, then the HA host on port 8927).
+    ma_server_url: str = ""
     family_philosophy: str = ""
     enable_standard_rules: bool = True
     enable_ai_rules: bool = True
