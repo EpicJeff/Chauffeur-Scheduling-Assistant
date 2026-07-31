@@ -1,0 +1,108 @@
+# Chauffeur Family-Hub Roadmap
+
+Status of the family-network pivot and the backlog for future phases.
+Shipped-feature details live in `system_capabilities.md` (the live spec) —
+this file tracks what is NOT built yet, with enough context to pick any item
+up cold. Last updated: 2026-07-31 (v2.19.0).
+
+## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
+
+PWA installability · FamilyMember overlay + roles (parent/adult/child/helper)
++ per-member PINs · HA API bridge · family messaging (family/DM/event
+channels, web push + HA notify) · family map (HA person entities, Leaflet) ·
+passenger "My Day" lens (swipe/day-nav, split-leg collapse) · Music tab
+(MA-only players, rich search, favorites, artwork proxy) · **Sendspin phone
+player** (each member's phone is a real MA player via the add-on's wss relay)
+· chore economy (pot/claims/points ledger/parent verification) · daily
+routines + streaks · rewards store with parent-approved redemptions.
+
+## Next-up candidates (no platform prerequisites)
+
+- **Agent tools for the family hub.** Wire into BOTH stacks
+  (`agent_router`/`agent_tools_v2` live; `agentic_chat_loop` dormant but kept
+  in sync): send/read family messages ("tell Mom I'll be late"), chores
+  ("what chores are open?", "claim the trash", parent-voice verification is
+  an open question — PIN equivalence needed), routines ("did Ben finish his
+  routine?"). When messaging tools land, restore the Argyle FAB on the PWA
+  Messages tab (hidden since v2.15.3 because it overlapped the composer and
+  had no messaging abilities).
+- **Voice memos (push-to-talk).** The walkie-talkie moment from the original
+  vision. Schema is ready (`ChatMessage.type='audio'` + `attachment`
+  reserved); needs MediaRecorder capture, an upload endpoint + storage,
+  autoplay-on-open in threads, and a chirpy push. iOS PWA records fine in
+  foreground.
+- **Gate HA-dependent UI when HA is unreachable** (user request 2026-07-31):
+  hide Map/Music tabs + map nav link when `/api/ha/status` says unavailable
+  (local dev without HA shows dead features today). Backends already degrade
+  gracefully — this is a UI-visibility pass only. Note the proper dev
+  alternative: `ha_base_url`/`ha_token` settings point local dev at real HA.
+- **Kiosk points leaderboard.** Family points on the wall panel; kiosk mode
+  exists, `GET /api/points` exists — cheap, fun.
+- **Per-member notification preferences.** Members with both web push and HA
+  notify get every message twice (accepted v1 tradeoff). Add a per-member
+  lane preference or dedupe.
+
+## The native app track (Capacitor wrapper — the big unlock)
+
+Wrap the existing PWA (NOT a rewrite; days not months) and distribute via
+TestFlight/Android sideload. Unlocks, in value order:
+
+1. **Lock-screen / background audio** — the Sendspin phone player currently
+   stops when iOS locks the screen; the wrapper makes phones real speakers.
+   The sendspin-js client code carries over unchanged.
+2. **Reliable push** (APNs/FCM instead of iOS web push quirks).
+3. **Background location** — family members without the HA companion app,
+   and the ONLY route to live location for role=helper drivers (no HA person
+   entity; My Day intentionally hides "Where?" for helpers today).
+4. **Eventually: live calls** (WebRTC + CallKit/ConnectionService). Until
+   then the deliberate answer to "intercom" is voice memos, not calls.
+
+Frictions to plan for: iOS builds need a Mac or cloud CI (dev machine is
+Windows) · $99/yr Apple Developer account · TestFlight builds expire after
+90 days (recurring release cadence) · Apple scrutinizes always-on location
+permissions.
+
+## Nice-to-haves / polish
+
+- Chore fairness nudges via the solver (rotation suggestions for chronically
+  unclaimed chores, "Lily did 80% of dishes this month"). The marketplace
+  stays primary — this decorates it.
+- Routine reminders (opt-in per item, at `time_of_day`) — deliberately NOT
+  default; avoid becoming a nag machine.
+- Badge/achievement engine beyond computed streaks — only if the kids ask.
+- "Restrict music to own player" per-member kid flag.
+- Dashboard-native chat panel (desktop parents currently use the PWA view).
+- My Day true drag-swipe (pre-rendered snap-scroll panes like the driver
+  timeline; current gesture+transition may be sufficient).
+- MA player auto-expose on Sendspin registration (rejected once: MA's config
+  API keys are version-fragile for a one-time toggle; revisit if MA grows a
+  stable API). Current one-time step per member+device: MA → Settings →
+  Players → enable "Expose this player to Home Assistant".
+- Harden the open-admin dashboard/config surface (it has always been open;
+  PINs currently protect identity switching + point payouts only).
+
+## Cleanups
+
+- Drop TinyDB code path + `CHAUFFEUR_STORAGE` toggle; audit the ~91
+  `db_lock` sites (sqlite_migration_design.md §8).
+- Repo root is littered with one-off `patch_*.py`/`test_*.py` scratch files
+  and `services/trip_planner_hacked*.py` snapshots — delete when brave.
+
+## Explicitly cut (with reasons — don't relitigate casually)
+
+- **Movies/video**: Jellyfin/Plex territory; licensing swamp; bridge-not-build
+  if ever.
+- **Meals**: no synergy with the solver/logistics DNA; at most a calendar
+  concern.
+- **Money/allowance mapping for points**: rewards are parent-defined items;
+  "$5" can be a reward item, but no currency integration.
+- **Solver-assigned chores**: choice drives kid buy-in; the pot won.
+- **Points for routines**: personal duties aren't paid work; streaks instead.
+
+## Open design questions
+
+- Parent-voice chore verification via the agent: what stands in for the PIN?
+- Should helpers see event threads for events they drive (currently: no,
+  DMs with parents only + kid contact relays through the family channel)?
+- Multi-family/household support if this ever leaves the house: everything
+  assumes one family per install.
