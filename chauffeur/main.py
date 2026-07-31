@@ -2704,32 +2704,65 @@ def member_day(member_id: str, date: Optional[str] = None):
             } if m else None
         return driver_members[driver_id]
 
-    rides = []
+    # Collect matches, then collapse _dropoff/_pickup split legs into their
+    # parent event (one card per real event, legs carry per-leg drivers).
+    matched = []
     for ev in sched.get('events', []):
         if not str(ev.get('start', '')).startswith(date_str):
             continue
         if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
             continue
         ev_id = str(ev.get('id', ''))
-        base_id = ev_id.split('_unrolled_')[0]
+        parent_id = ev_id  # split-leg parent: suffix stripped, instance kept
         for suffix in ('_dropoff', '_pickup'):
-            if base_id.endswith(suffix):
-                base_id = base_id[:-len(suffix)]
+            if parent_id.endswith(suffix):
+                parent_id = parent_id[:-len(suffix)]
+        rule_base = parent_id.split('_unrolled_')[0]
         cals = set(ev.get('calendar_ids') or [])
         title_l = (ev.get('title') or '').lower()
         if not (cals & p_cals) and not any(t in title_l for t in p_tags) \
-                and not _rule_bound({ev_id, base_id}):
+                and not _rule_bound({ev_id, parent_id, rule_base}):
             continue
-        rides.append({
+        matched.append((ev, ev_id, parent_id))
+
+    def _ride(ev, ev_id, legs=None):
+        return {
             'id': ev.get('id'),
             'title': ev.get('title'),
             'event_type': ev.get('event_type', 'standard'),
             'start': ev.get('start'),
             'end': ev.get('end'),
             'location': ev.get('location'),
-            'driver': _driver_member(assignments.get(ev.get('id')) or assignments.get(base_id)),
-            'status': status_by_event.get(str(ev.get('id'))) or status_by_event.get(base_id),
-        })
+            'driver': _driver_member(assignments.get(ev_id)),
+            'status': status_by_event.get(ev_id),
+            'legs': legs or [],
+        }
+
+    groups = {}
+    for item in matched:
+        groups.setdefault(item[2], []).append(item)
+
+    rides = []
+    for parent_id, items in groups.items():
+        base = next((it for it in items if it[1] == parent_id), None)
+        variants = [it for it in items if it[1] != parent_id]
+        if base is None:
+            rides.extend(_ride(ev, ev_id) for ev, ev_id, _p in items)
+            continue
+        legs = []
+        for ev, ev_id, _p in sorted(variants, key=lambda it: it[0].get('start') or ''):
+            legs.append({
+                'type': 'dropoff' if ev_id.endswith('_dropoff') else 'pickup',
+                'start': ev.get('start'),
+                'driver': _driver_member(assignments.get(ev_id)),
+                'status': status_by_event.get(ev_id),
+            })
+        ride = _ride(base[0], base[1], legs)
+        if any(l['status'] == 'in_progress' for l in legs):
+            ride['status'] = 'in_progress'
+        elif legs and all(l['status'] == 'completed' for l in legs):
+            ride['status'] = 'completed'
+        rides.append(ride)
     rides.sort(key=lambda r: r.get('start') or '')
     return {
         'member_id': member_id,

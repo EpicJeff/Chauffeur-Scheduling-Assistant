@@ -371,7 +371,13 @@
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
             if (nav) nav.style.display = (isTimeline || isMyDay) ? 'flex' : 'none';
-            if (isMyDay) updateMyDayLabel();
+            if (isMyDay) {
+                updateMyDayLabel();
+            } else if (isTimeline) {
+                // My Day may have left the arrows disabled at its bounds.
+                document.getElementById('btn-prev-day').disabled = false;
+                document.getElementById('btn-next-day').disabled = false;
+            }
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -449,18 +455,24 @@
             return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
         }
 
+        const MYDAY_MAX_OFFSET = 13;
+
         function updateMyDayLabel() {
             const label = document.getElementById('current-day-label');
             if (!label) return;
-            if (mydayOffset === 0) { label.textContent = 'Today'; return; }
-            if (mydayOffset === 1) { label.textContent = 'Tomorrow'; return; }
+            document.getElementById('btn-prev-day').disabled = mydayOffset <= 0;
+            document.getElementById('btn-next-day').disabled = mydayOffset >= MYDAY_MAX_OFFSET;
+            const sub = document.getElementById('date-subtitle');
             const d = new Date();
             d.setDate(d.getDate() + mydayOffset);
+            if (sub) sub.textContent = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            if (mydayOffset === 0) { label.textContent = 'Today'; return; }
+            if (mydayOffset === 1) { label.textContent = 'Tomorrow'; return; }
             label.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
         }
 
         function mydayShift(delta) {
-            mydayOffset = Math.max(0, Math.min(13, mydayOffset + delta));
+            mydayOffset = Math.max(0, Math.min(MYDAY_MAX_OFFSET, mydayOffset + delta));
             updateMyDayLabel();
             renderMyDay();
         }
@@ -499,7 +511,32 @@
                 ? formatTime(r.start)
                 : `${formatTime(r.start)} - ${formatTime(r.end)}`;
             let driverRow;
-            if (r.driver) {
+            if (r.legs && r.legs.length) {
+                const legRow = (l) => {
+                    const lbl = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
+                    const t = formatTime(l.start);
+                    if (!l.driver) {
+                        return `<div class="flex items-center justify-between mt-2 gap-2">
+                            <span class="text-sm text-gray-300 font-bold">${lbl} · ${t}</span>
+                            <span class="text-[11px] font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs driver</span>
+                        </div>`;
+                    }
+                    return `<div class="flex items-center justify-between mt-2 gap-2">
+                        <div class="flex items-center gap-2 text-sm text-gray-300 min-w-0">
+                            <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800 shrink-0"
+                                style="border-color:${l.driver.color_code || '#3b82f6'};color:${l.driver.color_code || '#3b82f6'}">${mfEscape(l.driver.avatar || (l.driver.name || '?').charAt(0).toUpperCase())}</span>
+                            <span class="truncate">🚗 <b>${mfEscape(l.driver.name)}</b> — ${lbl} ${t}${l.status === 'in_progress' ? ' · <span class="text-blue-300 font-bold">on the way</span>' : ''}</span>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button onclick="setView('map', '${l.driver.member_id}')"
+                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>
+                            <button onclick="messageMember('${l.driver.member_id}')"
+                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>
+                        </div>
+                    </div>`;
+                };
+                driverRow = `<div class="mt-3 pt-1 border-t border-gray-800">${r.legs.map(legRow).join('')}</div>`;
+            } else if (r.driver) {
                 driverRow = `
                 <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
                     <div class="flex items-center gap-2 text-sm text-gray-300">

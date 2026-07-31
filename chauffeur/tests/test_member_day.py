@@ -33,6 +33,7 @@ def reset_db():
 
 def _seed():
     storage.drivers_table.insert({"id": "jeff", "name": "Jeff", "color_code": "#f00"})
+    storage.drivers_table.insert({"id": "amy", "name": "Amy", "color_code": "#0f0"})
     storage.passengers_table.insert({"id": "p-ben", "name": "Ben",
                                      "calendar_ids": ["ben@cal"], "hashtags": ["#ben"]})
     storage.ensure_members()
@@ -64,8 +65,18 @@ def _seed():
             {"id": "swim_unrolled_2", "title": "Swim", "event_type": "standard",
              "start": "2026-07-31T07:00:00", "end": "2026-07-31T08:00:00",
              "location": None, "calendar_ids": ["family@cal"]},
+            # Split event: base + dropoff/pickup legs must collapse to ONE card
+            {"id": "karate", "title": "Karate", "event_type": "standard",
+             "start": "2026-07-31T16:30:00", "end": "2026-07-31T17:30:00",
+             "location": "Dojo", "calendar_ids": ["ben@cal"]},
+            {"id": "karate_dropoff", "title": "Dropoff: Karate", "event_type": "dropoff",
+             "start": "2026-07-31T16:20:00", "end": "2026-07-31T16:20:00",
+             "location": "Dojo", "calendar_ids": ["ben@cal"]},
+            {"id": "karate_pickup", "title": "Pickup: Karate", "event_type": "pickup",
+             "start": "2026-07-31T17:30:00", "end": "2026-07-31T17:30:00",
+             "location": "Dojo", "calendar_ids": ["ben@cal"]},
         ],
-        "assignments": {"soccer": "jeff"},
+        "assignments": {"soccer": "jeff", "karate_dropoff": "jeff", "karate_pickup": "amy"},
         "ghost_assignments": {"piano_dropoff": "jeff"},
         "matched_rules": {
             "scouts": [{"constraint_type": "required", "passenger_ids": ["p-ben"]}],
@@ -81,10 +92,21 @@ def scenario_day_assembly():
     ben = _seed()
     storage.mark_drive_status("route_soccer_1", "in_progress")
 
+    storage.mark_drive_status("init_karate_dropoff", "in_progress")
+
     day = main.member_day(ben["id"], date="2026-07-31")
     ids = [r["id"] for r in day["rides"]]
-    check(ids == ["swim_unrolled_2", "piano_dropoff", "tagged", "soccer", "scouts"],
-          f"calendar + hashtag + rule-bound (incl. unrolled base-id) matches, sorted; got {ids}")
+    check(ids == ["swim_unrolled_2", "piano_dropoff", "tagged", "soccer", "karate", "scouts"],
+          f"split legs collapse into base card; rule/hashtag/calendar matches sorted; got {ids}")
+
+    karate = next(r for r in day["rides"] if r["id"] == "karate")
+    check([l["type"] for l in karate["legs"]] == ["dropoff", "pickup"],
+          "legs sorted by time on the base card")
+    check(karate["legs"][0]["driver"]["name"] == "Jeff"
+          and karate["legs"][1]["driver"]["name"] == "Amy",
+          "per-leg drivers resolved (different drivers per leg)")
+    check(karate["status"] == "in_progress",
+          "in-progress leg bubbles up to the card status")
 
     soccer = next(r for r in day["rides"] if r["id"] == "soccer")
     check(soccer["driver"] and soccer["driver"]["name"] == "Jeff",
