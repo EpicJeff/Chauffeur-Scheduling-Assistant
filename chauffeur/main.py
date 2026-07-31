@@ -2775,7 +2775,11 @@ async def sendspin_relay(websocket: WebSocket):
         await websocket.close(code=1011, reason="Music Assistant Sendspin server not found")
         return
     try:
-        upstream = await _ws.connect(url, open_timeout=5, max_size=None)
+        # Generous ping_timeout: heavy solver runs can stall the event loop
+        # past the default 20s and needlessly kill healthy audio sessions.
+        upstream = await _ws.connect(url, open_timeout=5, max_size=None,
+                                     ping_interval=20, ping_timeout=60,
+                                     close_timeout=5)
     except Exception as e:
         _MA_WS_CACHE['url'] = None  # stale cache; re-resolve next attempt
         print(f"[sendspin] upstream connect failed: {e}")

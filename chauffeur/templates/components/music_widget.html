@@ -60,7 +60,34 @@
 
     // --- "This phone" Sendspin player (the PWA as a real MA endpoint) ---
     const MW_PHONE = '__phone__';
-    const _mwPhone = { player: null, active: false, state: null, connecting: false };
+    const _mwPhone = { player: null, active: false, state: null, connecting: false,
+                       retries: 0, reconnectTimer: null, everConnected: false };
+
+    function _mwScheduleReconnect() {
+        if (_mwPhone.reconnectTimer || _mwSelected !== MW_PHONE) return;
+        if (_mwPhone.retries >= 6) {
+            _mwToast('Phone player lost its connection — re-select "This phone" to retry.');
+            return;
+        }
+        const delay = Math.min(15000, 1500 * Math.pow(2, _mwPhone.retries));
+        _mwPhone.retries += 1;
+        _mwPhone.reconnectTimer = setTimeout(() => {
+            _mwPhone.reconnectTimer = null;
+            if (_mwSelected === MW_PHONE && !_mwPhone.player && !_mwPhone.connecting
+                && document.visibilityState === 'visible') {
+                mwStartPhonePlayer();
+            }
+        }, delay);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        // iOS suspends the socket when the page backgrounds; resume promptly.
+        if (document.visibilityState === 'visible' && _mwSelected === MW_PHONE
+            && !_mwPhone.player && !_mwPhone.connecting) {
+            _mwPhone.retries = 0;
+            mwStartPhonePlayer();
+        }
+    });
 
     function _mwPhoneName() {
         if (typeof membersData !== 'undefined' && typeof selectedMemberId !== 'undefined') {
@@ -100,8 +127,11 @@
                 if (_mwPhone.active) {
                     _mwPhone.active = false;
                     _mwPhone.player = null;
-                    _mwToast(e.reason ? `Phone player disconnected: ${e.reason}` : 'Phone player disconnected');
+                    // Quietly self-heal; only bother the user when it's hopeless
+                    // (relay refused: reason set) or retries run out.
+                    if (e.reason) _mwToast(`Phone player disconnected: ${e.reason}`);
                     mwRefresh();
+                    _mwScheduleReconnect();
                 }
             });
             const player = new window.SendspinPlayer({
@@ -116,15 +146,26 @@
                 },
             });
             // unlock() needs the user gesture that selected the option.
-            if (typeof player.unlock === 'function') await player.unlock();
+            if (typeof player.unlock === 'function') {
+                try { await player.unlock(); } catch (e) { /* reconnects run outside a gesture */ }
+            }
             if (typeof player.connect === 'function') await player.connect();
             _mwPhone.player = player;
             _mwPhone.active = true;
-            _mwToast('This phone is now a Music Assistant player 🎉');
+            if (!_mwPhone.everConnected) {
+                _mwPhone.everConnected = true;
+                _mwToast('This phone is now a Music Assistant player 🎉');
+            } else if (_mwPhone.retries > 0) {
+                console.info('[phone-player] reconnected');
+            }
+            _mwPhone.retries = 0;
         } catch (e) {
             _mwPhone.player = null;
             _mwPhone.active = false;
-            _mwToast('Phone player failed: ' + (e && e.message ? e.message : e));
+            if (_mwPhone.retries === 0) {
+                _mwToast('Phone player failed: ' + (e && e.message ? e.message : e));
+            }
+            _mwScheduleReconnect();
         } finally {
             _mwPhone.connecting = false;
             mwRefresh();
@@ -340,7 +381,11 @@
         if (!_mwSelected) return;
         if (_mwSelected === MW_PHONE) {
             const p = _mwPhone.player;
-            if (!p) { mwStartPhonePlayer(); return; }
+            if (!p) {
+                _mwToast('Phone player is reconnecting — try again in a second.');
+                if (!_mwPhone.connecting) mwStartPhonePlayer();
+                return;
+            }
             try {
                 if (command === 'volume_set' && typeof p.setVolume === 'function') {
                     p.setVolume(Math.round((extra.volume || 0) * 100));
@@ -519,6 +564,11 @@
     }
 
     function _mwStopPhonePlayer() {
+        if (_mwPhone.reconnectTimer) {
+            clearTimeout(_mwPhone.reconnectTimer);
+            _mwPhone.reconnectTimer = null;
+        }
+        _mwPhone.retries = 0;
         const p = _mwPhone.player;
         _mwPhone.player = null;
         _mwPhone.active = false;
