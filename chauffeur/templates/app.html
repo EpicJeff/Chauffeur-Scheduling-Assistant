@@ -192,6 +192,11 @@
             <div id="myday-content" class="p-4 space-y-3 pb-8"></div>
         </div>
 
+        <!-- Chores -->
+        <div id="chores-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+            <div id="chores-content" class="p-4 space-y-3 pb-8"></div>
+        </div>
+
         <!-- Bottom Tab Bar -->
         <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
             style="padding-bottom: env(safe-area-inset-bottom)">
@@ -227,6 +232,17 @@
                 <span class="text-[11px] font-bold tracking-wide">Messages</span>
                 <span id="tab-messages-badge"
                     class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold items-center justify-center"
+                    style="display: none">0</span>
+            </button>
+            <button id="tab-chores" onclick="setView('chores')"
+                class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors relative">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">Chores</span>
+                <span id="tab-chores-badge"
+                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-gray-900 text-[10px] font-bold items-center justify-center"
                     style="display: none">0</span>
             </button>
             <button id="tab-map" onclick="setView('map')"
@@ -373,6 +389,8 @@
             } else if (view === 'myday') {
                 mydayOffset = 0;
                 renderMyDay();
+            } else if (view === 'chores') {
+                fetchChores();
             } else if (view === 'music') {
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else {
@@ -387,7 +405,9 @@
             const isMap = currentView === 'map';
             const isMyDay = currentView === 'myday';
             const isMusic = currentView === 'music';
-            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic;
+            const isChores = currentView === 'chores';
+            const isTimeline = !isMessages && !isMap && !isMyDay && !isMusic && !isChores;
+            document.getElementById('chores-container').style.display = isChores ? 'flex' : 'none';
             document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
             if (nav) nav.style.display = (isTimeline || isMyDay) ? 'flex' : 'none';
@@ -420,7 +440,7 @@
         }
 
         function updateTabBar() {
-            ['myday', 'drives', 'family', 'messages', 'map', 'music'].forEach(v => {
+            ['myday', 'drives', 'family', 'messages', 'chores', 'map', 'music'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
@@ -443,8 +463,9 @@
             // only: no family agenda, map, or music.
             document.getElementById('tab-map').style.display = helper ? 'none' : 'flex';
             document.getElementById('tab-music').style.display = helper ? 'none' : 'flex';
+            document.getElementById('tab-chores').style.display = helper ? 'none' : 'flex';
             const hiddenNow = helper
-                ? ['family', 'map', 'music', 'myday']
+                ? ['family', 'map', 'music', 'myday', 'chores']
                 : (passenger ? ['drives', 'family'] : ['myday']);
             if (hiddenNow.includes(currentView)) {
                 currentView = passenger && !helper ? 'myday' : 'drives';
@@ -483,8 +504,10 @@
             syncPushSubscription();
             connectMessagesStream();
             fetchChannels();
+            fetchChores();
             if (currentView === 'messages') fetchChannels();
             else if (currentView === 'map') { initFamilyMap(); startFamilyMapPolling(); }
+            else if (currentView === 'chores') fetchChores();
             else renderMyDay();
         }
 
@@ -686,8 +709,10 @@
             if (openChannelParam && selectedMemberId) {
                 setView('messages');
                 openChannel(openChannelParam);
-            } else if (params.get('view') === 'messages' && selectedMemberId) {
-                setView('messages');
+            } else if (['messages', 'chores'].includes(params.get('view')) && selectedMemberId) {
+                setView(params.get('view'));
+            } else if (currentView === 'chores') {
+                fetchChores();  // restored from localStorage: setView early-returns
             } else if (currentView === 'map') {
                 // restored from localStorage: setView() would early-return
                 initFamilyMap();
@@ -1021,6 +1046,151 @@
             fetchChannels();
         }
 
+        // --- Chores ---
+        let choresData = [];
+
+        function memberToken() {
+            return localStorage.getItem('chauffeur_member_token') || '';
+        }
+
+        async function fetchChores() {
+            if (!selectedMemberId) return;
+            try {
+                const [choresRes, pointsRes] = await Promise.all([
+                    fetch(`${apiBase}api/chores`),
+                    fetch(`${apiBase}api/points`),
+                ]);
+                choresData = await choresRes.json();
+                renderChores(await pointsRes.json());
+                updateChoresBadge();
+            } catch (e) { console.error('Failed to fetch chores', e); }
+        }
+
+        function updateChoresBadge() {
+            const badge = document.getElementById('tab-chores-badge');
+            if (!badge) return;
+            const role = currentMemberRole();
+            let n = 0;
+            if (role === 'parent') {
+                n = choresData.filter(c => c.state === 'done').length;
+            } else {
+                n = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
+            }
+            badge.textContent = n > 99 ? '99+' : n;
+            badge.style.display = n > 0 ? 'flex' : 'none';
+        }
+
+        function choreEligibleForMe(c) {
+            const el = c.eligible_member_ids || [];
+            return !el.length || el.includes(selectedMemberId);
+        }
+
+        const CHORE_RECUR_LABEL = { once: '', daily: '· daily', weekly: '· weekly', monthly: '· monthly' };
+
+        function choreCard(c, buttonsHtml, subtitle) {
+            return `
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                        <div class="text-white font-bold text-[16px] leading-tight truncate">${mfEscape(c.title)}</div>
+                        <div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>
+                        ${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
+                        ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}
+                    </div>
+                    <div class="flex gap-2 shrink-0">${buttonsHtml}</div>
+                </div>
+            </div>`;
+        }
+
+        function renderChores(balances) {
+            const wrap = document.getElementById('chores-content');
+            if (!wrap) return;
+            const role = currentMemberRole();
+            const parts = [];
+
+            // Points header
+            if (role === 'child') {
+                const mine = (balances || []).find(b => b.member_id === selectedMemberId);
+                parts.push(`<div class="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-800/60 rounded-2xl p-4 flex items-center justify-between">
+                    <span class="text-gray-300 font-bold">My points</span>
+                    <span class="text-3xl font-black text-white">${mine ? mine.balance : 0} ⭐</span>
+                </div>`);
+            } else if (balances && balances.length) {
+                parts.push(`<div class="flex gap-2 flex-wrap">${balances.map(b => `
+                    <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 border border-gray-700 text-sm font-bold text-white">
+                        <span class="w-2.5 h-2.5 rounded-full" style="background-color:${b.color_code || '#3b82f6'}"></span>
+                        ${mfEscape(b.name)}: ${b.balance} ⭐
+                    </span>`).join('')}</div>`);
+            }
+
+            const btn = (label, cls, onclick) =>
+                `<button onclick="${onclick}" class="text-[12px] font-bold px-3 py-2 rounded-lg ${cls}">${label}</button>`;
+
+            if (role === 'parent') {
+                const toVerify = choresData.filter(c => c.state === 'done');
+                if (toVerify.length) {
+                    parts.push('<div class="text-xs font-black uppercase tracking-widest text-amber-400 pt-2">Needs your OK</div>');
+                    toVerify.forEach(c => parts.push(choreCard(c,
+                        btn('✓ Verify', 'bg-green-600 text-white active:bg-green-700', `verifyChore('${c.id}')`) +
+                        btn('✗', 'bg-red-600/80 text-white active:bg-red-700', `rejectChore('${c.id}')`),
+                        `done by ${mfEscape(c.claimed_by_name || '?')}`)));
+                }
+            }
+
+            const mine = choresData.filter(c => c.claimed_by === selectedMemberId && (c.state === 'claimed' || c.state === 'done'));
+            if (mine.length) {
+                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">My chores</div>');
+                mine.forEach(c => parts.push(choreCard(c,
+                    c.state === 'claimed'
+                        ? btn('Done!', 'bg-blue-600 text-white active:bg-blue-700', `choreDone('${c.id}')`) +
+                          btn('↩', 'bg-gray-800 text-gray-400 border border-gray-700', `unclaimChore('${c.id}')`)
+                        : '<span class="text-[11px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full self-center">Waiting for OK</span>',
+                    '')));
+            }
+
+            const available = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c));
+            parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Available</div>');
+            if (available.length) {
+                available.forEach(c => parts.push(choreCard(c,
+                    btn('Claim', 'bg-blue-600 text-white active:bg-blue-700', `claimChore('${c.id}')`), '')));
+            } else {
+                parts.push('<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">Nothing available right now 🎉</div>');
+            }
+
+            const othersClaimed = choresData.filter(c => (c.state === 'claimed' || c.state === 'done') && c.claimed_by !== selectedMemberId);
+            if (othersClaimed.length) {
+                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-600 pt-2">Taken</div>');
+                othersClaimed.forEach(c => parts.push(choreCard(c, '',
+                    `${mfEscape(c.claimed_by_name || '?')} is on it`)));
+            }
+
+            wrap.innerHTML = parts.join('');
+        }
+
+        async function _chorePost(path, body, headers) {
+            const res = await fetch(`${apiBase}api/chores/${path}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(headers || {}) },
+                body: JSON.stringify(body || {})
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Something went wrong');
+            }
+            fetchChores();
+        }
+
+        function claimChore(id) { _chorePost(`${id}/claim`, { member_id: selectedMemberId }); }
+        function unclaimChore(id) { _chorePost(`${id}/unclaim`, { member_id: selectedMemberId }); }
+        function choreDone(id) { _chorePost(`${id}/done`, { member_id: selectedMemberId }); }
+        function verifyChore(id) {
+            _chorePost(`${id}/verify`, {}, { 'X-Member-Token': memberToken() });
+        }
+        function rejectChore(id) {
+            const reason = prompt('What needs fixing?') || '';
+            _chorePost(`${id}/reject`, { reason: reason }, { 'X-Member-Token': memberToken() });
+        }
+
         // DM deep link used by member chips / driver rows (and later the map).
         // Helpers can only DM parents — anyone else contacting a helper is
         // relayed through the family channel where parents coordinate.
@@ -1252,6 +1422,7 @@
             syncPushSubscription();
             connectMessagesStream();
             fetchChannels();
+            if (currentMemberRole() !== 'helper') fetchChores();  // badge without opening the tab
 
             await fetchSchedule();
             fetchNotifications();

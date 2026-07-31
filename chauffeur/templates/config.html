@@ -82,6 +82,18 @@
                         </button>
                     </li>
                     <li>
+                        <button @click="activeTab = 'chores'"
+                            :class="activeTab === 'chores' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
+                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
+                                </path>
+                            </svg>
+                            Chores
+                        </button>
+                    </li>
+                    <li>
                         <button @click="activeTab = 'rules'"
                             :class="activeTab === 'rules' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
                             class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
@@ -969,6 +981,95 @@
                                 </div>
                             </div>
                         </template>
+                    </div>
+                </div>
+
+                <!-- Chores -->
+                <div x-show="activeTab === 'chores'" x-cloak x-transition.opacity
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-blue-300">Chores</h2>
+                    <p class="text-gray-400 text-sm mb-6">The family chore pot. Members claim chores in the app;
+                        children earn points when a parent verifies (verification happens in the app and requires a
+                        parent PIN). Empty eligibility = anyone can claim.</p>
+                    <div class="space-y-3 mb-8">
+                        <template x-for="chore in chores" :key="chore.id">
+                            <div class="bg-gray-900 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <h3 class="text-lg font-bold text-white" x-text="chore.title"></h3>
+                                        <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-bold text-xs"
+                                            x-text="'+' + chore.points + ' pts'"></span>
+                                        <span x-show="chore.recurrence !== 'once'"
+                                            class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs uppercase"
+                                            x-text="chore.recurrence"></span>
+                                        <span class="px-2 py-0.5 rounded font-bold text-xs uppercase"
+                                            :class="{ 'bg-green-900/50 text-green-300': chore.state === 'open',
+                                                      'bg-amber-900/50 text-amber-300': chore.state === 'claimed' || chore.state === 'done',
+                                                      'bg-gray-700 text-gray-400': chore.state === 'verified' }"
+                                            x-text="chore.state + (chore.claimed_by_name ? ' · ' + chore.claimed_by_name : '')"></span>
+                                    </div>
+                                    <p class="text-gray-400 text-sm mt-1" x-text="chore.description" x-show="chore.description"></p>
+                                </div>
+                                <div class="flex space-x-2 shrink-0">
+                                    <button @click="startEditChore(chore)"
+                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
+                                    <button @click="deleteChore(chore)"
+                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
+                        <h3 class="text-lg font-bold text-white mb-4"
+                            x-text="editChoreId ? 'Edit Chore' : 'Add New Chore'"></h3>
+                        <div class="flex gap-4 items-end flex-wrap">
+                            <div class="w-full lg:flex-1">
+                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
+                                <input type="text" x-model="choreEdit.title" placeholder="Take out the trash"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-sm">Points</label>
+                                <input type="number" min="0" max="1000" x-model.number="choreEdit.points"
+                                    class="w-24 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-sm">Repeats</label>
+                                <select x-model="choreEdit.recurrence"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    <option value="once">One-off</option>
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="w-full mt-4">
+                            <label class="block text-gray-400 mb-1 text-sm">Description (optional)</label>
+                            <input type="text" x-model="choreEdit.description"
+                                placeholder="Both bins, and put them back after pickup"
+                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                        </div>
+                        <div class="w-full mt-4">
+                            <label class="block text-gray-400 mb-1 text-sm">Who can claim it (none checked = anyone)</label>
+                            <div class="flex gap-3 flex-wrap">
+                                <template x-for="m in members.filter(x => x.role !== 'helper')" :key="m.id">
+                                    <label class="flex items-center gap-2 text-gray-300 font-bold bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
+                                        <input type="checkbox" :value="m.id" x-model="choreEdit.eligible_member_ids"
+                                            class="w-4 h-4">
+                                        <span x-text="m.name"></span>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mt-5">
+                            <button @click="saveChore()"
+                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
+                                x-text="editChoreId ? 'Save Chore' : 'Add Chore'"></button>
+                            <button x-show="editChoreId" @click="cancelEditChore()"
+                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
+                        </div>
                     </div>
                 </div>
 
@@ -2585,6 +2686,9 @@
                 editMemberId: null,
                 memberEdit: {},
                 memberMergeTarget: '',
+                chores: [],
+                editChoreId: null,
+                choreEdit: { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] },
                 publicBaseUrl: '',
                 haBaseUrl: '',
                 haToken: '',
@@ -2606,6 +2710,7 @@
                     await this.loadDrivers();
                     await this.loadPassengers();
                     await this.loadMembers();
+                    await this.loadChores();
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -3223,6 +3328,54 @@
                     if (!confirm(`Delete member "${member.name}"?`)) return;
                     await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
                     await this.loadMembers();
+                },
+                // --- Chores ---
+                async loadChores() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/chores`);
+                        const data = await res.json();
+                        this.chores = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load chores", e);
+                        this.chores = [];
+                    }
+                },
+                startEditChore(chore) {
+                    this.editChoreId = chore.id;
+                    this.choreEdit = {
+                        title: chore.title,
+                        description: chore.description || '',
+                        points: chore.points,
+                        recurrence: chore.recurrence || 'once',
+                        eligible_member_ids: [...(chore.eligible_member_ids || [])],
+                    };
+                },
+                cancelEditChore() {
+                    this.editChoreId = null;
+                    this.choreEdit = { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] };
+                },
+                async saveChore() {
+                    if (!(this.choreEdit.title || '').trim()) { alert('Title required'); return; }
+                    const url = this.editChoreId
+                        ? `${this.apiBase}api/chores/${this.editChoreId}`
+                        : `${this.apiBase}api/chores`;
+                    const res = await fetch(url, {
+                        method: this.editChoreId ? 'PUT' : 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.choreEdit)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        alert(err.detail || 'Could not save chore');
+                        return;
+                    }
+                    this.cancelEditChore();
+                    await this.loadChores();
+                },
+                async deleteChore(chore) {
+                    if (!confirm(`Delete chore "${chore.title}"?`)) return;
+                    await fetch(`${this.apiBase}api/chores/${chore.id}`, { method: 'DELETE' });
+                    await this.loadChores();
                 },
                 async loadHaOptions() {
                     try {

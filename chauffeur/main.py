@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -2802,6 +2802,196 @@ def music_play(req: MusicPlayRequest):
     if result is None:
         raise HTTPException(status_code=502, detail="Music Assistant play_media failed")
     return {"status": "ok"}
+
+# --- Chores + points API ---
+# Marketplace: parents post chores (open-admin config page, same trust as the
+# rest of the dashboard), members claim/complete them, VERIFICATION is the
+# integrity gate and requires a parent device token (PIN-backed).
+
+def _notify_member_lanes(member, title, body, path='/app'):
+    """One member, all lanes: web push + HA companion notify."""
+    try:
+        base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
+        url = f"{base}{path}" if base else path
+        send_push_to_member(member['id'], title, body, url)
+        svc = member.get('notify_service')
+        if svc:
+            from services import ha_api
+            svc_name = svc.split('.', 1)[1] if '.' in svc else svc
+            payload = {"title": title, "message": body}
+            if base:
+                payload["data"] = {"url": url}
+            ha_api.call_service('notify', svc_name, payload)
+    except Exception as e:
+        print(f"notify_member_lanes failed: {e}")
+
+def _notify_chore_event(kind, chore, actor_member=None, extra=''):
+    """Fan out chore lifecycle notifications in a background-safe way."""
+    try:
+        members = storage.get_all_members()
+        if kind == 'posted':
+            eligible = chore.get('eligible_member_ids') or []
+            for m in members:
+                if m.get('role') != 'child':
+                    continue
+                if eligible and m['id'] not in eligible:
+                    continue
+                _notify_member_lanes(m, 'New chore posted',
+                                     f"{chore['title']} (+{chore.get('points', 0)} pts)",
+                                     '/app?view=chores')
+        elif kind == 'done':
+            name = (actor_member or {}).get('name', 'Someone')
+            for m in members:
+                if m.get('role') == 'parent':
+                    _notify_member_lanes(m, 'Chore ready to verify',
+                                         f"{name} finished: {chore['title']}",
+                                         '/app?view=chores')
+        elif kind in ('verified', 'rejected'):
+            claimant = storage.get_member(chore.get('claimed_by') or '')
+            if claimant:
+                if kind == 'verified':
+                    body = f"{chore['title']} approved!" + (f" +{extra} points 🎉" if extra else '')
+                else:
+                    body = f"{chore['title']}: {extra or 'needs another pass'}"
+                _notify_member_lanes(claimant,
+                                     'Chore verified ✓' if kind == 'verified' else 'Chore needs a redo',
+                                     body, '/app?view=chores')
+    except Exception as e:
+        print(f"chore notification failed: {e}")
+
+class ChoreCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    points: int = 10
+    recurrence: str = 'once'
+    eligible_member_ids: list = []
+
+def _validate_chore_fields(req):
+    if not (req.title or '').strip():
+        raise HTTPException(status_code=400, detail="Title required")
+    if not (0 <= int(req.points) <= 1000):
+        raise HTTPException(status_code=400, detail="Points must be 0-1000")
+    if req.recurrence not in ('once', 'daily', 'weekly', 'monthly'):
+        raise HTTPException(status_code=400, detail="Invalid recurrence")
+
+@app.get("/api/chores")
+def list_chores():
+    chores = storage.get_all_chores()
+    members = {m['id']: m for m in storage.get_all_members()}
+    for c in chores:
+        claimant = members.get(c.get('claimed_by'))
+        c['claimed_by_name'] = claimant.get('name') if claimant else None
+        c['claimed_by_color'] = claimant.get('color_code') if claimant else None
+    order = {'done': 0, 'open': 1, 'claimed': 2, 'verified': 3}
+    chores.sort(key=lambda c: (order.get(c.get('state'), 9), -(c.get('points') or 0)))
+    return chores
+
+@app.post("/api/chores")
+def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
+    from models.schemas import Chore
+    _validate_chore_fields(req)
+    chore = Chore(title=req.title.strip(), description=req.description or '',
+                  points=int(req.points), recurrence=req.recurrence,
+                  eligible_member_ids=req.eligible_member_ids or []).model_dump()
+    storage.add_chore(chore)
+    background_tasks.add_task(_notify_chore_event, 'posted', chore)
+    return chore
+
+@app.put("/api/chores/{chore_id}")
+def edit_chore(chore_id: str, req: ChoreCreateRequest):
+    _validate_chore_fields(req)
+    if not storage.update_chore(chore_id, {
+            'title': req.title.strip(), 'description': req.description or '',
+            'points': int(req.points), 'recurrence': req.recurrence,
+            'eligible_member_ids': req.eligible_member_ids or []}):
+        raise HTTPException(status_code=404, detail="Chore not found")
+    return {"status": "updated"}
+
+@app.delete("/api/chores/{chore_id}")
+def remove_chore(chore_id: str):
+    storage.delete_chore(chore_id)
+    return {"status": "deleted"}
+
+class ChoreMemberRequest(BaseModel):
+    member_id: str
+
+@app.post("/api/chores/{chore_id}/claim")
+def claim_chore_endpoint(chore_id: str, req: ChoreMemberRequest):
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('role') == 'helper':
+        raise HTTPException(status_code=403, detail="Helpers don't do family chores")
+    chore = storage.get_chore(chore_id)
+    if not chore:
+        raise HTTPException(status_code=404, detail="Chore not found")
+    eligible = chore.get('eligible_member_ids') or []
+    if eligible and req.member_id not in eligible:
+        raise HTTPException(status_code=403, detail="This chore isn't available to you")
+    result = storage.claim_chore(chore_id, req.member_id)
+    if result == 'not_open':
+        raise HTTPException(status_code=409, detail="Already claimed")
+    if result == 'cap':
+        raise HTTPException(status_code=409,
+                            detail=f"You already have {storage.CHORE_CLAIM_CAP} chores going — finish one first")
+    if result != 'ok':
+        raise HTTPException(status_code=404, detail="Chore not found")
+    return storage.get_chore(chore_id)
+
+@app.post("/api/chores/{chore_id}/unclaim")
+def unclaim_chore_endpoint(chore_id: str, req: ChoreMemberRequest):
+    if not storage.unclaim_chore(chore_id, req.member_id):
+        raise HTTPException(status_code=409, detail="Not your claim (or not claimed)")
+    return {"status": "released"}
+
+@app.post("/api/chores/{chore_id}/done")
+def chore_done_endpoint(chore_id: str, req: ChoreMemberRequest, background_tasks: BackgroundTasks):
+    if not storage.mark_chore_done(chore_id, req.member_id):
+        raise HTTPException(status_code=409, detail="Not your claim (or not in progress)")
+    chore = storage.get_chore(chore_id)
+    background_tasks.add_task(_notify_chore_event, 'done', chore,
+                              storage.get_member(req.member_id))
+    return chore
+
+@app.post("/api/chores/{chore_id}/verify")
+def verify_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks,
+                          x_member_token: Optional[str] = Header(None)):
+    parent = require_parent_token(x_member_token)
+    result = storage.verify_chore(chore_id, parent['id'])
+    if result is None:
+        raise HTTPException(status_code=409, detail="Chore is not awaiting verification")
+    background_tasks.add_task(_notify_chore_event, 'verified', result['chore'],
+                              parent, str(result['awarded'] or ''))
+    return result
+
+class ChoreRejectRequest(BaseModel):
+    reason: Optional[str] = ""
+
+@app.post("/api/chores/{chore_id}/reject")
+def reject_chore_endpoint(chore_id: str, req: ChoreRejectRequest,
+                          background_tasks: BackgroundTasks,
+                          x_member_token: Optional[str] = Header(None)):
+    parent = require_parent_token(x_member_token)
+    chore = storage.reject_chore(chore_id, parent['id'], (req.reason or '').strip())
+    if chore is None:
+        raise HTTPException(status_code=409, detail="Chore is not awaiting verification")
+    background_tasks.add_task(_notify_chore_event, 'rejected', chore, parent,
+                              (req.reason or '').strip())
+    return chore
+
+@app.get("/api/points")
+def all_points():
+    return storage.get_all_point_balances()
+
+@app.get("/api/points/{member_id}")
+def member_points(member_id: str, limit: int = 25):
+    if not storage.get_member(member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {
+        'member_id': member_id,
+        'balance': storage.get_points_balance(member_id),
+        'ledger': storage.get_points_ledger(member_id, limit=limit),
+    }
 
 # --- Sendspin phone-player relay ---
 # The PWA registers as a real Music Assistant player (sendspin-js in the

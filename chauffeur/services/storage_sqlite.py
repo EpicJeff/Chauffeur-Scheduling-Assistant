@@ -39,6 +39,8 @@ INDEX_SPEC = {
     "chat_messages": [["channel_id"]],
     "channel_reads": [["channel_id", "member_id"], ["member_id"]],
     "member_tokens": [["token"], ["member_id"]],
+    "chores": [["id"], ["state"], ["claimed_by"]],
+    "points_ledger": [["member_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

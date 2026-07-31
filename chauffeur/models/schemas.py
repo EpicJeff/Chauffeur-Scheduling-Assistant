@@ -119,6 +119,37 @@ class ChannelRead(BaseModel):
     member_id: str
     last_read_ts: float = 0.0
 
+class Chore(BaseModel):
+    # Family chore pot: self-claimed (marketplace, not solver-assigned).
+    # Lifecycle: open -> claimed -> done -> verified | rejected (back to
+    # claimed for redo). Recurring chores reopen after reopens_on.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str
+    description: Optional[str] = ""
+    points: int = 10
+    recurrence: str = 'once'  # once | daily | weekly | monthly
+    eligible_member_ids: List[str] = Field(default_factory=list)  # empty = any non-helper
+    state: str = 'open'  # open | claimed | done | verified
+    claimed_by: Optional[str] = None
+    claimed_at: Optional[float] = None
+    done_at: Optional[float] = None
+    verified_by: Optional[str] = None
+    verified_at: Optional[float] = None
+    rejected_reason: Optional[str] = None
+    reopens_on: Optional[str] = None  # ISO date; recurring verified reopen
+    created_at: float = Field(default_factory=time.time)
+
+class PointsEntry(BaseModel):
+    # Append-only ledger: balances are sums, history is the table.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str
+    delta: int
+    reason: str = 'chore'  # chore | adjust | redeem (future)
+    chore_id: Optional[str] = None
+    chore_title: Optional[str] = None
+    by_member_id: Optional[str] = None  # verifier
+    ts: float = Field(default_factory=time.time)
+
 class EventFilter(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False

@@ -130,6 +130,8 @@ with db_lock:
     chat_messages_table = db.table('chat_messages')
     channel_reads_table = db.table('channel_reads')
     member_tokens_table = db.table('member_tokens')
+    chores_table = db.table('chores')
+    points_ledger_table = db.table('points_ledger')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -811,6 +813,197 @@ def get_member_by_token(token: str) -> Optional[dict]:
 def delete_member_tokens(member_id: str):
     with db_lock:
         member_tokens_table.remove(Query().member_id == member_id)
+
+# --- Chores + points ledger ---
+# Marketplace model: chores sit in a family pot, members claim them, parents
+# verify. Points ledger is append-only; balances are sums. Lifecycle
+# maintenance (recurring reopen, stale-claim release) runs lazily on read.
+
+CHORE_CLAIM_CAP = 3
+CHORE_STALE_CLAIM_HOURS = 48
+
+def _chore_reset_fields():
+    return {'state': 'open', 'claimed_by': None, 'claimed_at': None,
+            'done_at': None, 'verified_by': None, 'verified_at': None,
+            'rejected_reason': None, 'reopens_on': None}
+
+def _chore_maintenance():
+    import time
+    from datetime import date
+    today = date.today().isoformat()
+    now = time.time()
+    with db_lock:
+        for c in chores_table.all():
+            if (c.get('state') == 'verified' and c.get('recurrence') != 'once'
+                    and c.get('reopens_on') and c['reopens_on'] <= today):
+                chores_table.update(_chore_reset_fields(), doc_ids=[c.doc_id])
+            elif (c.get('state') == 'claimed' and c.get('claimed_at')
+                    and now - c['claimed_at'] > CHORE_STALE_CLAIM_HOURS * 3600):
+                # Claimed then ignored: release back to the pot.
+                chores_table.update({'state': 'open', 'claimed_by': None,
+                                     'claimed_at': None, 'rejected_reason': None},
+                                    doc_ids=[c.doc_id])
+
+def get_all_chores() -> List[dict]:
+    _chore_maintenance()
+    with db_lock:
+        out = []
+        for c in chores_table.all():
+            doc = dict(c)
+            doc['doc_id'] = c.doc_id
+            out.append(doc)
+        return out
+
+def get_chore(chore_id: str) -> Optional[dict]:
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        return dict(res[0]) if res else None
+
+def add_chore(data: dict) -> str:
+    with db_lock:
+        chores_table.insert(data)
+        return data['id']
+
+def update_chore(chore_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(chores_table.update(data, Query().id == chore_id))
+
+def delete_chore(chore_id: str):
+    with db_lock:
+        chores_table.remove(Query().id == chore_id)
+
+def count_active_claims(member_id: str) -> int:
+    with db_lock:
+        return sum(1 for c in chores_table.all()
+                   if c.get('claimed_by') == member_id
+                   and c.get('state') in ('claimed', 'done'))
+
+def claim_chore(chore_id: str, member_id: str) -> str:
+    """Returns 'ok' | 'not_open' | 'cap' | 'missing'."""
+    import time
+    _chore_maintenance()
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res:
+            return 'missing'
+        if res[0].get('state') != 'open':
+            return 'not_open'
+        active = sum(1 for c in chores_table.all()
+                     if c.get('claimed_by') == member_id
+                     and c.get('state') in ('claimed', 'done'))
+        if active >= CHORE_CLAIM_CAP:
+            return 'cap'
+        chores_table.update({'state': 'claimed', 'claimed_by': member_id,
+                             'claimed_at': time.time(), 'rejected_reason': None},
+                            Query().id == chore_id)
+        return 'ok'
+
+def unclaim_chore(chore_id: str, member_id: str) -> bool:
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res or res[0].get('state') != 'claimed' \
+                or res[0].get('claimed_by') != member_id:
+            return False
+        chores_table.update({'state': 'open', 'claimed_by': None,
+                             'claimed_at': None, 'rejected_reason': None},
+                            Query().id == chore_id)
+        return True
+
+def mark_chore_done(chore_id: str, member_id: str) -> bool:
+    import time
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res or res[0].get('state') != 'claimed' \
+                or res[0].get('claimed_by') != member_id:
+            return False
+        chores_table.update({'state': 'done', 'done_at': time.time()},
+                            Query().id == chore_id)
+        return True
+
+def _chore_next_reopen(recurrence: str) -> Optional[str]:
+    from datetime import date, timedelta
+    today = date.today()
+    if recurrence == 'daily':
+        return (today + timedelta(days=1)).isoformat()
+    if recurrence == 'weekly':
+        return (today + timedelta(days=7)).isoformat()
+    if recurrence == 'monthly':
+        try:
+            from dateutil.relativedelta import relativedelta
+            return (today + relativedelta(months=1)).isoformat()
+        except Exception:
+            return (today + timedelta(days=30)).isoformat()
+    return None
+
+def verify_chore(chore_id: str, verifier_member_id: str) -> Optional[dict]:
+    """done -> verified. Awards points to the claimant IF they are a child
+    (adults are claimable-but-pointless by design). Recurring chores get a
+    reopens_on date. Returns {'chore', 'awarded'} or None."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res or res[0].get('state') != 'done':
+            return None
+        chore = dict(res[0])
+        updates = {'state': 'verified', 'verified_by': verifier_member_id,
+                   'verified_at': time.time(),
+                   'reopens_on': _chore_next_reopen(chore.get('recurrence', 'once'))}
+        chores_table.update(updates, Query().id == chore_id)
+        chore.update(updates)
+        awarded = 0
+        claimant = members_table.search(Query().id == chore.get('claimed_by'))
+        if claimant and claimant[0].get('role') == 'child' and chore.get('points', 0) > 0:
+            awarded = int(chore['points'])
+            points_ledger_table.insert({
+                'id': _uuid.uuid4().hex,
+                'member_id': chore['claimed_by'],
+                'delta': awarded,
+                'reason': 'chore',
+                'chore_id': chore_id,
+                'chore_title': chore.get('title'),
+                'by_member_id': verifier_member_id,
+                'ts': time.time(),
+            })
+        return {'chore': chore, 'awarded': awarded}
+
+def reject_chore(chore_id: str, verifier_member_id: str, reason: str) -> Optional[dict]:
+    """done -> claimed (redo). No forfeiture — points just wait for a pass."""
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res or res[0].get('state') != 'done':
+            return None
+        chores_table.update({'state': 'claimed', 'done_at': None,
+                             'rejected_reason': reason or 'Needs another pass'},
+                            Query().id == chore_id)
+        out = dict(res[0])
+        out.update({'state': 'claimed', 'rejected_reason': reason})
+        return out
+
+def get_points_balance(member_id: str) -> int:
+    with db_lock:
+        return sum(int(e.get('delta', 0))
+                   for e in points_ledger_table.search(Query().member_id == member_id))
+
+def get_points_ledger(member_id: str, limit: int = 25) -> List[dict]:
+    with db_lock:
+        rows = [dict(e) for e in points_ledger_table.search(Query().member_id == member_id)]
+    rows.sort(key=lambda e: e.get('ts', 0), reverse=True)
+    return rows[:limit]
+
+def get_all_point_balances() -> List[dict]:
+    """[{member_id, name, color_code, avatar, balance}] for child members."""
+    balances = []
+    for m in get_all_members():
+        if m.get('role') != 'child':
+            continue
+        balances.append({
+            'member_id': m['id'], 'name': m.get('name'),
+            'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+            'balance': get_points_balance(m['id']),
+        })
+    balances.sort(key=lambda b: -b['balance'])
+    return balances
 
 # --- Family messaging (chat_channels / chat_messages / channel_reads) ---
 
