@@ -90,11 +90,20 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function _mwProxied(url) {
+        // https loads directly; http:// (MA's LAN image proxy) is mixed
+        // content on an https page — iOS blocks it silently — so it goes
+        // through the add-on's image proxy, like now-playing art.
+        return url.startsWith('https://')
+            ? url
+            : `${_mwApiBase}api/ha/image64/${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
+    }
+
     function _mwImage(item) {
         // MA serializes an image url on most items; only trust absolute urls.
         const img = item.image || item.image_url ||
             (item.metadata && item.metadata.images && item.metadata.images[0] && item.metadata.images[0].path);
-        return (typeof img === 'string' && img.startsWith('http')) ? img : null;
+        return (typeof img === 'string' && img.startsWith('http')) ? _mwProxied(img) : null;
     }
 
     function _mwSubtitle(item) {
@@ -148,8 +157,8 @@
                 // https page (iOS Safari blocks silently) — both go through
                 // the add-on's image proxy, base64url-encoded.
                 const pic = cur.entity_picture;
-                const src = pic.startsWith('https://')
-                    ? pic
+                const src = pic.startsWith('http')
+                    ? _mwProxied(pic)
                     : `${_mwApiBase}api/ha/image64/${btoa(pic).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
                 if (art.getAttribute('src') !== src) {
                     art.src = src;
