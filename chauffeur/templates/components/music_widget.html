@@ -128,27 +128,29 @@
     }
 
     function _mwPhonePlaying() {
+        // sendspin-js onStateChange: { isPlaying, volume, muted, playerState,
+        // serverState, groupState } (dist/types.d.ts, v3.2.1)
         const s = _mwPhone.state || {};
-        const pb = s.playbackState || s.playback_state || s.state
-            || (s.group && (s.group.playback_state || s.group.playbackState));
-        return String(pb || '').toLowerCase() === 'playing';
+        if (typeof s.isPlaying === 'boolean') return s.isPlaying;
+        return (s.groupState && s.groupState.playback_state) === 'playing';
     }
 
     function mwRenderPhoneState() {
         const s = _mwPhone.state || {};
-        const md = s.metadata || (s.group && s.group.metadata) || {};
+        // Metadata lives at serverState.metadata: {title, artist, album, artwork_url}
+        const md = (s.serverState && s.serverState.metadata) || {};
         const np = document.getElementById('mw-nowplaying');
-        const title = md.title || md.track || '';
-        const artist = md.artist || md.artists || '';
+        const title = md.title || '';
+        const artist = md.artist || '';
         if (np) {
             if (title || artist) {
                 np.style.display = 'flex';
                 document.getElementById('mw-title').textContent = title;
-                document.getElementById('mw-artist').textContent = Array.isArray(artist) ? artist.join(', ') : artist;
+                document.getElementById('mw-artist').textContent =
+                    artist + (md.album ? (artist ? ' · ' : '') + md.album : '');
                 const art = document.getElementById('mw-art');
-                const pic = md.artworkUrl || md.artwork_url || md.artUrl || md.art_url || md.image;
-                if (pic && typeof pic === 'string') {
-                    art.src = _mwProxied(pic);
+                if (md.artwork_url && typeof md.artwork_url === 'string') {
+                    art.src = _mwProxied(md.artwork_url);
                     art.style.display = 'block';
                 } else {
                     art.style.display = 'none';
