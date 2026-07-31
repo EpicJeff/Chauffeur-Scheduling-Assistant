@@ -18,14 +18,19 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
     """
     Retrieves a slimmed-down JSON of calendar events for a specific date range.
     """
-    from services.storage import get_cached_schedule
+    from services.storage import get_cached_schedule, get_all_drivers
     import re
     from dateutil.parser import parse
     import datetime
-    
+
     sched = get_cached_schedule()
     events = sched.get("events", [])
-    
+    # Join solver assignments so the model can answer "whose schedule" questions
+    # — without this it sees events but no drivers and reports empty schedules.
+    assignments = dict(sched.get("assignments", {}))
+    assignments.update(sched.get("ghost_assignments", {}))
+    driver_names = {d.get("id"): d.get("name") for d in get_all_drivers()}
+
     # Parse dates robustly
     try:
         sd_clean = re.sub(r'(?i)\b(this|next|last|on|the|upcoming)\b\s+', '', start_date).strip()
@@ -42,12 +47,14 @@ def get_calendar_events(start_date: str, end_date: str) -> Dict[str, Any]:
             try:
                 ev_dt = datetime.datetime.fromisoformat(ev_start.replace('Z', '+00:00')).date()
                 if sd <= ev_dt <= ed:
+                    drv_id = assignments.get(ev.get("id"))
                     slim_events.append({
                         "id": ev.get("id"),
                         "title": ev.get("title"),
                         "location": ev.get("location"),
                         "start": ev.get("start"),
-                        "end": ev.get("end")
+                        "end": ev.get("end"),
+                        "assigned_driver": driver_names.get(drv_id, drv_id)
                     })
             except ValueError:
                 pass
@@ -389,12 +396,12 @@ def get_available_tools() -> List[Dict]:
     return [
         {
             "name": "get_calendar_events",
-            "description": "Retrieves calendar events for a date range.",
+            "description": "Retrieves calendar events for a date range, each with its assigned_driver (null = unassigned). This is the CORRECT tool for questions about a specific driver's schedule or drives: fetch the range, then filter by assigned_driver.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "start_date": {"type": "string", "description": "The start date, e.g. 'Monday' or 'July 15'"},
-                    "end_date": {"type": "string", "description": "The end date, e.g. 'Friday' or 'July 20'"}
+                    "start_date": {"type": "string", "description": "The start date as YYYY-MM-DD, resolved from the CURRENT DATE in your context."},
+                    "end_date": {"type": "string", "description": "The end date as YYYY-MM-DD (inclusive), resolved from the CURRENT DATE in your context."}
                 },
                 "required": ["start_date", "end_date"]
             }
