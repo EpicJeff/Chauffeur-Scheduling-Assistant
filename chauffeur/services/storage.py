@@ -125,6 +125,7 @@ with db_lock:
     errand_rules_table = db.table('errand_rules')
     trip_metadata_table = db.table('trip_metadata')
     app_state_table = db.table('app_state')
+    members_table = db.table('members')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -199,6 +200,76 @@ def migrate_duplicate_rules():
                 rules_table.update(r, doc_ids=[r.doc_id])
 
 migrate_duplicate_rules()
+
+def ensure_members():
+    """Family-member overlay: one record per human, linking legacy driver and
+    passenger identities (which remain the solver's source of truth).
+    Idempotent — re-run after driver/passenger adds to fill gaps. Passengers
+    merge onto same-named members; passenger docs that predate the 'id'
+    field get one backfilled. Never deletes or rewrites anything else."""
+    import uuid as _uuid
+    import time
+    with db_lock:
+        members = [dict(m) for m in members_table.all()]
+        linked_drivers = {m.get('driver_id') for m in members if m.get('driver_id')}
+        linked_passengers = {m.get('passenger_id') for m in members if m.get('passenger_id')}
+        by_name = {}
+        for m in members:
+            by_name.setdefault((m.get('name') or '').strip().lower(), m)
+
+        def new_member(name, **overrides):
+            member = {
+                'id': _uuid.uuid4().hex,
+                'name': name,
+                'color_code': '#3b82f6',
+                'avatar': None,
+                'bio': '',
+                'can_drive': False,
+                'is_child': False,
+                'driver_id': None,
+                'passenger_id': None,
+                'ha_person_entity': None,
+                'notify_service': None,
+                'media_player_entity': None,
+                'pin': None,
+                'created_at': time.time(),
+            }
+            member.update(overrides)
+            members_table.insert(member)
+            by_name.setdefault(member['name'].strip().lower(), member)
+            return member
+
+        for d in drivers_table.all():
+            d_id = d.get('id')
+            if not d_id or d_id in linked_drivers:
+                continue
+            new_member(
+                (d.get('name') or '').strip() or d_id,
+                color_code=d.get('color_code') or '#3b82f6',
+                bio=d.get('bio') or '',
+                can_drive=not d.get('is_disabled', False),
+                driver_id=d_id,
+            )
+            linked_drivers.add(d_id)
+
+        for p in passengers_table.all():
+            p_id = p.get('id')
+            if not p_id:
+                p_id = _uuid.uuid4().hex
+                passengers_table.update({'id': p_id}, doc_ids=[p.doc_id])
+            if p_id in linked_passengers:
+                continue
+            name = (p.get('name') or '').strip()
+            existing = by_name.get(name.lower()) if name else None
+            if existing is not None and not existing.get('passenger_id'):
+                members_table.update({'passenger_id': p_id}, Query().id == existing['id'])
+                existing['passenger_id'] = p_id
+            else:
+                new_member(name or p_id, is_child=True, passenger_id=p_id,
+                           bio=p.get('bio') or '')
+            linked_passengers.add(p_id)
+
+ensure_members()
 
 def cleanup_corrupted_travel_times():
     try:
@@ -415,7 +486,9 @@ def add_driver(driver_data: dict) -> int:
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
-        return drivers_table.insert(driver_data)
+        doc_id = drivers_table.insert(driver_data)
+        ensure_members()
+        return doc_id
 
 def delete_driver(doc_id: int):
     with db_lock:
@@ -506,7 +579,9 @@ def add_passenger(passenger_data: dict) -> int:
         custom_schedules_table.truncate()
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
-        return passengers_table.insert(passenger_data)
+        doc_id = passengers_table.insert(passenger_data)
+        ensure_members()
+        return doc_id
 
 def update_passenger(doc_id: int, passenger_data: dict):
     with db_lock:
@@ -521,6 +596,108 @@ def delete_passenger(doc_id: int):
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
         passengers_table.remove(doc_ids=[doc_id])
+
+# Family member CRUD (overlay entity; see FamilyMember in models/schemas.py)
+def get_all_members() -> List[dict]:
+    with db_lock:
+        members = []
+        for m in members_table.all():
+            doc = dict(m)
+            doc['doc_id'] = m.doc_id
+            members.append(doc)
+        return members
+
+def get_member(member_id: str) -> Optional[dict]:
+    with db_lock:
+        res = members_table.search(Query().id == member_id)
+        return dict(res[0]) if res else None
+
+def get_member_by_driver_id(driver_id: str) -> Optional[dict]:
+    with db_lock:
+        res = members_table.search(Query().driver_id == driver_id)
+        return dict(res[0]) if res else None
+
+def get_member_by_passenger_id(passenger_id: str) -> Optional[dict]:
+    with db_lock:
+        res = members_table.search(Query().passenger_id == passenger_id)
+        return dict(res[0]) if res else None
+
+def add_member(member_data: dict) -> int:
+    with db_lock:
+        return members_table.insert(member_data)
+
+def update_member(member_id: str, member_data: dict) -> bool:
+    with db_lock:
+        return bool(members_table.update(member_data, Query().id == member_id))
+
+def delete_member(member_id: str) -> None:
+    with db_lock:
+        members_table.remove(Query().id == member_id)
+
+def merge_members(keep_id: str, absorb_id: str) -> Optional[dict]:
+    """Move driver/passenger links (and unset HA mappings) from absorb onto
+    keep, then delete absorb. Legacy driver/passenger records untouched."""
+    with db_lock:
+        keep = members_table.search(Query().id == keep_id)
+        absorb = members_table.search(Query().id == absorb_id)
+        if not keep or not absorb:
+            return None
+        keep, absorb = dict(keep[0]), dict(absorb[0])
+        updates = {}
+        if not keep.get('driver_id') and absorb.get('driver_id'):
+            updates['driver_id'] = absorb['driver_id']
+            updates['can_drive'] = absorb.get('can_drive', True)
+        if not keep.get('passenger_id') and absorb.get('passenger_id'):
+            updates['passenger_id'] = absorb['passenger_id']
+        for f in ('ha_person_entity', 'notify_service', 'media_player_entity', 'avatar'):
+            if not keep.get(f) and absorb.get(f):
+                updates[f] = absorb[f]
+        if updates:
+            members_table.update(updates, Query().id == keep_id)
+        members_table.remove(Query().id == absorb_id)
+        keep.update(updates)
+        return keep
+
+def split_member(member_id: str, link: str) -> Optional[dict]:
+    """Detach 'driver' or 'passenger' link into a fresh member (undo for a
+    bad name-match merge). Returns the new member, or None."""
+    import uuid as _uuid
+    import time
+    with db_lock:
+        res = members_table.search(Query().id == member_id)
+        if not res:
+            return None
+        member = dict(res[0])
+        link_field = 'driver_id' if link == 'driver' else 'passenger_id'
+        link_value = member.get(link_field)
+        if not link_value:
+            return None
+        # Refuse to split a member's only link (would leave an empty husk).
+        other_field = 'passenger_id' if link_field == 'driver_id' else 'driver_id'
+        if not member.get(other_field):
+            return None
+        new = {
+            'id': _uuid.uuid4().hex,
+            'name': member.get('name', ''),
+            'color_code': member.get('color_code', '#3b82f6'),
+            'avatar': None,
+            'bio': '',
+            'can_drive': link == 'driver' and member.get('can_drive', False),
+            'is_child': member.get('is_child', False) if link == 'passenger' else False,
+            'driver_id': link_value if link == 'driver' else None,
+            'passenger_id': link_value if link == 'passenger' else None,
+            'ha_person_entity': None,
+            'notify_service': None,
+            'media_player_entity': None,
+            'pin': None,
+            'created_at': time.time(),
+        }
+        clear = {link_field: None}
+        if link == 'driver':
+            clear['can_drive'] = False
+        members_table.update(clear, Query().id == member_id)
+        members_table.insert(new)
+        return new
 
 def add_telemetry_event(event_data: dict) -> int:
     with db_lock:

@@ -53,7 +53,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, TelemetryEvent, Errand, ErrandRule
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, FamilyMember, TelemetryEvent, Errand, ErrandRule
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -2303,6 +2303,81 @@ def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_passenger(doc_id)
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
+
+# --- Family Members API (overlay over drivers/passengers) ---
+
+@app.get("/api/members")
+def get_members():
+    members = storage.get_all_members()
+    drivers = {d.get('id'): d for d in storage.get_all_drivers()}
+    passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    for m in members:
+        m['driver'] = drivers.get(m.get('driver_id'))
+        m['passenger'] = passengers.get(m.get('passenger_id'))
+    return members
+
+@app.post("/api/members")
+def create_member(member: FamilyMember):
+    data = member.model_dump()
+    storage.add_member(data)
+    return {"id": data['id'], "status": "created"}
+
+@app.put("/api/members/{member_id}")
+def update_member_endpoint(member_id: str, updates: dict):
+    # Partial update; id/links are managed via merge/split, not blind PUT.
+    updates.pop('id', None)
+    updates.pop('doc_id', None)
+    updates.pop('driver', None)
+    updates.pop('passenger', None)
+    if not storage.update_member(member_id, updates):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"status": "updated"}
+
+@app.delete("/api/members/{member_id}")
+def delete_member_endpoint(member_id: str, force: bool = False):
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if (member.get('driver_id') or member.get('passenger_id')) and not force:
+        raise HTTPException(status_code=409,
+                            detail="Member is linked to a driver/passenger; pass force=true to delete anyway")
+    storage.delete_member(member_id)
+    return {"status": "deleted"}
+
+class MergeMembersRequest(BaseModel):
+    keep_id: str
+    absorb_id: str
+
+@app.post("/api/members/merge")
+def merge_members_endpoint(req: MergeMembersRequest):
+    result = storage.merge_members(req.keep_id, req.absorb_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return result
+
+class SplitMemberRequest(BaseModel):
+    link: str  # 'driver' | 'passenger'
+
+@app.post("/api/members/{member_id}/split")
+def split_member_endpoint(member_id: str, req: SplitMemberRequest):
+    if req.link not in ('driver', 'passenger'):
+        raise HTTPException(status_code=400, detail="link must be 'driver' or 'passenger'")
+    result = storage.split_member(member_id, req.link)
+    if result is None:
+        raise HTTPException(status_code=400,
+                            detail="Member not found, link empty, or it is the member's only link")
+    return result
+
+@app.get("/api/members/resolve")
+def resolve_member(driver_id: Optional[str] = None, passenger_id: Optional[str] = None):
+    member = None
+    if driver_id:
+        member = storage.get_member_by_driver_id(driver_id)
+    elif passenger_id:
+        member = storage.get_member_by_passenger_id(passenger_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="No member for that identity")
+    return member
 
 # --- Rules API ---
 @app.get("/api/rules")

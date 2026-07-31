@@ -70,6 +70,18 @@
                         </button>
                     </li>
                     <li>
+                        <button @click="activeTab = 'family'"
+                            :class="activeTab === 'family' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
+                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6">
+                                </path>
+                            </svg>
+                            Family
+                        </button>
+                    </li>
+                    <li>
                         <button @click="activeTab = 'rules'"
                             :class="activeTab === 'rules' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
                             class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
@@ -758,6 +770,97 @@
                             <button x-show="editDriverId" @click="cancelEditDriver()"
                                 class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Family Members -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-blue-300">Family Members</h2>
+                    <p class="text-gray-400 text-sm mb-6">One entry per person. Members link the driver and
+                        passenger records the solver uses; this page manages hub-level identity (avatar, color,
+                        child flag). Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a
+                        bad merge.</p>
+                    <div class="space-y-4">
+                        <template x-for="member in members" :key="member.id">
+                            <div class="bg-gray-900 p-5 rounded-xl shadow-sm">
+                                <div class="flex flex-col md:flex-row justify-between md:items-center">
+                                    <div class="flex items-center mb-4 md:mb-0">
+                                        <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white border-4 bg-gray-800"
+                                            :style="'border-color: ' + (member.color_code || '#3b82f6')">
+                                            <span
+                                                x-text="member.avatar || (member.name || '?').charAt(0).toUpperCase()"></span>
+                                        </div>
+                                        <div>
+                                            <h3 class="text-xl font-bold text-white" x-text="member.name"></h3>
+                                            <div class="text-sm flex gap-2 items-center mt-1 flex-wrap">
+                                                <template x-if="member.driver_id">
+                                                    <span
+                                                        class="px-2 py-0.5 bg-green-900/50 text-green-300 rounded font-bold text-xs uppercase tracking-wide">Driver</span>
+                                                </template>
+                                                <template x-if="member.passenger_id">
+                                                    <span
+                                                        class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-bold text-xs uppercase tracking-wide">Passenger</span>
+                                                </template>
+                                                <template x-if="member.is_child">
+                                                    <span
+                                                        class="px-2 py-0.5 bg-amber-900/50 text-amber-300 rounded font-bold text-xs uppercase tracking-wide">Child</span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex space-x-2 items-center">
+                                        <button @click="editMemberId === member.id ? editMemberId = null : startEditMember(member)"
+                                            class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                                        <button x-show="member.driver_id && member.passenger_id"
+                                            @click="splitMember(member)"
+                                            class="text-amber-500 hover:text-amber-400 bg-amber-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Split</button>
+                                        <button x-show="!member.driver_id && !member.passenger_id"
+                                            @click="deleteMember(member)"
+                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                                    </div>
+                                </div>
+                                <div x-show="editMemberId === member.id" x-cloak
+                                    class="mt-4 bg-gray-700/30 p-4 rounded-xl border border-gray-600 border-dashed">
+                                    <div class="flex gap-4 items-end flex-wrap">
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                                            <input type="text" x-model="memberEdit.name"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Color</label>
+                                            <input type="color" x-model="memberEdit.color_code"
+                                                class="bg-gray-900 border border-gray-600 rounded p-1 h-12 w-16">
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Avatar (emoji,
+                                                optional)</label>
+                                            <input type="text" x-model="memberEdit.avatar" maxlength="4"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                        </div>
+                                        <label class="flex items-center gap-2 text-gray-300 font-bold pb-3">
+                                            <input type="checkbox" x-model="memberEdit.is_child" class="w-5 h-5">
+                                            Child
+                                        </label>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Merge another member into
+                                                this one</label>
+                                            <select x-model="memberMergeTarget"
+                                                class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <option value="">— none —</option>
+                                                <template x-for="other in members.filter(m => m.id !== member.id)"
+                                                    :key="other.id">
+                                                    <option :value="other.id" x-text="other.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <button @click="saveMember(member)"
+                                            class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-3 rounded transition-colors shadow-md">Save</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
 
@@ -2370,6 +2473,10 @@
                 newErrandRuleKeywordInput: '',
                 editDriverId: null,
                 editPassengerId: null,
+                members: [],
+                editMemberId: null,
+                memberEdit: {},
+                memberMergeTarget: '',
                 editErrandRuleId: null,
                 editRuleId: null,
                 editPriorityRuleId: null,
@@ -2381,6 +2488,7 @@
                     await this.loadSettings();
                     await this.loadDrivers();
                     await this.loadPassengers();
+                    await this.loadMembers();
                     await this.loadRules();
                     await this.loadPriorityRules();
                     await this.loadErrandRules();
@@ -2904,6 +3012,67 @@
                         console.error("Failed to load passengers", e);
                         this.passengers = [];
                     }
+                },
+
+                // --- Family members ---
+                async loadMembers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members`);
+                        const data = await res.json();
+                        this.members = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load members", e);
+                        this.members = [];
+                    }
+                },
+                startEditMember(member) {
+                    this.editMemberId = member.id;
+                    this.memberMergeTarget = '';
+                    this.memberEdit = {
+                        name: member.name,
+                        color_code: member.color_code || '#3b82f6',
+                        avatar: member.avatar || '',
+                        is_child: !!member.is_child,
+                    };
+                },
+                async saveMember(member) {
+                    const updates = { ...this.memberEdit };
+                    updates.avatar = updates.avatar ? updates.avatar.trim() : null;
+                    await fetch(`${this.apiBase}api/members/${member.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updates)
+                    });
+                    if (this.memberMergeTarget) {
+                        const other = this.members.find(m => m.id === this.memberMergeTarget);
+                        if (other && confirm(`Merge "${other.name}" into "${updates.name}"? "${other.name}" goes away; their driver/passenger links move here.`)) {
+                            await fetch(`${this.apiBase}api/members/merge`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ keep_id: member.id, absorb_id: this.memberMergeTarget })
+                            });
+                        }
+                    }
+                    this.editMemberId = null;
+                    this.memberMergeTarget = '';
+                    await this.loadMembers();
+                },
+                async splitMember(member) {
+                    if (!confirm(`Split "${member.name}" — detach the passenger record into its own member?`)) return;
+                    const res = await fetch(`${this.apiBase}api/members/${member.id}/split`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ link: 'passenger' })
+                    });
+                    if (!res.ok) {
+                        alert('Split failed — the member may only have one link.');
+                    }
+                    await this.loadMembers();
+                },
+                async deleteMember(member) {
+                    if (!confirm(`Delete member "${member.name}"?`)) return;
+                    await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
+                    await this.loadMembers();
                 },
 
                 addPassengerCalendarId() {

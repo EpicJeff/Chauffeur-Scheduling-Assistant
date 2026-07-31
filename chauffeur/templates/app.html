@@ -254,8 +254,10 @@
     <script>
         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
         let driversData = [];
+        let membersData = [];
         let scheduleData = null;
         let selectedDriverId = localStorage.getItem('chauffeur_driver_id');
+        let selectedMemberId = localStorage.getItem('chauffeur_member_id');
         let currentDates = [];
         let activeDateIndex = 0;
         let routeContext = null;
@@ -296,6 +298,7 @@
         async function init() {
             updateTabBar();
             await fetchDrivers();
+            await fetchMembers();
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
                 selectDriver(selectedDriverId);
             } else {
@@ -310,6 +313,26 @@
                 driversData = data.filter(d => !d.is_disabled);
             } catch (e) {
                 console.error("Failed to fetch drivers", e);
+            }
+        }
+
+        async function fetchMembers() {
+            try {
+                const res = await fetch(`${apiBase}api/members`);
+                membersData = await res.json();
+            } catch (e) {
+                console.error("Failed to fetch members", e);
+            }
+        }
+
+        // Member identity rides alongside the legacy driver identity: existing
+        // endpoints still key on driver_id; member_id is the hub-level identity
+        // (messaging, passenger views) introduced with the family refactor.
+        function syncMemberIdentity(driverId) {
+            const m = membersData.find(m => m.driver_id === driverId);
+            if (m) {
+                selectedMemberId = m.id;
+                localStorage.setItem('chauffeur_member_id', m.id);
             }
         }
 
@@ -467,6 +490,7 @@
             currentDriverId = id;
             selectedDriverId = id;
             localStorage.setItem('chauffeur_driver_id', id);
+            syncMemberIdentity(id);
 
             const d = driversData.find(d => d.id === id);
             if (d) {
@@ -537,7 +561,9 @@
 
         function clearDriver() {
             selectedDriverId = null;
+            selectedMemberId = null;
             localStorage.removeItem('chauffeur_driver_id');
+            localStorage.removeItem('chauffeur_member_id');
             showDriverSelection();
         }
 

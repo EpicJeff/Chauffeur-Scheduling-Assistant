@@ -68,6 +68,25 @@ class Passenger(BaseModel):
     requires_attendance: bool = False
     bio: Optional[str] = ""
 
+class FamilyMember(BaseModel):
+    # Overlay entity: one record per human. Drivers/passengers stay the
+    # solver's source of truth; members link to them via driver_id /
+    # passenger_id and carry hub-level identity (avatar, HA mappings).
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    color_code: str = '#3b82f6'
+    avatar: Optional[str] = None  # emoji or static path; None -> initials
+    bio: Optional[str] = ""
+    can_drive: bool = False
+    is_child: bool = False
+    driver_id: Optional[str] = None
+    passenger_id: Optional[str] = None
+    ha_person_entity: Optional[str] = None    # e.g. person.jeff
+    notify_service: Optional[str] = None      # e.g. notify.mobile_app_jeffs_iphone
+    media_player_entity: Optional[str] = None
+    pin: Optional[str] = None  # reserved for future kid-lock, unused
+    created_at: float = Field(default_factory=time.time)
+
 class EventFilter(BaseModel):
     keywords: List[str] = Field(default_factory=list)
     keywords_match_all: bool = False

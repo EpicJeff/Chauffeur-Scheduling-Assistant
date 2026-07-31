@@ -34,6 +34,7 @@ INDEX_SPEC = {
     "trip_metadata": [["event_id"]],
     "daily_schedules": [["date_str"]],
     "route_geometry": [["origin", "destination", "profile"]],
+    "members": [["id"], ["driver_id"], ["passenger_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,
