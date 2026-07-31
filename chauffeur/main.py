@@ -2573,6 +2573,19 @@ def ha_media_players(ma_only: bool = True):
 
 _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/', '/api/image/')
 
+@app.get("/api/ha/image64/{encoded}")
+def ha_image64(encoded: str):
+    """Same as /api/ha/image but with the HA path base64url-encoded into a
+    clean path segment — '?path=%2Fapi%2F...' (encoded slashes) reads like a
+    traversal probe to WAFs/reverse proxies and got dropped on some client
+    network paths."""
+    import base64
+    try:
+        path = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode('utf-8')
+    except Exception:
+        raise HTTPException(status_code=400, detail="Bad encoding")
+    return ha_image(path=path)
+
 @app.get("/api/ha/image")
 def ha_image(path: str):
     """Proxy HA-relative artwork (entity_picture) so browsers on the

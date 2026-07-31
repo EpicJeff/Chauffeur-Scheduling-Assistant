@@ -166,6 +166,31 @@ def scenario_image_proxy():
             check(e.status_code == 502, "HA failure -> 502")
 
 
+def scenario_image64_roundtrip():
+    import base64
+    import main
+    from fastapi import HTTPException
+    path = '/api/media_player_proxy/media_player.kitchen?token=abc123=='
+    encoded = base64.urlsafe_b64encode(path.encode()).decode().rstrip('=')
+    with mock.patch.object(ha_api, 'fetch_binary',
+                           return_value=(b'img', 'image/png')) as fetch:
+        resp = main.ha_image64(encoded)
+        check(resp.body == b'img', "decoded path fetches")
+        check(fetch.call_args.args[0] == path, "base64url round-trips incl. padding")
+    try:
+        main.ha_image64('!!!not-base64!!!')
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "bad encoding -> 400")
+    # allowlist still applies after decode
+    bad = base64.urlsafe_b64encode(b'/api/states').decode().rstrip('=')
+    try:
+        main.ha_image64(bad)
+        check(False, "expected 400 for disallowed decoded path")
+    except HTTPException as e:
+        check(e.status_code == 400, "allowlist enforced post-decode")
+
+
 def scenario_fetch_binary_url():
     os.environ["SUPERVISOR_TOKEN"] = "t"
     resp = mock.Mock(status_code=200, content=b'img',
@@ -181,6 +206,7 @@ def scenario_fetch_binary_url():
 SCENARIOS = [
     scenario_media_players_listing,
     scenario_image_proxy,
+    scenario_image64_roundtrip,
     scenario_fetch_binary_url,
     scenario_command_mapping,
     scenario_search_uses_config_entry_and_unwraps,

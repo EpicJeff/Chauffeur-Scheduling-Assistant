@@ -144,9 +144,11 @@
             if (cur.entity_picture) {
                 // HA-relative entity_picture paths only resolve on the HA
                 // origin — route them through the add-on's image proxy.
+                // base64url path segment: a '?path=%2Fapi%2F...' query looked
+                // like a traversal probe to some middleboxes and got dropped.
                 const src = cur.entity_picture.startsWith('http')
                     ? cur.entity_picture
-                    : `${_mwApiBase}api/ha/image?path=${encodeURIComponent(cur.entity_picture)}`;
+                    : `${_mwApiBase}api/ha/image64/${btoa(cur.entity_picture).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
                 if (art.getAttribute('src') !== src) {
                     art.src = src;
                     art.style.display = 'block';
