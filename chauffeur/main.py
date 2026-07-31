@@ -2523,6 +2523,82 @@ def _fanout_message_notifications(channel, message):
     except Exception as e:
         print(f"Message notification fan-out failed: {e}")
 
+# --- Passenger day view API ---
+
+@app.get("/api/members/{member_id}/day")
+def member_day(member_id: str, date: Optional[str] = None):
+    """A passenger-lens day: the member's events from the combined schedule
+    cache (matched via their passenger record's calendar_ids/hashtags), each
+    with the assigned driver resolved to a member and a drive status."""
+    import datetime as _dt
+    member = storage.get_member(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    date_str = date or _dt.date.today().isoformat()
+
+    p_cals, p_tags = set(), set()
+    if member.get('passenger_id'):
+        for p in storage.get_all_passengers():
+            if p.get('id') == member['passenger_id']:
+                p_cals = set(p.get('calendar_ids') or [])
+                p_tags = {t.lower() for t in (p.get('hashtags') or [])}
+                break
+
+    sched = storage.get_cached_schedule() or {}
+    assignments = dict(sched.get('assignments', {}))
+    assignments.update(sched.get('ghost_assignments', {}))
+
+    status_by_event = {}
+    for leg in storage.get_in_progress_drives():
+        status_by_event.setdefault(_leg_event_id(leg), 'in_progress')
+    for leg in storage.get_completed_drives():
+        status_by_event.setdefault(_leg_event_id(leg), 'completed')
+
+    driver_members = {}
+
+    def _driver_member(driver_id):
+        if not driver_id:
+            return None
+        if driver_id not in driver_members:
+            m = storage.get_member_by_driver_id(driver_id)
+            driver_members[driver_id] = {
+                'member_id': m['id'], 'name': m.get('name'),
+                'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+            } if m else None
+        return driver_members[driver_id]
+
+    rides = []
+    for ev in sched.get('events', []):
+        if not str(ev.get('start', '')).startswith(date_str):
+            continue
+        if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
+            continue
+        cals = set(ev.get('calendar_ids') or [])
+        title_l = (ev.get('title') or '').lower()
+        if not (cals & p_cals) and not any(t in title_l for t in p_tags):
+            continue
+        base_id = str(ev.get('id', ''))
+        for suffix in ('_dropoff', '_pickup'):
+            if base_id.endswith(suffix):
+                base_id = base_id[:-len(suffix)]
+        rides.append({
+            'id': ev.get('id'),
+            'title': ev.get('title'),
+            'event_type': ev.get('event_type', 'standard'),
+            'start': ev.get('start'),
+            'end': ev.get('end'),
+            'location': ev.get('location'),
+            'driver': _driver_member(assignments.get(ev.get('id')) or assignments.get(base_id)),
+            'status': status_by_event.get(str(ev.get('id'))) or status_by_event.get(base_id),
+        })
+    rides.sort(key=lambda r: r.get('start') or '')
+    return {
+        'member_id': member_id,
+        'name': member.get('name'),
+        'date': date_str,
+        'rides': rides,
+    }
+
 # --- Family map API ---
 
 def _leg_event_id(leg_id):

@@ -182,9 +182,22 @@
             {% include 'components/family_map.html' %}
         </div>
 
+        <!-- My Day (passenger lens) -->
+        <div id="myday-container" class="flex-1 flex-col min-h-0 overflow-y-auto" style="display: none">
+            <div id="myday-content" class="p-4 space-y-3 pb-8"></div>
+        </div>
+
         <!-- Bottom Tab Bar -->
         <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
             style="padding-bottom: env(safe-area-inset-bottom)">
+            <button id="tab-myday" onclick="setView('myday')" style="display: none"
+                class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <span class="text-[11px] font-bold tracking-wide">My Day</span>
+            </button>
             <button id="tab-drives" onclick="setView('drives')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-blue-400 transition-colors">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -324,6 +337,8 @@
             } else if (view === 'map') {
                 initFamilyMap(focusMemberId);
                 startFamilyMapPolling();
+            } else if (view === 'myday') {
+                renderMyDay();
             } else {
                 buildTimeline();
             }
@@ -333,20 +348,149 @@
         function applyViewVisibility() {
             const isMessages = currentView === 'messages';
             const isMap = currentView === 'map';
-            document.getElementById('days-container').style.display = (isMessages || isMap) ? 'none' : 'flex';
+            const isMyDay = currentView === 'myday';
+            const isTimeline = !isMessages && !isMap && !isMyDay;
+            document.getElementById('days-container').style.display = isTimeline ? 'flex' : 'none';
             const nav = document.getElementById('day-nav');
-            if (nav) nav.style.display = (isMessages || isMap) ? 'none' : 'flex';
+            if (nav) nav.style.display = isTimeline ? 'flex' : 'none';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
+            document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
         }
 
         function updateTabBar() {
-            ['drives', 'family', 'messages', 'map'].forEach(v => {
+            ['myday', 'drives', 'family', 'messages', 'map'].forEach(v => {
                 const tab = document.getElementById(`tab-${v}`);
                 if (!tab) return;
                 tab.classList.toggle('text-blue-400', v === currentView);
                 tab.classList.toggle('text-gray-500', v !== currentView);
             });
+        }
+
+        // Passenger mode = a member without a driver identity is logged in.
+        function isPassengerMode() {
+            return !selectedDriverId && !!selectedMemberId;
+        }
+
+        function applyRoleTabs() {
+            const passenger = isPassengerMode();
+            document.getElementById('tab-myday').style.display = passenger ? 'flex' : 'none';
+            document.getElementById('tab-drives').style.display = passenger ? 'none' : 'flex';
+            document.getElementById('tab-family').style.display = passenger ? 'none' : 'flex';
+            if (passenger && (currentView === 'drives' || currentView === 'family')) {
+                currentView = 'myday';
+                localStorage.setItem('chauffeur_view', 'myday');
+            } else if (!passenger && currentView === 'myday') {
+                currentView = 'drives';
+                localStorage.setItem('chauffeur_view', 'drives');
+            }
+            updateTabBar();
+            applyViewVisibility();
+        }
+
+        async function selectPassengerMember(memberId) {
+            const m = membersData.find(x => x.id === memberId);
+            if (!m) return;
+            selectedDriverId = null;
+            currentDriverId = null;
+            localStorage.removeItem('chauffeur_driver_id');
+            selectedMemberId = memberId;
+            localStorage.setItem('chauffeur_member_id', memberId);
+
+            document.getElementById('driver-name').textContent = m.name;
+            document.getElementById('driver-avatar').textContent = m.avatar || (m.name || '?').charAt(0).toUpperCase();
+            document.getElementById('driver-avatar').style.borderColor = m.color_code || '#3b82f6';
+            document.getElementById('driver-avatar').style.color = m.color_code || '#3b82f6';
+
+            document.getElementById('screen-select-driver').classList.add('hidden');
+            document.getElementById('screen-schedule').classList.remove('hidden');
+            document.getElementById('btn-switch-driver').classList.remove('hidden');
+
+            applyRoleTabs();
+            await checkNotificationStatus();
+            syncPushSubscription();
+            connectMessagesStream();
+            fetchChannels();
+            if (currentView === 'messages') fetchChannels();
+            else if (currentView === 'map') { initFamilyMap(); startFamilyMapPolling(); }
+            else renderMyDay();
+        }
+
+        function _mydayLocalDate(offsetDays) {
+            const d = new Date();
+            d.setDate(d.getDate() + offsetDays);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        }
+
+        async function renderMyDay() {
+            const wrap = document.getElementById('myday-content');
+            if (!wrap || !selectedMemberId) return;
+            wrap.innerHTML = '<p class="text-center text-gray-500 animate-pulse mt-6">Loading your day...</p>';
+            const sections = [];
+            for (const [label, offset] of [['Today', 0], ['Tomorrow', 1]]) {
+                try {
+                    const res = await fetch(`${apiBase}api/members/${selectedMemberId}/day?date=${_mydayLocalDate(offset)}`);
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    sections.push(`<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">${label}</div>`);
+                    if (!data.rides.length) {
+                        sections.push('<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4">Nothing scheduled 🎉</div>');
+                        continue;
+                    }
+                    data.rides.forEach(r => sections.push(renderMyDayCard(r)));
+                } catch (e) { }
+            }
+            wrap.innerHTML = sections.join('') ||
+                '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
+        }
+
+        function renderMyDayCard(r) {
+            const typeBadge = r.event_type === 'dropoff'
+                ? '<span class="text-[10px] tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-0.5 rounded border border-orange-500/50">Dropoff</span>'
+                : (r.event_type === 'pickup'
+                    ? '<span class="text-[10px] tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded border border-green-500/50">Pickup</span>'
+                    : '');
+            const statusChip = r.status === 'in_progress'
+                ? '<span class="text-[10px] font-black uppercase bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/50 animate-pulse">On the way</span>'
+                : (r.status === 'completed'
+                    ? '<span class="text-[10px] font-black uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded-full border border-green-500/50">Done</span>'
+                    : '');
+            const timeStr = r.event_type === 'dropoff' || r.event_type === 'pickup'
+                ? formatTime(r.start)
+                : `${formatTime(r.start)} - ${formatTime(r.end)}`;
+            let driverRow;
+            if (r.driver) {
+                driverRow = `
+                <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
+                    <div class="flex items-center gap-2 text-sm text-gray-300">
+                        <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800"
+                            style="border-color:${r.driver.color_code || '#3b82f6'};color:${r.driver.color_code || '#3b82f6'}">${mfEscape(r.driver.avatar || (r.driver.name || '?').charAt(0).toUpperCase())}</span>
+                        🚗 <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="setView('map', '${r.driver.member_id}')"
+                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>
+                        <button onclick="messageMember('${r.driver.member_id}')"
+                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>
+                    </div>
+                </div>`;
+            } else {
+                driverRow = `
+                <div class="mt-3 pt-3 border-t border-gray-800">
+                    <span class="text-[11px] font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs a driver</span>
+                </div>`;
+            }
+            return `
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
+                    ${statusChip}
+                </div>
+                <div class="text-white font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
+                ${r.location ? `<div class="text-gray-400 text-sm mt-1 truncate">${mfEscape(r.location)}</div>` : ''}
+                ${driverRow}
+            </div>`;
         }
 
         function showGlobalAlert(msg) {
@@ -369,22 +513,27 @@
             applyViewVisibility();
             await fetchDrivers();
             await fetchMembers();
+            const restoredPassenger = !selectedDriverId && selectedMemberId
+                && membersData.find(m => m.id === selectedMemberId && !m.driver_id);
             if (selectedDriverId && driversData.find(d => d.id === selectedDriverId)) {
                 await selectDriver(selectedDriverId);
-                const params = new URLSearchParams(window.location.search);
-                const openChannelParam = params.get('open_channel');
-                if (openChannelParam && selectedMemberId) {
-                    setView('messages');
-                    openChannel(openChannelParam);
-                } else if (params.get('view') === 'messages' && selectedMemberId) {
-                    setView('messages');
-                } else if (currentView === 'map') {
-                    // restored from localStorage: setView() would early-return
-                    initFamilyMap();
-                    startFamilyMapPolling();
-                }
+            } else if (restoredPassenger) {
+                await selectPassengerMember(selectedMemberId);
             } else {
                 showDriverSelection();
+                return;
+            }
+            const params = new URLSearchParams(window.location.search);
+            const openChannelParam = params.get('open_channel');
+            if (openChannelParam && selectedMemberId) {
+                setView('messages');
+                openChannel(openChannelParam);
+            } else if (params.get('view') === 'messages' && selectedMemberId) {
+                setView('messages');
+            } else if (currentView === 'map') {
+                // restored from localStorage: setView() would early-return
+                initFamilyMap();
+                startFamilyMapPolling();
             }
         }
 
@@ -639,7 +788,7 @@
             if (Notification.permission === 'granted') {
                 pushBtn.classList.add('hidden');
             } else {
-                if (selectedDriverId) {
+                if (selectedDriverId || selectedMemberId) {
                     pushBtn.classList.remove('hidden');
                 }
             }
@@ -658,8 +807,9 @@
             document.getElementById('driver-avatar').style.color = "#6B7280";
 
             const list = document.getElementById('driver-list');
-            if (driversData.length === 0) {
-                list.innerHTML = "<p class='text-center text-gray-500'>No drivers configured.</p>";
+            const passengerMembers = membersData.filter(m => !m.driver_id);
+            if (driversData.length === 0 && passengerMembers.length === 0) {
+                list.innerHTML = "<p class='text-center text-gray-500'>No family members configured.</p>";
                 return;
             }
 
@@ -671,6 +821,16 @@
                     <div>
                         <div class="text-xl font-bold text-white">${d.name}</div>
                         <div class="text-sm text-gray-400 font-medium">${d.group} driver</div>
+                    </div>
+                </button>
+            `).join('') + passengerMembers.map(m => `
+                <button onclick="selectPassengerMember('${m.id}')" class="flex items-center gap-4 p-4 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 active:border-gray-700 transition-all shadow-lg text-left w-full">
+                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-black text-2xl border-4 shadow-inner bg-gray-800" style="border-color: ${m.color_code || '#3b82f6'}; color: ${m.color_code || '#3b82f6'}">
+                        ${m.avatar || (m.name || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                        <div class="text-xl font-bold text-white">${m.name}</div>
+                        <div class="text-sm text-gray-400 font-medium">passenger</div>
                     </div>
                 </button>
             `).join('');
@@ -772,6 +932,7 @@
             document.getElementById('screen-schedule').classList.remove('hidden');
             document.getElementById('btn-switch-driver').classList.remove('hidden');
             document.getElementById('btn-notif').classList.remove('hidden');
+            applyRoleTabs();
             await checkNotificationStatus();
             syncPushSubscription();
             connectMessagesStream();
@@ -818,7 +979,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        driver_id: currentDriverId,
+                        driver_id: currentDriverId || '',
                         member_id: selectedMemberId,
                         subscription: subscription
                     })
@@ -835,6 +996,8 @@
             selectedMemberId = null;
             localStorage.removeItem('chauffeur_driver_id');
             localStorage.removeItem('chauffeur_member_id');
+            if (messagesStream) { try { messagesStream.close(); } catch (e) { } messagesStream = null; }
+            applyRoleTabs();
             showDriverSelection();
         }
 
@@ -845,7 +1008,7 @@
         async function syncPushSubscription() {
             try {
                 if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-                if (Notification.permission !== 'granted' || !selectedDriverId) return;
+                if (Notification.permission !== 'granted' || (!selectedDriverId && !selectedMemberId)) return;
                 const reg = await navigator.serviceWorker.register('/sw.js');
                 const response = await fetch(`${apiBase}api/vapid_public_key`);
                 const data = await response.json();
@@ -856,7 +1019,7 @@
                 await fetch(`${apiBase}api/push_subscribe`, {  // silent re-sync
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ driver_id: selectedDriverId, member_id: selectedMemberId, subscription: subscription })
+                    body: JSON.stringify({ driver_id: selectedDriverId || '', member_id: selectedMemberId, subscription: subscription })
                 });
             } catch (e) {
                 console.warn('Push subscription re-sync failed', e);
