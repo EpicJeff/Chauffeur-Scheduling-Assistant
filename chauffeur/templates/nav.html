@@ -92,19 +92,7 @@
 
             <!-- Right aligned elements -->
             <div class="flex items-center gap-2">
-                <!-- Control Center Icon -->
-                <div class="hidden md:flex items-center relative">
-                    <button onclick="if(typeof toggleOperationsSidebar === 'function') toggleOperationsSidebar()"
-                        class="text-indigo-400 hover:text-indigo-300 p-2 rounded-full hover:bg-gray-700 transition-colors focus:outline-none">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 6h16M4 12h16M4 18h16"></path>
-                        </svg>
-                        <span id="maps-stats-warning-dot" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-500 rounded-full hidden border-2 border-gray-900"></span>
-                    </button>
-                </div>
-
-                <!-- Settings Icon (Right aligned) -->
+                <!-- Settings Icon (left of the Control Center toggle) -->
                 <div class="hidden md:flex items-center" id="settings-nav-item">
                     <a href="config"
                         class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700 transition-colors">
@@ -116,6 +104,18 @@
                                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                         </svg>
                     </a>
+                </div>
+
+                <!-- Control Center Icon (hidden in kiosk mode and while the sidebar is open — it has its own close button inside) -->
+                <div class="hidden md:flex items-center relative" id="control-center-nav-item">
+                    <button onclick="if(typeof toggleOperationsSidebar === 'function') toggleOperationsSidebar()"
+                        class="text-indigo-400 hover:text-indigo-300 p-2 rounded-full hover:bg-gray-700 transition-colors focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                        <span id="maps-stats-warning-dot" class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-amber-500 rounded-full hidden border-2 border-gray-900"></span>
+                    </button>
                 </div>
 
                 <!-- Mobile menu button -->
@@ -150,11 +150,15 @@
             });
 
             if (isKiosk) {
-                // Hide settings gear icon in kiosk mode
+                // Kiosk is a display surface: no settings, no control center.
                 const settingsIcon = document.getElementById('settings-nav-item');
                 if (settingsIcon) settingsIcon.style.display = 'none';
                 const mobileSettingsIcon = document.getElementById('mobile-settings-nav-item');
                 if (mobileSettingsIcon) mobileSettingsIcon.style.display = 'none';
+                const ccIcon = document.getElementById('control-center-nav-item');
+                if (ccIcon) ccIcon.style.display = 'none';
+                const mobileCcBtn = document.getElementById('mobile-cc-nav-item');
+                if (mobileCcBtn) mobileCcBtn.style.display = 'none';
             }
         });
     </script>
@@ -248,7 +252,8 @@
             
             <div class="h-px bg-gray-800 my-2"></div>
             
-            <button onclick="if(typeof toggleOperationsSidebar === 'function'){ document.getElementById('mobile-menu').classList.add('hidden'); toggleOperationsSidebar(); }"
+            <button id="mobile-cc-nav-item"
+                onclick="if(typeof toggleOperationsSidebar === 'function'){ document.getElementById('mobile-menu').classList.add('hidden'); toggleOperationsSidebar(); }"
                 class="text-indigo-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2 text-left w-full">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"

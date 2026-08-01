@@ -821,6 +821,14 @@ function closeChatHelpModal() {
         
         localStorage.setItem('controlCenterOpen', isOperationsSidebarOpen);
 
+        // The sidebar has its own close button — showing the nav toggle next
+        // to an open sidebar reads as two hamburgers. Kiosk never shows it.
+        const ccNavBtn = document.getElementById('control-center-nav-item');
+        if (ccNavBtn) {
+            const kiosk = new URLSearchParams(window.location.search).get('kiosk') === 'true';
+            ccNavBtn.style.display = (isOperationsSidebarOpen || kiosk) ? 'none' : '';
+        }
+
         if (isOperationsSidebarOpen) {
             sidebar.classList.remove('translate-x-full');
             sidebar.classList.add('translate-x-0');
@@ -850,6 +858,9 @@ function closeChatHelpModal() {
     }
     
     document.addEventListener('DOMContentLoaded', () => {
+        // Kiosk is a display surface — never restore an open control center
+        // there, even if this browser left it open in normal mode.
+        if (new URLSearchParams(window.location.search).get('kiosk') === 'true') return;
         const isOpen = localStorage.getItem('controlCenterOpen') === 'true';
         if (isOpen) {
             // Disable transition temporarily for instant open
