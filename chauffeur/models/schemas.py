@@ -315,6 +315,17 @@ class Settings(BaseModel):
     # When False, the solver never invents "suggested driver" (ghost) routes
     # for unassigned events; they simply stay in the triage bucket.
     suggested_routes_enabled: bool = True
+    # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
+    # allowlisted senders' messages are LLM-extracted into event/task
+    # proposals a parent approves on /intake. The password is a Gmail app
+    # password for the dedicated family account — never a personal login.
+    ingest_email_enabled: bool = False
+    ingest_email_host: str = "imap.gmail.com"
+    ingest_email_user: str = ""
+    ingest_email_password: str = ""
+    # Each entry: {pattern: substring matched against From (e.g. "@school.org"
+    # or "coach.dan"), calendar_id: optional default target calendar}.
+    ingest_allowlist: List[dict] = Field(default_factory=list)
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

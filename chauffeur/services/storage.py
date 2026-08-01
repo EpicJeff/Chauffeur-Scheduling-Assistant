@@ -137,6 +137,8 @@ with db_lock:
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     ics_feeds_table = db.table('ics_feeds')
+    event_proposals_table = db.table('event_proposals')
+    ingest_log_table = db.table('ingest_log')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -2087,3 +2089,57 @@ def update_ics_feed(feed_id: str, updates: dict) -> None:
 def delete_ics_feed(feed_id: str) -> None:
     with db_lock:
         ics_feeds_table.remove(Query().id == feed_id)
+
+# --- Email intake: proposals + activity log (services/email_ingest.py) ---
+
+def patch_settings(updates: dict) -> None:
+    """Merge keys into settings WITHOUT the schedule-cache invalidation that
+    update_settings() performs — for keys (email intake creds/allowlist) that
+    cannot affect the solver."""
+    with db_lock:
+        docs = settings_table.all()
+        current = dict(docs[0]) if docs else {}
+        current.update(updates)
+        settings_table.truncate()
+        settings_table.insert(current)
+
+def get_proposals(status: str = None) -> List[dict]:
+    with db_lock:
+        if status:
+            return event_proposals_table.search(Query().status == status)
+        return event_proposals_table.all()
+
+def get_proposal(proposal_id: str) -> Optional[dict]:
+    with db_lock:
+        res = event_proposals_table.search(Query().id == proposal_id)
+        return res[0] if res else None
+
+def add_proposal(proposal: dict) -> str:
+    import uuid, time
+    proposal = dict(proposal)
+    proposal.setdefault('id', uuid.uuid4().hex)
+    proposal.setdefault('status', 'proposed')
+    proposal.setdefault('created_at', time.time())
+    with db_lock:
+        event_proposals_table.insert(proposal)
+    return proposal['id']
+
+def update_proposal(proposal_id: str, updates: dict) -> None:
+    with db_lock:
+        event_proposals_table.update(updates, Query().id == proposal_id)
+
+def add_ingest_log(entry: dict, cap: int = 200) -> None:
+    import time
+    entry = dict(entry)
+    entry.setdefault('ts', time.time())
+    with db_lock:
+        ingest_log_table.insert(entry)
+        rows = sorted(ingest_log_table.all(), key=lambda r: r.get('ts', 0))
+        if len(rows) > cap:
+            for r in rows[:len(rows) - cap]:
+                ingest_log_table.remove(doc_ids=[r.doc_id])
+
+def get_ingest_log(limit: int = 50) -> List[dict]:
+    with db_lock:
+        rows = sorted(ingest_log_table.all(), key=lambda r: r.get('ts', 0), reverse=True)
+        return rows[:limit]

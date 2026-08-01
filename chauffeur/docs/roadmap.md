@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.22.0).
+up cold. Last updated: 2026-08-01 (v2.23.0).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -69,19 +69,17 @@ genuinely one-tap or it's data entry with extra steps.
   implicit when the person has one). Updates patch, cancellations delete
   future events only, past events are frozen history. Details in
   system_capabilities.md.
-- **Phase 2 — email ingest (the universal adapter; highest noise risk).**
-  Nearly every walled-garden school/team app (ParentSquare, ClassDojo,
-  TeamSnap, Remind…) leaks through "notify me by email." Ingest via Gmail
-  filter → forward to a Chauffeur address, or Gmail API polling (same
-  Google-credentials pattern as Calendar). Noise defense, layered cheap→
-  expensive: (1) allowlist-only senders in v1 — precision first, recall
-  later; (2) cheap relevance gate ("date-bound action for THIS family?")
-  before any extraction; (3) dedup against calendar + existing proposals;
-  (4) the queue's approve/ignore signals train per-sender/topic priors;
-  (5) an accountability digest ("processed 14, proposed 2, ignored 12 —
-  review") makes false negatives auditable instead of silent. The failure
-  mode to fear: a noisy queue teaches the parent to ignore it — worse than
-  nothing, because trust without precision means missed events.
+- **Phase 2 — email ingest. V1 SHIPPED v2.23.0 (2026-08-01).** Dedicated
+  Gmail polled over IMAP+app password (Gmail API service accounts are
+  Workspace-only — the Calendar credential pattern does NOT carry over),
+  allowlist gate → LLM extraction (events + 📌 tasks) → proposal queue on
+  `/intake` with parent approval, per-message accountability log, parent
+  push nudges. Still open from the original design: (a) approve/ignore
+  signals training per-sender priors — today the allowlist is manual only;
+  (b) editing a proposal's time/title before approving (today: ignore +
+  manual entry); (c) drive-errand creation from proposals (tasks become
+  all-day 📌 events instead — errands need location+duration); (d) a
+  scheduled weekly digest push (the log page exists, nothing pushes it).
 - **Phase 3 — vision capture (paper + screenshots).** PWA share-target:
   snap the backpack flyer / screenshot the group text (iOS will never
   expose SMS — share is the permanent ceiling there). Needs a competent

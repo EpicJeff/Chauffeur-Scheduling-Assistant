@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intake</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            sans: ['Inter', 'sans-serif'],
+                        },
+                        colors: {
+                            gray: {
+                                900: '#111827',
+                                800: '#1F2937',
+                                700: '#374151',
+                                600: '#4B5563',
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body {
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="intakePage()" x-init="init()" x-cloak>
+        <div class="max-w-5xl mx-auto p-6 lg:p-10">
+
+            <header class="mb-8">
+                <h2 class="text-3xl font-bold text-white mb-2">📥 Intake</h2>
+                <p class="text-gray-400">School and team email, turned into proposed events. Nothing lands on a
+                    calendar without your approval. Forward messages to the family mailbox, or set an auto-forward
+                    filter for the senders below.</p>
+            </header>
+
+            <!-- ===== Proposals ===== -->
+            <section class="mb-10">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">Waiting for approval</h3>
+                    <button @click="checkNow()" :disabled="checking"
+                        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                        x-text="checking ? 'Checking mailbox...' : 'Check mailbox now'"></button>
+                </div>
+                <div x-show="proposals.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                    Nothing waiting. New proposals appear here (and parents get a push) when family email contains
+                    date-bound events or to-dos.
+                </div>
+                <div class="space-y-4">
+                    <template x-for="p in proposals" :key="p.id">
+                        <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                            <div class="flex flex-col md:flex-row md:items-start gap-4">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                                        <span class="px-2 py-0.5 rounded font-bold text-xs uppercase tracking-wide"
+                                            :class="p.kind === 'task' ? 'bg-amber-900/50 text-amber-300' : 'bg-teal-900/50 text-teal-300'"
+                                            x-text="p.kind === 'task' ? 'To-do' : 'Event'"></span>
+                                        <h4 class="text-lg font-bold text-white" x-text="p.title"></h4>
+                                        <span class="text-xs text-gray-500"
+                                            x-text="Math.round((p.confidence || 0) * 100) + '% sure'"></span>
+                                    </div>
+                                    <p class="text-sm text-gray-300" x-text="whenLabel(p)"></p>
+                                    <p class="text-sm text-gray-400" x-show="p.location" x-text="'📍 ' + p.location"></p>
+                                    <p class="text-sm text-gray-400" x-show="p.member_name"
+                                        x-text="'👤 Looks like: ' + p.member_name"></p>
+                                    <p class="text-xs text-gray-500 mt-2 italic" x-show="p.notes" x-text="p.notes"></p>
+                                    <p class="text-xs text-gray-600 mt-1 truncate"
+                                        x-text="'✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
+                                </div>
+                                <div class="flex flex-col gap-2 shrink-0 md:w-72">
+                                    <select x-model="p._target"
+                                        class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm w-full">
+                                        <option value="">Onto whose calendar?</option>
+                                        <template x-for="opt in calendarTargets" :key="opt.id + opt.label">
+                                            <option :value="opt.id" x-text="opt.label"></option>
+                                        </template>
+                                    </select>
+                                    <div class="flex gap-2">
+                                        <button @click="approve(p)" :disabled="!p._target || busyId === p.id"
+                                            class="flex-1 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-lg transition-colors"
+                                            x-text="busyId === p.id ? '...' : '✓ Approve'"></button>
+                                        <button @click="ignore(p)" :disabled="busyId === p.id"
+                                            class="flex-1 bg-gray-600 hover:bg-gray-500 text-white font-bold py-2.5 rounded-lg transition-colors">✗
+                                            Ignore</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- ===== Activity log ===== -->
+            <section class="mb-10">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Recent activity
+                    <span class="normal-case font-medium text-gray-600">— every processed message is accounted for, so
+                        misses are visible</span></h3>
+                <div x-show="log.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                    No mail processed yet.
+                </div>
+                <div class="bg-gray-800 rounded-xl divide-y divide-gray-700/60" x-show="log.length > 0">
+                    <template x-for="(row, i) in log" :key="i">
+                        <div class="px-5 py-3 flex flex-col md:flex-row md:items-center gap-1 md:gap-4 text-sm">
+                            <span class="text-gray-500 shrink-0 w-36" x-text="tsLabel(row.ts)"></span>
+                            <span class="text-gray-300 truncate flex-1"
+                                x-text="(row.subject || '') + (row.from ? ' · ' + row.from : '')"></span>
+                            <span class="shrink-0 font-medium"
+                                :class="(row.outcome || '').startsWith('proposed') ? 'text-green-400' : ((row.outcome || '').startsWith('error') ? 'text-red-400' : 'text-gray-500')"
+                                x-text="row.outcome"></span>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- ===== Mailbox settings ===== -->
+            <section class="mb-16">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Family mailbox</h3>
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center gap-3 mb-5">
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="config.ingest_email_enabled" class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                            </div>
+                        </label>
+                        <span class="font-bold text-gray-200">Poll the mailbox automatically (every 10 minutes)</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">IMAP host</label>
+                            <input type="text" x-model="config.ingest_email_host" placeholder="imap.gmail.com"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm">Mailbox address</label>
+                            <input type="text" x-model="config.ingest_email_user" placeholder="family.chauffeur@gmail.com"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 mb-1 text-sm"
+                                x-text="config.has_password ? 'App password (saved — leave blank to keep)' : 'App password'"></label>
+                            <input type="password" x-model="passwordInput" placeholder="xxxx xxxx xxxx xxxx"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white font-mono text-sm">
+                        </div>
+                    </div>
+
+                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Allowed senders</label>
+                    <p class="text-xs text-gray-500 mb-3">Only mail from these senders is read — precision first. A
+                        pattern matches anywhere in the From address ("@school.org", "coach.dan"). Pick a default
+                        calendar to pre-fill proposals from that sender.</p>
+                    <template x-for="(entry, idx) in config.ingest_allowlist" :key="idx">
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" x-model="entry.pattern" placeholder="@school.org"
+                                class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
+                            <select x-model="entry.calendar_id"
+                                class="w-64 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm">
+                                <option value="">No default calendar</option>
+                                <template x-for="opt in calendarTargets" :key="opt.id + opt.label">
+                                    <option :value="opt.id" x-text="opt.label"></option>
+                                </template>
+                            </select>
+                            <button @click="config.ingest_allowlist.splice(idx, 1)"
+                                class="text-red-400 hover:text-red-300 bg-red-500/10 px-3 rounded-lg font-bold">✕</button>
+                        </div>
+                    </template>
+                    <button @click="config.ingest_allowlist.push({pattern: '', calendar_id: ''})"
+                        class="text-blue-400 hover:text-blue-300 font-bold text-sm mb-5">+ Add sender</button>
+
+                    <div class="flex gap-3">
+                        <button @click="saveConfig()" :disabled="savingConfig"
+                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold px-6 py-3 rounded-lg transition-colors"
+                            x-text="savingConfig ? 'Saving...' : 'Save Settings'"></button>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        function intakePage() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                proposals: [],
+                log: [],
+                config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_allowlist: [] },
+                passwordInput: '',
+                calendarTargets: [],
+                checking: false,
+                savingConfig: false,
+                busyId: null,
+
+                async init() {
+                    await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(), this.loadTargets()]);
+                },
+                async loadProposals() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals?status=proposed`);
+                        const data = await res.json();
+                        this.proposals = (Array.isArray(data) ? data : []).map(p => ({ ...p, _target: p.calendar_id || '' }));
+                    } catch (e) { this.proposals = []; }
+                },
+                async loadLog() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/log?limit=30`);
+                        const data = await res.json();
+                        this.log = Array.isArray(data) ? data : [];
+                    } catch (e) { this.log = []; }
+                },
+                async loadConfig() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/config`);
+                        this.config = await res.json();
+                        if (!Array.isArray(this.config.ingest_allowlist)) this.config.ingest_allowlist = [];
+                        this.config.ingest_allowlist = this.config.ingest_allowlist.map(e => ({ pattern: e.pattern || '', calendar_id: e.calendar_id || '' }));
+                    } catch (e) { console.error('config load failed', e); }
+                },
+                async loadTargets() {
+                    try {
+                        const [pres, dres] = await Promise.all([
+                            fetch(`${this.apiBase}api/passengers`), fetch(`${this.apiBase}api/drivers`)]);
+                        const passengers = await pres.json(), drivers = await dres.json();
+                        const opts = [];
+                        (Array.isArray(passengers) ? passengers : []).forEach(p =>
+                            (p.calendar_ids || []).forEach(c => opts.push({ id: c, label: `${p.name} — ${c}` })));
+                        (Array.isArray(drivers) ? drivers : []).forEach(d =>
+                            ((d.calendar_ids || d.calendarIds) || []).forEach(c => opts.push({ id: c, label: `${d.name} — ${c}` })));
+                        this.calendarTargets = opts;
+                    } catch (e) { this.calendarTargets = []; }
+                },
+                whenLabel(p) {
+                    try {
+                        if (p.all_day) {
+                            const d = new Date(p.start + 'T00:00:00');
+                            const label = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+                            return p.kind === 'task' ? `Due ${label}` : `All day, ${label}`;
+                        }
+                        const s = new Date(p.start), e = new Date(p.end);
+                        return s.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
+                            + ', ' + s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                            + ' – ' + e.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    } catch (err) { return p.start; }
+                },
+                tsLabel(ts) {
+                    try { return new Date(ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+                    catch (e) { return ''; }
+                },
+                async approve(p) {
+                    this.busyId = p.id;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/proposals/${p.id}/approve`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ calendar_id: p._target })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) showGlobalAlert(data.detail || 'Approve failed.');
+                        await this.loadProposals();
+                    } finally { this.busyId = null; }
+                },
+                async ignore(p) {
+                    this.busyId = p.id;
+                    try {
+                        await fetch(`${this.apiBase}api/proposals/${p.id}/ignore`, { method: 'POST' });
+                        await this.loadProposals();
+                    } finally { this.busyId = null; }
+                },
+                async checkNow() {
+                    this.checking = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ingest/run`, { method: 'POST' });
+                        const s = await res.json();
+                        if (s.error) showGlobalAlert('Mailbox check failed: ' + s.error);
+                        else showGlobalAlert(`Checked ${s.checked} new message${s.checked !== 1 ? 's' : ''} — ${s.proposed} proposal${s.proposed !== 1 ? 's' : ''} added.`);
+                        await Promise.all([this.loadProposals(), this.loadLog()]);
+                    } catch (e) {
+                        showGlobalAlert('Mailbox check failed: ' + e.message);
+                    } finally { this.checking = false; }
+                },
+                async saveConfig() {
+                    this.savingConfig = true;
+                    try {
+                        const payload = {
+                            ingest_email_enabled: this.config.ingest_email_enabled,
+                            ingest_email_host: this.config.ingest_email_host,
+                            ingest_email_user: this.config.ingest_email_user,
+                            ingest_allowlist: this.config.ingest_allowlist,
+                        };
+                        if (this.passwordInput.trim()) payload.ingest_email_password = this.passwordInput.trim();
+                        const res = await fetch(`${this.apiBase}api/ingest/config`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (res.ok) {
+                            this.passwordInput = '';
+                            showGlobalAlert('Intake settings saved.');
+                            await this.loadConfig();
+                        } else {
+                            showGlobalAlert('Could not save settings.');
+                        }
+                    } finally { this.savingConfig = false; }
+                },
+            }
+        }
+    </script>
+    {% include 'components/control_center.html' %}
+</body>
+
+</html>

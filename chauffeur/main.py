@@ -390,6 +390,30 @@ def flush_assignment_notifications():
                 driver_id=d_id, event_id="schedule", action="updated",
                 details="Upcoming schedule changed: " + ", ".join(d.strftime('%a %m/%d') for d in fdates)).model_dump())
 
+async def email_ingest_loop():
+    """Poll the family intake mailbox every 10 minutes (services/email_ingest).
+    New proposals push a review nudge to parents."""
+    await asyncio.sleep(120)
+    while True:
+        try:
+            from services import storage as _st, email_ingest
+            settings = _st.get_settings() or {}
+            if settings.get('ingest_email_enabled') and settings.get('ingest_email_user'):
+                summary = await asyncio.to_thread(email_ingest.run_ingest)
+                n = summary.get('proposed', 0)
+                if n:
+                    def _nudge_parents():
+                        for m in _st.get_all_members():
+                            if m.get('role') == 'parent':
+                                _notify_member_lanes(
+                                    m, 'New proposed events',
+                                    f'📥 {n} new item{"s" if n != 1 else ""} extracted from family email — review in Intake.',
+                                    path='/intake')
+                    await asyncio.to_thread(_nudge_parents)
+        except Exception as e:
+            print(f"Email ingest loop error: {e}")
+        await asyncio.sleep(600)
+
 async def ics_sync_loop():
     """Hourly re-sync of subscribed ICS feeds (services/ics_sync.py). Hourly
     because same-day reschedules (rainouts) should land before pickup time.
@@ -410,6 +434,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
     ics_task = asyncio.create_task(ics_sync_loop())
+    ingest_task = asyncio.create_task(email_ingest_loop())
 
     from services.migrations import run_all_migrations
     migration_task = asyncio.create_task(run_all_migrations())
@@ -418,6 +443,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
     push_task.cancel()
     ics_task.cancel()
+    ingest_task.cancel()
     migration_task.cancel()
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
@@ -498,6 +524,12 @@ def errands(request: Request):
 @app.get("/chores")
 def chores_page(request: Request):
     response = templates.TemplateResponse(request=request, name="chores.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+@app.get("/intake")
+def intake_page(request: Request):
+    response = templates.TemplateResponse(request=request, name="intake.html")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -2440,6 +2472,111 @@ def delete_ics_feed(feed_id: str, background_tasks: BackgroundTasks,
             background_tasks.add_task(trigger_background_refresh)
     storage.delete_ics_feed(feed_id)
     return {"status": "deleted", "events_removed": removed}
+
+# --- Email Intake API (intake arc phase 2) ---
+
+class IngestConfig(BaseModel):
+    ingest_email_enabled: Optional[bool] = None
+    ingest_email_host: Optional[str] = None
+    ingest_email_user: Optional[str] = None
+    ingest_email_password: Optional[str] = None
+    ingest_allowlist: Optional[list] = None
+
+class ProposalApprove(BaseModel):
+    calendar_id: str
+    title: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+@app.get("/api/ingest/config")
+def get_ingest_config():
+    s = storage.get_settings() or {}
+    return {
+        'ingest_email_enabled': bool(s.get('ingest_email_enabled')),
+        'ingest_email_host': s.get('ingest_email_host') or 'imap.gmail.com',
+        'ingest_email_user': s.get('ingest_email_user') or '',
+        'has_password': bool(s.get('ingest_email_password')),
+        'ingest_allowlist': s.get('ingest_allowlist') or [],
+    }
+
+@app.post("/api/ingest/config")
+def set_ingest_config(cfg: IngestConfig):
+    updates = {k: v for k, v in cfg.model_dump().items() if v is not None}
+    # An empty password field in the UI means "keep the stored one".
+    if updates.get('ingest_email_password') == '':
+        updates.pop('ingest_email_password')
+    if 'ingest_allowlist' in updates:
+        updates['ingest_allowlist'] = [
+            {'pattern': (e.get('pattern') or '').strip(),
+             'calendar_id': (e.get('calendar_id') or '').strip() or None}
+            for e in updates['ingest_allowlist']
+            if isinstance(e, dict) and (e.get('pattern') or '').strip()
+        ]
+    storage.patch_settings(updates)
+    return {"status": "updated"}
+
+@app.post("/api/ingest/run")
+def run_ingest_now():
+    from services import email_ingest
+    return email_ingest.run_ingest()
+
+@app.get("/api/ingest/log")
+def ingest_log(limit: int = 50):
+    return storage.get_ingest_log(limit=limit)
+
+@app.get("/api/proposals")
+def list_proposals(status: str = 'proposed'):
+    props = storage.get_proposals(status if status != 'all' else None)
+    return sorted(props, key=lambda p: p.get('start') or '')
+
+@app.post("/api/proposals/{proposal_id}/approve")
+def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: BackgroundTasks):
+    from services import calendar as gcal
+    prop = storage.get_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if prop.get('status') != 'proposed':
+        raise HTTPException(status_code=409, detail=f"Proposal is already {prop.get('status')}")
+
+    title = (req.title or '').strip() or prop['title']
+    start = req.start or prop['start']
+    end = req.end or prop['end']
+    description_parts = []
+    if prop.get('notes'):
+        description_parts.append(prop['notes'])
+    description_parts.append(f"From family email: {prop.get('source_from', '')} — {prop.get('source_subject', '')}")
+
+    if prop.get('all_day'):
+        body_start, body_end = {'date': start[:10]}, {'date': end[:10]}
+    else:
+        body_start, body_end = {'dateTime': start}, {'dateTime': end}
+    body = {
+        'summary': title,
+        'start': body_start,
+        'end': body_end,
+        'description': '\n'.join(description_parts),
+        'extendedProperties': {'private': {'intake_proposal_id': proposal_id}},
+    }
+    if prop.get('location'):
+        body['location'] = prop['location']
+
+    gid = gcal.insert_event(req.calendar_id, body)
+    if not gid:
+        raise HTTPException(status_code=502, detail="Google Calendar rejected the event")
+    storage.update_proposal(proposal_id, {
+        'status': 'approved', 'calendar_id': req.calendar_id,
+        'created_event_id': gid, 'title': title, 'start': start, 'end': end,
+    })
+    background_tasks.add_task(trigger_background_refresh)
+    return {"status": "approved", "event_id": gid}
+
+@app.post("/api/proposals/{proposal_id}/ignore")
+def ignore_proposal(proposal_id: str):
+    prop = storage.get_proposal(proposal_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    storage.update_proposal(proposal_id, {'status': 'ignored'})
+    return {"status": "ignored"}
 
 # --- Family Members API (overlay over drivers/passengers) ---
 
