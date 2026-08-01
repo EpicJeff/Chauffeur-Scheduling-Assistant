@@ -2480,7 +2480,7 @@ class IngestConfig(BaseModel):
     ingest_email_host: Optional[str] = None
     ingest_email_user: Optional[str] = None
     ingest_email_password: Optional[str] = None
-    ingest_allowlist: Optional[list] = None
+    ingest_sender_defaults: Optional[list] = None
 
 class ProposalApprove(BaseModel):
     calendar_id: str
@@ -2496,7 +2496,7 @@ def get_ingest_config():
         'ingest_email_host': s.get('ingest_email_host') or 'imap.gmail.com',
         'ingest_email_user': s.get('ingest_email_user') or '',
         'has_password': bool(s.get('ingest_email_password')),
-        'ingest_allowlist': s.get('ingest_allowlist') or [],
+        'ingest_sender_defaults': s.get('ingest_sender_defaults') or [],
     }
 
 @app.post("/api/ingest/config")
@@ -2505,11 +2505,11 @@ def set_ingest_config(cfg: IngestConfig):
     # An empty password field in the UI means "keep the stored one".
     if updates.get('ingest_email_password') == '':
         updates.pop('ingest_email_password')
-    if 'ingest_allowlist' in updates:
-        updates['ingest_allowlist'] = [
+    if 'ingest_sender_defaults' in updates:
+        updates['ingest_sender_defaults'] = [
             {'pattern': (e.get('pattern') or '').strip(),
              'calendar_id': (e.get('calendar_id') or '').strip() or None}
-            for e in updates['ingest_allowlist']
+            for e in updates['ingest_sender_defaults']
             if isinstance(e, dict) and (e.get('pattern') or '').strip()
         ]
     storage.patch_settings(updates)

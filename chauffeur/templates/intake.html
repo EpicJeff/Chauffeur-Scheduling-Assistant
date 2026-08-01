@@ -48,9 +48,9 @@
 
             <header class="mb-8">
                 <h2 class="text-3xl font-bold text-white mb-2">📥 Intake</h2>
-                <p class="text-gray-400">School and team email, turned into proposed events. Nothing lands on a
-                    calendar without your approval. Forward messages to the family mailbox, or set an auto-forward
-                    filter for the senders below.</p>
+                <p class="text-gray-400">School and team email, turned into proposed events. Every message sent to the
+                    family mailbox is analyzed — you decide what goes there, with Gmail auto-forward filters or by
+                    simply forwarding an email. Nothing lands on a calendar without your approval.</p>
             </header>
 
             <!-- ===== Proposals ===== -->
@@ -163,11 +163,11 @@
                         </div>
                     </div>
 
-                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Allowed senders</label>
-                    <p class="text-xs text-gray-500 mb-3">Only mail from these senders is read — precision first. A
-                        pattern matches anywhere in the From address ("@school.org", "coach.dan"). Pick a default
-                        calendar to pre-fill proposals from that sender.</p>
-                    <template x-for="(entry, idx) in config.ingest_allowlist" :key="idx">
+                    <label class="block text-gray-400 mb-1 text-sm font-semibold">Sender defaults (optional)</label>
+                    <p class="text-xs text-gray-500 mb-3">Routing hints, not a filter — every email is analyzed either
+                        way. When a pattern matches the From address ("@school.org", "coach.dan"), proposals from that
+                        sender are pre-filled with the chosen calendar.</p>
+                    <template x-for="(entry, idx) in config.ingest_sender_defaults" :key="idx">
                         <div class="flex gap-2 mb-2">
                             <input type="text" x-model="entry.pattern" placeholder="@school.org"
                                 class="flex-1 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white font-mono text-sm">
@@ -178,12 +178,12 @@
                                     <option :value="opt.id" x-text="opt.label"></option>
                                 </template>
                             </select>
-                            <button @click="config.ingest_allowlist.splice(idx, 1)"
+                            <button @click="config.ingest_sender_defaults.splice(idx, 1)"
                                 class="text-red-400 hover:text-red-300 bg-red-500/10 px-3 rounded-lg font-bold">✕</button>
                         </div>
                     </template>
-                    <button @click="config.ingest_allowlist.push({pattern: '', calendar_id: ''})"
-                        class="text-blue-400 hover:text-blue-300 font-bold text-sm mb-5">+ Add sender</button>
+                    <button @click="config.ingest_sender_defaults.push({pattern: '', calendar_id: ''})"
+                        class="text-blue-400 hover:text-blue-300 font-bold text-sm mb-5">+ Add sender default</button>
 
                     <div class="flex gap-3">
                         <button @click="saveConfig()" :disabled="savingConfig"
@@ -201,7 +201,7 @@
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 proposals: [],
                 log: [],
-                config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_allowlist: [] },
+                config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_sender_defaults: [] },
                 passwordInput: '',
                 calendarTargets: [],
                 checking: false,
@@ -229,8 +229,8 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/config`);
                         this.config = await res.json();
-                        if (!Array.isArray(this.config.ingest_allowlist)) this.config.ingest_allowlist = [];
-                        this.config.ingest_allowlist = this.config.ingest_allowlist.map(e => ({ pattern: e.pattern || '', calendar_id: e.calendar_id || '' }));
+                        if (!Array.isArray(this.config.ingest_sender_defaults)) this.config.ingest_sender_defaults = [];
+                        this.config.ingest_sender_defaults = this.config.ingest_sender_defaults.map(e => ({ pattern: e.pattern || '', calendar_id: e.calendar_id || '' }));
                     } catch (e) { console.error('config load failed', e); }
                 },
                 async loadTargets() {
@@ -302,7 +302,7 @@
                             ingest_email_enabled: this.config.ingest_email_enabled,
                             ingest_email_host: this.config.ingest_email_host,
                             ingest_email_user: this.config.ingest_email_user,
-                            ingest_allowlist: this.config.ingest_allowlist,
+                            ingest_sender_defaults: this.config.ingest_sender_defaults,
                         };
                         if (this.passwordInput.trim()) payload.ingest_email_password = this.passwordInput.trim();
                         const res = await fetch(`${this.apiBase}api/ingest/config`, {

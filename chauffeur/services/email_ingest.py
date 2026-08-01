@@ -9,10 +9,17 @@ normalize + dedupe, and store surviving items as PROPOSALS a parent approves
 on /intake — approval writes a real Google Calendar event; nothing enters the
 family calendar without a human tap.
 
-Noise defense, layered cheap→expensive (the design goal is precision — a
-noisy queue teaches the parent to ignore it, which is worse than no queue):
-1. allowlist-only senders (v1: nothing outside it is even read);
-2. the extraction prompt is a relevance gate too — newsletters with no
+Every message in the mailbox is analyzed — THE MAILBOX IS THE FILTER. The
+family decides upstream what arrives (Gmail auto-forward filters, manual
+forwards), so a Chauffeur-side sender gate would be a second copy of the same
+decision — and would break manual forwards, which arrive From the forwarding
+parent, not the original sender. Sender patterns survive only as optional
+ROUTING hints (ingest_sender_defaults prefills a proposal's target calendar).
+
+Noise defense (the design goal is precision — a noisy queue teaches the
+parent to ignore it, which is worse than no queue):
+1. the mailbox is curated by the family + Gmail's own spam filtering;
+2. the extraction prompt is a relevance gate — newsletters with no
    date-bound family action return zero items;
 3. confidence floor;
 4. dedupe against existing proposals (any status — an ignored proposal must
@@ -91,11 +98,12 @@ def _body_text(msg) -> str:
     return body[:MAX_BODY_CHARS]
 
 
-def sender_allowed(from_addr: str, allowlist: list):
-    """Return the matching allowlist entry, or None. Patterns are lowercase
-    substrings of the From address, so '@school.org' and 'coach.dan' work."""
+def sender_default(from_addr: str, sender_defaults: list):
+    """Optional routing hint: the first entry whose pattern (a lowercase
+    substring, so '@school.org' and 'coach.dan' work) appears in the From
+    address. None just means no prefilled calendar — never a skip."""
     addr = (from_addr or '').lower()
-    for entry in allowlist or []:
+    for entry in sender_defaults or []:
         pattern = (entry.get('pattern') or '').strip().lower()
         if pattern and pattern in addr:
             return entry
@@ -279,14 +287,37 @@ def _is_duplicate(prop: dict, existing: list, sched_events: list) -> bool:
     return False
 
 
+def _calendar_for_member_name(name: str):
+    """Resolve the LLM's member-name guess to that person's calendar (their
+    passenger calendar first — kid events land there — else their driver
+    calendar). Used to prefill a proposal's target when no sender default
+    matched; the parent still confirms on /intake."""
+    if not name:
+        return None
+    target = name.strip().lower()
+    member = next((m for m in storage.get_all_members()
+                   if (m.get('name') or '').strip().lower() == target), None)
+    if not member:
+        return None
+    if member.get('passenger_id'):
+        for p in storage.get_all_passengers():
+            if p.get('id') == member['passenger_id'] and p.get('calendar_ids'):
+                return p['calendar_ids'][0]
+    if member.get('driver_id'):
+        for d in storage.get_all_drivers():
+            if d.get('id') == member['driver_id'] and d.get('calendar_ids'):
+                return d['calendar_ids'][0]
+    return None
+
+
 # --- orchestration ----------------------------------------------------------
 
 def run_ingest() -> dict:
     """One poll: fetch → allowlist → extract → normalize → dedupe → propose.
-    Returns {'checked', 'proposed', 'skipped', 'error'}."""
-    summary = {'checked': 0, 'proposed': 0, 'skipped': 0, 'error': None}
+    Returns {'checked', 'proposed', 'error'}."""
+    summary = {'checked': 0, 'proposed': 0, 'error': None}
     settings = storage.get_settings() or {}
-    allowlist = settings.get('ingest_allowlist') or []
+    sender_defaults = settings.get('ingest_sender_defaults') or []
 
     messages, err = fetch_new_messages(settings)
     if err:
@@ -305,11 +336,7 @@ def run_ingest() -> dict:
     for msg in messages:
         summary['checked'] += 1
         log = {'from': msg['from'], 'subject': msg['subject'][:120]}
-        entry = sender_allowed(msg['from'], allowlist)
-        if entry is None:
-            summary['skipped'] += 1
-            storage.add_ingest_log({**log, 'outcome': 'skipped: sender not allowlisted'})
-            continue
+        entry = sender_default(msg['from'], sender_defaults)
         try:
             items = extract_items(msg['subject'], msg['from'], msg['text'], member_names)
         except Exception as e:
@@ -329,7 +356,8 @@ def run_ingest() -> dict:
                 'source': 'email',
                 'source_from': msg['from'],
                 'source_subject': msg['subject'][:200],
-                'calendar_id': entry.get('calendar_id') or None,
+                'calendar_id': (entry or {}).get('calendar_id')
+                    or _calendar_for_member_name(prop.get('member_name')),
             })
             storage.add_proposal(prop)
             existing.append(prop)

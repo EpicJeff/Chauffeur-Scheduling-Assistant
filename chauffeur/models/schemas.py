@@ -323,9 +323,11 @@ class Settings(BaseModel):
     ingest_email_host: str = "imap.gmail.com"
     ingest_email_user: str = ""
     ingest_email_password: str = ""
-    # Each entry: {pattern: substring matched against From (e.g. "@school.org"
-    # or "coach.dan"), calendar_id: optional default target calendar}.
-    ingest_allowlist: List[dict] = Field(default_factory=list)
+    # Optional ROUTING hints, not a gate: every message in the intake mailbox
+    # is analyzed (the mailbox itself is the filter — the family curates what
+    # gets forwarded there). Each entry {pattern, calendar_id} prefills a
+    # proposal's target calendar when the pattern appears in the From address.
+    ingest_sender_defaults: List[dict] = Field(default_factory=list)
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

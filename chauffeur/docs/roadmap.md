@@ -72,10 +72,14 @@ genuinely one-tap or it's data entry with extra steps.
 - **Phase 2 — email ingest. V1 SHIPPED v2.23.0 (2026-08-01).** Dedicated
   Gmail polled over IMAP+app password (Gmail API service accounts are
   Workspace-only — the Calendar credential pattern does NOT carry over),
-  allowlist gate → LLM extraction (events + 📌 tasks) → proposal queue on
-  `/intake` with parent approval, per-message accountability log, parent
-  push nudges. Still open from the original design: (a) approve/ignore
-  signals training per-sender priors — today the allowlist is manual only;
+  every mailbox message analyzed (v2.23.1: the mailbox IS the filter —
+  the family curates via Gmail filters/forwards; the planned allowlist
+  gate was cut as redundant and forward-hostile, sender patterns survive
+  as optional calendar-routing defaults, with the LLM's member guess as
+  fallback router) → LLM extraction (events + 📌 tasks) → proposal queue
+  on `/intake` with parent approval, per-message accountability log,
+  parent push nudges. Still open from the original design: (a) learned
+  per-sender/topic priors from approve/ignore signals;
   (b) editing a proposal's time/title before approving (today: ignore +
   manual entry); (c) drive-errand creation from proposals (tasks become
   all-day 📌 events instead — errands need location+duration); (d) a

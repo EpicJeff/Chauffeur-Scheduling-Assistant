@@ -58,13 +58,14 @@ def test_mime_and_allowlist():
     body2 = email_ingest._body_text(html_only)
     check('Picture Day' in body2 and '<' not in body2, f"html stripped: {body2!r}")
 
-    allow = [{'pattern': '@teamsnap.com', 'calendar_id': 'ben@cal'},
-             {'pattern': 'principal.smith', 'calendar_id': None}]
-    check(email_ingest.sender_allowed('coach.dan@teamsnap.com', allow)['calendar_id'] == 'ben@cal',
+    defaults = [{'pattern': '@teamsnap.com', 'calendar_id': 'ben@cal'},
+                {'pattern': 'principal.smith', 'calendar_id': None}]
+    check(email_ingest.sender_default('coach.dan@teamsnap.com', defaults)['calendar_id'] == 'ben@cal',
           "domain pattern matches with default calendar")
-    check(email_ingest.sender_allowed('PRINCIPAL.SMITH@district.org', allow) is not None,
+    check(email_ingest.sender_default('PRINCIPAL.SMITH@district.org', defaults) is not None,
           "case-insensitive name pattern matches")
-    check(email_ingest.sender_allowed('spam@promo.com', allow) is None, "unlisted sender rejected")
+    check(email_ingest.sender_default('unknown@somewhere.com', defaults) is None,
+          "unmatched sender returns no default (but is still processed)")
 
 
 def test_normalize():
@@ -110,38 +111,48 @@ def test_run_ingest():
         'ingest_email_enabled': True,
         'ingest_email_user': 'family@test',
         'ingest_email_password': 'x',
-        'ingest_allowlist': [{'pattern': '@teamsnap.com', 'calendar_id': 'ben@cal'}],
+        'ingest_sender_defaults': [{'pattern': '@teamsnap.com', 'calendar_id': 'ben@cal'}],
     })
+
+    storage.add_passenger({'name': 'Lily', 'hashtags': [], 'calendar_ids': ['lily@cal']})
 
     real_fetch = email_ingest.fetch_new_messages
     real_extract = email_ingest.extract_items
     try:
         msgs = [
             _fake_msg(11, 'coach.dan@teamsnap.com', 'Game Saturday', 'Game 10am'),
-            _fake_msg(12, 'spam@promo.com', 'SALE', 'Buy now'),
+            _fake_msg(12, 'parent@personal.com', 'Fwd: Picture Day', 'Picture day info'),
         ]
         email_ingest.fetch_new_messages = lambda settings: (msgs, None)
-        email_ingest.extract_items = lambda subject, from_addr, body, names: [
-            {'kind': 'event', 'title': 'Soccer Game', 'date': IN_5_DAYS,
-             'start_time': '10:00', 'end_time': '11:00', 'location': 'Riverside',
-             'member_name': 'Ben', 'confidence': 0.9},
-            {'kind': 'event', 'title': 'Junk', 'date': IN_5_DAYS, 'confidence': 0.1},
-        ]
+
+        def fake_extract(subject, from_addr, body, names):
+            if 'teamsnap' in from_addr:
+                return [
+                    {'kind': 'event', 'title': 'Soccer Game', 'date': IN_5_DAYS,
+                     'start_time': '10:00', 'end_time': '11:00', 'location': 'Riverside',
+                     'member_name': 'Ben', 'confidence': 0.9},
+                    {'kind': 'event', 'title': 'Junk', 'date': IN_5_DAYS, 'confidence': 0.1},
+                ]
+            return [{'kind': 'event', 'title': 'Picture Day', 'date': IN_5_DAYS,
+                     'member_name': 'Lily', 'confidence': 0.85}]
+        email_ingest.extract_items = fake_extract
 
         s = email_ingest.run_ingest()
-        check(s['checked'] == 2 and s['proposed'] == 1 and s['skipped'] == 1,
-              f"one proposal, spam skipped: {s}")
-        props = storage.get_proposals('proposed')
-        check(len(props) == 1 and props[0]['calendar_id'] == 'ben@cal',
-              "proposal stored with allowlist default calendar")
-        check(props[0]['source_from'] == 'coach.dan@teamsnap.com', "source recorded")
+        check(s['checked'] == 2 and s['proposed'] == 2,
+              f"every message analyzed, incl. a manual forward: {s}")
+        props = {p['title']: p for p in storage.get_proposals('proposed')}
+        check(props['Soccer Game']['calendar_id'] == 'ben@cal',
+              "sender default prefills the target calendar (wins over member guess)")
+        check(props['Picture Day']['calendar_id'] == 'lily@cal',
+              "no sender default -> LLM member guess resolves to that kid's calendar")
+        check(props['Soccer Game']['source_from'] == 'coach.dan@teamsnap.com', "source recorded")
         log = storage.get_ingest_log()
-        check(any('skipped' in r['outcome'] for r in log), "skip logged")
-        check(any(r['outcome'].startswith('proposed 1') for r in log), "proposal logged")
+        check(sum(1 for r in log if r['outcome'].startswith('proposed 1')) == 2,
+              "both messages logged as proposed")
 
         # Re-run with the same content: dedupe keeps the queue clean even
         # after the parent ignores the proposal.
-        storage.update_proposal(props[0]['id'], {'status': 'ignored'})
+        storage.update_proposal(props['Soccer Game']['id'], {'status': 'ignored'})
         s2 = email_ingest.run_ingest()
         check(s2['proposed'] == 0, f"duplicate (even vs ignored) not re-proposed: {s2}")
 
