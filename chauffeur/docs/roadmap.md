@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-07-31 (v2.19.0).
+up cold. Last updated: 2026-08-01 (v2.20.3).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -41,6 +41,51 @@ routines + streaks · rewards store with parent-approved redemptions.
 - **Per-member notification preferences.** Members with both web push and HA
   notify get every message twice (accepted v1 tradeoff). Add a per-member
   lane preference or dedupe.
+
+## The intake arc (capture layer — the next big thing, decided 2026-08-01)
+
+The gap: everything downstream of an event existing is automated (solver,
+departure pushes, digests, My Day, threads), but every event still enters via
+a parent transcribing it into Google Calendar. The "logistics parent" is the
+family's API — that's the mental load the app hasn't touched. Close the loop
+from "information arrives in messy form" to "event/errand exists, correctly
+routed," with parent approval. Intake feeding the solver is the moat
+(Skylight Sidekick does email→calendar now, but nobody decides who drives).
+
+Shared infrastructure for all phases: a **proposal queue** — extracted
+candidates (events AND errands/todos, e.g. "send $12 by Friday") land as
+proposals; parent one-tap approves/edits/ignores; approval writes to the
+correct kid's Google calendar via the existing create-event path. Follows
+the established parent-verification pattern from chores/rewards. Must be
+genuinely one-tap or it's data entry with extra steps.
+
+- **Phase 1 — ICS feed subscriptions (the free win, zero LLM).** Paste a
+  team/school ICS URL, answer "whose calendar is this?" once — routing is a
+  subscription-level fact, not a per-event decision. Chauffeur polls the
+  feed and propagates updates/cancels by ICS UID (beats manual copies,
+  which go stale on the first rainout). Events land on the kid's real GCal
+  calendar so attendee detection → solver → pushes need zero new code.
+  Kills the every-season ritual: find feed, import, hand-copy per kid.
+- **Phase 2 — email ingest (the universal adapter; highest noise risk).**
+  Nearly every walled-garden school/team app (ParentSquare, ClassDojo,
+  TeamSnap, Remind…) leaks through "notify me by email." Ingest via Gmail
+  filter → forward to a Chauffeur address, or Gmail API polling (same
+  Google-credentials pattern as Calendar). Noise defense, layered cheap→
+  expensive: (1) allowlist-only senders in v1 — precision first, recall
+  later; (2) cheap relevance gate ("date-bound action for THIS family?")
+  before any extraction; (3) dedup against calendar + existing proposals;
+  (4) the queue's approve/ignore signals train per-sender/topic priors;
+  (5) an accountability digest ("processed 14, proposed 2, ignored 12 —
+  review") makes false negatives auditable instead of silent. The failure
+  mode to fear: a noisy queue teaches the parent to ignore it — worse than
+  nothing, because trust without precision means missed events.
+- **Phase 3 — vision capture (paper + screenshots).** PWA share-target:
+  snap the backpack flyer / screenshot the group text (iOS will never
+  expose SMS — share is the permanent ceiling there). Needs a competent
+  multimodal cloud model — Gemma won't cut it for flyers; family-scale
+  volume is dozens of calls/week, pennies. Recurrence with exceptions
+  (spring break, early dismissal) is where extraction embarrasses — v1
+  handles single + simple-weekly events only.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 
