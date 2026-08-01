@@ -3566,6 +3566,11 @@ def list_channels(member_id: str):
         msgs = storage.get_channel_messages(c['id'], limit=1)
         c['last_message'] = msgs[-1] if msgs else None
         c['unread'] = unread.get(c['id'], 0)
+    # Channels with no messages yet don't get listed (except the family hub):
+    # Discuss/Message get-or-create a channel the moment the thread is opened,
+    # and an untouched thread must not clutter the whole household's list.
+    # It appears for everyone once the first message is posted.
+    channels = [c for c in channels if c.get('kind') == 'family' or c['last_message']]
     # family channel pinned first, then most recent activity
     channels.sort(key=lambda c: (
         0 if c.get('kind') == 'family' else 1,

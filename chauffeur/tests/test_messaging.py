@@ -254,6 +254,33 @@ def scenario_helper_restrictions():
         check(pushed == ["kid"], f"family fan-out excludes helpers, got {pushed}")
 
 
+def scenario_empty_channels_hidden_from_list():
+    import main
+    _member("mom", "Mom", role="parent")
+    _member("kid", "Kid", role="child")
+    storage.ensure_family_channel()
+    fam = storage.get_family_channel()
+
+    # Discuss/Message get-or-create the channel on open; untouched threads
+    # must not appear on anyone's list until the first message lands.
+    ev = storage.get_or_create_event_channel("evt1", "Soccer", "2126-01-01T18:00:00")
+    dm = storage.get_or_create_dm("kid", "mom")
+    for mid in ("kid", "mom"):
+        ids = {c["id"] for c in main.list_channels(mid)}
+        check(fam["id"] in ids, "empty family channel still listed (the hub)")
+        check(ev["id"] not in ids, f"empty event thread hidden from {mid}")
+        check(dm["id"] not in ids, f"empty DM hidden from {mid}")
+
+    storage.add_chat_message({"id": "e1", "channel_id": ev["id"], "sender_member_id": "mom",
+                              "ts": time.time(), "type": "text", "body": "snacks?", "attachment": None})
+    storage.add_chat_message({"id": "d1", "channel_id": dm["id"], "sender_member_id": "kid",
+                              "ts": time.time(), "type": "text", "body": "hi", "attachment": None})
+    for mid in ("kid", "mom"):
+        ids = {c["id"] for c in main.list_channels(mid)}
+        check(ev["id"] in ids and dm["id"] in ids,
+              f"channels appear once the first message lands ({mid})")
+
+
 SCENARIOS = [
     scenario_family_channel_singleton,
     scenario_helper_restrictions,
@@ -265,6 +292,7 @@ SCENARIOS = [
     scenario_unread_counts_and_reads,
     scenario_send_message_endpoint_validations,
     scenario_fanout_recipients,
+    scenario_empty_channels_hidden_from_list,
 ]
 
 if __name__ == "__main__":

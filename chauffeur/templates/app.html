@@ -1019,10 +1019,13 @@
             }).join('');
         }
 
-        async function openChannel(channelId) {
+        async function openChannel(channelId, channelObj = null) {
             activeChannelId = channelId;
             document.getElementById('thread-view').style.display = 'flex';
-            let c = channelsData.find(x => x.id === channelId);
+            // Empty channels aren't in the list payload (they only get listed
+            // once the first message is posted), so Discuss/DM creation passes
+            // the channel object straight through for the header.
+            let c = channelsData.find(x => x.id === channelId) || channelObj;
             if (!c) {
                 await fetchChannels();
                 c = channelsData.find(x => x.id === channelId);
@@ -1329,7 +1332,7 @@
                 if (!res.ok) throw new Error('dm refused');
                 const ch = await res.json();
                 setView('messages');
-                openChannel(ch.id);
+                openChannel(ch.id, ch);
             } catch (e) { showGlobalAlert('Failed to open chat'); }
         }
 
@@ -1999,7 +2002,7 @@
                             });
                             const ch = await res.json();
                             setView('messages');
-                            openChannel(ch.id);
+                            openChannel(ch.id, ch);
                         } catch (e) { showGlobalAlert('Failed to open event chat'); }
                     };
                 } else {
