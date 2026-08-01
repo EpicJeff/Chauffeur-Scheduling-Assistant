@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.23.0).
+up cold. Last updated: 2026-08-01 (v2.24.1).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -111,6 +111,28 @@ Frictions to plan for: iOS builds need a Mac or cloud CI (dev machine is
 Windows) · $99/yr Apple Developer account · TestFlight builds expire after
 90 days (recurring release cadence) · Apple scrutinizes always-on location
 permissions.
+
+**Distribution plan (decided 2026-08-01): TestFlight is the workshop, the
+App Store is the destination.**
+- Phase A — develop on **TestFlight internal testing**: no review at all,
+  instant builds; family joins the developer team as internal testers.
+- Phase B — once stable, submit as an **App Store release, likely via
+  Apple's unlisted-app distribution** (fully reviewed, never expires,
+  reachable only by direct link — not searchable; request it from Apple).
+  Kills the 90-day expiry treadmill permanently. Public listing is also
+  fine — the app is a config-screen shell without a server URL (same shape
+  as the HA companion / Plex / Nextcloud apps); strangers downloading it
+  get nothing.
+- Review hurdles to budget for (one-time, all solvable): Guideline 4.2
+  "minimum functionality" (Capacitor passes when the app feels native —
+  push/audio/navigation are the point of wrapping); reviewers must be able
+  to exercise the app → build a **bundled demo mode with fixture data**
+  (the no-hosting alternative to a demo server + credentials); background
+  location needs honest purpose strings + a privacy policy URL and is the
+  likeliest source of review back-and-forth.
+- Server-side prerequisite regardless of distribution: real APNs/FCM push
+  (replacing web push for the wrapper) — its own task, second-biggest
+  value item after lock-screen audio.
 
 ## Nice-to-haves / polish
 
