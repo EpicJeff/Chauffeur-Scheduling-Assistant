@@ -338,6 +338,21 @@ class UpdateDriveStatusTool(BaseModel):
     status: str = Field(default="completed", description="The status, usually 'completed'.")
     leg_id: str = Field(default="", description="The exact leg ID if known (e.g. 'route_evt1_evt2').")
 
+class GetPointBalancesTool(BaseModel):
+    """
+    Gets the current chore-point balance for every child, sorted highest first.
+    """
+    pass
+
+class AdjustPointsTool(BaseModel):
+    """
+    Adds, subtracts, or sets a child's chore points (a parent-level manual adjustment recorded in the points history). Use delta for relative changes ('give Bob 20 points' -> delta 20, 'take away 5' -> delta -5) or set_to for an absolute balance ('set Bob to 100'). Provide exactly one of delta / set_to.
+    """
+    member_name: str = Field(..., description="The child's name.")
+    delta: Optional[int] = Field(default=None, description="Relative point change; negative to subtract.")
+    set_to: Optional[int] = Field(default=None, description="Absolute target balance.")
+    note: str = Field(default="", description="Short reason shown in the points history, e.g. 'Helped carry groceries'.")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -367,6 +382,8 @@ TOOL_SCHEMAS = {
     "add_trip_flight": AddTripFlightTool.model_json_schema(),
     "edit_trip_flight": EditTripFlightTool.model_json_schema(),
     "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
+    "get_point_balances": GetPointBalancesTool.model_json_schema(),
+    "adjust_points": AdjustPointsTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1343,6 +1360,18 @@ def handle_update_drive_status(args: dict) -> dict:
 
     return {"status": "success", "message": f"Marked drive status as {status}."}
 
+def handle_get_point_balances(args: dict) -> dict:
+    # Shared implementation with the v2 (Gemma router) stack so both agent
+    # stacks stay in lockstep on chore-point behavior.
+    from services.agent_tools_v2 import get_point_balances
+    return get_point_balances()
+
+def handle_adjust_points(args: dict) -> dict:
+    from services.agent_tools_v2 import adjust_points
+    return adjust_points(args.get("member_name", ""),
+                         delta=args.get("delta"), set_to=args.get("set_to"),
+                         note=args.get("note", ""))
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -1371,6 +1400,8 @@ TOOL_HANDLERS = {
     "add_trip_flight": handle_add_trip_flight,
     "edit_trip_flight": handle_edit_trip_flight,
     "delete_trip_flight": handle_delete_trip_flight,
+    "get_point_balances": handle_get_point_balances,
+    "adjust_points": handle_adjust_points,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

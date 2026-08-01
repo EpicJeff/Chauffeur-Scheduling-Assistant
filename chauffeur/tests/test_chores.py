@@ -177,12 +177,92 @@ def scenario_endpoint_rules():
     check(detail["balance"] == 20 and detail["ledger"][0]["delta"] == 20, "member points detail")
 
 
+def scenario_adjust_and_reset():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    bt = BackgroundTasks()
+    _member("kid", "Kid", "child")
+    _member("kid2", "Other Kid", "child")
+    _member("mom", "Mom", "parent")
+
+    # adjust: relative and absolute, append-only ledger
+    res = main.adjust_points_endpoint(main.PointsAdjustRequest(
+        member_id="kid", delta=30, note="Helped with groceries"), bt)
+    check(res["balance"] == 30, "delta adjust lands")
+    res = main.adjust_points_endpoint(main.PointsAdjustRequest(
+        member_id="kid", set_to=100), bt)
+    check(res["delta"] == 70 and res["balance"] == 100, "set_to computes the delta")
+    ledger = storage.get_points_ledger("kid")
+    check(len(ledger) == 2 and all(e["reason"] == "adjust" for e in ledger),
+          "adjustments are appended, not edits")
+    check(ledger[1]["chore_title"] == "Helped with groceries", "note rides in chore_title")
+
+    # validation: children only, exactly one of delta/set_to
+    for req, why in [
+        (main.PointsAdjustRequest(member_id="mom", delta=5), "parents have no points"),
+        (main.PointsAdjustRequest(member_id="kid"), "neither delta nor set_to"),
+        (main.PointsAdjustRequest(member_id="kid", delta=5, set_to=5), "both delta and set_to"),
+    ]:
+        try:
+            main.adjust_points_endpoint(req, bt)
+            check(False, f"expected 400 for {why}")
+        except HTTPException as e:
+            check(e.status_code == 400, f"{why} refused")
+    res = main.adjust_points_endpoint(main.PointsAdjustRequest(member_id="kid", set_to=100), bt)
+    check(res["delta"] == 0 and storage.get_points_ledger("kid", limit=99) and
+          len(storage.get_points_ledger("kid", limit=99)) == 2, "no-op set writes no ledger entry")
+
+    # reset: zeroes via compensating entry, denies pending redemptions
+    storage.adjust_points("kid2", 40)
+    storage.add_reward({"id": "rw1", "title": "Movie night", "description": "",
+                        "cost": 25, "created_at": time.time()})
+    red_id = storage.request_redemption("rw1", "kid")
+    check(red_id not in ("missing", "insufficient"), "redemption requested")
+
+    result = main.reset_points_endpoint(main.PointsResetRequest(), bt)
+    check(result["denied_redemptions"] == 1, "pending redemption auto-denied on reset")
+    check(storage.get_points_balance("kid") == 0 and storage.get_points_balance("kid2") == 0,
+          "all children zeroed")
+    check(storage.get_redemptions("kid", "denied"), "redemption is denied, not deleted")
+    check(len(storage.get_points_ledger("kid", limit=99)) == 3, "reset appends, history intact")
+
+    # single-member reset leaves others alone
+    storage.adjust_points("kid", 10)
+    storage.adjust_points("kid2", 10)
+    main.reset_points_endpoint(main.PointsResetRequest(member_id="kid"), bt)
+    check(storage.get_points_balance("kid") == 0, "targeted reset zeroes the target")
+    check(storage.get_points_balance("kid2") == 10, "targeted reset spares everyone else")
+
+
+def scenario_agent_points_tools():
+    from services import agent_tools_v2
+    _member("kid", "Kid", "child")
+    _member("kiddo", "Kiddo", "child")
+    _member("mom", "Mom", "parent")
+
+    res = agent_tools_v2.adjust_points("Kid", delta=25, note="chat bonus")
+    check(res["status"] == "success" and storage.get_points_balance("kid") == 25,
+          "agent delta adjust")
+    res = agent_tools_v2.adjust_points("kiddo", set_to=50)
+    check(storage.get_points_balance("kiddo") == 50, "agent set_to adjust")
+    res = agent_tools_v2.adjust_points("Ki")  # ambiguous prefix, no delta/set_to
+    check(res["status"] == "error", "ambiguous name refused")
+    res = agent_tools_v2.adjust_points("Mom", delta=5)
+    check(res["status"] == "error", "parent name is not a child match")
+
+    res = agent_tools_v2.get_point_balances()
+    check(res["status"] == "success" and "Kiddo has 50" in res["message"],
+          "balance summary reads naturally")
+
+
 SCENARIOS = [
     scenario_lifecycle_and_points,
     scenario_adults_claimable_but_pointless,
     scenario_claim_cap,
     scenario_maintenance,
     scenario_endpoint_rules,
+    scenario_adjust_and_reset,
+    scenario_agent_points_tools,
 ]
 
 if __name__ == "__main__":

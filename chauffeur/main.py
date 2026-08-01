@@ -478,6 +478,18 @@ def calendar_view(request: Request):
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
 
+@app.get("/chores")
+def chores_page(request: Request):
+    response = templates.TemplateResponse(request=request, name="chores.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+@app.get("/routines")
+def routines_page(request: Request):
+    response = templates.TemplateResponse(request=request, name="routines.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 @app.get("/map")
 def family_map_page(request: Request):
     response = templates.TemplateResponse(request=request, name="map.html")
@@ -2983,6 +2995,59 @@ def reject_chore_endpoint(chore_id: str, req: ChoreRejectRequest,
 def all_points():
     return storage.get_all_point_balances()
 
+class PointsAdjustRequest(BaseModel):
+    member_id: str
+    delta: Optional[int] = None    # relative change...
+    set_to: Optional[int] = None   # ...or absolute target (exactly one)
+    note: Optional[str] = ""
+
+class PointsResetRequest(BaseModel):
+    member_id: Optional[str] = None  # None = every child
+
+@app.post("/api/points/adjust")
+def adjust_points_endpoint(req: PointsAdjustRequest, background_tasks: BackgroundTasks):
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('role') != 'child':
+        raise HTTPException(status_code=400, detail="Points are only tracked for children")
+    if (req.delta is None) == (req.set_to is None):
+        raise HTTPException(status_code=400, detail="Provide exactly one of delta or set_to")
+    delta = int(req.delta) if req.delta is not None \
+        else int(req.set_to) - storage.get_points_balance(req.member_id)
+    if abs(delta) > 100000:
+        raise HTTPException(status_code=400, detail="Adjustment too large")
+    if delta == 0:
+        return {'member_id': req.member_id, 'delta': 0,
+                'balance': storage.get_points_balance(req.member_id)}
+    balance = storage.adjust_points(req.member_id, delta, req.note or '')
+    note = (req.note or '').strip()
+    body = f"{'+' if delta > 0 else ''}{delta} points" + (f" — {note}" if note else '')
+    background_tasks.add_task(_notify_member_lanes, member, 'Points adjusted',
+                              body, '/app?view=chores')
+    pending = sum(r['cost'] for r in storage.get_redemptions(req.member_id, 'pending'))
+    return {'member_id': req.member_id, 'delta': delta, 'balance': balance,
+            'pending_redemptions': pending}
+
+@app.post("/api/points/reset")
+def reset_points_endpoint(req: PointsResetRequest, background_tasks: BackgroundTasks):
+    if req.member_id:
+        member = storage.get_member(req.member_id)
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if member.get('role') != 'child':
+            raise HTTPException(status_code=400, detail="Points are only tracked for children")
+    result = storage.reset_points(req.member_id)
+    for entry in result['members']:
+        if entry['cleared'] == 0:
+            continue
+        kid = storage.get_member(entry['member_id'])
+        if kid:
+            background_tasks.add_task(_notify_member_lanes, kid, 'Points reset',
+                                      'Your points were reset by a parent',
+                                      '/app?view=chores')
+    return result
+
 @app.get("/api/points/{member_id}")
 def member_points(member_id: str, limit: int = 25):
     if not storage.get_member(member_id):
@@ -3056,6 +3121,23 @@ def routines_day(member_id: str, date: Optional[str] = None):
         'items': storage.routines_for_day(member_id, date_str),
         'streak': storage.compute_streak(member_id),
     }
+
+@app.get("/api/routines/streaks")
+def routines_streaks():
+    """Per-member streak summary for every member with routine items —
+    feeds the routines page header chips and the kiosk streak board."""
+    member_ids = {r['member_id'] for r in storage.get_routines()}
+    out = []
+    for m in storage.get_all_members():
+        if m['id'] not in member_ids:
+            continue
+        out.append({
+            'member_id': m['id'], 'name': m.get('name'),
+            'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+            'streak': storage.compute_streak(m['id']),
+        })
+    out.sort(key=lambda x: (-x['streak']['current'], x['name'] or ''))
+    return out
 
 class RoutineCheckRequest(BaseModel):
     member_id: str

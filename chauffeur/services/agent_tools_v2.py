@@ -358,6 +358,63 @@ def manage_trip_rules(trip_id: str, action: str, rule: Dict[str, Any] = None, ru
 
     return {"status": "error", "message": f"Unknown action '{action}'. Use create, list, enable, disable, or delete."}
 
+def _find_child_member(member_name: str):
+    """Fuzzy-resolve a child member by name (exact, then substring, both
+    case-insensitive). Returns (member, error_message)."""
+    from services import storage
+    children = [m for m in storage.get_all_members() if m.get('role') == 'child']
+    if not children:
+        return None, "There are no child members set up yet."
+    name = (member_name or '').strip().lower()
+    if not name:
+        return None, "Which child do you mean? Please give a name."
+    exact = [m for m in children if (m.get('name') or '').lower() == name]
+    if len(exact) == 1:
+        return exact[0], None
+    partial = [m for m in children if name in (m.get('name') or '').lower()
+               or (m.get('name') or '').lower() in name]
+    if len(partial) == 1:
+        return partial[0], None
+    names = ", ".join(m.get('name') or '?' for m in children)
+    return None, f"I couldn't match '{member_name}' to one child. The children are: {names}."
+
+
+def get_point_balances() -> Dict[str, Any]:
+    """Chore-point balances for every child, sorted highest first."""
+    from services import storage
+    balances = storage.get_all_point_balances()
+    if not balances:
+        return {"status": "success", "balances": [],
+                "message": "No children are earning points yet."}
+    msg = ", ".join(f"{b['name']} has {b['balance']} points" for b in balances)
+    return {"status": "success", "balances": balances, "message": msg + "."}
+
+
+def adjust_points(member_name: str, delta: int = None, set_to: int = None,
+                  note: str = "", by_member_id: str = None) -> Dict[str, Any]:
+    """Manual point adjustment for a child, as an append-only ledger entry.
+    Give either delta (relative) or set_to (absolute)."""
+    from services import storage
+    member, err = _find_child_member(member_name)
+    if err:
+        return {"status": "error", "message": err}
+    if (delta is None) == (set_to is None):
+        return {"status": "error",
+                "message": "Give either a relative change (delta) or a target balance (set_to), not both."}
+    if delta is None:
+        delta = int(set_to) - storage.get_points_balance(member['id'])
+    else:
+        delta = int(delta)
+    if delta == 0:
+        balance = storage.get_points_balance(member['id'])
+        return {"status": "success",
+                "message": f"{member['name']} already has {balance} points — nothing to change."}
+    balance = storage.adjust_points(member['id'], delta, note or '', by_member_id)
+    change = f"+{delta}" if delta > 0 else str(delta)
+    return {"status": "success",
+            "message": f"Done — {change} points for {member['name']}. They now have {balance} points."}
+
+
 # ==============================================================================
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
@@ -519,6 +576,25 @@ def get_available_tools() -> List[Dict]:
                     }
                 },
                 "required": ["trip_id", "action"]
+            }
+        },
+        {
+            "name": "get_point_balances",
+            "description": "Gets the current chore-point balance for every child. Use for questions like 'how many points does Bob have' or 'who is winning on points'.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "adjust_points",
+            "description": "Adds, subtracts, or sets a child's chore points (a parent-level manual adjustment, recorded in the points history). Use delta for relative changes ('give Bob 20 points' -> delta 20, 'take away 5' -> delta -5) or set_to for absolute ('set Bob to 100'). Never both.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {"type": "string", "description": "The child's name."},
+                    "delta": {"type": "integer", "description": "Relative change, negative to subtract."},
+                    "set_to": {"type": "integer", "description": "Absolute target balance."},
+                    "note": {"type": "string", "description": "Short reason shown in the points history, e.g. 'Helped carry groceries'."}
+                },
+                "required": ["member_name"]
             }
         }
     ]

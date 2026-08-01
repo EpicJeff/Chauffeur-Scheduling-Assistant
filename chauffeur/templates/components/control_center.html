@@ -30,6 +30,20 @@
     </div>
 </div>
 
+<!-- Global Input Modal (shared prompt() replacement — use window.promptInput) -->
+<div id="cc-input-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-6 max-w-sm w-full border border-gray-700">
+        <h3 id="cc-input-title" class="text-xl font-bold text-white mb-4">Input</h3>
+        <p id="cc-input-message" class="text-gray-300 mb-4 text-sm whitespace-pre-wrap"></p>
+        <input id="cc-input-field" type="text" autocomplete="off"
+            class="w-full bg-gray-900 border border-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none rounded p-3 text-white mb-6">
+        <div class="flex justify-end gap-3">
+            <button id="cc-input-cancel-btn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm transition-colors font-bold">Cancel</button>
+            <button id="cc-input-ok-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-sm transition-colors shadow-lg shadow-blue-900/50">OK</button>
+        </div>
+    </div>
+</div>
+
 <!-- Chat Help Modal -->
 <div id="chat-help-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4" onclick="if(event.target === this) closeChatHelpModal()">
     <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 flex flex-col max-h-[85vh]">
@@ -1078,6 +1092,40 @@ function closeChatHelpModal() {
                     resolve(true);
                 }
             }, trueText, "bg-blue-600 hover:bg-blue-500 shadow-blue-900/50", title, falseText);
+        });
+    }
+
+    // prompt() replacement. Resolves to the entered string, or null on cancel.
+    window.promptInput = function(title, message, { placeholder = '', value = '', type = 'text', okText = 'OK' } = {}) {
+        return new Promise(resolve => {
+            const modal = document.getElementById('cc-input-modal');
+            const field = document.getElementById('cc-input-field');
+            const okBtn = document.getElementById('cc-input-ok-btn');
+            const cancelBtn = document.getElementById('cc-input-cancel-btn');
+            document.getElementById('cc-input-title').textContent = title;
+            document.getElementById('cc-input-message').textContent = message;
+            okBtn.textContent = okText;
+            field.type = type;
+            field.placeholder = placeholder;
+            field.value = value;
+            let done = false;
+            const finish = (result) => {
+                if (done) return;
+                done = true;
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                okBtn.onclick = cancelBtn.onclick = field.onkeydown = null;
+                resolve(result);
+            };
+            okBtn.onclick = () => finish(field.value);
+            cancelBtn.onclick = () => finish(null);
+            field.onkeydown = (e) => {
+                if (e.key === 'Enter') finish(field.value);
+                if (e.key === 'Escape') finish(null);
+            };
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => field.focus(), 50);
         });
     }
 </script>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chores & Rewards</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            sans: ['Inter', 'sans-serif'],
+                        },
+                        colors: {
+                            gray: {
+                                900: '#111827',
+                                800: '#1F2937',
+                                700: '#374151',
+                                600: '#4B5563',
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body {
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="choresPage()" x-init="init()" x-cloak>
+        <div class="max-w-5xl mx-auto p-6 lg:p-10">
+
+            <header class="mb-8">
+                <h2 class="text-3xl font-bold text-white mb-2">Chores & Rewards</h2>
+                <p class="text-gray-400" x-show="!isKiosk">The family chore pot: kids claim chores in the app, a parent
+                    verifies (PIN required there), points land here. Rewards are what points buy.</p>
+            </header>
+
+            <!-- ===== Leaderboard (the only section in kiosk mode) ===== -->
+            <section class="mb-10">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Points Leaderboard</h3>
+                <div x-show="balances.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                    No children are earning points yet.
+                </div>
+                <div class="grid gap-4" :class="isKiosk ? 'md:grid-cols-2' : 'grid-cols-1'">
+                    <template x-for="(b, idx) in balances" :key="b.member_id">
+                        <div class="bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg">
+                            <div class="flex items-center gap-4">
+                                <div class="text-2xl font-black w-8 text-center shrink-0"
+                                    :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
+                                    x-text="'#' + (idx + 1)"></div>
+                                <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl text-white shrink-0"
+                                    :style="'background-color:' + (b.color_code || '#3b82f6')"
+                                    x-text="b.avatar || (b.name || '?').charAt(0)"></div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-xl font-bold text-white truncate" x-text="b.name"></div>
+                                    <div class="text-sm text-gray-500" x-show="pendingCost(b.member_id) > 0"
+                                        x-text="pendingCost(b.member_id) + ' pts in pending reward requests'"></div>
+                                </div>
+                                <div class="text-right shrink-0">
+                                    <div class="font-black text-blue-400" :class="isKiosk ? 'text-5xl' : 'text-3xl'"
+                                        x-text="b.balance"></div>
+                                    <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">points</div>
+                                </div>
+                            </div>
+
+                            <!-- Admin: point tools per child -->
+                            <div x-show="!isKiosk" class="mt-4 pt-4 border-t border-gray-700/60">
+                                <div class="flex gap-2 items-center flex-wrap">
+                                    <input type="number" min="1" x-model.number="tools[b.member_id].amount"
+                                        placeholder="pts"
+                                        class="w-20 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                    <input type="text" x-model="tools[b.member_id].note" placeholder="Reason (optional)"
+                                        class="flex-1 min-w-[10rem] bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                    <button @click="adjust(b, 1)"
+                                        class="bg-green-600/80 hover:bg-green-500 text-white font-bold px-3 py-2 rounded-lg text-sm">+ Add</button>
+                                    <button @click="adjust(b, -1)"
+                                        class="bg-red-600/80 hover:bg-red-500 text-white font-bold px-3 py-2 rounded-lg text-sm">− Subtract</button>
+                                    <button @click="setTo(b)"
+                                        class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded-lg text-sm">Set to</button>
+                                    <button @click="zeroOut(b)"
+                                        class="text-red-400 hover:text-red-300 bg-red-500/10 font-bold px-3 py-2 rounded-lg text-sm">Zero</button>
+                                </div>
+                                <button @click="toggleHistory(b.member_id)"
+                                    class="mt-3 text-xs font-bold text-gray-500 hover:text-gray-300 uppercase tracking-widest"
+                                    x-text="expanded[b.member_id] ? 'Hide history' : 'Show history'"></button>
+                                <div x-show="expanded[b.member_id]" class="mt-2 space-y-1">
+                                    <template x-for="e in (ledgers[b.member_id] || [])" :key="e.id">
+                                        <div class="flex items-center gap-3 text-sm bg-gray-900/60 rounded-lg px-3 py-2">
+                                            <span class="font-bold w-14 text-right shrink-0"
+                                                :class="e.delta >= 0 ? 'text-green-400' : 'text-red-400'"
+                                                x-text="(e.delta >= 0 ? '+' : '') + e.delta"></span>
+                                            <span class="text-gray-300 truncate flex-1" x-text="e.chore_title || e.reason"></span>
+                                            <span class="text-[10px] uppercase tracking-wide text-gray-600 font-bold shrink-0"
+                                                x-text="e.reason"></span>
+                                            <span class="text-xs text-gray-500 shrink-0"
+                                                x-text="new Date(e.ts * 1000).toLocaleDateString()"></span>
+                                        </div>
+                                    </template>
+                                    <div x-show="(ledgers[b.member_id] || []).length === 0" class="text-xs text-gray-600 px-3 py-1">
+                                        No history yet.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="!isKiosk && balances.length > 0" class="mt-4 flex justify-end">
+                    <button @click="resetAll()"
+                        class="text-red-400 hover:text-red-300 bg-red-500/10 border border-red-900/50 font-bold px-4 py-2 rounded-lg text-sm">
+                        Reset all points…
+                    </button>
+                </div>
+            </section>
+
+            <template x-if="!isKiosk">
+                <div>
+                    <!-- ===== Pending reward requests ===== -->
+                    <section class="mb-10" x-show="redemptions.length > 0">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Pending Reward Requests</h3>
+                        <div class="space-y-2">
+                            <template x-for="r in redemptions" :key="r.id">
+                                <div class="bg-gray-800 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
+                                    <span class="font-bold text-white" x-text="r.member_name"></span>
+                                    <span class="text-gray-400">wants</span>
+                                    <span class="font-bold text-indigo-300 truncate" x-text="r.reward_title"></span>
+                                    <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 rounded font-bold text-xs shrink-0"
+                                        x-text="r.cost + ' pts'"></span>
+                                    <span class="ml-auto text-xs text-gray-500 shrink-0">approve or deny in the app (parent PIN)</span>
+                                </div>
+                            </template>
+                        </div>
+                    </section>
+
+                    <!-- ===== Chores admin ===== -->
+                    <section class="mb-10">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Chore Pot</h3>
+                        <div class="space-y-3 mb-5">
+                            <div x-show="chores.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                                No chores posted yet — add the first one below.
+                            </div>
+                            <template x-for="chore in chores" :key="chore.id">
+                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <h4 class="text-lg font-bold text-white" x-text="chore.title"></h4>
+                                            <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-bold text-xs"
+                                                x-text="'+' + chore.points + ' pts'"></span>
+                                            <span x-show="chore.recurrence !== 'once'"
+                                                class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs uppercase"
+                                                x-text="chore.recurrence"></span>
+                                            <span class="px-2 py-0.5 rounded font-bold text-xs uppercase"
+                                                :class="{ 'bg-green-900/50 text-green-300': chore.state === 'open',
+                                                          'bg-amber-900/50 text-amber-300': chore.state === 'claimed' || chore.state === 'done',
+                                                          'bg-gray-700 text-gray-400': chore.state === 'verified' }"
+                                                x-text="chore.state + (chore.claimed_by_name ? ' · ' + chore.claimed_by_name : '')"></span>
+                                        </div>
+                                        <p class="text-gray-400 text-sm mt-1" x-text="chore.description" x-show="chore.description"></p>
+                                    </div>
+                                    <div class="flex space-x-2 shrink-0">
+                                        <button @click="startEditChore(chore)"
+                                            class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
+                                        <button @click="deleteChore(chore)"
+                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="bg-gray-800/60 p-6 rounded-xl border border-gray-600 border-dashed">
+                            <h4 class="text-lg font-bold text-white mb-4"
+                                x-text="editChoreId ? 'Edit Chore' : 'Add New Chore'"></h4>
+                            <div class="flex gap-4 items-end flex-wrap">
+                                <div class="w-full lg:flex-1">
+                                    <label class="block text-gray-400 mb-1 text-sm">Title</label>
+                                    <input type="text" x-model="choreEdit.title" placeholder="Take out the trash"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Points</label>
+                                    <input type="number" min="0" max="1000" x-model.number="choreEdit.points"
+                                        class="w-24 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Repeats</label>
+                                    <select x-model="choreEdit.recurrence"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        <option value="once">One-off</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="w-full mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Description (optional)</label>
+                                <input type="text" x-model="choreEdit.description"
+                                    placeholder="Both bins, and put them back after pickup"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                            </div>
+                            <div class="w-full mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Who can claim it (none checked = anyone)</label>
+                                <div class="flex gap-3 flex-wrap">
+                                    <template x-for="m in members.filter(x => x.role !== 'helper')" :key="m.id">
+                                        <label class="flex items-center gap-2 text-gray-300 font-bold bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
+                                            <input type="checkbox" :value="m.id" x-model="choreEdit.eligible_member_ids"
+                                                class="w-4 h-4">
+                                            <span x-text="m.name"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="flex gap-2 mt-5">
+                                <button @click="saveChore()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
+                                    x-text="editChoreId ? 'Save Chore' : 'Add Chore'"></button>
+                                <button x-show="editChoreId" @click="cancelEditChore()"
+                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ===== Rewards admin ===== -->
+                    <section class="mb-10">
+                        <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Rewards Store</h3>
+                        <div class="space-y-3 mb-5">
+                            <div x-show="rewards.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                                No rewards yet — give those points something to buy.
+                            </div>
+                            <template x-for="rw in rewards" :key="rw.id">
+                                <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex justify-between items-center gap-3">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <h4 class="text-lg font-bold text-white" x-text="rw.title"></h4>
+                                            <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 rounded font-bold text-xs"
+                                                x-text="rw.cost + ' pts'"></span>
+                                        </div>
+                                        <p class="text-gray-400 text-sm" x-text="rw.description" x-show="rw.description"></p>
+                                    </div>
+                                    <div class="flex space-x-2 shrink-0">
+                                        <button @click="startEditReward(rw)"
+                                            class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
+                                        <button @click="deleteReward(rw)"
+                                            class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="bg-gray-800/60 p-6 rounded-xl border border-gray-600 border-dashed">
+                            <h4 class="text-lg font-bold text-white mb-4"
+                                x-text="editRewardId ? 'Edit Reward' : 'Add Reward'"></h4>
+                            <div class="flex gap-4 items-end flex-wrap">
+                                <div class="w-full lg:flex-1">
+                                    <label class="block text-gray-400 mb-1 text-sm">Title</label>
+                                    <input type="text" x-model="rewardEdit.title" placeholder="Movie night pick"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Cost (points)</label>
+                                    <input type="number" min="1" x-model.number="rewardEdit.cost"
+                                        class="w-28 bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div class="w-full lg:flex-1">
+                                    <label class="block text-gray-400 mb-1 text-sm">Description (optional)</label>
+                                    <input type="text" x-model="rewardEdit.description"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <button @click="saveReward()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
+                                    x-text="editRewardId ? 'Save' : 'Add'"></button>
+                                <button x-show="editRewardId" @click="cancelEditReward()"
+                                    class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script>
+        function choresPage() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                balances: [],
+                ledgers: {},
+                tools: {},
+                expanded: {},
+                members: [],
+                chores: [],
+                rewards: [],
+                redemptions: [],
+                editChoreId: null,
+                choreEdit: { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] },
+                editRewardId: null,
+                rewardEdit: { title: '', description: '', cost: 50 },
+
+                async init() {
+                    await this.loadPoints();
+                    if (!this.isKiosk) {
+                        await Promise.all([this.loadMembers(), this.loadChores(),
+                                           this.loadRewards(), this.loadRedemptions()]);
+                    }
+                    if (this.isKiosk) {
+                        setInterval(() => this.loadPoints(), 60000);
+                    }
+                },
+
+                // --- Points ---
+                async loadPoints() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/points`);
+                        const data = await res.json();
+                        // tools entries must exist before the cards render
+                        for (const b of data) {
+                            if (!this.tools[b.member_id]) this.tools[b.member_id] = { amount: null, note: '' };
+                            if (!this.isKiosk) this.loadLedger(b.member_id);
+                        }
+                        this.balances = data;
+                    } catch (e) { console.error('Failed to load points', e); }
+                },
+                async loadLedger(memberId) {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/points/${memberId}?limit=15`);
+                        const data = await res.json();
+                        this.ledgers[memberId] = data.ledger || [];
+                    } catch (e) { /* history is decorative */ }
+                },
+                toggleHistory(memberId) {
+                    this.expanded[memberId] = !this.expanded[memberId];
+                },
+                pendingCost(memberId) {
+                    return this.redemptions.filter(r => r.member_id === memberId)
+                        .reduce((s, r) => s + (r.cost || 0), 0);
+                },
+                async adjust(b, sign) {
+                    const t = this.tools[b.member_id];
+                    const amount = Math.abs(Number(t.amount) || 0);
+                    if (!amount) { showGlobalAlert('Enter a point amount first'); return; }
+                    await this.postAdjust({ member_id: b.member_id, delta: sign * amount, note: t.note || '' });
+                },
+                async setTo(b) {
+                    const t = this.tools[b.member_id];
+                    if (t.amount === null || t.amount === '' || Number(t.amount) < 0) {
+                        showGlobalAlert('Enter the target balance in the points box first'); return;
+                    }
+                    await this.postAdjust({ member_id: b.member_id, set_to: Number(t.amount), note: t.note || '' });
+                },
+                async postAdjust(payload) {
+                    const res = await fetch(`${this.apiBase}api/points/adjust`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not adjust points');
+                        return;
+                    }
+                    const data = await res.json();
+                    if (data.pending_redemptions > data.balance) {
+                        showGlobalAlert(`Heads up: pending reward requests (${data.pending_redemptions} pts) now exceed the balance (${data.balance} pts) — they can't be approved until points catch up or you deny them in the app.`);
+                    }
+                    this.tools[payload.member_id] = { amount: null, note: '' };
+                    await this.loadPoints();
+                },
+                async zeroOut(b) {
+                    const pending = this.pendingCost(b.member_id);
+                    const warn = pending > 0 ? ` Their ${pending} pts of pending reward requests will be denied.` : '';
+                    if (!await promptConfirm('Zero points', `Zero out ${b.name}'s ${b.balance} points?${warn}`, 'Zero out')) return;
+                    await this.postReset({ member_id: b.member_id });
+                },
+                async resetAll() {
+                    const pending = this.redemptions.reduce((s, r) => s + (r.cost || 0), 0);
+                    const warn = pending > 0 ? ` All ${pending} pts of pending reward requests will be denied.` : '';
+                    if (!await promptConfirm('Reset all points',
+                        `Reset EVERYONE's points to zero?${warn} History is kept — this adds a compensating "reset" entry.`,
+                        'Reset all')) return;
+                    await this.postReset({});
+                },
+                async postReset(payload) {
+                    const res = await fetch(`${this.apiBase}api/points/reset`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not reset points');
+                        return;
+                    }
+                    await Promise.all([this.loadPoints(), this.loadRedemptions()]);
+                },
+
+                // --- Members ---
+                async loadMembers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members`);
+                        this.members = await res.json();
+                    } catch (e) { this.members = []; }
+                },
+
+                // --- Chores ---
+                async loadChores() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/chores`);
+                        const data = await res.json();
+                        this.chores = Array.isArray(data) ? data : [];
+                    } catch (e) { this.chores = []; }
+                },
+                startEditChore(chore) {
+                    this.editChoreId = chore.id;
+                    this.choreEdit = {
+                        title: chore.title,
+                        description: chore.description || '',
+                        points: chore.points,
+                        recurrence: chore.recurrence || 'once',
+                        eligible_member_ids: [...(chore.eligible_member_ids || [])],
+                    };
+                },
+                cancelEditChore() {
+                    this.editChoreId = null;
+                    this.choreEdit = { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] };
+                },
+                async saveChore() {
+                    if (!(this.choreEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }
+                    const url = this.editChoreId
+                        ? `${this.apiBase}api/chores/${this.editChoreId}`
+                        : `${this.apiBase}api/chores`;
+                    const res = await fetch(url, {
+                        method: this.editChoreId ? 'PUT' : 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.choreEdit)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save chore');
+                        return;
+                    }
+                    this.cancelEditChore();
+                    await this.loadChores();
+                },
+                async deleteChore(chore) {
+                    if (!await promptConfirm('Delete chore', `Delete chore "${chore.title}"?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/chores/${chore.id}`, { method: 'DELETE' });
+                    await this.loadChores();
+                },
+
+                // --- Rewards ---
+                async loadRewards() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/rewards`);
+                        this.rewards = await res.json();
+                    } catch (e) { this.rewards = []; }
+                },
+                async loadRedemptions() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/redemptions?state=pending`);
+                        this.redemptions = await res.json();
+                    } catch (e) { this.redemptions = []; }
+                },
+                startEditReward(rw) {
+                    this.editRewardId = rw.id;
+                    this.rewardEdit = { title: rw.title, description: rw.description || '', cost: rw.cost };
+                },
+                cancelEditReward() {
+                    this.editRewardId = null;
+                    this.rewardEdit = { title: '', description: '', cost: 50 };
+                },
+                async saveReward() {
+                    if (!(this.rewardEdit.title || '').trim()) { showGlobalAlert('Title required'); return; }
+                    const url = this.editRewardId
+                        ? `${this.apiBase}api/rewards/${this.editRewardId}`
+                        : `${this.apiBase}api/rewards`;
+                    const res = await fetch(url, {
+                        method: this.editRewardId ? 'PUT' : 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.rewardEdit)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save reward');
+                        return;
+                    }
+                    this.cancelEditReward();
+                    await this.loadRewards();
+                },
+                async deleteReward(rw) {
+                    if (!await promptConfirm('Delete reward', `Delete reward "${rw.title}"?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/rewards/${rw.id}`, { method: 'DELETE' });
+                    await this.loadRewards();
+                },
+            };
+        }
+    </script>
+
+    {% include 'components/control_center.html' %}
+</body>
+
+</html>

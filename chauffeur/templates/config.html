@@ -82,18 +82,6 @@
                         </button>
                     </li>
                     <li>
-                        <button @click="activeTab = 'chores'"
-                            :class="activeTab === 'chores' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
-                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
-                                </path>
-                            </svg>
-                            Chores
-                        </button>
-                    </li>
-                    <li>
                         <button @click="activeTab = 'rules'"
                             :class="activeTab === 'rules' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
                             class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
@@ -981,216 +969,6 @@
                                 </div>
                             </div>
                         </template>
-                    </div>
-                </div>
-
-                <!-- Chores -->
-                <div x-show="activeTab === 'chores'" x-cloak x-transition.opacity
-                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-2 text-blue-300">Chores</h2>
-                    <p class="text-gray-400 text-sm mb-6">The family chore pot. Members claim chores in the app;
-                        children earn points when a parent verifies (verification happens in the app and requires a
-                        parent PIN). Empty eligibility = anyone can claim.</p>
-                    <div class="space-y-3 mb-8">
-                        <template x-for="chore in chores" :key="chore.id">
-                            <div class="bg-gray-900 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3">
-                                <div class="min-w-0">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                        <h3 class="text-lg font-bold text-white" x-text="chore.title"></h3>
-                                        <span class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-bold text-xs"
-                                            x-text="'+' + chore.points + ' pts'"></span>
-                                        <span x-show="chore.recurrence !== 'once'"
-                                            class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded font-bold text-xs uppercase"
-                                            x-text="chore.recurrence"></span>
-                                        <span class="px-2 py-0.5 rounded font-bold text-xs uppercase"
-                                            :class="{ 'bg-green-900/50 text-green-300': chore.state === 'open',
-                                                      'bg-amber-900/50 text-amber-300': chore.state === 'claimed' || chore.state === 'done',
-                                                      'bg-gray-700 text-gray-400': chore.state === 'verified' }"
-                                            x-text="chore.state + (chore.claimed_by_name ? ' · ' + chore.claimed_by_name : '')"></span>
-                                    </div>
-                                    <p class="text-gray-400 text-sm mt-1" x-text="chore.description" x-show="chore.description"></p>
-                                </div>
-                                <div class="flex space-x-2 shrink-0">
-                                    <button @click="startEditChore(chore)"
-                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
-                                    <button @click="deleteChore(chore)"
-                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-
-                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
-                        <h3 class="text-lg font-bold text-white mb-4"
-                            x-text="editChoreId ? 'Edit Chore' : 'Add New Chore'"></h3>
-                        <div class="flex gap-4 items-end flex-wrap">
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                                <input type="text" x-model="choreEdit.title" placeholder="Take out the trash"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Points</label>
-                                <input type="number" min="0" max="1000" x-model.number="choreEdit.points"
-                                    class="w-24 bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Repeats</label>
-                                <select x-model="choreEdit.recurrence"
-                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                    <option value="once">One-off</option>
-                                    <option value="daily">Daily</option>
-                                    <option value="weekly">Weekly</option>
-                                    <option value="monthly">Monthly</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="w-full mt-4">
-                            <label class="block text-gray-400 mb-1 text-sm">Description (optional)</label>
-                            <input type="text" x-model="choreEdit.description"
-                                placeholder="Both bins, and put them back after pickup"
-                                class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                        </div>
-                        <div class="w-full mt-4">
-                            <label class="block text-gray-400 mb-1 text-sm">Who can claim it (none checked = anyone)</label>
-                            <div class="flex gap-3 flex-wrap">
-                                <template x-for="m in members.filter(x => x.role !== 'helper')" :key="m.id">
-                                    <label class="flex items-center gap-2 text-gray-300 font-bold bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
-                                        <input type="checkbox" :value="m.id" x-model="choreEdit.eligible_member_ids"
-                                            class="w-4 h-4">
-                                        <span x-text="m.name"></span>
-                                    </label>
-                                </template>
-                            </div>
-                        </div>
-                        <div class="flex gap-2 mt-5">
-                            <button @click="saveChore()"
-                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
-                                x-text="editChoreId ? 'Save Chore' : 'Add Chore'"></button>
-                            <button x-show="editChoreId" @click="cancelEditChore()"
-                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
-                        </div>
-                    </div>
-
-                    <!-- Daily Routines -->
-                    <h2 class="text-3xl font-bold mt-10 mb-2 text-blue-300">Daily Routines</h2>
-                    <p class="text-gray-400 text-sm mb-6">Personal checklists (brush teeth, homework…) shown on each
-                        member's My Day. No points — streaks instead. Optional time of day; leave days unchecked for
-                        every day.</p>
-                    <div class="space-y-3 mb-8">
-                        <template x-for="r in routines" :key="r.id">
-                            <div class="bg-gray-900 p-4 rounded-xl flex flex-col md:flex-row justify-between md:items-center gap-3">
-                                <div class="flex items-center gap-2 flex-wrap min-w-0">
-                                    <span class="px-2 py-0.5 bg-gray-700 text-gray-200 rounded font-bold text-xs"
-                                        x-text="r.member_name || '?'"></span>
-                                    <h3 class="text-lg font-bold text-white" x-text="r.title"></h3>
-                                    <span x-show="r.time_of_day" class="text-blue-400 font-bold text-sm" x-text="r.time_of_day"></span>
-                                    <span class="text-gray-500 text-xs font-bold"
-                                        x-text="(r.days_of_week && r.days_of_week.length) ? r.days_of_week.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(' ') : 'every day'"></span>
-                                </div>
-                                <div class="flex space-x-2 shrink-0">
-                                    <button @click="startEditRoutine(r)"
-                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
-                                    <button @click="deleteRoutine(r)"
-                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
-                        <h3 class="text-lg font-bold text-white mb-4"
-                            x-text="editRoutineId ? 'Edit Routine Item' : 'Add Routine Item'"></h3>
-                        <div class="flex gap-4 items-end flex-wrap">
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Member</label>
-                                <select x-model="routineEdit.member_id"
-                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                                    <template x-for="m in members.filter(x => x.role !== 'helper')" :key="m.id">
-                                        <option :value="m.id" x-text="m.name"></option>
-                                    </template>
-                                </select>
-                            </div>
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                                <input type="text" x-model="routineEdit.title" placeholder="Brush teeth"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Time (optional)</label>
-                                <input type="time" x-model="routineEdit.time_of_day"
-                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                        </div>
-                        <div class="w-full mt-4">
-                            <label class="block text-gray-400 mb-1 text-sm">Days (none = every day)</label>
-                            <div class="flex gap-2 flex-wrap">
-                                <template x-for="(d, idx) in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']" :key="idx">
-                                    <label class="flex items-center gap-1.5 text-gray-300 font-bold bg-gray-900 border border-gray-700 rounded-lg px-3 py-2">
-                                        <input type="checkbox" :value="idx" x-model.number="routineEdit.days_of_week"
-                                            class="w-4 h-4">
-                                        <span x-text="d"></span>
-                                    </label>
-                                </template>
-                            </div>
-                        </div>
-                        <div class="flex gap-2 mt-5">
-                            <button @click="saveRoutine()"
-                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
-                                x-text="editRoutineId ? 'Save Item' : 'Add Item'"></button>
-                            <button x-show="editRoutineId" @click="cancelEditRoutine()"
-                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
-                        </div>
-                    </div>
-
-                    <!-- Rewards -->
-                    <h2 class="text-3xl font-bold mt-10 mb-2 text-blue-300">Rewards</h2>
-                    <p class="text-gray-400 text-sm mb-6">What points buy. Kids request in the app; a parent approves
-                        (PIN required) and the points are deducted.</p>
-                    <div class="space-y-3 mb-8">
-                        <template x-for="rw in rewards" :key="rw.id">
-                            <div class="bg-gray-900 p-4 rounded-xl flex justify-between items-center gap-3">
-                                <div class="min-w-0">
-                                    <div class="flex items-center gap-2">
-                                        <h3 class="text-lg font-bold text-white" x-text="rw.title"></h3>
-                                        <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 rounded font-bold text-xs"
-                                            x-text="rw.cost + ' pts'"></span>
-                                    </div>
-                                    <p class="text-gray-400 text-sm" x-text="rw.description" x-show="rw.description"></p>
-                                </div>
-                                <div class="flex space-x-2 shrink-0">
-                                    <button @click="startEditReward(rw)"
-                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
-                                    <button @click="deleteReward(rw)"
-                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg font-bold text-sm">Delete</button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-                    <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
-                        <h3 class="text-lg font-bold text-white mb-4"
-                            x-text="editRewardId ? 'Edit Reward' : 'Add Reward'"></h3>
-                        <div class="flex gap-4 items-end flex-wrap">
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Title</label>
-                                <input type="text" x-model="rewardEdit.title" placeholder="Movie night pick"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-sm">Cost (points)</label>
-                                <input type="number" min="1" x-model.number="rewardEdit.cost"
-                                    class="w-28 bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Description (optional)</label>
-                                <input type="text" x-model="rewardEdit.description"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
-                            </div>
-                            <button @click="saveReward()"
-                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-3 rounded transition-colors shadow-md"
-                                x-text="editRewardId ? 'Save' : 'Add'"></button>
-                            <button x-show="editRewardId" @click="cancelEditReward()"
-                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-4 py-3 rounded transition-colors">Cancel</button>
-                        </div>
                     </div>
                 </div>
 
@@ -2807,15 +2585,6 @@
                 editMemberId: null,
                 memberEdit: {},
                 memberMergeTarget: '',
-                chores: [],
-                editChoreId: null,
-                choreEdit: { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] },
-                routines: [],
-                editRoutineId: null,
-                routineEdit: { member_id: '', title: '', time_of_day: '', days_of_week: [] },
-                rewards: [],
-                editRewardId: null,
-                rewardEdit: { title: '', description: '', cost: 50 },
                 publicBaseUrl: '',
                 haBaseUrl: '',
                 haToken: '',
@@ -2837,9 +2606,6 @@
                     await this.loadDrivers();
                     await this.loadPassengers();
                     await this.loadMembers();
-                    await this.loadChores();
-                    await this.loadRoutines();
-                    await this.loadRewards();
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -3400,20 +3166,21 @@
                     };
                 },
                 async resetMemberPin(member) {
-                    if (!confirm(`Reset ${member.name}'s PIN? They can set a new one next time they sign in.`)) return;
+                    if (!await promptConfirm('Reset PIN', `Reset ${member.name}'s PIN? They can set a new one next time they sign in.`, 'Reset PIN')) return;
                     await fetch(`${this.apiBase}api/members/${member.id}/pin/clear`, { method: 'POST' });
                     await this.loadMembers();
                 },
                 async setMemberPin(member) {
-                    const pin = prompt(`Set a PIN for ${member.name} (4-8 digits):`);
+                    const pin = await promptInput(`Set PIN for ${member.name}`, '4-8 digits.',
+                        { placeholder: '1234', type: 'tel', okText: 'Set PIN' });
                     if (!pin) return;
-                    if (!/^\d{4,8}$/.test(pin.trim())) { alert('PIN must be 4-8 digits.'); return; }
+                    if (!/^\d{4,8}$/.test(pin.trim())) { showGlobalAlert('PIN must be 4-8 digits.'); return; }
                     const res = await fetch(`${this.apiBase}api/members/${member.id}/pin`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ pin: pin.trim() })
                     });
-                    if (!res.ok) alert('Could not set PIN.');
+                    if (!res.ok) showGlobalAlert('Could not set PIN.');
                     await this.loadMembers();
                 },
                 async saveMember(member) {
@@ -3429,7 +3196,7 @@
                     });
                     if (this.memberMergeTarget) {
                         const other = this.members.find(m => m.id === this.memberMergeTarget);
-                        if (other && confirm(`Merge "${other.name}" into "${updates.name}"? "${other.name}" goes away; their driver/passenger links move here.`)) {
+                        if (other && await promptConfirm('Merge members', `Merge "${other.name}" into "${updates.name}"? "${other.name}" goes away; their driver/passenger links move here.`, 'Merge')) {
                             await fetch(`${this.apiBase}api/members/merge`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -3442,158 +3209,21 @@
                     await this.loadMembers();
                 },
                 async splitMember(member) {
-                    if (!confirm(`Split "${member.name}" — detach the passenger record into its own member?`)) return;
+                    if (!await promptConfirm('Split member', `Split "${member.name}" — detach the passenger record into its own member?`, 'Split')) return;
                     const res = await fetch(`${this.apiBase}api/members/${member.id}/split`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ link: 'passenger' })
                     });
                     if (!res.ok) {
-                        alert('Split failed — the member may only have one link.');
+                        showGlobalAlert('Split failed — the member may only have one link.');
                     }
                     await this.loadMembers();
                 },
                 async deleteMember(member) {
-                    if (!confirm(`Delete member "${member.name}"?`)) return;
+                    if (!await promptConfirm('Delete member', `Delete member "${member.name}"?`, 'Delete')) return;
                     await fetch(`${this.apiBase}api/members/${member.id}`, { method: 'DELETE' });
                     await this.loadMembers();
-                },
-                // --- Chores ---
-                async loadChores() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/chores`);
-                        const data = await res.json();
-                        this.chores = Array.isArray(data) ? data : [];
-                    } catch (e) {
-                        console.error("Failed to load chores", e);
-                        this.chores = [];
-                    }
-                },
-                startEditChore(chore) {
-                    this.editChoreId = chore.id;
-                    this.choreEdit = {
-                        title: chore.title,
-                        description: chore.description || '',
-                        points: chore.points,
-                        recurrence: chore.recurrence || 'once',
-                        eligible_member_ids: [...(chore.eligible_member_ids || [])],
-                    };
-                },
-                cancelEditChore() {
-                    this.editChoreId = null;
-                    this.choreEdit = { title: '', description: '', points: 10, recurrence: 'once', eligible_member_ids: [] };
-                },
-                async saveChore() {
-                    if (!(this.choreEdit.title || '').trim()) { alert('Title required'); return; }
-                    const url = this.editChoreId
-                        ? `${this.apiBase}api/chores/${this.editChoreId}`
-                        : `${this.apiBase}api/chores`;
-                    const res = await fetch(url, {
-                        method: this.editChoreId ? 'PUT' : 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(this.choreEdit)
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        alert(err.detail || 'Could not save chore');
-                        return;
-                    }
-                    this.cancelEditChore();
-                    await this.loadChores();
-                },
-                async deleteChore(chore) {
-                    if (!confirm(`Delete chore "${chore.title}"?`)) return;
-                    await fetch(`${this.apiBase}api/chores/${chore.id}`, { method: 'DELETE' });
-                    await this.loadChores();
-                },
-
-                // --- Routines ---
-                async loadRoutines() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/routines`);
-                        this.routines = await res.json();
-                    } catch (e) { this.routines = []; }
-                },
-                startEditRoutine(r) {
-                    this.editRoutineId = r.id;
-                    this.routineEdit = {
-                        member_id: r.member_id, title: r.title,
-                        time_of_day: r.time_of_day || '',
-                        days_of_week: [...(r.days_of_week || [])],
-                    };
-                },
-                cancelEditRoutine() {
-                    this.editRoutineId = null;
-                    this.routineEdit = { member_id: '', title: '', time_of_day: '', days_of_week: [] };
-                },
-                async saveRoutine() {
-                    if (!(this.routineEdit.title || '').trim()) { alert('Title required'); return; }
-                    if (!this.routineEdit.member_id) { alert('Pick a member'); return; }
-                    const payload = {
-                        member_id: this.routineEdit.member_id,
-                        title: this.routineEdit.title,
-                        time_of_day: this.routineEdit.time_of_day || null,
-                        days_of_week: (this.routineEdit.days_of_week || []).map(Number),
-                    };
-                    const url = this.editRoutineId
-                        ? `${this.apiBase}api/routines/${this.editRoutineId}`
-                        : `${this.apiBase}api/routines`;
-                    const res = await fetch(url, {
-                        method: this.editRoutineId ? 'PUT' : 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        alert(err.detail || 'Could not save routine');
-                        return;
-                    }
-                    this.cancelEditRoutine();
-                    await this.loadRoutines();
-                },
-                async deleteRoutine(r) {
-                    if (!confirm(`Delete routine "${r.title}" for ${r.member_name}?`)) return;
-                    await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
-                    await this.loadRoutines();
-                },
-
-                // --- Rewards ---
-                async loadRewards() {
-                    try {
-                        const res = await fetch(`${this.apiBase}api/rewards`);
-                        this.rewards = await res.json();
-                    } catch (e) { this.rewards = []; }
-                },
-                startEditReward(rw) {
-                    this.editRewardId = rw.id;
-                    this.rewardEdit = { title: rw.title, description: rw.description || '', cost: rw.cost };
-                },
-                cancelEditReward() {
-                    this.editRewardId = null;
-                    this.rewardEdit = { title: '', description: '', cost: 50 };
-                },
-                async saveReward() {
-                    if (!(this.rewardEdit.title || '').trim()) { alert('Title required'); return; }
-                    const url = this.editRewardId
-                        ? `${this.apiBase}api/rewards/${this.editRewardId}`
-                        : `${this.apiBase}api/rewards`;
-                    const res = await fetch(url, {
-                        method: this.editRewardId ? 'PUT' : 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(this.rewardEdit)
-                    });
-                    if (!res.ok) {
-                        const err = await res.json().catch(() => ({}));
-                        alert(err.detail || 'Could not save reward');
-                        return;
-                    }
-                    this.cancelEditReward();
-                    await this.loadRewards();
-                },
-                async deleteReward(rw) {
-                    if (!confirm(`Delete reward "${rw.title}"?`)) return;
-                    await fetch(`${this.apiBase}api/rewards/${rw.id}`, { method: 'DELETE' });
-                    await this.loadRewards();
                 },
                 async loadHaOptions() {
                     try {

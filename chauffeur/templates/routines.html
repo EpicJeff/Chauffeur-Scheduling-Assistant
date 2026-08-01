@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Routines</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            sans: ['Inter', 'sans-serif'],
+                        },
+                        colors: {
+                            gray: {
+                                900: '#111827',
+                                800: '#1F2937',
+                                700: '#374151',
+                                600: '#4B5563',
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body {
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="routinesPage()" x-init="init()" x-cloak>
+        <div class="max-w-5xl mx-auto p-6 lg:p-10">
+
+            <header class="mb-8 flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                    <h2 class="text-3xl font-bold text-white mb-2">Daily Routines</h2>
+                    <p class="text-gray-400" x-show="!isKiosk">Personal checklists (brush teeth, homework…) shown on
+                        each member's My Day. No points — streaks instead. Optional time of day; leave days unchecked
+                        for every day.</p>
+                </div>
+                <!-- New routine: only members with no routine yet -->
+                <div x-show="!isKiosk && availableMembers().length > 0" class="flex items-center gap-2">
+                    <select x-model="newRoutineMemberId"
+                        class="bg-gray-900 border border-gray-600 rounded-lg p-3 text-white">
+                        <option value="">Pick a member…</option>
+                        <template x-for="m in availableMembers()" :key="m.id">
+                            <option :value="m.id" x-text="m.name"></option>
+                        </template>
+                    </select>
+                    <button @click="startRoutine()"
+                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-3 rounded-lg shadow-md">
+                        New Routine
+                    </button>
+                </div>
+            </header>
+
+            <!-- ===== Kiosk: streak board only ===== -->
+            <template x-if="isKiosk">
+                <div>
+                    <div x-show="streaks.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                        No routines set up yet.
+                    </div>
+                    <div class="grid gap-4 md:grid-cols-2">
+                        <template x-for="s in streaks" :key="s.member_id">
+                            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 shadow-lg">
+                                <div class="flex items-center gap-4 mb-4">
+                                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-bold text-2xl text-white shrink-0"
+                                        :style="'background-color:' + (s.color_code || '#3b82f6')"
+                                        x-text="s.avatar || (s.name || '?').charAt(0)"></div>
+                                    <div class="text-2xl font-bold text-white" x-text="s.name"></div>
+                                    <div class="ml-auto text-right">
+                                        <div class="text-5xl font-black text-orange-400">
+                                            <span x-text="s.streak.current"></span><span class="text-2xl">🔥</span>
+                                        </div>
+                                        <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">day streak</div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <div class="flex-1 bg-gray-900 rounded-full h-3 overflow-hidden">
+                                        <div class="bg-green-500 h-full rounded-full transition-all"
+                                            :style="'width:' + (s.streak.today_total ? Math.round(100 * s.streak.today_done / s.streak.today_total) : 0) + '%'"></div>
+                                    </div>
+                                    <div class="text-sm font-bold shrink-0"
+                                        :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-400'"
+                                        x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total + ' today') : 'rest day'"></div>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-2" x-text="'Best: ' + s.streak.best + ' days'"></div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+
+            <!-- ===== Admin: one block per member ===== -->
+            <template x-if="!isKiosk">
+                <div class="space-y-6">
+                    <div x-show="blocks().length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-8 text-center">
+                        No routines yet. Pick a member above to start their routine.
+                    </div>
+
+                    <template x-for="member in blocks()" :key="member.id">
+                        <section class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
+                            <!-- Block header -->
+                            <div class="flex items-center gap-3 px-5 py-4 bg-gray-800 border-b border-gray-700/70">
+                                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shrink-0"
+                                    :style="'background-color:' + (member.color_code || '#3b82f6')"
+                                    x-text="member.avatar || (member.name || '?').charAt(0)"></div>
+                                <h3 class="text-xl font-bold text-white" x-text="member.name + \"'s routine\""></h3>
+                                <template x-if="streakFor(member.id)">
+                                    <div class="flex items-center gap-3 ml-2">
+                                        <span class="px-2 py-0.5 bg-orange-900/40 text-orange-300 rounded-lg font-bold text-sm"
+                                            x-text="'🔥 ' + streakFor(member.id).current"></span>
+                                        <span class="text-xs text-gray-500 font-bold"
+                                            x-text="streakFor(member.id).today_total
+                                                ? streakFor(member.id).today_done + '/' + streakFor(member.id).today_total + ' today'
+                                                : 'rest day'"></span>
+                                    </div>
+                                </template>
+                                <button @click="deleteBlock(member)"
+                                    class="ml-auto text-red-500/70 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">
+                                    Delete routine
+                                </button>
+                            </div>
+
+                            <!-- Items -->
+                            <div class="divide-y divide-gray-700/50">
+                                <template x-for="r in itemsFor(member.id)" :key="r.id">
+                                    <div>
+                                        <!-- Display row -->
+                                        <div x-show="editItemId !== r.id" class="flex items-center gap-3 px-5 py-3">
+                                            <span class="text-blue-400 font-bold text-sm w-14 shrink-0"
+                                                x-text="r.time_of_day || '—'"></span>
+                                            <span class="text-white font-semibold" x-text="r.title"></span>
+                                            <span class="text-gray-500 text-xs font-bold ml-1"
+                                                x-text="(r.days_of_week && r.days_of_week.length) ? r.days_of_week.map(d => dayNames[d]).join(' ') : 'every day'"></span>
+                                            <div class="ml-auto flex gap-2 shrink-0">
+                                                <button @click="startEditItem(r)"
+                                                    class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Edit</button>
+                                                <button @click="deleteItem(r)"
+                                                    class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Delete</button>
+                                            </div>
+                                        </div>
+                                        <!-- Inline edit row -->
+                                        <div x-show="editItemId === r.id" class="px-5 py-3 bg-gray-900/40">
+                                            <div class="flex gap-3 items-end flex-wrap">
+                                                <div class="flex-1 min-w-[12rem]">
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Title</label>
+                                                    <input type="text" x-model="editItem.title"
+                                                        class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Time</label>
+                                                    <input type="time" x-model="editItem.time_of_day"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
+                                                </div>
+                                                <div class="flex gap-1.5 flex-wrap items-center pb-1">
+                                                    <template x-for="(d, idx) in dayNames" :key="idx">
+                                                        <label class="flex items-center gap-1 text-gray-300 text-xs font-bold bg-gray-900 border border-gray-700 rounded px-2 py-1.5 cursor-pointer"
+                                                            :class="editItem.days_of_week.includes(idx) ? 'border-blue-500 text-blue-300' : ''">
+                                                            <input type="checkbox" :value="idx" x-model.number="editItem.days_of_week"
+                                                                class="w-3.5 h-3.5">
+                                                            <span x-text="d"></span>
+                                                        </label>
+                                                    </template>
+                                                </div>
+                                                <div class="flex gap-2">
+                                                    <button @click="saveEditItem()"
+                                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded">Save</button>
+                                                    <button @click="editItemId = null"
+                                                        class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2.5 rounded">Cancel</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Quick-add row -->
+                            <div class="px-5 py-4 bg-gray-900/30 border-t border-gray-700/50">
+                                <div class="flex gap-3 items-end flex-wrap">
+                                    <div class="flex-1 min-w-[12rem]">
+                                        <input type="text" x-model="quickAdd[member.id].title" placeholder="Add an item… e.g. Brush teeth"
+                                            @keydown.enter="addItem(member.id)"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                                    </div>
+                                    <input type="time" x-model="quickAdd[member.id].time_of_day"
+                                        class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                                    <div class="flex gap-1.5 flex-wrap items-center pb-1">
+                                        <template x-for="(d, idx) in dayNames" :key="idx">
+                                            <label class="flex items-center gap-1 text-gray-300 text-xs font-bold bg-gray-900 border border-gray-700 rounded px-2 py-1.5 cursor-pointer"
+                                                :class="quickAdd[member.id].days_of_week.includes(idx) ? 'border-blue-500 text-blue-300' : ''">
+                                                <input type="checkbox" :value="idx" x-model.number="quickAdd[member.id].days_of_week"
+                                                    class="w-3.5 h-3.5">
+                                                <span x-text="d"></span>
+                                            </label>
+                                        </template>
+                                    </div>
+                                    <button @click="addItem(member.id)"
+                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-lg">Add</button>
+                                </div>
+                            </div>
+                        </section>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <script>
+        function routinesPage() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                dayNames: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                members: [],
+                routines: [],
+                streaks: [],
+                newRoutineMemberId: '',
+                // Members with an empty just-started block (no items saved yet):
+                // purely client-side; the block materializes once the first
+                // item is added and disappears on reload otherwise.
+                draftBlocks: [],
+                quickAdd: {},
+                editItemId: null,
+                editItem: { title: '', time_of_day: '', days_of_week: [] },
+
+                async init() {
+                    if (this.isKiosk) {
+                        await this.loadStreaks();
+                        setInterval(() => this.loadStreaks(), 60000);
+                        return;
+                    }
+                    await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                async loadMembers() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/members`);
+                        const all = await res.json();
+                        this.members = all.filter(m => m.role !== 'helper');
+                    } catch (e) { this.members = []; }
+                },
+                async loadRoutines() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/routines`);
+                        this.routines = await res.json();
+                    } catch (e) { this.routines = []; }
+                },
+                async loadStreaks() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/routines/streaks`);
+                        this.streaks = await res.json();
+                    } catch (e) { this.streaks = []; }
+                },
+
+                memberIdsWithItems() {
+                    return [...new Set(this.routines.map(r => r.member_id))];
+                },
+                blocks() {
+                    const withItems = this.memberIdsWithItems();
+                    const ids = [...new Set([...withItems, ...this.draftBlocks])];
+                    return ids.map(id => this.members.find(m => m.id === id)).filter(Boolean)
+                        .map(m => { this.ensureQuickAdd(m.id); return m; })
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+                availableMembers() {
+                    const taken = new Set([...this.memberIdsWithItems(), ...this.draftBlocks]);
+                    return this.members.filter(m => !taken.has(m.id));
+                },
+                itemsFor(memberId) {
+                    return this.routines.filter(r => r.member_id === memberId)
+                        .sort((a, b) => (a.time_of_day === null) - (b.time_of_day === null)
+                            || (a.time_of_day || '').localeCompare(b.time_of_day || '')
+                            || (a.title || '').localeCompare(b.title || ''));
+                },
+                streakFor(memberId) {
+                    return this.streaks.find(s => s.member_id === memberId)?.streak || null;
+                },
+                ensureQuickAdd(memberId) {
+                    if (!this.quickAdd[memberId]) {
+                        this.quickAdd[memberId] = { title: '', time_of_day: '', days_of_week: [] };
+                    }
+                },
+
+                startRoutine() {
+                    if (!this.newRoutineMemberId) { showGlobalAlert('Pick a member first'); return; }
+                    this.ensureQuickAdd(this.newRoutineMemberId);
+                    this.draftBlocks.push(this.newRoutineMemberId);
+                    this.newRoutineMemberId = '';
+                },
+
+                async addItem(memberId) {
+                    const q = this.quickAdd[memberId];
+                    if (!(q.title || '').trim()) return;
+                    const payload = {
+                        member_id: memberId,
+                        title: q.title.trim(),
+                        time_of_day: q.time_of_day || null,
+                        days_of_week: (q.days_of_week || []).map(Number),
+                    };
+                    const res = await fetch(`${this.apiBase}api/routines`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not add routine item');
+                        return;
+                    }
+                    // Keep time + days for rapid entry of the next item; clear title only.
+                    q.title = '';
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                startEditItem(r) {
+                    this.editItemId = r.id;
+                    this.editItem = {
+                        member_id: r.member_id,
+                        title: r.title,
+                        time_of_day: r.time_of_day || '',
+                        days_of_week: [...(r.days_of_week || [])],
+                    };
+                },
+                async saveEditItem() {
+                    if (!(this.editItem.title || '').trim()) { showGlobalAlert('Title required'); return; }
+                    const payload = {
+                        member_id: this.editItem.member_id,
+                        title: this.editItem.title.trim(),
+                        time_of_day: this.editItem.time_of_day || null,
+                        days_of_week: (this.editItem.days_of_week || []).map(Number),
+                    };
+                    const res = await fetch(`${this.apiBase}api/routines/${this.editItemId}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save routine item');
+                        return;
+                    }
+                    this.editItemId = null;
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+                async deleteItem(r) {
+                    if (!await promptConfirm('Delete item', `Delete "${r.title}"?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+                async deleteBlock(member) {
+                    const items = this.itemsFor(member.id);
+                    if (items.length &&
+                        !await promptConfirm('Delete routine',
+                            `Delete ${member.name}'s whole routine (${items.length} item${items.length === 1 ? '' : 's'})? Their check-off history goes too.`,
+                            'Delete')) {
+                        return;
+                    }
+                    for (const r of items) {
+                        await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
+                    }
+                    this.draftBlocks = this.draftBlocks.filter(id => id !== member.id);
+                    await Promise.all([this.loadRoutines(), this.loadStreaks()]);
+                },
+            };
+        }
+    </script>
+
+    {% include 'components/control_center.html' %}
+</body>
+
+</html>

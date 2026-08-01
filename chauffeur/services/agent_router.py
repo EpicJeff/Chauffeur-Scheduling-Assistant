@@ -191,11 +191,14 @@ Never ask them which driver they are — you already know.
     # Timing data showed each Gemma call costs 40-80s, and given the chance the
     # model re-issues the same action instead of concluding (observed writing a
     # duplicate override), so the extra round is both slow and harmful.
+    # get_point_balances is a query, but its message is already the complete
+    # spoken answer — treating it terminal saves a 40-80s concluding round.
     TERMINAL_ACTION_TOOLS = {"assign_driver_to_event_fuzzy", "remove_override_for_event_fuzzy",
                              "add_trip_poi",
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
-                             "start_route", "complete_route"}
+                             "start_route", "complete_route",
+                             "adjust_points", "get_point_balances"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -340,6 +343,19 @@ Never ask them which driver they are — you already know.
                                               prompt=args.get("prompt", ""), flight=args.get("flight"))
                     if res.get("message"): agent_message = res["message"]
                     if res.get("ui_action"): ui_action = res["ui_action"]
+                elif func_name == "get_point_balances":
+                    from services.agent_tools_v2 import get_point_balances
+                    res = get_point_balances()
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "adjust_points":
+                    from services.agent_tools_v2 import adjust_points
+                    # by_member_id: only trustworthy in PWA driver chat, where
+                    # the logged-in member is resolved server-side.
+                    res = adjust_points(args.get("member_name"),
+                                        delta=args.get("delta"), set_to=args.get("set_to"),
+                                        note=args.get("note", ""),
+                                        by_member_id=driver_id if driver else None)
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name in ("get_my_route", "start_route", "complete_route") and driver:
                     # driver_id is always the logged-in driver — never taken from the LLM
                     from services.agent_tools_v2 import get_my_route, start_route, complete_route

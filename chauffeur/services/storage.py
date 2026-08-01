@@ -1009,6 +1009,48 @@ def get_all_point_balances() -> List[dict]:
     balances.sort(key=lambda b: -b['balance'])
     return balances
 
+def adjust_points(member_id: str, delta: int, note: str = '',
+                  by_member_id: str = None) -> int:
+    """Manual point adjustment. The ledger is append-only — corrections are
+    new 'adjust' entries, never edits — so history stays auditable. Returns
+    the new balance. chore_title carries the note so every ledger renderer
+    shows the reason without a schema change."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        points_ledger_table.insert({
+            'id': _uuid.uuid4().hex,
+            'member_id': member_id,
+            'delta': int(delta),
+            'reason': 'adjust',
+            'chore_id': None,
+            'chore_title': (note or '').strip() or 'Manual adjustment',
+            'by_member_id': by_member_id,
+            'ts': time.time(),
+        })
+    return get_points_balance(member_id)
+
+def reset_points(member_id: str = None, by_member_id: str = None) -> dict:
+    """Zero balances via compensating 'adjust' entries (history preserved).
+    member_id None = every child. Pending redemptions are auto-denied first:
+    a pending request against a zeroed balance could never be approved and
+    would wedge future redemptions (pending cost counts as spent)."""
+    targets = [m for m in get_all_members()
+               if m.get('role') == 'child'
+               and (member_id is None or m['id'] == member_id)]
+    denied = 0
+    results = []
+    for m in targets:
+        for red in get_redemptions(m['id'], 'pending'):
+            if decide_redemption(red['id'], by_member_id, approve=False):
+                denied += 1
+        balance = get_points_balance(m['id'])
+        if balance != 0:
+            adjust_points(m['id'], -balance, 'Points reset', by_member_id)
+        results.append({'member_id': m['id'], 'name': m.get('name'),
+                        'cleared': balance})
+    return {'members': results, 'denied_redemptions': denied}
+
 # --- Daily routines + streaks ---
 # Personal templates checked off per day. A day is "complete" when every item
 # scheduled for that day is checked; days with nothing scheduled are neutral
