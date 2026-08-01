@@ -338,6 +338,12 @@ class UpdateDriveStatusTool(BaseModel):
     status: str = Field(default="completed", description="The status, usually 'completed'.")
     leg_id: str = Field(default="", description="The exact leg ID if known (e.g. 'route_evt1_evt2').")
 
+class ReopenChoreTool(BaseModel):
+    """
+    Puts a chore back in the pot (open, claimable now). Use when a verified chore needs doing again this period or to release a chore someone claimed but isn't doing. Chores finished and awaiting verification cannot be reopened.
+    """
+    chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
+
 class GetPointBalancesTool(BaseModel):
     """
     Gets the current chore-point balance for every child, sorted highest first.
@@ -384,6 +390,7 @@ TOOL_SCHEMAS = {
     "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
     "get_point_balances": GetPointBalancesTool.model_json_schema(),
     "adjust_points": AdjustPointsTool.model_json_schema(),
+    "reopen_chore": ReopenChoreTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1372,6 +1379,10 @@ def handle_adjust_points(args: dict) -> dict:
                          delta=args.get("delta"), set_to=args.get("set_to"),
                          note=args.get("note", ""))
 
+def handle_reopen_chore(args: dict) -> dict:
+    from services.agent_tools_v2 import reopen_chore
+    return reopen_chore(args.get("chore_title", ""))
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -1402,6 +1413,7 @@ TOOL_HANDLERS = {
     "delete_trip_flight": handle_delete_trip_flight,
     "get_point_balances": handle_get_point_balances,
     "adjust_points": handle_adjust_points,
+    "reopen_chore": handle_reopen_chore,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

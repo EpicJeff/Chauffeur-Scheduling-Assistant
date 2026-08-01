@@ -198,7 +198,7 @@ Never ask them which driver they are — you already know.
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
                              "start_route", "complete_route",
-                             "adjust_points", "get_point_balances"}
+                             "adjust_points", "get_point_balances", "reopen_chore"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -346,6 +346,10 @@ Never ask them which driver they are — you already know.
                 elif func_name == "get_point_balances":
                     from services.agent_tools_v2 import get_point_balances
                     res = get_point_balances()
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "reopen_chore":
+                    from services.agent_tools_v2 import reopen_chore
+                    res = reopen_chore(args.get("chore_title", ""))
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "adjust_points":
                     from services.agent_tools_v2 import adjust_points

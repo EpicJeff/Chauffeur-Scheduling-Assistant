@@ -876,6 +876,22 @@ def delete_chore(chore_id: str):
     with db_lock:
         chores_table.remove(Query().id == chore_id)
 
+def reopen_chore(chore_id: str) -> str:
+    """Manual return to the pot: 'verified' (reopen early / run again) or
+    'claimed' (parent-side release). NOT 'done' — that's finished work
+    awaiting verification; discarding it silently is what reject-with-reason
+    is for. Points from a prior verification are never touched (undoing a
+    payout is a separate, explicit ledger adjustment).
+    Returns 'ok' | 'missing' | 'not_reopenable'."""
+    with db_lock:
+        res = chores_table.search(Query().id == chore_id)
+        if not res:
+            return 'missing'
+        if res[0].get('state') not in ('verified', 'claimed'):
+            return 'not_reopenable'
+        chores_table.update(_chore_reset_fields(), Query().id == chore_id)
+        return 'ok'
+
 def count_active_claims(member_id: str) -> int:
     with db_lock:
         return sum(1 for c in chores_table.all()

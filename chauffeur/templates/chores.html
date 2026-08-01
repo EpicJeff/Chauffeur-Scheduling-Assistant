@@ -174,6 +174,9 @@
                                         <p class="text-gray-400 text-sm mt-1" x-text="chore.description" x-show="chore.description"></p>
                                     </div>
                                     <div class="flex space-x-2 shrink-0">
+                                        <button x-show="chore.state === 'verified' || chore.state === 'claimed'"
+                                            @click="reopenChore(chore)"
+                                            class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg font-bold text-sm">Reopen</button>
                                         <button @click="startEditChore(chore)"
                                             class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg font-bold text-sm">Edit</button>
                                         <button @click="deleteChore(chore)"
@@ -453,6 +456,18 @@
                         return;
                     }
                     this.cancelEditChore();
+                    await this.loadChores();
+                },
+                async reopenChore(chore) {
+                    const msg = chore.state === 'verified'
+                        ? `Put "${chore.title}" back in the pot now? Points already earned from it stay.`
+                        : `Release "${chore.title}" from ${chore.claimed_by_name || 'its claimant'} back to the pot?`;
+                    if (!await promptConfirm('Reopen chore', msg, 'Reopen')) return;
+                    const res = await fetch(`${this.apiBase}api/chores/${chore.id}/reopen`, { method: 'POST' });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not reopen chore');
+                    }
                     await this.loadChores();
                 },
                 async deleteChore(chore) {

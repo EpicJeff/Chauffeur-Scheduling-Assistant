@@ -2924,6 +2924,19 @@ def remove_chore(chore_id: str):
     storage.delete_chore(chore_id)
     return {"status": "deleted"}
 
+@app.post("/api/chores/{chore_id}/reopen")
+def reopen_chore_endpoint(chore_id: str, background_tasks: BackgroundTasks):
+    result = storage.reopen_chore(chore_id)
+    if result == 'missing':
+        raise HTTPException(status_code=404, detail="Chore not found")
+    if result == 'not_reopenable':
+        raise HTTPException(status_code=409,
+                            detail="Only verified or claimed chores can be reopened — "
+                                   "finished work awaiting verification should be verified or rejected in the app")
+    chore = storage.get_chore(chore_id)
+    background_tasks.add_task(_notify_chore_event, 'posted', chore)
+    return chore
+
 class ChoreMemberRequest(BaseModel):
     member_id: str
 

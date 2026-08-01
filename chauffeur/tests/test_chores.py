@@ -255,6 +255,54 @@ def scenario_agent_points_tools():
           "balance summary reads naturally")
 
 
+def scenario_reopen():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    bt = BackgroundTasks()
+    _member("kid", "Kid", "child")
+    _member("mom", "Mom", "parent")
+
+    # verified recurring chore reopens early; points stay
+    _chore("c1", title="Trash", points=15, recurrence="daily")
+    storage.claim_chore("c1", "kid")
+    storage.mark_chore_done("c1", "kid")
+    storage.verify_chore("c1", "mom")
+    check(storage.get_chore("c1")["reopens_on"], "verified daily chore is locked until reopens_on")
+    chore = main.reopen_chore_endpoint("c1", bt)
+    check(chore["state"] == "open" and chore["claimed_by"] is None
+          and chore["reopens_on"] is None, "reopen returns chore to the pot clean")
+    check(storage.get_points_balance("kid") == 15, "earned points untouched by reopen")
+
+    # claimed chore releases; done chore refuses toward verify/reject
+    storage.claim_chore("c1", "kid")
+    check(main.reopen_chore_endpoint("c1", bt)["state"] == "open", "claimed chore released")
+    storage.claim_chore("c1", "kid")
+    storage.mark_chore_done("c1", "kid")
+    for cid, expect, why in [("c1", 409, "done chore"), ("nope", 404, "missing chore")]:
+        try:
+            main.reopen_chore_endpoint(cid, bt)
+            check(False, f"expected {expect} for {why}")
+        except HTTPException as e:
+            check(e.status_code == expect, f"{why} refused")
+    check(storage.reopen_chore("c1") == 'not_reopenable', "open/done states not reopenable in storage")
+
+    # agent tool: fuzzy match, state-aware messages
+    from services import agent_tools_v2
+    _chore("c2", title="Water plants", points=5)
+    storage.claim_chore("c2", "kid")
+    res = agent_tools_v2.reopen_chore("water")
+    check(res["status"] == "success" and storage.get_chore("c2")["state"] == "open",
+          "agent reopens by fuzzy title")
+    res = agent_tools_v2.reopen_chore("water")
+    check(res["status"] == "success" and "already open" in res["message"],
+          "already-open reads as a no-op success")
+    res = agent_tools_v2.reopen_chore("trash")
+    check(res["status"] == "error" and "verify" in res["message"],
+          "done chore steered to verify/reject")
+    res = agent_tools_v2.reopen_chore("no such chore")
+    check(res["status"] == "error", "unknown chore errors")
+
+
 SCENARIOS = [
     scenario_lifecycle_and_points,
     scenario_adults_claimable_but_pointless,
@@ -263,6 +311,7 @@ SCENARIOS = [
     scenario_endpoint_rules,
     scenario_adjust_and_reset,
     scenario_agent_points_tools,
+    scenario_reopen,
 ]
 
 if __name__ == "__main__":

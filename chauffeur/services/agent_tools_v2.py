@@ -415,6 +415,47 @@ def adjust_points(member_name: str, delta: int = None, set_to: int = None,
             "message": f"Done — {change} points for {member['name']}. They now have {balance} points."}
 
 
+def reopen_chore(chore_title: str) -> Dict[str, Any]:
+    """Puts a verified or claimed chore back in the pot (open) so it can be
+    claimed again this period. Fuzzy title match; 'done' chores are refused
+    toward verify/reject."""
+    from services import storage
+    name = (chore_title or '').strip().lower()
+    if not name:
+        return {"status": "error", "message": "Which chore should I reopen? Please give its name."}
+    chores = storage.get_all_chores()
+    matches = [c for c in chores if (c.get('title') or '').lower() == name] \
+        or [c for c in chores if name in (c.get('title') or '').lower()]
+    if not matches:
+        return {"status": "error", "message": f"I couldn't find a chore matching '{chore_title}'."}
+    reopenable = [c for c in matches if c.get('state') in ('verified', 'claimed')]
+    if not reopenable:
+        c = matches[0]
+        if c.get('state') == 'open':
+            return {"status": "success", "message": f"'{c['title']}' is already open and up for grabs."}
+        return {"status": "error",
+                "message": f"'{c['title']}' is finished and waiting for a parent to verify it — "
+                           "verify or reject it in the app instead of reopening."}
+    if len(reopenable) > 1:
+        names = ", ".join(c['title'] for c in reopenable)
+        return {"status": "error", "message": f"That matches more than one chore: {names}. Which one?"}
+    chore = reopenable[0]
+    storage.reopen_chore(chore['id'])
+    # Same "chore available" fan-out the reopen endpoint sends, off-thread so
+    # push latency never eats into the agent's reply budget.
+    try:
+        import threading
+        import main as _main
+        fresh = storage.get_chore(chore['id'])
+        threading.Thread(target=_main._notify_chore_event, args=('posted', fresh),
+                         daemon=True).start()
+    except Exception:
+        pass
+    extra = " Points already earned from it stay." if chore.get('state') == 'verified' else ""
+    return {"status": "success",
+            "message": f"Done — '{chore['title']}' is back in the pot and up for grabs.{extra}"}
+
+
 # ==============================================================================
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
@@ -576,6 +617,17 @@ def get_available_tools() -> List[Dict]:
                     }
                 },
                 "required": ["trip_id", "action"]
+            }
+        },
+        {
+            "name": "reopen_chore",
+            "description": "Puts a chore back in the pot (open, claimable now). Use when a verified chore needs doing again this period ('put the trash chore back up') or to release a chore someone claimed but isn't doing. Chores finished and awaiting verification cannot be reopened — those get verified or rejected in the app.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chore_title": {"type": "string", "description": "The chore's name (fuzzy matched)."}
+                },
+                "required": ["chore_title"]
             }
         },
         {
