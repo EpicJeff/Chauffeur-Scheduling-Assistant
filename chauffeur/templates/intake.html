@@ -212,12 +212,23 @@
 
                 async init() {
                     await Promise.all([this.loadProposals(), this.loadLog(), this.loadConfig(), this.loadTargets()]);
+                    // The background poll creates proposals while the page is
+                    // open — refresh quietly so they appear without a click.
+                    setInterval(() => {
+                        if (!document.hidden) { this.loadProposals(); this.loadLog(); }
+                    }, 60000);
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) { this.loadProposals(); this.loadLog(); }
+                    });
                 },
                 async loadProposals() {
                     try {
                         const res = await fetch(`${this.apiBase}api/proposals?status=proposed`);
                         const data = await res.json();
-                        this.proposals = (Array.isArray(data) ? data : []).map(p => ({ ...p, _target: p.calendar_id || '' }));
+                        // Preserve in-progress target selections across quiet refreshes.
+                        const prev = Object.fromEntries(this.proposals.map(p => [p.id, p._target]));
+                        this.proposals = (Array.isArray(data) ? data : []).map(p =>
+                            ({ ...p, _target: prev[p.id] !== undefined ? prev[p.id] : (p.calendar_id || '') }));
                     } catch (e) { this.proposals = []; }
                 },
                 async loadLog() {
@@ -290,8 +301,14 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/ingest/run`, { method: 'POST' });
                         const s = await res.json();
-                        if (s.error) showGlobalAlert('Mailbox check failed: ' + s.error);
-                        else showGlobalAlert(`Checked ${s.checked} new message${s.checked !== 1 ? 's' : ''} — ${s.proposed} proposal${s.proposed !== 1 ? 's' : ''} added.`);
+                        if (s.error) {
+                            showGlobalAlert('Mailbox check failed: ' + s.error);
+                        } else if (s.checked === 0) {
+                            showGlobalAlert('No new mail since the last check — the automatic poll (every 10 minutes) may have just processed things; see Recent activity.'
+                                + (s.pending ? ` ${s.pending} proposal${s.pending !== 1 ? 's' : ''} waiting below.` : ''));
+                        } else {
+                            showGlobalAlert(`Checked ${s.checked} new message${s.checked !== 1 ? 's' : ''} — ${s.proposed} proposal${s.proposed !== 1 ? 's' : ''} added.`);
+                        }
                         await Promise.all([this.loadProposals(), this.loadLog()]);
                     } catch (e) {
                         showGlobalAlert('Mailbox check failed: ' + e.message);

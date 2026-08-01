@@ -2518,7 +2518,11 @@ def set_ingest_config(cfg: IngestConfig):
 @app.post("/api/ingest/run")
 def run_ingest_now():
     from services import email_ingest
-    return email_ingest.run_ingest()
+    summary = email_ingest.run_ingest()
+    # Pending count lets the UI tell "nothing new" apart from "the background
+    # poll beat you to it moments ago" — both report checked: 0.
+    summary['pending'] = len(storage.get_proposals('proposed'))
+    return summary
 
 @app.get("/api/ingest/log")
 def ingest_log(limit: int = 50):

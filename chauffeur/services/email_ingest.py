@@ -35,8 +35,14 @@ import email
 import email.header
 import imaplib
 import re
+import threading
 
 from services import storage
+
+# The 10-minute loop and the manual "Check mailbox now" button share the UID
+# cursor; serializing them prevents interleaved fetches (and the confusing
+# "checked 0" race is reported honestly by the caller instead).
+_run_lock = threading.Lock()
 
 DEFAULT_HOST = 'imap.gmail.com'
 MAX_MESSAGES_PER_RUN = 20
@@ -314,8 +320,13 @@ def _calendar_for_member_name(name: str):
 # --- orchestration ----------------------------------------------------------
 
 def run_ingest() -> dict:
-    """One poll: fetch → allowlist → extract → normalize → dedupe → propose.
-    Returns {'checked', 'proposed', 'error'}."""
+    """One poll: fetch → extract → normalize → dedupe → propose.
+    Returns {'checked', 'proposed', 'error'}. Serialized under _run_lock."""
+    with _run_lock:
+        return _run_ingest_locked()
+
+
+def _run_ingest_locked() -> dict:
     summary = {'checked': 0, 'proposed': 0, 'error': None}
     settings = storage.get_settings() or {}
     sender_defaults = settings.get('ingest_sender_defaults') or []
