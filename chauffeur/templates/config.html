@@ -47,38 +47,15 @@
                         </button>
                     </li>
                     <li>
-                        <button @click="activeTab = 'drivers'"
-                            :class="activeTab === 'drivers' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
-                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
-                            </svg>
-                            Drivers
-                        </button>
-                    </li>
-                    <li>
-                        <button @click="activeTab = 'passengers'"
-                            :class="activeTab === 'passengers' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
+                        <button @click="activeTab = 'family'"
+                            :class="activeTab === 'family' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
                             class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
                             <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
                                 </path>
                             </svg>
-                            Passengers
-                        </button>
-                    </li>
-                    <li>
-                        <button @click="activeTab = 'family'"
-                            :class="activeTab === 'family' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'"
-                            class="whitespace-nowrap w-full text-left px-4 py-2 md:py-3 rounded-lg font-bold transition-colors flex items-center text-sm md:text-base">
-                            <svg class="w-5 h-5 mr-2 md:mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6">
-                                </path>
-                            </svg>
-                            Family
+                            People
                         </button>
                     </li>
                     <li>
@@ -111,7 +88,7 @@
 
         <!-- Main Content Area -->
         <div class="flex-1 overflow-y-auto p-8 lg:p-12 relative">
-            <div class="max-w-5xl mx-auto">
+            <div class="max-w-5xl mx-auto flex flex-col">
 
                 <!-- Settings -->
                 <div x-show="activeTab === 'general'" x-cloak x-transition.opacity
@@ -501,6 +478,56 @@
                         </div>
                     </div>
 
+                    <div class="mt-6 pt-6 border-t border-gray-700">
+                        <h4 class="font-bold text-white mb-4">Solver Behavior</h4>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="loadBalancingEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Balance Driving Load</span>
+                            </div>
+                            <div x-show="loadBalancingEnabled" class="flex items-center gap-2 shrink-0">
+                                <label class="text-sm text-gray-400 font-semibold" for="loadBalancingMetric">Balance by</label>
+                                <select id="loadBalancingMetric" x-model="loadBalancingMetric" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                    <option value="events">Total Events Driven</option>
+                                    <option value="driving_time">Total Driving Time</option>
+                                    <option value="occupied_time">Total Occupied Time</option>
+                                </select>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                When on, the solver spreads events across all drivers using the chosen measure of load.
+                                When off, it fills the highest-priority drivers first. Attendee assignments,
+                                manual overrides, and shared-passenger chains still take precedence.
+                                <span x-show="loadBalancingEnabled && loadBalancingMetric === 'driving_time'">
+                                    Driving time is estimated as the round trip from each driver's home to the event.
+                                </span>
+                            </p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="suggestedRoutesEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Suggested Driver Routes</span>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                When on, events no real driver can take get a suggested "extra driver" route
+                                (ghost columns on the dashboard). When off, those events just stay in the
+                                unassigned triage bucket.
+                            </p>
+                        </div>
+                    </div>
+
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
                         <div>
                             <h4 class="font-bold text-white">System Cache & Database</h4>
@@ -518,115 +545,12 @@
                     </div>
                 </div>
 
-                <!-- Drivers -->
-                <div x-show="activeTab === 'drivers'" x-cloak x-transition.opacity
+                <!-- Driving profile form (People tab sub-panel) -->
+                <div x-show="activeTab === 'family' && showDriverForm" x-cloak x-transition.opacity
+                    id="driverFormPanel" style="order: 1"
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-6 text-blue-300">Drivers</h2>
-
-                    <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <div class="flex items-center space-x-3 shrink-0">
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" x-model="loadBalancingEnabled" @change="saveSettings()"
-                                    class="sr-only peer">
-                                <div
-                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                </div>
-                            </label>
-                            <span class="font-bold text-gray-300">Balance Driving Load</span>
-                        </div>
-                        <div x-show="loadBalancingEnabled" class="flex items-center gap-2 shrink-0">
-                            <label class="text-sm text-gray-400 font-semibold" for="loadBalancingMetric">Balance by</label>
-                            <select id="loadBalancingMetric" x-model="loadBalancingMetric" @change="saveSettings()"
-                                class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                                <option value="events">Total Events Driven</option>
-                                <option value="driving_time">Total Driving Time</option>
-                                <option value="occupied_time">Total Occupied Time</option>
-                            </select>
-                        </div>
-                        <p class="text-sm text-gray-500">
-                            When on, the solver spreads events across all drivers using the chosen measure of load.
-                            When off, it fills the highest-priority drivers first. Attendee assignments,
-                            manual overrides, and shared-passenger chains still take precedence.
-                            <span x-show="loadBalancingEnabled && loadBalancingMetric === 'driving_time'">
-                                Driving time is estimated as the round trip from each driver's home to the event.
-                            </span>
-                        </p>
-                    </div>
-
-                    <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-8 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                        <div class="flex items-center space-x-3 shrink-0">
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" x-model="suggestedRoutesEnabled" @change="saveSettings()"
-                                    class="sr-only peer">
-                                <div
-                                    class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                </div>
-                            </label>
-                            <span class="font-bold text-gray-300">Suggested Driver Routes</span>
-                        </div>
-                        <p class="text-sm text-gray-500">
-                            When on, events no real driver can take get a suggested "extra driver" route
-                            (ghost columns on the dashboard). When off, those events just stay in the
-                            unassigned triage bucket.
-                        </p>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                        <template x-for="driver in drivers" :key="driver.doc_id || driver.id">
-                            <div class="bg-gray-900 p-5 rounded-xl flex justify-between items-start border-t-4 shadow-md transition hover:-translate-y-1"
-                                :class="{'opacity-50 grayscale': driver.is_disabled}"
-                                :style="'border-color: ' + driver.color_code">
-                                <div class="w-full">
-                                    <div class="flex justify-between items-center mb-2">
-                                        <div class="font-bold text-xl text-white flex items-center gap-2">
-                                            <span x-text="driver.name"></span>
-                                            <template x-if="driver.is_disabled">
-                                                <span
-                                                    class="px-2 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-800 font-bold uppercase tracking-wider">Disabled</span>
-                                            </template>
-                                        </div>
-                                        <div class="flex space-x-2">
-                                            <button @click="editDriverItem(driver)"
-                                                class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
-                                                    </path>
-                                                </svg>
-                                            </button>
-                                            <button @click="deleteDriver(driver.doc_id)"
-                                                class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
-                                                    </path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="text-gray-500 text-sm font-mono" x-text="driver.id"></div>
-                                    <div class="mt-3 flex flex-wrap gap-2 text-xs">
-                                        <span class="px-2 py-1 bg-gray-800 rounded text-gray-300"
-                                            x-text="'Group: ' + driver.group"></span>
-                                        <span class="px-2 py-1 bg-gray-800 rounded text-gray-300"
-                                            x-text="'Priority: ' + driver.priority_index"></span>
-                                        <template x-if="driver.preferred_start || driver.preferred_end">
-                                            <span class="px-2 py-1 bg-gray-800 rounded text-gray-300"
-                                                x-text="'Hours: ' + (driver.preferred_start || 'Any') + ' - ' + (driver.preferred_end || 'Any')"></span>
-                                        </template>
-                                    </div>
-                                    <template x-if="driver.calendar_ids && driver.calendar_ids.length > 0">
-                                        <div class="mt-2 text-xs text-gray-400 truncate w-full"
-                                            x-text="'Calendars: ' + driver.calendar_ids.length"></div>
-                                    </template>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
+                    <h2 class="text-2xl font-bold mb-6 text-green-300"
+                        x-text="editDriverId ? ('Driving Profile — ' + newDriver.name) : 'New Driving Profile'"></h2>
                     <div class="flex flex-col gap-4 bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
                         <div class="flex gap-4 items-end flex-wrap">
                             <div class="w-full lg:flex-1">
@@ -846,25 +770,28 @@
                                 </label>
                             </div>
                         </div>
-                        <div class="flex gap-4 mt-2">
+                        <div class="flex gap-4 mt-2 items-center">
                             <button @click="submitDriver()"
                                 class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
                                 :disabled="saving"
                                 x-text="saving ? 'Saving...' : (editDriverId ? 'Save Driver' : 'Add Driver')"></button>
-                            <button x-show="editDriverId" @click="cancelEditDriver()"
+                            <button @click="cancelEditDriver()"
                                 class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            <button x-show="editDriverId" @click="deleteDriver(editDriverId)"
+                                class="ml-auto text-red-400 hover:text-red-300 bg-red-500/10 px-4 py-3 rounded-lg font-bold text-sm transition-colors">Remove
+                                Driving Profile</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Family Members -->
+                <!-- People (unified members + roles) -->
                 <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-2 text-blue-300">Family Members</h2>
-                    <p class="text-gray-400 text-sm mb-4">One entry per person. Members link the driver and
-                        passenger records the solver uses; this page manages hub-level identity (avatar, color,
-                        child flag) and Home Assistant mappings. Use <b>Merge</b> if the same person appears
-                        twice, <b>Split</b> to undo a bad merge.</p>
+                    <h2 class="text-3xl font-bold mb-2 text-blue-300">People</h2>
+                    <p class="text-gray-400 text-sm mb-4">Everyone in the household, one entry per person —
+                        identity (avatar, color, role, PIN, Home Assistant mappings) plus their
+                        <b>Driving</b> and <b>Passenger</b> profiles, which are the records the solver uses.
+                        Use <b>Merge</b> if the same person appears twice, <b>Split</b> to undo a bad merge.</p>
                     <div class="mb-6 flex items-center gap-2 text-sm" x-show="haStatus">
                         <span class="px-3 py-1 rounded-full font-bold text-xs uppercase tracking-wide"
                             :class="haStatus && haStatus.available ? 'bg-green-900/50 text-green-300 border border-green-800' : 'bg-red-900/50 text-red-300 border border-red-800'"
@@ -914,9 +841,15 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="flex space-x-2 items-center">
+                                    <div class="flex space-x-2 items-center flex-wrap">
                                         <button @click="editMemberId === member.id ? editMemberId = null : startEditMember(member)"
-                                            class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                                            class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Identity</button>
+                                        <button @click="openDrivingProfile(member)"
+                                            class="text-green-500 hover:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm"
+                                            x-text="member.driver_id ? '🚗 Driving' : '+ Driving'"></button>
+                                        <button @click="openPassengerProfile(member)"
+                                            class="text-sky-500 hover:text-sky-400 bg-sky-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm"
+                                            x-text="member.passenger_id ? '🧒 Passenger' : '+ Passenger'"></button>
                                         <button x-show="member.driver_id && member.passenger_id"
                                             @click="splitMember(member)"
                                             class="text-amber-500 hover:text-amber-400 bg-amber-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Split</button>
@@ -1015,64 +948,25 @@
                             </div>
                         </template>
                     </div>
+                    <div class="flex gap-4 mt-6 flex-wrap">
+                        <button @click="openNewDriver()"
+                            class="flex-1 min-w-[180px] border border-dashed border-gray-600 hover:border-green-500 hover:text-green-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                            Add a Driver</button>
+                        <button @click="openNewPassenger()"
+                            class="flex-1 min-w-[180px] border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                            Add a Passenger</button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">New people appear here automatically when their driver or
+                        passenger profile is saved (same-name profiles link to the existing person).</p>
                 </div>
 
-                <!-- Passengers -->
-                <div x-show="activeTab === 'passengers'" x-cloak x-transition.opacity
+                <!-- Passenger profile form (People tab sub-panel) -->
+                <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
+                    id="passengerFormPanel" style="order: 2"
                     class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
-                    <h2 class="text-3xl font-bold mb-6 text-blue-300">Passengers</h2>
-                    <div class="space-y-4 mb-8">
-                        <template x-for="passenger in passengers" :key="passenger.doc_id || passenger.id">
-                            <div
-                                class="bg-gray-900 p-5 rounded-xl flex flex-col md:flex-row justify-between md:items-center shadow-sm">
-                                <div class="flex items-center mb-4 md:mb-0">
-                                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white"
-                                        :style="'background-color: ' + getPassengerColor(passenger)">
-                                        <span x-text="(passenger.name || '').charAt(0)"></span>
-                                    </div>
-                                    <div>
-                                        <h3 class="text-xl font-bold text-white" x-text="passenger.name"></h3>
-                                        <div class="text-gray-400 text-sm flex gap-2 items-center mt-1">
-                                            <template x-for="tag in (passenger.hashtags || [])" :key="tag">
-                                                <span
-                                                    class="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded font-mono text-xs"
-                                                    x-text="tag"></span>
-                                            </template>
-                                            <span
-                                                x-text="(passenger.calendar_ids ? passenger.calendar_ids.length : 0) + ' calendars'"></span>
-                                            <template x-if="passenger.requires_attendance">
-                                                <span
-                                                    class="px-2 py-0.5 bg-red-900/50 text-red-300 rounded font-bold text-xs uppercase tracking-wide border border-red-800">Requires
-                                                    Attendance</span>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button @click="editPassenger(passenger)"
-                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 p-2 rounded-lg transition-colors">
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
-                                            </path>
-                                        </svg>
-                                    </button>
-                                    <button @click="deletePassenger(passenger.doc_id)"
-                                        class="text-red-500 hover:text-red-400 bg-red-500/10 p-2 rounded-lg transition-colors">
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
-                                            </path>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </template>
-                    </div>
-
+                    <h2 class="text-2xl font-bold mb-6 text-sky-300"
+                        x-text="editPassengerId ? ('Passenger Profile — ' + newPassenger.name) : 'New Passenger Profile'"></h2>
                     <div class="bg-gray-700/30 p-6 rounded-xl border border-gray-600 border-dashed">
-                        <h3 class="text-lg font-bold text-white mb-4"
-                            x-text="editPassengerId ? 'Edit Passenger' : 'Add New Passenger'"></h3>
                         <div class="flex gap-4 items-end flex-wrap">
                             <div class="w-full lg:flex-1">
                                 <label class="block text-gray-400 mb-1 text-sm">Name</label>
@@ -1217,13 +1111,16 @@
                                 </div>
                             </label>
                         </div>
-                        <div class="flex gap-4 mt-4">
+                        <div class="flex gap-4 mt-4 items-center">
                             <button @click="submitPassenger()"
                                 class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
                                 :disabled="saving"
                                 x-text="saving ? 'Saving...' : (editPassengerId ? 'Save Passenger' : 'Add Passenger')"></button>
-                            <button x-show="editPassengerId" @click="cancelEditPassenger()"
+                            <button @click="cancelEditPassenger()"
                                 class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            <button x-show="editPassengerId" @click="deletePassenger(editPassengerId)"
+                                class="ml-auto text-red-400 hover:text-red-300 bg-red-500/10 px-4 py-3 rounded-lg font-bold text-sm transition-colors">Remove
+                                Passenger Profile</button>
                         </div>
                     </div>
                 </div>
@@ -2661,6 +2558,8 @@
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
+                showDriverForm: false,
+                showPassengerForm: false,
                 icsFeeds: [],
                 newIcsFeed: { url: '', calendar_id: '' },
                 icsFeedBusy: false,
@@ -3150,6 +3049,7 @@
                         });
                         this.cancelEditDriver();
                         await this.loadDrivers();
+                        await this.loadMembers();
                     } finally {
                         this.saving = false;
                     }
@@ -3199,14 +3099,68 @@
                 },
                 cancelEditDriver() {
                     this.editDriverId = null;
+                    this.showDriverForm = false;
                     this.newDriver = { id: '', name: '', color_code: '#3B82F6', group: 'primary', priority_index: 1, preferred_start: '', preferred_end: '', home_location: '', calendarIds: [], hashtags: [], is_disabled: false, preferred_maps_provider: 'google', phone_number: '', cell_carrier: '', bio: '' };
                     this.newDriverCalendarInput = '';
                     this.newDriverHashtagInput = '';
                 },
                 async deleteDriver(docId) {
-                    if (!confirm('Are you sure you want to delete this driver?')) return;
+                    if (!await promptConfirm('Remove driving profile', 'Delete this driving profile? The person stays in the family hub; their driver record and its solver assignments go away.', 'Delete')) return;
                     await fetch(`${this.apiBase}api/drivers/${docId}`, { method: 'DELETE' });
+                    this.cancelEditDriver();
                     await this.loadDrivers();
+                    await this.loadMembers();
+                },
+
+                // --- People tab: role-profile navigation ---
+                driverForMember(m) {
+                    return (this.drivers || []).find(d => d.id === m.driver_id) || null;
+                },
+                passengerForMember(m) {
+                    return (this.passengers || []).find(p => p.id === m.passenger_id || p.doc_id === m.passenger_id) || null;
+                },
+                _scrollToPanel(id) {
+                    this.$nextTick(() => {
+                        const el = document.getElementById(id);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    });
+                },
+                openDrivingProfile(member) {
+                    const d = this.driverForMember(member);
+                    if (d) {
+                        this.editDriverItem(d);
+                    } else {
+                        this.cancelEditDriver();
+                        this.newDriver.name = member.name;
+                        this.newDriver.color_code = member.color_code || '#3B82F6';
+                    }
+                    this.showDriverForm = true;
+                    this.showPassengerForm = false;
+                    this._scrollToPanel('driverFormPanel');
+                },
+                openPassengerProfile(member) {
+                    const p = this.passengerForMember(member);
+                    if (p) {
+                        this.editPassenger(p);
+                    } else {
+                        this.cancelEditPassenger();
+                        this.newPassenger.name = member.name;
+                    }
+                    this.showPassengerForm = true;
+                    this.showDriverForm = false;
+                    this._scrollToPanel('passengerFormPanel');
+                },
+                openNewDriver() {
+                    this.cancelEditDriver();
+                    this.showDriverForm = true;
+                    this.showPassengerForm = false;
+                    this._scrollToPanel('driverFormPanel');
+                },
+                openNewPassenger() {
+                    this.cancelEditPassenger();
+                    this.showPassengerForm = true;
+                    this.showDriverForm = false;
+                    this._scrollToPanel('passengerFormPanel');
                 },
 
                 // --- Passengers ---
@@ -3478,7 +3432,9 @@
                             });
                         }
                         this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
+                        this.showPassengerForm = false;
                         await this.loadPassengers();
+                        await this.loadMembers();
                     } finally {
                         this.saving = false;
                     }
@@ -3492,12 +3448,15 @@
                 cancelEditPassenger() {
                     this.newPassenger = { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' };
                     this.editPassengerId = null;
+                    this.showPassengerForm = false;
                 },
 
                 async deletePassenger(docId) {
-                    if (!confirm('Are you sure you want to delete this passenger?')) return;
+                    if (!await promptConfirm('Remove passenger profile', 'Delete this passenger profile? The person stays in the family hub; their passenger record and its calendar/rule bindings go away.', 'Delete')) return;
                     await fetch(`${this.apiBase}api/passengers/${docId}`, { method: 'DELETE' });
+                    this.cancelEditPassenger();
                     await this.loadPassengers();
+                    await this.loadMembers();
                 },
 
                 // --- Rules ---

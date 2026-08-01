@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.21.0).
+up cold. Last updated: 2026-08-01 (v2.22.0).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -41,15 +41,10 @@ routines + streaks · rewards store with parent-approved redemptions.
 - **Per-member notification preferences.** Members with both web push and HA
   notify get every message twice (accepted v1 tradeoff). Add a per-member
   lane preference or dedupe.
-- **Unify Config's Drivers/Passengers/Family tabs into one People tab**
-  (user proposal 2026-08-01). The backend already agrees: FamilyMember is
-  the identity, driver_id/passenger_id are role links, and merge/split
-  exists only because the three-tab UI predates the overlay. One tab
-  listing members, each expanding to identity props + a "Driving" section
-  (priority/groups/windows/home/phone) and a "Passenger" section
-  (hashtags/calendars/attendance) shown or addable per role. Big refactor
-  of the most-used 4,000-line admin page — its own release, done alone;
-  solver records stay untouched underneath.
+- **Unify Config's Drivers/Passengers/Family tabs into one People tab.
+  SHIPPED v2.22.0 (2026-08-01)** — member cards are the hub; the intact
+  driver/passenger forms open on demand as role profiles; solver toggles
+  moved to General → Solver Behavior. Details in system_capabilities.md.
 
 ## The intake arc (capture layer — the next big thing, decided 2026-08-01)
 
