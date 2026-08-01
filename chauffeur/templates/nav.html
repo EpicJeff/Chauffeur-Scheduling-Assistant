@@ -182,9 +182,12 @@
                         'trips': 'trips', 'map': 'map'
                     };
                     document.querySelectorAll('nav a[href]').forEach(a => {
-                        const path = (a.getAttribute('href') || '')
-                            .split('?')[0].replace(/^\//, '');
-                        const slug = SLUGS[path];
+                        // hrefs were rewritten above to full paths, which under
+                        // HA ingress carry a token prefix — match the LAST
+                        // path segment, not the whole path.
+                        const path = (a.getAttribute('href') || '').split('?')[0];
+                        const page = path.split('/').filter(Boolean).pop() || '';
+                        const slug = SLUGS[page];
                         if (slug && !allowed.has(slug)) a.style.display = 'none';
                     });
                 }
