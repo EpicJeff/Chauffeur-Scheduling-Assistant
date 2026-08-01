@@ -258,13 +258,23 @@ def ensure_members():
             d_id = d.get('id')
             if not d_id or d_id in linked_drivers:
                 continue
-            new_member(
-                (d.get('name') or '').strip() or d_id,
-                color_code=d.get('color_code') or '#3b82f6',
-                bio=d.get('bio') or '',
-                can_drive=not d.get('is_disabled', False),
-                driver_id=d_id,
-            )
+            name = (d.get('name') or '').strip()
+            existing = by_name.get(name.lower()) if name else None
+            if existing is not None and not existing.get('driver_id'):
+                # Same-named member without a driving link (e.g. added via
+                # "+ Add a Person" or passenger-first): link, don't duplicate.
+                members_table.update(
+                    {'driver_id': d_id, 'can_drive': not d.get('is_disabled', False)},
+                    Query().id == existing['id'])
+                existing['driver_id'] = d_id
+            else:
+                new_member(
+                    name or d_id,
+                    color_code=d.get('color_code') or '#3b82f6',
+                    bio=d.get('bio') or '',
+                    can_drive=not d.get('is_disabled', False),
+                    driver_id=d_id,
+                )
             linked_drivers.add(d_id)
 
         for p in passengers_table.all():

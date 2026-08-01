@@ -948,16 +948,51 @@
                             </div>
                         </template>
                     </div>
-                    <div class="flex gap-4 mt-6 flex-wrap">
-                        <button @click="openNewDriver()"
-                            class="flex-1 min-w-[180px] border border-dashed border-gray-600 hover:border-green-500 hover:text-green-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
-                            Add a Driver</button>
-                        <button @click="openNewPassenger()"
-                            class="flex-1 min-w-[180px] border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
-                            Add a Passenger</button>
+                    <div class="mt-6">
+                        <button x-show="!showAddPerson" @click="showAddPerson = true"
+                            class="w-full border border-dashed border-gray-600 hover:border-blue-500 hover:text-blue-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                            Add a Person</button>
+                        <div x-show="showAddPerson" x-cloak
+                            class="bg-gray-700/30 p-5 rounded-xl border border-gray-600 border-dashed">
+                            <h3 class="text-lg font-bold text-white mb-4">New Person</h3>
+                            <div class="flex gap-4 items-end flex-wrap">
+                                <div class="flex-1 min-w-[160px]">
+                                    <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                                    <input type="text" x-model="newPerson.name" placeholder="e.g. Grandma June"
+                                        @keydown.enter="addPerson()"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Role</label>
+                                    <select x-model="newPerson.role"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        <option value="parent">Parent (admin)</option>
+                                        <option value="adult">Adult</option>
+                                        <option value="child">Child</option>
+                                        <option value="helper">Helper (external)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Color</label>
+                                    <input type="color" x-model="newPerson.color_code"
+                                        class="bg-gray-900 border border-gray-600 rounded p-1 h-12 w-16">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Avatar (emoji, optional)</label>
+                                    <input type="text" x-model="newPerson.avatar" maxlength="4"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                </div>
+                                <button @click="addPerson()" :disabled="saving"
+                                    class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Add
+                                    Person</button>
+                                <button @click="showAddPerson = false"
+                                    class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">A person needs no driving or passenger profile to be part
+                            of the family — they can chat, appear on the map, and use the app. Add profiles later from
+                            their card (+ Driving / + Passenger) if they start driving or riding.</p>
                     </div>
-                    <p class="text-xs text-gray-500 mt-2">New people appear here automatically when their driver or
-                        passenger profile is saved (same-name profiles link to the existing person).</p>
                 </div>
 
                 <!-- Passenger profile form (People tab sub-panel) -->
@@ -2560,6 +2595,8 @@
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
                 showDriverForm: false,
                 showPassengerForm: false,
+                showAddPerson: false,
+                newPerson: { name: '', role: 'adult', color_code: '#3B82F6', avatar: '' },
                 icsFeeds: [],
                 newIcsFeed: { url: '', calendar_id: '' },
                 icsFeedBusy: false,
@@ -3110,6 +3147,32 @@
                     this.cancelEditDriver();
                     await this.loadDrivers();
                     await this.loadMembers();
+                },
+
+                async addPerson() {
+                    const name = (this.newPerson.name || '').trim();
+                    if (!name) return showGlobalAlert('Name is required.');
+                    if ((this.members || []).some(m => (m.name || '').trim().toLowerCase() === name.toLowerCase()))
+                        return showGlobalAlert(`There is already a person named "${name}".`);
+                    this.saving = true;
+                    try {
+                        await fetch(`${this.apiBase}api/members`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                name: name,
+                                role: this.newPerson.role,
+                                is_child: this.newPerson.role === 'child',
+                                color_code: this.newPerson.color_code,
+                                avatar: (this.newPerson.avatar || '').trim() || null
+                            })
+                        });
+                        this.newPerson = { name: '', role: 'adult', color_code: '#3B82F6', avatar: '' };
+                        this.showAddPerson = false;
+                        await this.loadMembers();
+                    } finally {
+                        this.saving = false;
+                    }
                 },
 
                 // --- People tab: role-profile navigation ---
