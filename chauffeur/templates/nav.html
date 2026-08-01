@@ -160,6 +160,35 @@
                 const mobileCcBtn = document.getElementById('mobile-cc-nav-item');
                 if (mobileCcBtn) mobileCcBtn.style.display = 'none';
             }
+
+            // Per-embed tab filtering, aimed at HA iframe cards: the URL is
+            // each card's own config channel (params propagate across links).
+            //   ?tabs=none                -> no nav bar at all (pure card)
+            //   ?tabs=schedule,chores     -> only those tabs visible
+            // Slugs: schedule, calendar, errands, chores, routines, intake,
+            // trips, map. Unknown/empty values are ignored, not fatal.
+            const tabsParam = urlParams.get('tabs');
+            if (tabsParam !== null) {
+                const navEl = document.querySelector('nav');
+                if (tabsParam.trim() === '' || tabsParam.trim().toLowerCase() === 'none') {
+                    if (navEl) navEl.style.display = 'none';
+                } else {
+                    const allowed = new Set(tabsParam.split(',')
+                        .map(s => s.trim().toLowerCase()).filter(Boolean));
+                    const SLUGS = {
+                        'dashboard_v2': 'schedule', 'calendar': 'calendar',
+                        'errands': 'errands', 'chores': 'chores',
+                        'routines': 'routines', 'intake': 'intake',
+                        'trips': 'trips', 'map': 'map'
+                    };
+                    document.querySelectorAll('nav a[href]').forEach(a => {
+                        const path = (a.getAttribute('href') || '')
+                            .split('?')[0].replace(/^\//, '');
+                        const slug = SLUGS[path];
+                        if (slug && !allowed.has(slug)) a.style.display = 'none';
+                    });
+                }
+            }
         });
     </script>
 
