@@ -35,8 +35,11 @@ routines + streaks · rewards store with parent-approved redemptions.
   (local dev without HA shows dead features today). Backends already degrade
   gracefully — this is a UI-visibility pass only. Note the proper dev
   alternative: `ha_base_url`/`ha_token` settings point local dev at real HA.
-- **Kiosk points leaderboard.** Family points on the wall panel; kiosk mode
-  exists, `GET /api/points` exists — cheap, fun.
+- **Kiosk points leaderboard — ALREADY SHIPPED, stale item (noticed
+  2026-08-01).** `/chores?kiosk=true` has been exactly this since v2.20.0
+  (leaderboard-only collapse, 60s refresh; `/routines?kiosk=true` = streak
+  board). Only unbuilt remnant, if ever wanted: a compact points strip ON
+  the main schedule dashboard's kiosk view, so one panel shows both.
 - **Per-member notification preferences.** Members with both web push and HA
   notify get every message twice (accepted v1 tradeoff). Add a per-member
   lane preference or dedupe.
