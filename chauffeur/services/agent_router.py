@@ -110,6 +110,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "Resolve relative dates ('today', 'tonight', 'tomorrow', weekday names) against this "
                       "before calling tools, and pass tool dates as YYYY-MM-DD.\n")
 
+    if not driver:
+        system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
+                          "but you do NOT know who is speaking in this context. If the speaker has identified "
+                          "themselves (or the request implies it: 'tell Mom Dad is on his way' -> from Dad), pass "
+                          "from_member/member_name. Otherwise ask who it is BEFORE sending or claiming — never guess.\n")
+
     if driver:
         system_prompt += f"""
 DRIVER MODE (PWA):
@@ -119,6 +125,8 @@ Their drives for TODAY are listed below; use get_my_route for other days.
 When they say they are leaving or heading out, call start_route. When they say they picked up,
 dropped off, arrived, or finished, call complete_route with the matching action.
 Never ask them which driver they are — you already know.
+Messages and chore claims act as {driver.get('name')} automatically — never ask who is
+sending or claiming, and never pass from_member/member_name for them.
 """
         try:
             from services.agent_tools_v2 import get_my_route
@@ -198,7 +206,13 @@ Never ask them which driver they are — you already know.
                              "clear_trip_itinerary", "auto_schedule_trip_itinerary",
                              "manage_trip_rules", "manage_trip_flights",
                              "start_route", "complete_route",
-                             "adjust_points", "get_point_balances", "reopen_chore"}
+                             "adjust_points", "get_point_balances", "reopen_chore",
+                             # Family-hub tools: sends are actions; the reads
+                             # return a message that IS the complete spoken
+                             # answer (same reasoning as get_point_balances).
+                             "send_family_message", "send_direct_message",
+                             "get_family_messages", "list_chores",
+                             "claim_chore", "get_routine_status"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -350,6 +364,40 @@ Never ask them which driver they are — you already know.
                 elif func_name == "reopen_chore":
                     from services.agent_tools_v2 import reopen_chore
                     res = reopen_chore(args.get("chore_title", ""))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "send_family_message":
+                    from services.agent_tools_v2 import send_family_message
+                    # sender_driver_id: only trusted in PWA driver chat.
+                    res = send_family_message(args.get("message_text", ""),
+                                              sender_driver_id=driver_id if driver else None,
+                                              from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "send_direct_message":
+                    from services.agent_tools_v2 import send_direct_message
+                    res = send_direct_message(args.get("recipient_name", ""),
+                                              args.get("message_text", ""),
+                                              sender_driver_id=driver_id if driver else None,
+                                              from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_family_messages":
+                    from services.agent_tools_v2 import get_family_messages
+                    res = get_family_messages(limit=args.get("limit", 10),
+                                              requester_driver_id=driver_id if driver else None)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "list_chores":
+                    from services.agent_tools_v2 import list_chores
+                    res = list_chores()
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "claim_chore":
+                    from services.agent_tools_v2 import claim_chore
+                    res = claim_chore(args.get("chore_title", ""),
+                                      member_name=args.get("member_name"),
+                                      sender_driver_id=driver_id if driver else None)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_routine_status":
+                    from services.agent_tools_v2 import get_routine_status
+                    res = get_routine_status(args.get("member_name", ""),
+                                             args.get("target_date", "today"))
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "adjust_points":
                     from services.agent_tools_v2 import adjust_points

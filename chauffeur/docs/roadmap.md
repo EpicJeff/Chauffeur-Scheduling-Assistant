@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.24.1).
+up cold. Last updated: 2026-08-01 (v2.25.0).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -18,14 +18,13 @@ routines + streaks · rewards store with parent-approved redemptions.
 
 ## Next-up candidates (no platform prerequisites)
 
-- **Agent tools for the family hub.** Wire into BOTH stacks
-  (`agent_router`/`agent_tools_v2` live; `agentic_chat_loop` dormant but kept
-  in sync): send/read family messages ("tell Mom I'll be late"), chores
-  ("what chores are open?", "claim the trash", parent-voice verification is
-  an open question — PIN equivalence needed), routines ("did Ben finish his
-  routine?"). When messaging tools land, restore the Argyle FAB on the PWA
-  Messages tab (hidden since v2.15.3 because it overlapped the composer and
-  had no messaging abilities).
+- **Agent tools for the family hub. SHIPPED v2.25.0 (2026-08-01)** — six
+  tools in both stacks (send/read family messages + DMs with full push
+  fan-out, list/claim chores, routine status), PWA sender identity trusted
+  server-side, voice/admin must name the actor or the agent asks. Argyle
+  FAB restored on the Messages channel list (still hidden inside open
+  threads). Parent-voice chore VERIFICATION remains deliberately out (PIN
+  equivalence — see open questions).
 - **Voice memos (push-to-talk).** The walkie-talkie moment from the original
   vision. Schema is ready (`ChatMessage.type='audio'` + `attachment`
   reserved); needs MediaRecorder capture, an upload endpoint + storage,
@@ -107,10 +106,11 @@ TestFlight/Android sideload. Unlocks, in value order:
 4. **Eventually: live calls** (WebRTC + CallKit/ConnectionService). Until
    then the deliberate answer to "intercom" is voice memos, not calls.
 
-Frictions to plan for: iOS builds need a Mac or cloud CI (dev machine is
-Windows) · $99/yr Apple Developer account · TestFlight builds expire after
-90 days (recurring release cadence) · Apple scrutinizes always-on location
-permissions.
+Frictions to plan for: iOS builds need a Mac — **available: a MacBook Pro
+(broken screen, works on an external monitor) and a MacBook Air in the
+house (noted 2026-08-01), so no cloud CI required** · $99/yr Apple
+Developer account · TestFlight builds expire after 90 days (recurring
+release cadence) · Apple scrutinizes always-on location permissions.
 
 **Distribution plan (decided 2026-08-01): TestFlight is the workshop, the
 App Store is the destination.**

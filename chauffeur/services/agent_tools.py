@@ -359,6 +359,47 @@ class AdjustPointsTool(BaseModel):
     set_to: Optional[int] = Field(default=None, description="Absolute target balance.")
     note: str = Field(default="", description="Short reason shown in the points history, e.g. 'Helped carry groceries'.")
 
+class SendFamilyMessageTool(BaseModel):
+    """
+    Posts a message to the family chat channel everyone sees. The sender must be known: pass from_member with the speaker's name; if the speaker is unknown, ask who it is before sending.
+    """
+    message_text: str = Field(..., description="The message to post, in the sender's voice.")
+    from_member: Optional[str] = Field(default=None, description="Who the message is from (family member name).")
+
+class SendDirectMessageTool(BaseModel):
+    """
+    Sends a private direct message to one family member ('tell Mom I'll be late'). Sender must be known via from_member; ask if unknown.
+    """
+    recipient_name: str = Field(..., description="The family member to message (fuzzy matched by name).")
+    message_text: str = Field(..., description="The message to send, in the sender's voice.")
+    from_member: Optional[str] = Field(default=None, description="Who the message is from.")
+
+class GetFamilyMessagesTool(BaseModel):
+    """
+    Reads the most recent messages from the family chat channel.
+    """
+    limit: int = Field(default=10, description="How many recent messages to read (max 25).")
+
+class ListChoresTool(BaseModel):
+    """
+    Lists the family chore pot: open chores, who has claimed what, and what awaits parent verification.
+    """
+    pass
+
+class ClaimChoreTool(BaseModel):
+    """
+    Claims an open chore for a family member ('Ben will take the dishes'). member_name is required; ask who is claiming if unknown.
+    """
+    chore_title: str = Field(..., description="The chore's name (fuzzy matched).")
+    member_name: Optional[str] = Field(default=None, description="Who is claiming it.")
+
+class GetRoutineStatusTool(BaseModel):
+    """
+    Checks a family member's daily routine progress and streak ('did Ben finish his routine?').
+    """
+    member_name: str = Field(..., description="Whose routine to check.")
+    target_date: str = Field(default="today", description="Day to check (YYYY-MM-DD, 'today', 'yesterday').")
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -391,6 +432,12 @@ TOOL_SCHEMAS = {
     "get_point_balances": GetPointBalancesTool.model_json_schema(),
     "adjust_points": AdjustPointsTool.model_json_schema(),
     "reopen_chore": ReopenChoreTool.model_json_schema(),
+    "send_family_message": SendFamilyMessageTool.model_json_schema(),
+    "send_direct_message": SendDirectMessageTool.model_json_schema(),
+    "get_family_messages": GetFamilyMessagesTool.model_json_schema(),
+    "list_chores": ListChoresTool.model_json_schema(),
+    "claim_chore": ClaimChoreTool.model_json_schema(),
+    "get_routine_status": GetRoutineStatusTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1383,6 +1430,35 @@ def handle_reopen_chore(args: dict) -> dict:
     from services.agent_tools_v2 import reopen_chore
     return reopen_chore(args.get("chore_title", ""))
 
+def handle_send_family_message(args: dict) -> dict:
+    from services.agent_tools_v2 import send_family_message
+    return send_family_message(args.get("message_text", ""),
+                               from_member=args.get("from_member"))
+
+def handle_send_direct_message(args: dict) -> dict:
+    from services.agent_tools_v2 import send_direct_message
+    return send_direct_message(args.get("recipient_name", ""),
+                               args.get("message_text", ""),
+                               from_member=args.get("from_member"))
+
+def handle_get_family_messages(args: dict) -> dict:
+    from services.agent_tools_v2 import get_family_messages
+    return get_family_messages(limit=args.get("limit", 10))
+
+def handle_list_chores(args: dict) -> dict:
+    from services.agent_tools_v2 import list_chores
+    return list_chores()
+
+def handle_claim_chore(args: dict) -> dict:
+    from services.agent_tools_v2 import claim_chore
+    return claim_chore(args.get("chore_title", ""),
+                       member_name=args.get("member_name"))
+
+def handle_get_routine_status(args: dict) -> dict:
+    from services.agent_tools_v2 import get_routine_status
+    return get_routine_status(args.get("member_name", ""),
+                              args.get("target_date", "today"))
+
 TOOL_HANDLERS = {
     "start_drive": handle_start_drive,
     "update_drive_status": handle_update_drive_status,
@@ -1414,6 +1490,12 @@ TOOL_HANDLERS = {
     "get_point_balances": handle_get_point_balances,
     "adjust_points": handle_adjust_points,
     "reopen_chore": handle_reopen_chore,
+    "send_family_message": handle_send_family_message,
+    "send_direct_message": handle_send_direct_message,
+    "get_family_messages": handle_get_family_messages,
+    "list_chores": handle_list_chores,
+    "claim_chore": handle_claim_chore,
+    "get_routine_status": handle_get_routine_status,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

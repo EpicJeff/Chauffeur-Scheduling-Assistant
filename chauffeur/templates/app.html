@@ -425,17 +425,12 @@
                 document.getElementById('btn-prev-day').disabled = false;
                 document.getElementById('btn-next-day').disabled = false;
             }
-            // The Argyle agent has no messaging tools, and its FAB overlays
-            // the thread composer's Send button — hide both on Messages.
+            // Argyle has messaging tools now (v2.25.0) so the FAB is back on
+            // the Messages channel list; it still hides inside an OPEN thread,
+            // where it overlays the composer's Send button.
+            const threadOpen = (document.getElementById('thread-view') || {}).style?.display === 'flex';
             const agentFab = document.getElementById('kiosk-chat-fab');
-            if (agentFab) agentFab.style.display = isMessages ? 'none' : '';
-            if (isMessages) {
-                const agentPopup = document.getElementById('kiosk-chat-popup');
-                if (agentPopup && !agentPopup.classList.contains('hidden')) {
-                    agentPopup.classList.add('hidden');
-                    agentPopup.classList.remove('flex');
-                }
-            }
+            if (agentFab) agentFab.style.display = (isMessages && threadOpen) ? 'none' : '';
             const showProposals = currentView === 'family' && currentMemberRole() === 'parent'
                 && typeof proposalsData !== 'undefined' && proposalsData.length > 0;
             document.getElementById('proposals-container').style.display = showProposals ? 'block' : 'none';
@@ -1157,6 +1152,7 @@
         async function openChannel(channelId, channelObj = null) {
             activeChannelId = channelId;
             document.getElementById('thread-view').style.display = 'flex';
+            applyViewVisibility();  // hides the Argyle FAB over the composer
             // Empty channels aren't in the list payload (they only get listed
             // once the first message is posted), so Discuss/DM creation passes
             // the channel object straight through for the header.
@@ -1232,6 +1228,7 @@
         function closeThread() {
             activeChannelId = null;
             document.getElementById('thread-view').style.display = 'none';
+            applyViewVisibility();  // FAB returns on the channel list
             fetchChannels();
         }
 

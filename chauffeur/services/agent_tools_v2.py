@@ -460,6 +460,226 @@ def reopen_chore(chore_title: str) -> Dict[str, Any]:
 # TOOL REGISTRY (For Gemma Router)
 # ==============================================================================
 
+# --- Family hub tools (messaging / chores / routines) ------------------------
+# Shared implementations for BOTH agent stacks. Identity rules: in PWA driver
+# chat the logged-in driver's member is the trusted actor (sender_driver_id,
+# injected server-side, never taken from the LLM); in admin/voice contexts the
+# speaker must name themselves (from_member / member_name) or the tool asks.
+
+def _member_for_driver(driver_id: str):
+    if not driver_id:
+        return None
+    from services.storage import get_all_members
+    return next((m for m in get_all_members() if m.get('driver_id') == driver_id), None)
+
+
+def _find_member_fuzzy(name: str):
+    if not name:
+        return None
+    from services.storage import get_all_members
+    target = name.strip().lower()
+    members = get_all_members()
+    exact = [m for m in members if (m.get('name') or '').strip().lower() == target]
+    if len(exact) == 1:
+        return exact[0]
+    sub = [m for m in members if target and target in (m.get('name') or '').strip().lower()]
+    return sub[0] if len(sub) == 1 else None
+
+
+def _member_names() -> str:
+    from services.storage import get_all_members
+    return ', '.join(m.get('name') for m in get_all_members() if m.get('name'))
+
+
+def _resolve_actor(sender_driver_id: str = None, member_name: str = None):
+    """Returns (member, None) or (None, error_result)."""
+    m = _member_for_driver(sender_driver_id)
+    if m:
+        return m, None
+    if member_name:
+        m = _find_member_fuzzy(member_name)
+        if m:
+            return m, None
+        return None, {"status": "error",
+                      "message": f"I couldn't find a family member named '{member_name}'. Family members: {_member_names()}."}
+    return None, {"status": "error",
+                  "message": "I need to know who this is from — tell me your name (for example: \"this is Mom\")."}
+
+
+def _post_chat_message(channel: dict, sender: dict, body: str) -> dict:
+    """Store a chat message and fire the same SSE + push fan-out as the
+    /api/channels POST endpoint. main is lazily imported (it is the running
+    app module); in tests it is absent and fan-out is skipped silently."""
+    from models.schemas import ChatMessage
+    from services import storage
+    message = ChatMessage(channel_id=channel['id'], sender_member_id=sender['id'],
+                          body=body).model_dump()
+    storage.add_chat_message(message)
+    storage.set_last_read(channel['id'], sender['id'], message['ts'])
+    try:
+        import main as _main
+        recipients = channel.get('member_ids') if channel.get('kind') == 'dm' else None
+        _main._push_message_event(channel['id'], recipients)
+        import threading
+        threading.Thread(target=_main._fanout_message_notifications,
+                         args=(channel, message), daemon=True).start()
+    except Exception as e:
+        print(f"Agent message fan-out skipped: {e}")
+    return message
+
+
+def send_family_message(message_text: str, sender_driver_id: str = None,
+                        from_member: str = None) -> Dict[str, Any]:
+    from services import storage
+    text = (message_text or '').strip()
+    if not text:
+        return {"status": "error", "message": "There's no message text to send."}
+    sender, err = _resolve_actor(sender_driver_id, from_member)
+    if err:
+        return err
+    if sender.get('role') == 'helper':
+        return {"status": "error", "message": "Helpers can only send direct messages to parents."}
+    storage.ensure_family_channel()
+    channel = storage.get_family_channel()
+    if not channel:
+        return {"status": "error", "message": "The family channel isn't set up yet."}
+    _post_chat_message(channel, sender, text)
+    return {"status": "success",
+            "message": f"Sent to the family channel from {sender.get('name')}: “{text}”"}
+
+
+def send_direct_message(recipient_name: str, message_text: str,
+                        sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
+    from services import storage
+    text = (message_text or '').strip()
+    if not text:
+        return {"status": "error", "message": "There's no message text to send."}
+    sender, err = _resolve_actor(sender_driver_id, from_member)
+    if err:
+        return err
+    recipient = _find_member_fuzzy(recipient_name)
+    if not recipient:
+        return {"status": "error",
+                "message": f"I couldn't find '{recipient_name}'. Family members: {_member_names()}."}
+    if recipient['id'] == sender['id']:
+        return {"status": "error", "message": "That message would go to yourself."}
+    # Same helper rules the messaging endpoint enforces.
+    if sender.get('role') == 'helper' and recipient.get('role') != 'parent':
+        return {"status": "error", "message": "Helpers can only send direct messages to parents."}
+    if recipient.get('role') == 'helper' and sender.get('role') != 'parent':
+        return {"status": "error",
+                "message": "Only parents can message helpers directly — post in the family channel instead."}
+    dm = storage.get_or_create_dm(sender['id'], recipient['id'])
+    _post_chat_message(dm, sender, text)
+    return {"status": "success",
+            "message": f"Sent to {recipient.get('name')} from {sender.get('name')}: “{text}”"}
+
+
+def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dict[str, Any]:
+    import datetime
+    from services import storage
+    requester = _member_for_driver(requester_driver_id)
+    if requester and requester.get('role') == 'helper':
+        return {"status": "error", "message": "Helpers don't have access to the family channel."}
+    channel = storage.get_family_channel()
+    msgs = storage.get_channel_messages(channel['id'], limit=max(1, min(int(limit or 10), 25))) if channel else []
+    if not msgs:
+        return {"status": "success", "message": "No family messages yet."}
+    names = {m['id']: m.get('name', '?') for m in storage.get_all_members()}
+    lines = []
+    for m in msgs:
+        t = datetime.datetime.fromtimestamp(m.get('ts', 0)).strftime('%a %I:%M %p').lstrip('0')
+        lines.append(f"{names.get(m.get('sender_member_id'), 'Unknown')} ({t}): {m.get('body', '')}")
+    return {"status": "success", "message": "Recent family messages:\n" + "\n".join(lines)}
+
+
+def list_chores() -> Dict[str, Any]:
+    from services import storage
+    chores = storage.get_all_chores()
+    names = {m['id']: m.get('name', '?') for m in storage.get_all_members()}
+    open_c = [c for c in chores if c.get('state') == 'open']
+    claimed = [c for c in chores if c.get('state') == 'claimed']
+    done = [c for c in chores if c.get('state') == 'done']
+    parts = []
+    if open_c:
+        parts.append("Open (up for grabs): " + "; ".join(
+            f"{c.get('title')} ({c.get('points', 0)} pts)" for c in open_c))
+    if claimed:
+        parts.append("Claimed: " + "; ".join(
+            f"{c.get('title')} — {names.get(c.get('claimed_by'), '?')}" for c in claimed))
+    if done:
+        parts.append("Waiting for a parent to verify: " + "; ".join(
+            f"{c.get('title')} — {names.get(c.get('claimed_by'), '?')}" for c in done))
+    if not parts:
+        return {"status": "success", "message": "The chore pot is empty right now."}
+    return {"status": "success", "message": " | ".join(parts)}
+
+
+def claim_chore(chore_title: str, member_name: str = None,
+                sender_driver_id: str = None) -> Dict[str, Any]:
+    from services import storage
+    actor, err = _resolve_actor(sender_driver_id, member_name)
+    if err:
+        # Claiming needs an actor: reword the ask for this tool.
+        if not member_name:
+            err = dict(err, message="Who is claiming it? Tell me the family member's name.")
+        return err
+    if actor.get('role') == 'helper':
+        return {"status": "error", "message": "Helpers can't claim family chores."}
+    title = (chore_title or '').strip().lower()
+    if not title:
+        return {"status": "error", "message": "Which chore should be claimed?"}
+    chores = storage.get_all_chores()
+    matches = [c for c in chores if title in (c.get('title') or '').lower()]
+    open_matches = [c for c in matches if c.get('state') == 'open']
+    if not matches:
+        return {"status": "error", "message": f"No chore matches '{chore_title}'."}
+    if not open_matches:
+        c = matches[0]
+        return {"status": "error",
+                "message": f"'{c.get('title')}' isn't open right now (state: {c.get('state')})."}
+    chore = open_matches[0]
+    # Per-chore eligibility list (empty = any non-helper member).
+    eligible = chore.get('eligible_member_ids') or []
+    if eligible and actor['id'] not in eligible:
+        return {"status": "error",
+                "message": f"{actor.get('name')} isn't on the eligible list for '{chore.get('title')}'."}
+    result = storage.claim_chore(chore['id'], actor['id'])
+    if result == 'ok':
+        pts = chore.get('points', 0)
+        return {"status": "success",
+                "message": f"{actor.get('name')} claimed '{chore.get('title')}'"
+                           + (f" ({pts} pts on verification)." if pts else ".")}
+    if result == 'cap':
+        return {"status": "error",
+                "message": f"{actor.get('name')} already has the maximum number of claimed chores."}
+    return {"status": "error", "message": f"Couldn't claim '{chore.get('title')}' ({result})."}
+
+
+def get_routine_status(member_name: str, target_date: str = "today") -> Dict[str, Any]:
+    from services import storage
+    member = _find_member_fuzzy(member_name)
+    if not member:
+        return {"status": "error",
+                "message": f"I couldn't find '{member_name}'. Family members: {_member_names()}."}
+    date_str = _parse_fuzzy_date(target_date).isoformat()
+    items = storage.routines_for_day(member['id'], date_str)
+    if not items:
+        return {"status": "success",
+                "message": f"{member.get('name')} has no routine items scheduled for {date_str}."}
+    done = [i for i in items if i.get('checked')]
+    missing = [i.get('title') for i in items if not i.get('checked')]
+    streak = storage.compute_streak(member['id'])
+    msg = f"{member.get('name')}'s routine for {date_str}: {len(done)}/{len(items)} done"
+    if missing:
+        msg += f" — still to do: {', '.join(missing)}"
+    else:
+        msg += " — all done! 🎉"
+    if streak.get('current'):
+        msg += f" 🔥 {streak['current']}-day streak."
+    return {"status": "success", "message": msg}
+
+
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
     """Flight management for the v2 router. Thin wrapper over the validated v1
     handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
@@ -634,6 +854,71 @@ def get_available_tools() -> List[Dict]:
             "name": "get_point_balances",
             "description": "Gets the current chore-point balance for every child. Use for questions like 'how many points does Bob have' or 'who is winning on points'.",
             "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "send_family_message",
+            "description": "Posts a message to the family chat channel that everyone sees ('tell everyone dinner is at 6'). The sender must be known: in driver chat it is the logged-in member automatically; otherwise pass from_member with the speaker's name, and if you don't know who is speaking, ASK before sending.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_text": {"type": "string", "description": "The message to post, in the sender's voice."},
+                    "from_member": {"type": "string", "description": "Who the message is from (family member name). Omit in driver chat — the sender is already known."}
+                },
+                "required": ["message_text"]
+            }
+        },
+        {
+            "name": "send_direct_message",
+            "description": "Sends a private direct message to one family member ('tell Mom I'll be late'). Sender rules are the same as send_family_message: known automatically in driver chat, otherwise from_member is required (ask if unknown).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient_name": {"type": "string", "description": "The family member to message (fuzzy matched by name)."},
+                    "message_text": {"type": "string", "description": "The message to send, in the sender's voice."},
+                    "from_member": {"type": "string", "description": "Who the message is from. Omit in driver chat."}
+                },
+                "required": ["recipient_name", "message_text"]
+            }
+        },
+        {
+            "name": "get_family_messages",
+            "description": "Reads the most recent messages from the family chat channel ('any new family messages?', 'what did I miss?').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "How many recent messages to read (default 10, max 25)."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "list_chores",
+            "description": "Lists the family chore pot: what's open to claim, who has claimed what, and what's waiting for parent verification ('what chores are open?', 'who's doing the dishes?').",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "claim_chore",
+            "description": "Claims an open chore for a family member ('claim the trash', 'Ben will take the dishes'). In driver chat the logged-in member claims it; otherwise member_name is required (ask who is claiming if unknown).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chore_title": {"type": "string", "description": "The chore's name (fuzzy matched)."},
+                    "member_name": {"type": "string", "description": "Who is claiming it. Omit in driver chat."}
+                },
+                "required": ["chore_title"]
+            }
+        },
+        {
+            "name": "get_routine_status",
+            "description": "Checks a family member's daily routine progress and streak ('did Ben finish his routine?', 'what's left on Lily's checklist?').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {"type": "string", "description": "Whose routine to check."},
+                    "target_date": {"type": "string", "description": "Day to check, default 'today' (YYYY-MM-DD or 'yesterday')."}
+                },
+                "required": ["member_name"]
+            }
         },
         {
             "name": "adjust_points",
