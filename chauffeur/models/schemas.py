@@ -256,6 +256,10 @@ class Settings(BaseModel):
     tomorrow_digest_enabled: bool = True
     tomorrow_digest_time: str = "20:00"  # HH:MM, server-local time
     calendar_ids: List[str]
+    # One of calendar_ids, starred in Config → General. The family's shared
+    # calendar: intake proposals with no clear owner (and whole-family /
+    # multi-member events) default here.
+    default_calendar_id: str = ""
     # How many days the kiosk/dashboard renders. Display only.
     days_to_show: int = 7
     # How far ahead the schedule is actually built, progressively, one day at a

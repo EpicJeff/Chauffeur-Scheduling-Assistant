@@ -118,6 +118,17 @@
                                     </div>
                                     <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"
                                         class="mr-2"></span>
+                                    <button @click="setDefaultCalendar(calId)"
+                                        :title="defaultCalendarId === calId ? 'Default calendar' : 'Make default calendar'"
+                                        class="mr-1 focus:outline-none transition-colors"
+                                        :class="defaultCalendarId === calId ? 'text-yellow-300' : 'text-gray-500 hover:text-yellow-300'">
+                                        <svg class="w-4 h-4" :fill="defaultCalendarId === calId ? 'currentColor' : 'none'"
+                                            stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z">
+                                            </path>
+                                        </svg>
+                                    </button>
                                     <button @click="removeCalendarId(index)"
                                         class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -131,6 +142,8 @@
                                 <div class="text-gray-500 italic text-sm">No calendars added yet.</div>
                             </template>
                         </div>
+                        <p class="text-xs text-gray-500 mt-2">★ marks the default (family) calendar — used for intake
+                            proposals when it isn't clear whose event it is, and for whole-family events.</p>
                     </div>
                     <!-- Days to show -->
                     <div class="mb-6">
@@ -2547,6 +2560,7 @@
                 homeLocation: '',
                 locationSuggestions: [],
                 calendarIds: [],
+                defaultCalendarId: '',
                 driverLocationSuggestions: [],
                 ruleLocationSuggestions: [],
                 priorityRuleLocationSuggestions: [],
@@ -2914,6 +2928,7 @@
                     this.maServerUrl = data.ma_server_url || '';
                     this.tripHashtags = data.trip_hashtags || [];
                     this.calendarIds = data.calendar_ids || [];
+                    this.defaultCalendarId = data.default_calendar_id || '';
                     this.isHomeAssistant = data.is_home_assistant || false;
 
                     // LLM Settings
@@ -2945,7 +2960,13 @@
                     this.newCalendarIdInput = '';
                 },
                 async removeCalendarId(index) {
+                    const removed = this.calendarIds[index];
                     this.calendarIds.splice(index, 1);
+                    if (this.defaultCalendarId === removed) this.defaultCalendarId = '';
+                    await this.saveSettings();
+                },
+                async setDefaultCalendar(calId) {
+                    this.defaultCalendarId = this.defaultCalendarId === calId ? '' : calId;
                     await this.saveSettings();
                 },
                 async addTripHashtag() {
@@ -2968,6 +2989,7 @@
                     try {
                         const payload = {
                             calendar_ids: this.calendarIds,
+                            default_calendar_id: this.defaultCalendarId || '',
                             days_to_show: parseInt(this.daysToShow) || 7,
                             route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 1440,
                             time_format_24h: this.timeFormat24h,

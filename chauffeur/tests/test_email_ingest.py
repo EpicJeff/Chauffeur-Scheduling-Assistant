@@ -112,6 +112,7 @@ def test_run_ingest():
         'ingest_email_user': 'family@test',
         'ingest_email_password': 'x',
         'ingest_sender_defaults': [{'pattern': '@teamsnap.com', 'calendar_id': 'ben@cal'}],
+        'default_calendar_id': 'family@cal',
     })
 
     storage.add_passenger({'name': 'Lily', 'hashtags': [], 'calendar_ids': ['lily@cal']})
@@ -134,20 +135,25 @@ def test_run_ingest():
                     {'kind': 'event', 'title': 'Junk', 'date': IN_5_DAYS, 'confidence': 0.1},
                 ]
             return [{'kind': 'event', 'title': 'Picture Day', 'date': IN_5_DAYS,
-                     'member_name': 'Lily', 'confidence': 0.85}]
+                     'member_name': 'Lily', 'confidence': 0.85},
+                    {'kind': 'event', 'title': 'Fall Festival', 'date': IN_5_DAYS,
+                     'member_name': None, 'confidence': 0.8}]
         email_ingest.extract_items = fake_extract
 
         s = email_ingest.run_ingest()
-        check(s['checked'] == 2 and s['proposed'] == 2,
+        check(s['checked'] == 2 and s['proposed'] == 3,
               f"every message analyzed, incl. a manual forward: {s}")
         props = {p['title']: p for p in storage.get_proposals('proposed')}
         check(props['Soccer Game']['calendar_id'] == 'ben@cal',
               "sender default prefills the target calendar (wins over member guess)")
         check(props['Picture Day']['calendar_id'] == 'lily@cal',
               "no sender default -> LLM member guess resolves to that kid's calendar")
+        check(props['Fall Festival']['calendar_id'] == 'family@cal',
+              "no owner -> starred family default calendar")
         check(props['Soccer Game']['source_from'] == 'coach.dan@teamsnap.com', "source recorded")
         log = storage.get_ingest_log()
-        check(sum(1 for r in log if r['outcome'].startswith('proposed 1')) == 2,
+        check(any(r['outcome'].startswith('proposed 1') for r in log)
+              and any(r['outcome'].startswith('proposed 2') for r in log),
               "both messages logged as proposed")
 
         # Re-run with the same content: dedupe keeps the queue clean even

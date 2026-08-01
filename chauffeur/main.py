@@ -4561,7 +4561,15 @@ def get_settings():
 
 @app.post("/api/settings")
 def update_settings(settings: Settings, background_tasks: BackgroundTasks):
-    storage.update_settings(settings.model_dump() if hasattr(settings, 'model_dump') else settings.dict())
+    # MERGE, don't replace: clients send only the fields they manage (the
+    # config page doesn't know about intake creds; /intake doesn't know about
+    # solver toggles). exclude_unset keeps model defaults from clobbering
+    # stored values a client never sent — a blind replace here silently wiped
+    # intake mailbox credentials on every config-page save.
+    incoming = settings.model_dump(exclude_unset=True)
+    current = storage.get_settings() or {}
+    current.update(incoming)
+    storage.update_settings(current)
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "updated"}
 

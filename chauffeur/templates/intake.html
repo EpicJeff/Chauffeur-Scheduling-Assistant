@@ -166,7 +166,9 @@
                     <label class="block text-gray-400 mb-1 text-sm font-semibold">Sender defaults (optional)</label>
                     <p class="text-xs text-gray-500 mb-3">Routing hints, not a filter — every email is analyzed either
                         way. When a pattern matches the From address ("@school.org", "coach.dan"), proposals from that
-                        sender are pre-filled with the chosen calendar.</p>
+                        sender are pre-filled with the chosen calendar. Otherwise Chauffeur guesses the family member
+                        from the email itself, and falls back to the ★ default calendar from Settings → General for
+                        whole-family or unclear items.</p>
                     <template x-for="(entry, idx) in config.ingest_sender_defaults" :key="idx">
                         <div class="flex gap-2 mb-2">
                             <input type="text" x-model="entry.pattern" placeholder="@school.org"

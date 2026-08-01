@@ -176,7 +176,8 @@ Return ONLY valid JSON: {"items": [...]}. Each item:
   "start_time": "HH:MM" or null (null = all-day; for kind=task the deadline date),
   "end_time": "HH:MM" or null,
   "location": "..." or null,
-  "member_name": one of the family names below, or null if unclear,
+  "member_name": one of the family names below, or null if unclear OR if the
+    item is for multiple family members / the whole family,
   "notes": one short sentence of context or null,
   "confidence": 0.0-1.0
 }
@@ -356,8 +357,12 @@ def run_ingest() -> dict:
                 'source': 'email',
                 'source_from': msg['from'],
                 'source_subject': msg['subject'][:200],
+                # Routing tiers: explicit sender default > LLM member guess >
+                # the family's starred default calendar (whole-family events
+                # land there; attendees get tagged after approval).
                 'calendar_id': (entry or {}).get('calendar_id')
-                    or _calendar_for_member_name(prop.get('member_name')),
+                    or _calendar_for_member_name(prop.get('member_name'))
+                    or (settings.get('default_calendar_id') or None),
             })
             storage.add_proposal(prop)
             existing.append(prop)
