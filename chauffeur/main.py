@@ -405,10 +405,14 @@ async def email_ingest_loop():
                     def _nudge_parents():
                         for m in _st.get_all_members():
                             if m.get('role') == 'parent':
+                                # Deep link into the PWA Family tab (which
+                                # hosts the approval queue for parents) — the
+                                # dashboard /intake page is not reachable from
+                                # a phone tap on the public origin.
                                 _notify_member_lanes(
                                     m, 'New proposed events',
-                                    f'📥 {n} new item{"s" if n != 1 else ""} extracted from family email — review in Intake.',
-                                    path='/intake')
+                                    f'📥 {n} new item{"s" if n != 1 else ""} extracted from family email — tap to review.',
+                                    path='/app?view=family')
                     await asyncio.to_thread(_nudge_parents)
         except Exception as e:
             print(f"Email ingest loop error: {e}")

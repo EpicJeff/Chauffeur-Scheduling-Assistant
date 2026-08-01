@@ -150,6 +150,12 @@
             {% include 'components/music_widget.html' %}
         </div>
 
+        <!-- Proposed events from email intake (parents, Family view only) -->
+        <div id="proposals-container" class="shrink-0 overflow-y-auto max-h-[45%] border-b border-gray-800 bg-gray-950"
+            style="display: none">
+            <div id="proposals-content" class="p-3 space-y-2"></div>
+        </div>
+
         <!-- Schedule Container (Swipeable) -->
         <div id="days-container"
             class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
@@ -395,6 +401,7 @@
                 if (musicWidgetStarted && typeof mwRefresh === 'function') mwRefresh();
             } else {
                 buildTimeline();
+                if (view === 'family') fetchProposals();
             }
             if (view !== 'map' && typeof stopFamilyMapPolling === 'function') stopFamilyMapPolling();
         }
@@ -429,6 +436,9 @@
                     agentPopup.classList.remove('flex');
                 }
             }
+            const showProposals = currentView === 'family' && currentMemberRole() === 'parent'
+                && typeof proposalsData !== 'undefined' && proposalsData.length > 0;
+            document.getElementById('proposals-container').style.display = showProposals ? 'block' : 'none';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
             document.getElementById('myday-container').style.display = isMyDay ? 'flex' : 'none';
@@ -740,6 +750,128 @@
             el._hideTimer = setTimeout(() => el.classList.add('opacity-0'), 3500);
         }
 
+        // --- Intake proposals (parents approve/ignore from the Family tab) ---
+        let proposalsData = [];
+        let proposalTargets = null;  // [{id, label}] lazily fetched once
+
+        function escProp(s) {
+            const d = document.createElement('div');
+            d.textContent = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        async function fetchProposals() {
+            if (currentMemberRole() !== 'parent') { proposalsData = []; return; }
+            try {
+                const res = await fetch(`${apiBase}api/proposals?status=proposed`);
+                const data = await res.json();
+                const prev = Object.fromEntries(proposalsData.map(p => [p.id, p._target]));
+                proposalsData = (Array.isArray(data) ? data : []).map(p =>
+                    ({ ...p, _target: prev[p.id] !== undefined ? prev[p.id] : (p.calendar_id || '') }));
+            } catch (e) { proposalsData = []; }
+            if (proposalsData.length && !proposalTargets) await fetchProposalTargets();
+            renderProposals();
+            applyViewVisibility();
+        }
+
+        async function fetchProposalTargets() {
+            try {
+                const [pres, dres] = await Promise.all([
+                    fetch(`${apiBase}api/passengers`), fetch(`${apiBase}api/drivers`)]);
+                const passengers = await pres.json(), drivers = await dres.json();
+                const opts = [];
+                (Array.isArray(passengers) ? passengers : []).forEach(p =>
+                    (p.calendar_ids || []).forEach(c => opts.push({ id: c, label: p.name })));
+                (Array.isArray(drivers) ? drivers : []).forEach(d =>
+                    ((d.calendar_ids || d.calendarIds) || []).forEach(c => {
+                        if (!opts.find(o => o.id === c)) opts.push({ id: c, label: d.name });
+                    }));
+                proposalTargets = opts;
+            } catch (e) { proposalTargets = []; }
+        }
+
+        function proposalWhen(p) {
+            try {
+                if (p.all_day) {
+                    const d = new Date(p.start + 'T00:00:00');
+                    const label = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                    return p.kind === 'task' ? `Due ${label}` : `All day, ${label}`;
+                }
+                const s = new Date(p.start);
+                return s.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+                    + ' · ' + s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            } catch (e) { return p.start; }
+        }
+
+        function renderProposals() {
+            const wrap = document.getElementById('proposals-content');
+            if (!wrap) return;
+            wrap.innerHTML = '';
+            if (!proposalsData.length) return;
+            const header = document.createElement('div');
+            header.className = 'text-xs font-black uppercase tracking-widest text-gray-500 px-1';
+            header.textContent = `📥 Proposed events (${proposalsData.length})`;
+            wrap.appendChild(header);
+            proposalsData.forEach(p => {
+                const card = document.createElement('div');
+                card.className = 'bg-gray-900 border border-gray-800 rounded-2xl p-3';
+                const inList = (proposalTargets || []).some(o => o.id === p.calendar_id);
+                const extraOpt = (p.calendar_id && !inList)
+                    ? `<option value="${escProp(p.calendar_id)}">Family calendar</option>` : '';
+                const opts = (proposalTargets || []).map(o =>
+                    `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');
+                card.innerHTML = `
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
+                        <span class="font-bold text-white text-sm">${escProp(p.title)}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
+                    <div class="text-[10px] text-gray-600 truncate mt-0.5">✉️ ${escProp(p.source_subject || p.source_from || '')}</div>
+                    <div class="flex gap-2 mt-2">
+                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-white text-xs" data-role="target">
+                            <option value="">Whose calendar?</option>${extraOpt}${opts}
+                        </select>
+                        <button data-role="approve" class="bg-green-600 active:bg-green-700 disabled:opacity-40 text-white font-bold text-xs px-3 rounded-lg shrink-0">✓ Approve</button>
+                        <button data-role="ignore" class="bg-gray-700 active:bg-gray-600 text-white font-bold text-xs px-3 rounded-lg shrink-0">✗</button>
+                    </div>`;
+                const sel = card.querySelector('[data-role="target"]');
+                sel.value = p._target || '';
+                const approveBtn = card.querySelector('[data-role="approve"]');
+                approveBtn.disabled = !sel.value;
+                sel.onchange = () => { p._target = sel.value; approveBtn.disabled = !sel.value; };
+                approveBtn.onclick = () => approveProposal(p.id);
+                card.querySelector('[data-role="ignore"]').onclick = () => ignoreProposal(p.id);
+                wrap.appendChild(card);
+            });
+        }
+
+        async function approveProposal(id) {
+            const p = proposalsData.find(x => x.id === id);
+            if (!p || !p._target) return;
+            try {
+                const res = await fetch(`${apiBase}api/proposals/${id}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ calendar_id: p._target })
+                });
+                const data = await res.json();
+                if (!res.ok) { showGlobalAlert(data.detail || 'Approve failed.'); return; }
+                showGlobalAlert(`Added "${p.title}" to the calendar.`);
+                proposalsData = proposalsData.filter(x => x.id !== id);
+                renderProposals();
+                applyViewVisibility();
+            } catch (e) { showGlobalAlert('Approve failed: ' + e.message); }
+        }
+
+        async function ignoreProposal(id) {
+            try {
+                await fetch(`${apiBase}api/proposals/${id}/ignore`, { method: 'POST' });
+                proposalsData = proposalsData.filter(x => x.id !== id);
+                renderProposals();
+                applyViewVisibility();
+            } catch (e) { showGlobalAlert('Could not ignore: ' + e.message); }
+        }
+
         async function init() {
             updateTabBar();
             applyViewVisibility();
@@ -760,7 +892,7 @@
             if (openChannelParam && selectedMemberId) {
                 setView('messages');
                 openChannel(openChannelParam);
-            } else if (['messages', 'chores'].includes(params.get('view')) && selectedMemberId) {
+            } else if (['messages', 'chores', 'family'].includes(params.get('view')) && selectedMemberId) {
                 setView(params.get('view'));
             } else if (currentView === 'chores') {
                 fetchChores();  // restored from localStorage: setView early-returns
@@ -769,6 +901,9 @@
                 initFamilyMap();
                 startFamilyMapPolling();
             }
+            // Parents: load the intake proposal queue so the Family tab (and
+            // the ?view=family push deep link) shows it immediately.
+            if (currentMemberRole() === 'parent') fetchProposals();
         }
 
         async function fetchDrivers() {
