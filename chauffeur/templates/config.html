@@ -770,6 +770,51 @@
                                     </template>
                                 </div>
                             </div>
+                            <div class="w-full mt-4" x-show="editDriverId && newDriver.calendarIds.length">
+                                <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
+                                <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events
+                                    are created on this person's calendar and re-synced hourly, so reschedules and
+                                    cancellations propagate on their own. Past events are never touched.</p>
+                                <template x-for="feed in icsFeedsFor(newDriver.calendarIds)" :key="feed.id">
+                                    <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
+                                        :class="feed.enabled === false ? 'opacity-60' : ''">
+                                        <div class="flex-1 min-w-0">
+                                            <span class="text-sm font-bold text-white" x-text="feed.name"></span>
+                                            <span class="text-xs text-teal-300 ml-2" x-text="(feed.event_count || 0) + ' events'"></span>
+                                            <span x-show="feed.enabled === false"
+                                                class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
+                                            <p class="text-xs truncate"
+                                                :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                                x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
+                                            </p>
+                                        </div>
+                                        <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
+                                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                            x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
+                                        <button @click="toggleIcsFeed(feed)"
+                                            class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                            x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
+                                        <button @click="deleteIcsFeed(feed)"
+                                            class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
+                                    </div>
+                                </template>
+                                <div class="flex gap-2">
+                                    <input type="text" x-model="newIcsFeed.url"
+                                        placeholder="https://... .ics or webcal://..."
+                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
+                                    <select x-show="newDriver.calendarIds.length > 1" x-model="newIcsFeed.calendar_id"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
+                                        <option value="">Onto calendar...</option>
+                                        <template x-for="c in newDriver.calendarIds" :key="c">
+                                            <option :value="c"
+                                                x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
+                                        </template>
+                                    </select>
+                                    <button @click="addInlineIcsFeed(newDriver.calendarIds)" :disabled="icsFeedBusy"
+                                        class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
+                                        x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
+                                </div>
+                            </div>
                             <div class="w-full mt-4">
                                 <div class="flex justify-between items-center mb-2">
                                     <label class="block text-gray-400 font-semibold text-sm">Bio / Context (e.g. "Jeff
@@ -1090,6 +1135,51 @@
                                         </div>
                                     </template>
                                 </div>
+                            </div>
+                        </div>
+                        <div class="w-full mt-4" x-show="editPassengerId && newPassenger.calendar_ids.length">
+                            <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
+                            <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events are
+                                created on this passenger's calendar and re-synced hourly, so reschedules and
+                                cancellations propagate on their own. Past events are never touched.</p>
+                            <template x-for="feed in icsFeedsFor(newPassenger.calendar_ids)" :key="feed.id">
+                                <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
+                                    :class="feed.enabled === false ? 'opacity-60' : ''">
+                                    <div class="flex-1 min-w-0">
+                                        <span class="text-sm font-bold text-white" x-text="feed.name"></span>
+                                        <span class="text-xs text-teal-300 ml-2" x-text="(feed.event_count || 0) + ' events'"></span>
+                                        <span x-show="feed.enabled === false"
+                                            class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
+                                        <p class="text-xs truncate"
+                                            :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                            x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
+                                        </p>
+                                    </div>
+                                    <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
+                                        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                        x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
+                                    <button @click="toggleIcsFeed(feed)"
+                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                        x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
+                                    <button @click="deleteIcsFeed(feed)"
+                                        class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
+                                </div>
+                            </template>
+                            <div class="flex gap-2">
+                                <input type="text" x-model="newIcsFeed.url"
+                                    placeholder="https://... .ics or webcal://..."
+                                    class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
+                                <select x-show="newPassenger.calendar_ids.length > 1" x-model="newIcsFeed.calendar_id"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
+                                    <option value="">Onto calendar...</option>
+                                    <template x-for="c in newPassenger.calendar_ids" :key="c">
+                                        <option :value="c"
+                                            x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
+                                    </template>
+                                </select>
+                                <button @click="addInlineIcsFeed(newPassenger.calendar_ids)" :disabled="icsFeedBusy"
+                                    class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
+                                    x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
                             </div>
                         </div>
                         <div class="w-full mt-4">
@@ -2571,6 +2661,10 @@
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
+                icsFeeds: [],
+                newIcsFeed: { url: '', calendar_id: '' },
+                icsFeedBusy: false,
+                icsSyncingId: null,
                 newPassengerHashtagInput: '',
                 newPassengerCalendarInput: '',
                 newRule: { driver_id: '', constraint_type: 'required', keywords: [], passenger_ids: [], days_of_week: [], start_date: '', end_date: '', time_start: '', time_end: '', location: '', filter_sets: [], buffer_before_mins: 0, buffer_after_mins: 0, attendance_action: 'stay' },
@@ -2605,6 +2699,7 @@
                     await this.loadSettings();
                     await this.loadDrivers();
                     await this.loadPassengers();
+                    this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
@@ -3138,6 +3233,89 @@
                         console.error("Failed to load passengers", e);
                         this.passengers = [];
                     }
+                },
+
+                // --- ICS calendar feeds ---
+                async loadIcsFeeds() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds`);
+                        const data = await res.json();
+                        this.icsFeeds = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load ICS feeds", e);
+                        this.icsFeeds = [];
+                    }
+                },
+                icsFeedsFor(calIds) {
+                    const ids = calIds || [];
+                    return this.icsFeeds.filter(f => ids.includes(f.calendar_id));
+                },
+                icsTargetLabel(calId) {
+                    const m = this.calendarMetadata[calId];
+                    return m ? m.summary : calId;
+                },
+                async addInlineIcsFeed(calIds) {
+                    const url = (this.newIcsFeed.url || '').trim();
+                    if (!url) return showGlobalAlert('Paste an ICS feed URL first.');
+                    const ids = calIds || [];
+                    const target = ids.length === 1 ? ids[0] : this.newIcsFeed.calendar_id;
+                    if (!target) return showGlobalAlert('Pick which calendar the events go on.');
+                    this.icsFeedBusy = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: url, calendar_id: target })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) {
+                            showGlobalAlert(data.detail || 'Could not add that feed.');
+                        } else {
+                            showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} events. They're being created in the background.`);
+                            this.newIcsFeed = { url: '', calendar_id: '' };
+                            await this.loadIcsFeeds();
+                            setTimeout(() => this.loadIcsFeeds(), 8000); // pick up the initial sync result
+                        }
+                    } catch (e) {
+                        showGlobalAlert('Could not add feed: ' + e.message);
+                    } finally {
+                        this.icsFeedBusy = false;
+                    }
+                },
+                async syncIcsFeed(feed) {
+                    this.icsSyncingId = feed.id;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}/sync`, { method: 'POST' });
+                        const data = await res.json();
+                        if (data.error) {
+                            showGlobalAlert('Sync failed: ' + data.error);
+                        } else {
+                            showGlobalAlert(`Synced "${feed.name}": ${data.total} events (${data.added} added, ${data.updated} updated, ${data.removed} removed).`);
+                        }
+                    } catch (e) {
+                        showGlobalAlert('Sync failed: ' + e.message);
+                    } finally {
+                        this.icsSyncingId = null;
+                        await this.loadIcsFeeds();
+                    }
+                },
+                async toggleIcsFeed(feed) {
+                    await fetch(`${this.apiBase}api/ics_feeds/${feed.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: feed.enabled === false })
+                    });
+                    await this.loadIcsFeeds();
+                },
+                async deleteIcsFeed(feed) {
+                    if (!await promptConfirm('Delete feed', `Stop syncing "${feed.name}"?`, 'Delete')) return;
+                    const removeEvents = await promptConfirm('Remove its events?',
+                        `Also remove the upcoming events this feed created from ${this.icsTargetLabel(feed.calendar_id)}? Past events are always kept.`,
+                        'Remove them', 'Keep them');
+                    const res = await fetch(`${this.apiBase}api/ics_feeds/${feed.id}?remove_events=${removeEvents}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (removeEvents) showGlobalAlert(`Feed deleted. ${data.events_removed} upcoming events removed.`);
+                    await this.loadIcsFeeds();
                 },
 
                 // --- Family members ---

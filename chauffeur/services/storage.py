@@ -136,6 +136,7 @@ with db_lock:
     routine_checks_table = db.table('routine_checks')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
+    ics_feeds_table = db.table('ics_feeds')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -2044,3 +2045,35 @@ def update_conversation_title(conversation_id: str, title: str):
         import time
         conversations_table.update({'title': title, 'updated_at': time.time()}, Conv.id == conversation_id)
 
+
+# --- ICS feed subscriptions (intake arc phase 1, services/ics_sync.py) ---
+
+def get_ics_feeds() -> List[dict]:
+    with db_lock:
+        return ics_feeds_table.all()
+
+def get_ics_feed(feed_id: str) -> Optional[dict]:
+    with db_lock:
+        res = ics_feeds_table.search(Query().id == feed_id)
+        return res[0] if res else None
+
+def add_ics_feed(feed: dict) -> str:
+    import uuid
+    feed = dict(feed)
+    feed.setdefault('id', uuid.uuid4().hex)
+    feed.setdefault('enabled', True)
+    feed.setdefault('event_map', {})
+    feed.setdefault('event_count', 0)
+    feed.setdefault('last_synced', None)
+    feed.setdefault('last_status', 'never synced')
+    with db_lock:
+        ics_feeds_table.insert(feed)
+    return feed['id']
+
+def update_ics_feed(feed_id: str, updates: dict) -> None:
+    with db_lock:
+        ics_feeds_table.update(updates, Query().id == feed_id)
+
+def delete_ics_feed(feed_id: str) -> None:
+    with db_lock:
+        ics_feeds_table.remove(Query().id == feed_id)

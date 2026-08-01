@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.20.3).
+up cold. Last updated: 2026-08-01 (v2.21.0).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -41,6 +41,15 @@ routines + streaks · rewards store with parent-approved redemptions.
 - **Per-member notification preferences.** Members with both web push and HA
   notify get every message twice (accepted v1 tradeoff). Add a per-member
   lane preference or dedupe.
+- **Unify Config's Drivers/Passengers/Family tabs into one People tab**
+  (user proposal 2026-08-01). The backend already agrees: FamilyMember is
+  the identity, driver_id/passenger_id are role links, and merge/split
+  exists only because the three-tab UI predates the overlay. One tab
+  listing members, each expanding to identity props + a "Driving" section
+  (priority/groups/windows/home/phone) and a "Passenger" section
+  (hashtags/calendars/attendance) shown or addable per role. Big refactor
+  of the most-used 4,000-line admin page — its own release, done alone;
+  solver records stay untouched underneath.
 
 ## The intake arc (capture layer — the next big thing, decided 2026-08-01)
 
@@ -59,13 +68,12 @@ correct kid's Google calendar via the existing create-event path. Follows
 the established parent-verification pattern from chores/rewards. Must be
 genuinely one-tap or it's data entry with extra steps.
 
-- **Phase 1 — ICS feed subscriptions (the free win, zero LLM).** Paste a
-  team/school ICS URL, answer "whose calendar is this?" once — routing is a
-  subscription-level fact, not a per-event decision. Chauffeur polls the
-  feed and propagates updates/cancels by ICS UID (beats manual copies,
-  which go stale on the first rainout). Events land on the kid's real GCal
-  calendar so attendee detection → solver → pushes need zero new code.
-  Kills the every-season ritual: find feed, import, hand-copy per kid.
+- **Phase 1 — ICS feed subscriptions. SHIPPED v2.21.0 (2026-08-01).**
+  `services/ics_sync.py` + hourly loop; feeds are managed inline on the
+  Driver/Passenger edit forms (paste URL → Subscribe; target calendar
+  implicit when the person has one). Updates patch, cancellations delete
+  future events only, past events are frozen history. Details in
+  system_capabilities.md.
 - **Phase 2 — email ingest (the universal adapter; highest noise risk).**
   Nearly every walled-garden school/team app (ParentSquare, ClassDojo,
   TeamSnap, Remind…) leaks through "notify me by email." Ingest via Gmail

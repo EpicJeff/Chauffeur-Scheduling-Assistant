@@ -411,6 +411,42 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
         print(f"Error creating event in {calendar_id}: {ex}")
         return None
 
+def insert_event(calendar_id: str, body: dict):
+    """Insert a raw event body (supports all-day 'date' starts, extended
+    properties, etc. — unlike create_event's dateTime-only signature).
+    Returns the new event id or None."""
+    service = get_calendar_service()
+    try:
+        created = service.events().insert(calendarId=calendar_id, body=body).execute()
+        return created.get('id')
+    except Exception as ex:
+        print(f"Error inserting event in {calendar_id}: {ex}")
+        return None
+
+def patch_event(calendar_id: str, event_id: str, body: dict) -> bool:
+    """Patch an existing event with a partial/full body."""
+    service = get_calendar_service()
+    try:
+        service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+        return True
+    except Exception as ex:
+        print(f"Error patching event {event_id} in {calendar_id}: {ex}")
+        return False
+
+def remove_event(calendar_id: str, event_id: str) -> bool:
+    """Delete an event; an already-gone event (404/410) counts as success so
+    callers don't retry forever on manually-deleted events."""
+    service = get_calendar_service()
+    try:
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        return True
+    except Exception as ex:
+        status = getattr(getattr(ex, 'resp', None), 'status', None)
+        if status in (404, 410):
+            return True
+        print(f"Error removing event {event_id} from {calendar_id}: {ex}")
+        return False
+
 def delete_event(calendar_id: str, event_id: str):
     """
     Deletes an event from Google Calendar.

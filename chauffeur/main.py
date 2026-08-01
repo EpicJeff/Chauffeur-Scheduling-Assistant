@@ -390,17 +390,34 @@ def flush_assignment_notifications():
                 driver_id=d_id, event_id="schedule", action="updated",
                 details="Upcoming schedule changed: " + ", ".join(d.strftime('%a %m/%d') for d in fdates)).model_dump())
 
+async def ics_sync_loop():
+    """Hourly re-sync of subscribed ICS feeds (services/ics_sync.py). Hourly
+    because same-day reschedules (rainouts) should land before pickup time.
+    First pass waits a minute so startup isn't competing with the feed fetch."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            from services import ics_sync
+            result = await asyncio.to_thread(ics_sync.sync_all_feeds)
+            if result.get('changed'):
+                await asyncio.to_thread(trigger_background_refresh)
+        except Exception as e:
+            print(f"ICS sync loop error: {e}")
+        await asyncio.sleep(3600)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(poll_schedule())
     push_task = asyncio.create_task(push_notification_loop())
-    
+    ics_task = asyncio.create_task(ics_sync_loop())
+
     from services.migrations import run_all_migrations
     migration_task = asyncio.create_task(run_all_migrations())
-    
+
     yield
     task.cancel()
     push_task.cancel()
+    ics_task.cancel()
     migration_task.cancel()
 
 app = FastAPI(title="Family Driver Graph Scheduler", lifespan=lifespan)
@@ -2326,6 +2343,103 @@ def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_passenger(doc_id)
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
+
+# --- ICS Feed Subscriptions API (intake arc phase 1) ---
+
+class IcsFeedCreate(BaseModel):
+    url: str
+    calendar_id: str
+    name: Optional[str] = None
+
+class IcsFeedUpdate(BaseModel):
+    name: Optional[str] = None
+    calendar_id: Optional[str] = None
+    enabled: Optional[bool] = None
+
+def _public_ics_feed(f: dict) -> dict:
+    """The event_map is internal bookkeeping (can be hundreds of entries)."""
+    return {k: v for k, v in f.items() if k != 'event_map'}
+
+@app.get("/api/ics_feeds")
+def list_ics_feeds():
+    return [_public_ics_feed(f) for f in storage.get_ics_feeds()]
+
+@app.post("/api/ics_feeds")
+def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
+    from services import ics_sync
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Feed URL is required")
+    try:
+        parsed = ics_sync.fetch_and_parse(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read that ICS feed: {e}")
+
+    name = (req.name or '').strip() or parsed.get('name')
+    if not name:
+        name = url.split('/')[2] if '://' in url else url
+    feed_id = storage.add_ics_feed({
+        'url': url,
+        'name': name,
+        'calendar_id': req.calendar_id,
+        'created_at': datetime.now().astimezone().isoformat(),
+    })
+
+    def _initial_sync():
+        feed = storage.get_ics_feed(feed_id)
+        if feed:
+            res = ics_sync.sync_feed(feed)
+            if res.get('added') or res.get('updated') or res.get('removed'):
+                trigger_background_refresh()
+
+    background_tasks.add_task(_initial_sync)
+    return {"id": feed_id, "name": name, "event_count": len(parsed['items']),
+            "status": "created — first sync running in background"}
+
+@app.put("/api/ics_feeds/{feed_id}")
+def update_ics_feed(feed_id: str, req: IcsFeedUpdate):
+    feed = storage.get_ics_feed(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    updates = {}
+    if req.name is not None:
+        updates['name'] = req.name.strip()
+    if req.enabled is not None:
+        updates['enabled'] = req.enabled
+    if req.calendar_id is not None and req.calendar_id != feed.get('calendar_id'):
+        # Retargeting calendars: the old calendar's future events would be
+        # orphaned, so refuse — delete and re-add the feed instead.
+        raise HTTPException(status_code=400,
+                            detail="Target calendar can't be changed; delete the feed and re-add it.")
+    if updates:
+        storage.update_ics_feed(feed_id, updates)
+    return {"status": "updated"}
+
+@app.post("/api/ics_feeds/{feed_id}/sync")
+def sync_ics_feed_now(feed_id: str, background_tasks: BackgroundTasks):
+    from services import ics_sync
+    feed = storage.get_ics_feed(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    res = ics_sync.sync_feed(feed)
+    if res.get('added') or res.get('updated') or res.get('removed'):
+        background_tasks.add_task(trigger_background_refresh)
+    return res
+
+@app.delete("/api/ics_feeds/{feed_id}")
+def delete_ics_feed(feed_id: str, background_tasks: BackgroundTasks,
+                    remove_events: bool = False):
+    from services import ics_sync
+    feed = storage.get_ics_feed(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    removed = 0
+    if remove_events:
+        removed = ics_sync.remove_feed_events(feed)
+        if removed:
+            background_tasks.add_task(trigger_background_refresh)
+    storage.delete_ics_feed(feed_id)
+    return {"status": "deleted", "events_removed": removed}
 
 # --- Family Members API (overlay over drivers/passengers) ---
 

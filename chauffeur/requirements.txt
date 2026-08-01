@@ -14,3 +14,5 @@ cryptography
 google-search-results
 requests
 websockets
+icalendar
+recurring-ical-events
