@@ -272,12 +272,19 @@
                 async init() {
                     if (this.isKiosk) {
                         await this.loadStreaks();
+                        this._celebrateSweep();   // first call seeds localStorage silently
                         await this.loadAllDayItems();
                         setInterval(() => this.reloadKiosk(), 30000);
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
                     await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                _celebrateSweep() {
+                    for (const s of this.streaks) {
+                        maybeCelebrateStatusKiosk(s.member_id, s.name, 'routine', s.status);
+                    }
                 },
 
                 // --- Kiosk lanes: today's checklist per child, checked off with
@@ -297,6 +304,7 @@
                 },
                 async reloadKiosk() {
                     await this.loadStreaks();
+                    this._celebrateSweep();
                     await this.loadAllDayItems();
                 },
                 dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
@@ -318,6 +326,12 @@
                     if (!res.ok) {
                         const e = await res.json().catch(() => ({}));
                         showGlobalAlert(e.detail || 'Could not update');
+                    } else {
+                        // Instant tier-up at the tap that earned it; the poll sweep
+                        // can't double-fire (localStorage is updated here first).
+                        const data = await res.json().catch(() => ({}));
+                        const s = this.streaks.find(x => x.member_id === memberId);
+                        maybeCelebrateStatusKiosk(memberId, s ? s.name : '', 'routine', data.tier_status);
                     }
                     await this.reloadKiosk();
                 },
@@ -453,6 +467,7 @@
         }
     </script>
 
+    {% include 'components/status_celebration.html' %}
     {% include 'components/control_center.html' %}
 </body>
 

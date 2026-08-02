@@ -1,0 +1,64 @@
+<!-- Shared kiosk status-tier celebration: a named confetti overlay for the wall
+     panel ("Addison is now Super Helper!"), fired when a child's tier changes
+     UPWARD. Mirrors the PWA logic in app.html: last-seen tier per member+track
+     in localStorage, seeded silently on first sight (a freshly mounted panel
+     must not fire stale celebrations), compared by threshold so ladder
+     renames/config edits don't false-fire. Plain JS, no Alpine dependency. -->
+<script>
+    (function () {
+        function esc(s) {
+            const d = document.createElement('div');
+            d.textContent = s == null ? '' : String(s);
+            return d.innerHTML;
+        }
+
+        // Returns true when it celebrated (callers don't need it; handy for tests).
+        window.maybeCelebrateStatusKiosk = function (memberId, memberName, track, status) {
+            if (!memberId) return false;
+            const key = `chauffeur_status_${track}_${memberId}`;
+            const prevRaw = localStorage.getItem(key);
+            localStorage.setItem(key, JSON.stringify(status
+                ? { name: status.name, threshold: status.threshold || 0 } : null));
+            if (prevRaw === null) return false;                 // first sighting: seed silently
+            if (!status) return false;
+            let prev = null;
+            try { prev = JSON.parse(prevRaw); } catch (e) { }
+            if (prev && prev.name === status.name) return false;
+            if (prev && (prev.threshold || 0) >= (status.threshold || 0)) return false;
+            window.celebrateStatusKiosk(memberName, status, track);
+            return true;
+        };
+
+        window.celebrateStatusKiosk = function (memberName, status, track) {
+            const label = track === 'routine' ? 'Routine Status' : 'Chore Status';
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center overflow-hidden';
+            overlay.style.background = 'rgba(0,0,0,0.72)';
+            const emojis = ['🎉', '✨', '⭐', '🎊', '🌟'];
+            let confetti = '';
+            for (let i = 0; i < 24; i++) {
+                const e = emojis[i % emojis.length];
+                const left = Math.random() * 100, delay = Math.random() * 0.9,
+                    dur = 2.2 + Math.random() * 1.6, size = 18 + Math.random() * 28;
+                confetti += `<span style="position:absolute;top:-56px;left:${left}%;font-size:${size}px;` +
+                    `animation:kioskStatusConfetti ${dur}s linear ${delay}s forwards;">${e}</span>`;
+            }
+            overlay.innerHTML = `
+                <style>
+                    @keyframes kioskStatusConfetti { to { transform: translateY(115vh) rotate(340deg); opacity: .9; } }
+                    @keyframes kioskStatusPop { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); opacity: 1; } }
+                </style>
+                ${confetti}
+                <div style="animation:kioskStatusPop .5s ease-out forwards"
+                    class="relative text-center px-10 py-9 bg-gray-900 border border-amber-500/40 rounded-3xl shadow-2xl mx-6">
+                    <div class="text-7xl mb-3">${esc(status.emoji) || '🏅'}</div>
+                    <div class="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">New ${label}</div>
+                    <div class="text-3xl font-black text-amber-300">${esc(memberName)} is now ${esc(status.name)}!</div>
+                    <div class="text-base text-gray-400 mt-2">Amazing work — keep it up! 🎉</div>
+                </div>`;
+            overlay.addEventListener('click', () => overlay.remove());
+            document.body.appendChild(overlay);
+            setTimeout(() => overlay.remove(), 7000);
+        };
+    })();
+</script>

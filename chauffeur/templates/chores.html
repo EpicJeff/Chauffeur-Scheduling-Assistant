@@ -525,6 +525,14 @@
                             if (!this.isKiosk) this.loadLedger(b.member_id);
                         }
                         this.balances = data;
+                        // Kiosk: a chore tier-up (points land when a parent
+                        // verifies, often from their phone) celebrates publicly
+                        // on the wall within one poll.
+                        if (this.isKiosk) {
+                            for (const b of data) {
+                                maybeCelebrateStatusKiosk(b.member_id, b.name, 'chore', b.status);
+                            }
+                        }
                     } catch (e) { console.error('Failed to load points', e); }
                 },
                 async loadLedger(memberId) {
@@ -712,6 +720,7 @@
         }
     </script>
 
+    {% include 'components/status_celebration.html' %}
     {% include 'components/control_center.html' %}
 </body>
 
