@@ -58,7 +58,25 @@
                 <div x-show="balances.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
                     No children are earning points yet.
                 </div>
-                <div class="grid gap-4" :class="isKiosk ? 'md:grid-cols-2' : 'grid-cols-1'">
+                <!-- Kiosk: compact horizontal strip so the lanes below get the vertical space -->
+                <div x-show="isKiosk" class="flex flex-wrap gap-3">
+                    <template x-for="(b, idx) in balances" :key="'lb-' + b.member_id">
+                        <div class="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-2.5 shadow">
+                            <div class="text-lg font-black w-6 text-center shrink-0"
+                                :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
+                                x-text="'#' + (idx + 1)"></div>
+                            <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white shrink-0"
+                                :style="'background-color:' + (b.color_code || '#3b82f6')"
+                                x-text="b.avatar || (b.name || '?').charAt(0)"></div>
+                            <div class="font-bold text-white" x-text="b.name"></div>
+                            <div class="font-black text-blue-400 text-2xl leading-none" x-text="b.balance"></div>
+                            <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">pts</div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Non-kiosk: full detail cards with admin point tools -->
+                <div x-show="!isKiosk" class="grid gap-4 grid-cols-1">
                     <template x-for="(b, idx) in balances" :key="b.member_id">
                         <div class="bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg">
                             <div class="flex items-center gap-4">
@@ -128,6 +146,101 @@
                     </button>
                 </div>
             </section>
+
+            <!-- ===== Kiosk: interactive per-child lanes ===== -->
+            <template x-if="isKiosk">
+                <section class="mb-10">
+                    <div x-show="balances.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
+                        No children set up yet.
+                    </div>
+                    <div class="grid gap-5"
+                        :class="balances.length >= 3 ? 'lg:grid-cols-3 sm:grid-cols-2' : (balances.length === 2 ? 'sm:grid-cols-2' : 'grid-cols-1')">
+                        <template x-for="b in balances" :key="'lane-' + b.member_id">
+                            <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
+                                <!-- Lane header -->
+                                <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
+                                        :style="'background-color:' + (b.color_code || '#3b82f6')"
+                                        x-text="b.avatar || (b.name || '?').charAt(0)"></div>
+                                    <div class="font-bold text-white text-lg flex-1 truncate" x-text="b.name"></div>
+                                    <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
+                                </div>
+
+                                <!-- This child's claimed / in-progress chores -->
+                                <template x-if="myChoresFor(b.member_id).length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
+                                        <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
+                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                                <div class="min-w-0">
+                                                    <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
+                                                    <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                                </div>
+                                                <div class="flex gap-2 shrink-0">
+                                                    <template x-if="c.state === 'claimed'">
+                                                        <div class="flex gap-2">
+                                                            <button @click="kioskDone(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700">Done!</button>
+                                                            <button @click="kioskUnclaim(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="c.state === 'done'">
+                                                        <span class="text-[10px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full">Waiting for OK</span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Available to claim -->
+                                <div class="space-y-2">
+                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
+                                    <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
+                                        <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
+                                                <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                            </div>
+                                            <button @click="kioskClaim(c.id, b.member_id)"
+                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Claim</button>
+                                        </div>
+                                    </template>
+                                    <div x-show="availableChoresFor(b.member_id).length === 0"
+                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing to claim 🎉</div>
+                                </div>
+
+                                <!-- Rewards this child can ask for -->
+                                <template x-if="rewards.length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-indigo-400">Rewards</div>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <template x-for="rw in rewards" :key="'rw-' + b.member_id + '-' + rw.id">
+                                                <div class="bg-gray-900 border border-gray-800 rounded-xl p-2.5 flex flex-col gap-1.5">
+                                                    <div class="text-white font-bold text-[13px] leading-tight" x-text="rw.title"></div>
+                                                    <div class="flex items-center justify-between mt-auto gap-1">
+                                                        <span class="text-[11px] font-black text-indigo-300" x-text="rw.cost + ' ⭐'"></span>
+                                                        <template x-if="pendingRewardFor(b.member_id, rw.id)">
+                                                            <span class="text-[10px] font-black uppercase text-amber-300">Asked ⏳</span>
+                                                        </template>
+                                                        <template x-if="!pendingRewardFor(b.member_id, rw.id)">
+                                                            <button @click="kioskRedeem(rw.id, b.member_id)"
+                                                                :disabled="spendableFor(b.member_id) < rw.cost"
+                                                                class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg"
+                                                                :class="spendableFor(b.member_id) >= rw.cost ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-600'">Redeem</button>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+            </template>
 
             <template x-if="!isKiosk">
                 <div>
@@ -320,10 +433,67 @@
                     if (!this.isKiosk) {
                         await Promise.all([this.loadMembers(), this.loadChores(),
                                            this.loadRewards(), this.loadRedemptions()]);
+                    } else {
+                        // Kiosk needs the same data as the PWA so each lane can
+                        // show claimable chores + affordable rewards. Refresh on
+                        // a timer so lanes reflect others' taps and parent OKs.
+                        await Promise.all([this.loadChores(), this.loadRewards(), this.loadRedemptions()]);
+                        setInterval(() => this.reloadKiosk(), 30000);
                     }
-                    if (this.isKiosk) {
-                        setInterval(() => this.loadPoints(), 60000);
+                },
+
+                async reloadKiosk() {
+                    await Promise.all([this.loadPoints(), this.loadChores(),
+                                       this.loadRewards(), this.loadRedemptions()]);
+                },
+
+                // --- Kiosk lanes: identity is per-lane (the tapped child), passed
+                // explicitly to the same per-action endpoints the PWA uses. No
+                // stored/global identity, so lanes never stomp each other. ---
+                choreEligibleFor(c, memberId) {
+                    const el = c.eligible_member_ids || [];
+                    return !el.length || el.includes(memberId);
+                },
+                availableChoresFor(memberId) {
+                    return this.chores.filter(c => c.state === 'open' && this.choreEligibleFor(c, memberId));
+                },
+                myChoresFor(memberId) {
+                    return this.chores.filter(c => c.claimed_by === memberId
+                        && (c.state === 'claimed' || c.state === 'done'));
+                },
+                spendableFor(memberId) {
+                    const b = this.balances.find(x => x.member_id === memberId);
+                    return (b ? b.balance : 0) - this.pendingCost(memberId);
+                },
+                pendingRewardFor(memberId, rewardId) {
+                    return this.redemptions.some(r => r.member_id === memberId && r.reward_id === rewardId);
+                },
+                async _kioskChore(path, memberId) {
+                    const res = await fetch(`${this.apiBase}api/chores/${path}`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: memberId })
+                    });
+                    if (!res.ok) {
+                        const e = await res.json().catch(() => ({}));
+                        showGlobalAlert(e.detail || 'Something went wrong');
                     }
+                    await this.reloadKiosk();
+                },
+                kioskClaim(choreId, memberId) { return this._kioskChore(`${choreId}/claim`, memberId); },
+                kioskUnclaim(choreId, memberId) { return this._kioskChore(`${choreId}/unclaim`, memberId); },
+                kioskDone(choreId, memberId) { return this._kioskChore(`${choreId}/done`, memberId); },
+                async kioskRedeem(rewardId, memberId) {
+                    const res = await fetch(`${this.apiBase}api/rewards/${rewardId}/redeem`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: memberId })
+                    });
+                    if (!res.ok) {
+                        const e = await res.json().catch(() => ({}));
+                        showGlobalAlert(e.detail || 'Could not request reward');
+                    } else {
+                        showGlobalAlert('Asked! A parent will approve it 🤞');
+                    }
+                    await this.reloadKiosk();
                 },
 
                 // --- Points ---
