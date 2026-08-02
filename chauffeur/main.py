@@ -205,6 +205,7 @@ def _send_tomorrow_digests(subs):
     events = {e.get("id"): e for e in cache.get("events", [])}
     assignments = cache.get("assignments") or {}
     kits = storage.get_prep_kits()
+    pax = prep_kits.passenger_objs()
     tomorrow = _dt.date.today() + _dt.timedelta(days=1)
     weather_line = _tomorrow_weather_line(tomorrow)
 
@@ -222,7 +223,7 @@ def _send_tomorrow_digests(subs):
         if start.date() != tomorrow:
             continue
         title = ev.get("title") or "Event"
-        prep = prep_kits.items_for_title(title, kits)
+        prep = prep_kits.items_for_event(ev, kits, pax)
         if prep:
             title += f" (bring: {', '.join(prep[:4])})"
         per_driver.setdefault(d_id, []).append((start, title))
@@ -3554,20 +3555,43 @@ class PrepKitRequest(BaseModel):
     keywords: List[str] = []
     items: List[str] = []
     enabled: bool = True
+    keywords_match_all: bool = False
+    passenger_ids: List[str] = []
+    passengers_match_all: bool = False
+    days_of_week: List[int] = []
+    time_start: Optional[str] = None
+    time_end: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    location: Optional[str] = None
 
 def _validate_prep_kit(req: PrepKitRequest):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Kit name is required")
-    if not [k for k in req.keywords if k.strip()]:
-        raise HTTPException(status_code=400, detail="At least one keyword is required")
     if not [i for i in req.items if i.strip()]:
         raise HTTPException(status_code=400, detail="At least one item is required")
+    # Same rule as rule-filters: with no criterion at all, nothing can match
+    # (does_event_match_rule requires at least one satisfied criterion).
+    if not ([k for k in req.keywords if k.strip()] or req.passenger_ids
+            or req.days_of_week or (req.location or '').strip()
+            or req.time_start or req.time_end or req.start_date or req.end_date):
+        raise HTTPException(status_code=400,
+                            detail="Add at least one matching criterion (keyword, passenger, day, time, date, or location)")
 
 def _prep_kit_fields(req: PrepKitRequest) -> dict:
     return {'name': req.name.strip(),
-            'keywords': [k.strip().lower() for k in req.keywords if k.strip()],
             'items': [i.strip() for i in req.items if i.strip()],
-            'enabled': req.enabled}
+            'enabled': req.enabled,
+            'keywords': [k.strip().lower() for k in req.keywords if k.strip()],
+            'keywords_match_all': req.keywords_match_all,
+            'passenger_ids': [str(p) for p in req.passenger_ids],
+            'passengers_match_all': req.passengers_match_all,
+            'days_of_week': sorted({int(d) for d in req.days_of_week}),
+            'time_start': req.time_start or None,
+            'time_end': req.time_end or None,
+            'start_date': req.start_date or None,
+            'end_date': req.end_date or None,
+            'location': (req.location or '').strip() or None}
 
 @app.get("/api/prep-kits")
 def list_prep_kits():
@@ -3594,6 +3618,32 @@ def edit_prep_kit(kit_id: str, req: PrepKitRequest):
 def remove_prep_kit(kit_id: str):
     storage.delete_prep_kit(kit_id)
     return {"status": "deleted"}
+
+@app.get("/api/prep-kits/matches")
+def prep_kit_matches():
+    """Which upcoming schedule-cache events each kit matches — the same
+    visibility routing rules get, so a kit's filters are verifiable instead
+    of guessed. Split dropoff/pickup variants collapse to one entry."""
+    from services import prep_kits
+    kits = storage.get_prep_kits()
+    cache = storage.get_cached_schedule() or {}
+    pax = prep_kits.passenger_objs()
+    out = {k['id']: [] for k in kits}
+    seen = {k['id']: set() for k in kits}
+    events = sorted(cache.get('events', []), key=lambda e: e.get('start') or '')
+    for ev in events:
+        if ev.get('event_type') == 'errand' or ev.get('trip_suppressed'):
+            continue
+        parent_id = str(ev.get('id', ''))
+        for suffix in ('_dropoff', '_pickup'):
+            if parent_id.endswith(suffix):
+                parent_id = parent_id[:-len(suffix)]
+        for kit in prep_kits.match_kits_for_event(ev, kits, pax):
+            if parent_id in seen[kit['id']] or len(out[kit['id']]) >= 20:
+                continue
+            seen[kit['id']].add(parent_id)
+            out[kit['id']].append({'title': ev.get('title'), 'start': ev.get('start')})
+    return out
 
 @app.post("/api/prep-kits/suggest")
 def suggest_prep_kits():
@@ -3910,6 +3960,7 @@ def member_day(member_id: str, date: Optional[str] = None):
 
     from services import prep_kits as _prep
     _kits = storage.get_prep_kits()
+    _pax = _prep.passenger_objs()
 
     def _ride(ev, ev_id, legs=None):
         return {
@@ -3922,7 +3973,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             'driver': _driver_member(assignments.get(ev_id)),
             'status': status_by_event.get(ev_id),
             'legs': legs or [],
-            'prep': _prep.items_for_title(ev.get('title'), _kits),
+            'prep': _prep.items_for_event(ev, _kits, _pax),
         }
 
     groups = {}

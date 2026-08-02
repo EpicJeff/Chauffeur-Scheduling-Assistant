@@ -294,8 +294,24 @@
                                         <template x-for="kw in (k.keywords || [])" :key="kw">
                                             <span class="px-2 py-0.5 bg-blue-900/40 text-blue-300 rounded text-xs font-bold" x-text="kw"></span>
                                         </template>
+                                        <template x-for="pid in (k.passenger_ids || [])" :key="pid">
+                                            <span class="px-2 py-0.5 bg-green-900/40 text-green-300 rounded text-xs font-bold" x-text="passengerName(pid)"></span>
+                                        </template>
+                                        <span x-show="(k.days_of_week || []).length"
+                                            class="px-2 py-0.5 bg-pink-900/40 text-pink-300 rounded text-xs font-bold"
+                                            x-text="(k.days_of_week || []).map(d => dayNames[d]).join(' ')"></span>
+                                        <span x-show="k.time_start || k.time_end"
+                                            class="px-2 py-0.5 bg-gray-700/60 text-gray-300 rounded text-xs font-bold"
+                                            x-text="(k.time_start || '…') + '–' + (k.time_end || '…')"></span>
+                                        <span x-show="k.location"
+                                            class="px-2 py-0.5 bg-gray-700/60 text-gray-300 rounded text-xs font-bold"
+                                            x-text="'📍 ' + k.location"></span>
                                         <span class="text-gray-400 text-sm" x-text="(k.items || []).join(' · ')"></span>
                                         <div class="ml-auto flex gap-2 shrink-0 items-center">
+                                            <button @click="showMatchesKitId = showMatchesKitId === k.id ? null : k.id"
+                                                class="px-3 py-1.5 rounded-lg font-bold text-xs"
+                                                :class="matchesFor(k.id).length ? 'text-amber-300 bg-amber-500/10' : 'text-gray-500 bg-gray-700/40'"
+                                                x-text="matchesFor(k.id).length + ' upcoming'"></button>
                                             <button @click="toggleKit(k)"
                                                 class="px-3 py-1.5 rounded-lg font-bold text-xs"
                                                 :class="k.enabled === false ? 'text-gray-400 bg-gray-700/60' : 'text-green-400 bg-green-500/10'"
@@ -306,20 +322,123 @@
                                                 class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Delete</button>
                                         </div>
                                     </div>
-                                    <div x-show="editKitId === k.id" class="px-5 py-3 bg-gray-900/40 flex flex-col gap-2">
-                                        <div class="flex gap-3 flex-wrap items-end">
-                                            <div class="min-w-[10rem]">
+                                    <!-- Matched upcoming events (same visibility rules get) -->
+                                    <div x-show="showMatchesKitId === k.id" class="px-5 pb-3 bg-gray-900/30">
+                                        <div x-show="!matchesFor(k.id).length" class="text-gray-500 text-sm py-1">
+                                            No upcoming events match this kit's filters.
+                                        </div>
+                                        <template x-for="(m, mi) in matchesFor(k.id)" :key="mi">
+                                            <div class="flex items-center gap-3 py-1 text-sm">
+                                                <span class="text-amber-300/80 font-bold w-32 shrink-0" x-text="matchWhen(m.start)"></span>
+                                                <span class="text-gray-300" x-text="m.title"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <!-- Edit panel: the routing-rule filter-set form, filters only -->
+                                    <div x-show="editKitId === k.id" class="px-5 py-4 bg-gray-900/40 flex flex-col gap-4">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
                                                 <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Kit name</label>
                                                 <input type="text" x-model="kitEdit.name" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
                                             </div>
-                                            <div class="flex-1 min-w-[12rem]">
-                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Keywords (comma-separated)</label>
-                                                <input type="text" x-model="kitEdit.keywords" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            <div>
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items to bring (comma-separated)</label>
+                                                <input type="text" x-model="kitEdit.items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
                                             </div>
                                         </div>
-                                        <div>
-                                            <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items (comma-separated)</label>
-                                            <input type="text" x-model="kitEdit.items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-gray-700/60 pt-4">
+                                            <div>
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <label class="block text-gray-400 text-xs font-bold">Keywords</label>
+                                                    <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="kitEdit.keywords.length > 1">
+                                                        <span class="text-gray-500" :class="kitEdit.keywords_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                        <div class="relative">
+                                                            <input type="checkbox" x-model="kitEdit.keywords_match_all" class="sr-only">
+                                                            <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="kitEdit.keywords_match_all ? 'bg-blue-500' : ''"></div>
+                                                            <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="kitEdit.keywords_match_all ? 'translate-x-2' : ''"></div>
+                                                        </div>
+                                                        <span class="text-gray-500" :class="kitEdit.keywords_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                    </label>
+                                                </div>
+                                                <div class="flex gap-2 mb-2">
+                                                    <input type="text" x-model="kitEdit._kwInput" placeholder="e.g. soccer"
+                                                        @keydown.enter.prevent="addKitKeyword()"
+                                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                    <button @click="addKitKeyword()"
+                                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded text-sm">Add</button>
+                                                </div>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="(kw, ki) in kitEdit.keywords" :key="ki">
+                                                        <span class="bg-gray-800 text-yellow-300 border border-gray-600 px-2 py-1 rounded text-xs flex items-center">
+                                                            <span x-text="kw"></span>
+                                                            <button @click="kitEdit.keywords.splice(ki, 1)"
+                                                                class="ml-2 text-gray-400 hover:text-red-400">&times;</button>
+                                                        </span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <label class="block text-gray-400 text-xs font-bold">Passengers</label>
+                                                    <label class="flex items-center space-x-1 cursor-pointer text-xs" x-show="kitEdit.passenger_ids.length > 1">
+                                                        <span class="text-gray-500" :class="kitEdit.passengers_match_all ? '' : 'text-blue-400 font-bold'">Any</span>
+                                                        <div class="relative">
+                                                            <input type="checkbox" x-model="kitEdit.passengers_match_all" class="sr-only">
+                                                            <div class="block bg-gray-600 w-6 h-4 rounded-full" :class="kitEdit.passengers_match_all ? 'bg-blue-500' : ''"></div>
+                                                            <div class="dot absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition transform" :class="kitEdit.passengers_match_all ? 'translate-x-2' : ''"></div>
+                                                        </div>
+                                                        <span class="text-gray-500" :class="kitEdit.passengers_match_all ? 'text-blue-400 font-bold' : ''">All</span>
+                                                    </label>
+                                                </div>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="p in passengerMembers()" :key="p.passenger_id">
+                                                        <button
+                                                            @click="kitEdit.passenger_ids.includes(p.passenger_id) ? kitEdit.passenger_ids = kitEdit.passenger_ids.filter(x => x !== p.passenger_id) : kitEdit.passenger_ids.push(p.passenger_id)"
+                                                            :class="kitEdit.passenger_ids.includes(p.passenger_id) ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                            class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                            x-text="p.name"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Days of the Week</label>
+                                                <div class="flex flex-wrap gap-2">
+                                                    <template x-for="(day, di) in dayNames" :key="di">
+                                                        <button
+                                                            @click="kitEdit.days_of_week.includes(di) ? kitEdit.days_of_week = kitEdit.days_of_week.filter(d => d !== di) : kitEdit.days_of_week.push(di)"
+                                                            :class="kitEdit.days_of_week.includes(di) ? 'bg-pink-600 border-pink-500 text-white' : 'bg-gray-900 border-gray-600 text-gray-400'"
+                                                            class="border px-2 py-1 rounded text-xs font-bold transition-colors"
+                                                            x-text="day"></button>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <div class="flex-1">
+                                                    <label class="block text-gray-400 mb-1 text-xs font-bold">Start Date</label>
+                                                    <input type="date" x-model="kitEdit.start_date" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                </div>
+                                                <div class="flex-1">
+                                                    <label class="block text-gray-400 mb-1 text-xs font-bold">End Date</label>
+                                                    <input type="date" x-model="kitEdit.end_date" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="flex flex-col md:flex-row gap-2">
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Starts After (Time)</label>
+                                                <input type="time" x-model="kitEdit.time_start" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                            </div>
+                                            <div class="flex-1">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Ends Before (Time)</label>
+                                                <input type="time" x-model="kitEdit.time_end" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                            </div>
+                                            <div class="flex-1 md:flex-[2]">
+                                                <label class="block text-gray-400 mb-1 text-xs font-bold">Location</label>
+                                                <input type="text" x-model="kitEdit.location" placeholder="Location keyword..."
+                                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm placeholder-gray-600">
+                                            </div>
                                         </div>
                                         <div class="flex gap-2 justify-end">
                                             <button @click="saveEditKit()"
@@ -380,8 +499,10 @@
                 suggestedKits: [],
                 suggesting: false,
                 editKitId: null,
-                kitEdit: { name: '', keywords: '', items: '' },
+                kitEdit: {},
                 newKit: { name: '', keywords: '', items: '' },
+                kitMatches: {},
+                showMatchesKitId: null,
 
                 async init() {
                     if (this.isKiosk) {
@@ -572,6 +693,33 @@
                         const res = await fetch(`${this.apiBase}api/prep-kits`);
                         this.prepKits = await res.json();
                     } catch (e) { this.prepKits = []; }
+                    this.loadKitMatches();   // non-blocking refresh of the visibility chips
+                },
+                async loadKitMatches() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits/matches`);
+                        this.kitMatches = res.ok ? await res.json() : {};
+                    } catch (e) { this.kitMatches = {}; }
+                },
+                matchesFor(kitId) { return this.kitMatches[kitId] || []; },
+                matchWhen(s) {
+                    try {
+                        const d = new Date(s);
+                        return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+                            + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    } catch (e) { return s; }
+                },
+                passengerMembers() {
+                    return this.members.filter(m => m.passenger_id);
+                },
+                passengerName(pid) {
+                    const m = this.members.find(x => x.passenger_id === pid);
+                    return m ? m.name : pid;
+                },
+                addKitKeyword() {
+                    const val = (this.kitEdit._kwInput || '').trim().toLowerCase();
+                    if (val && !this.kitEdit.keywords.includes(val)) this.kitEdit.keywords.push(val);
+                    this.kitEdit._kwInput = '';
                 },
                 async _postKit(payload, method, id) {
                     const url = `${this.apiBase}api/prep-kits${id ? '/' + id : ''}`;
@@ -602,28 +750,47 @@
                     this.editKitId = k.id;
                     this.kitEdit = {
                         name: k.name,
-                        keywords: (k.keywords || []).join(', '),
                         items: (k.items || []).join(', '),
                         enabled: k.enabled !== false,
+                        keywords: [...(k.keywords || [])],
+                        keywords_match_all: !!k.keywords_match_all,
+                        passenger_ids: [...(k.passenger_ids || [])],
+                        passengers_match_all: !!k.passengers_match_all,
+                        days_of_week: [...(k.days_of_week || [])],
+                        time_start: k.time_start || '',
+                        time_end: k.time_end || '',
+                        start_date: k.start_date || '',
+                        end_date: k.end_date || '',
+                        location: k.location || '',
+                        _kwInput: '',
+                    };
+                },
+                _kitEditPayload() {
+                    return {
+                        name: (this.kitEdit.name || '').trim(),
+                        items: this._parseList(this.kitEdit.items),
+                        enabled: this.kitEdit.enabled,
+                        keywords: this.kitEdit.keywords,
+                        keywords_match_all: this.kitEdit.keywords_match_all,
+                        passenger_ids: this.kitEdit.passenger_ids,
+                        passengers_match_all: this.kitEdit.passengers_match_all,
+                        days_of_week: this.kitEdit.days_of_week.map(Number),
+                        time_start: this.kitEdit.time_start || null,
+                        time_end: this.kitEdit.time_end || null,
+                        start_date: this.kitEdit.start_date || null,
+                        end_date: this.kitEdit.end_date || null,
+                        location: (this.kitEdit.location || '').trim() || null,
                     };
                 },
                 async saveEditKit() {
-                    const payload = {
-                        name: (this.kitEdit.name || '').trim(),
-                        keywords: this._parseList(this.kitEdit.keywords),
-                        items: this._parseList(this.kitEdit.items),
-                        enabled: this.kitEdit.enabled,
-                    };
-                    if (await this._postKit(payload, 'PUT', this.editKitId)) {
+                    this.addKitKeyword();   // capture a typed-but-unadded keyword
+                    if (await this._postKit(this._kitEditPayload(), 'PUT', this.editKitId)) {
                         this.editKitId = null;
                         await this.loadPrepKits();
                     }
                 },
                 async toggleKit(k) {
-                    await this._postKit({
-                        name: k.name, keywords: k.keywords || [], items: k.items || [],
-                        enabled: k.enabled === false,
-                    }, 'PUT', k.id);
+                    await this._postKit({ ...k, enabled: k.enabled === false }, 'PUT', k.id);
                     await this.loadPrepKits();
                 },
                 async deleteKit(k) {

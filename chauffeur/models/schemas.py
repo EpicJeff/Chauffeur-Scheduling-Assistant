@@ -151,14 +151,25 @@ class RoutineItem(BaseModel):
     created_at: float = Field(default_factory=time.time)
 
 class PrepKit(BaseModel):
-    # Packing list matched to events by title keyword (any-match, substring,
-    # case-insensitive — same matching family as rule keywords). Items surface
-    # on My Day ride cards and in the tomorrow digest push.
+    # Packing list matched to events with the SAME filter criteria routing
+    # rules use (evaluated by the solver's does_event_match_rule, so semantics
+    # are identical by construction: AND across criteria types, any/all
+    # toggles within keywords and passengers). Items surface on My Day ride
+    # cards and in the tomorrow digest push.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
-    keywords: List[str] = Field(default_factory=list)
     items: List[str] = Field(default_factory=list)
     enabled: bool = True
+    keywords: List[str] = Field(default_factory=list)
+    keywords_match_all: bool = False
+    passenger_ids: List[str] = Field(default_factory=list)
+    passengers_match_all: bool = False
+    days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun
+    time_start: Optional[str] = None   # "HH:MM" — event starts at/after
+    time_end: Optional[str] = None     # "HH:MM" — event ends at/before
+    start_date: Optional[str] = None   # YYYY-MM-DD window
+    end_date: Optional[str] = None
+    location: Optional[str] = None     # substring match
     created_at: float = Field(default_factory=time.time)
 
 class Reward(BaseModel):

@@ -1,9 +1,10 @@
 """Tests for prep kits (services/prep_kits.py).
 
-Keyword-matched packing lists: matching semantics (case-insensitive any-keyword
-substring, disabled kits skipped), item dedup across kits, storage CRUD, and
-the suggest normalization layer (ungrounded keywords dropped, already-covered
-kits filtered — with the LLM call mocked).
+Kits are rule-filtered packing lists: matching delegates to the solver's
+does_event_match_rule, so the scenarios verify routing-rule semantics
+(keywords any/all, passenger resolution via calendar ids, days of week,
+time/date windows, location), item dedup across kits, storage CRUD, and the
+suggest normalization layer (LLM mocked).
 
 Run from chauffeur/:  python tests/test_prep_kits.py
 """
@@ -12,35 +13,96 @@ from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
 from services import prep_kits, storage
 
 
-SOCCER = {"id": "k1", "name": "Soccer", "keywords": ["soccer"],
-          "items": ["Cleats", "Shin Guards", "Water Bottle"], "enabled": True}
-SWIM = {"id": "k2", "name": "Swim", "keywords": ["swim", "pool"],
-        "items": ["Goggles", "Towel", "Water Bottle"], "enabled": True}
-DISABLED = {"id": "k3", "name": "Old", "keywords": ["soccer"],
-            "items": ["Ancient Boots"], "enabled": False}
+def _ev(**kw):
+    base = {"title": "Addison Soccer Practice", "start": "2026-08-05T16:00:00",
+            "end": "2026-08-05T17:00:00", "location": "City Fields",
+            "calendar_ids": ["addison@cal"]}
+    base.update(kw)
+    return base
 
 
-def scenario_matching():
-    kits = [SOCCER, SWIM, DISABLED]
-    check([k["id"] for k in prep_kits.match_kits("Addison Soccer Practice", kits)] == ["k1"],
+def _kit(**kw):
+    base = {"id": "k1", "name": "Soccer", "enabled": True,
+            "items": ["Cleats", "Shin Guards", "Water Bottle"], "keywords": ["soccer"]}
+    base.update(kw)
+    return base
+
+
+def scenario_keyword_matching():
+    kits = [_kit(), _kit(id="k2", name="Swim", keywords=["swim", "pool"],
+                  items=["Goggles", "Towel", "Water Bottle"]),
+            _kit(id="k3", name="Old", items=["Ancient Boots"], enabled=False)]
+    m = prep_kits.match_kits_for_event(_ev(), kits)
+    check([k["id"] for k in m] == ["k1"],
           "case-insensitive substring match; disabled kit skipped")
-    check(prep_kits.match_kits("Piano Lesson", kits) == [], "no keyword hit = no kits")
-    check(prep_kits.match_kits("", kits) == [], "empty title matches nothing")
-    check([k["id"] for k in prep_kits.match_kits("POOL PARTY", kits)] == ["k2"],
+    check(prep_kits.match_kits_for_event(_ev(title="Piano Lesson"), kits) == [],
+          "no keyword hit = no kits")
+    check([k["id"] for k in prep_kits.match_kits_for_event(_ev(title="POOL PARTY"), kits)] == ["k2"],
           "any-keyword (second keyword) matches, case folded both ways")
+    # match-all keywords: routing-rule AND semantics
+    both = [_kit(keywords=["soccer", "game"], keywords_match_all=True)]
+    check(prep_kits.match_kits_for_event(_ev(title="Soccer practice"), both) == [],
+          "match-all needs every keyword")
+    check(len(prep_kits.match_kits_for_event(_ev(title="Soccer GAME"), both)) == 1,
+          "match-all satisfied by every keyword present")
+
+
+def scenario_rule_filters():
+    # Days of week (2026-08-05 is a Wednesday = 2)
+    wed = [_kit(days_of_week=[2])]
+    check(len(prep_kits.match_kits_for_event(_ev(), wed)) == 1, "day-of-week hit")
+    check(prep_kits.match_kits_for_event(_ev(start="2026-08-06T16:00:00", end="2026-08-06T17:00:00"),
+                                         wed) == [], "Thursday event misses a Wed-only kit")
+    # Time window: event must start at/after time_start and end at/before time_end
+    tw = [_kit(time_start="15:00", time_end="18:00")]
+    check(len(prep_kits.match_kits_for_event(_ev(), tw)) == 1, "inside time window")
+    check(prep_kits.match_kits_for_event(_ev(start="2026-08-05T08:00:00", end="2026-08-05T09:00:00"),
+                                         tw) == [], "morning event misses an afternoon window")
+    # Location substring
+    loc = [_kit(location="city fields")]
+    check(len(prep_kits.match_kits_for_event(_ev(), loc)) == 1, "location substring hit")
+    check(prep_kits.match_kits_for_event(_ev(location="School Gym"), loc) == [], "location miss")
+    # Date window (seasonal gear)
+    win = [_kit(start_date="2026-08-01", end_date="2026-08-31")]
+    check(len(prep_kits.match_kits_for_event(_ev(), win)) == 1, "inside date window")
+    check(prep_kits.match_kits_for_event(_ev(start="2026-09-05T16:00:00", end="2026-09-05T17:00:00"),
+                                         win) == [], "outside date window")
+    # AND across criteria types: keyword hits but day misses -> no match
+    both = [_kit(days_of_week=[0])]
+    check(prep_kits.match_kits_for_event(_ev(), both) == [],
+          "criteria types AND together, exactly like rules")
+
+
+def scenario_passenger_filter():
+    with storage.db_lock:
+        storage.passengers_table.truncate()
+        storage.passengers_table.insert({"id": "p_add", "name": "Addison",
+                                         "calendar_ids": ["addison@cal"], "hashtags": []})
+        storage.passengers_table.insert({"id": "p_ben", "name": "Ben",
+                                         "calendar_ids": ["ben@cal"], "hashtags": []})
+    pax = prep_kits.passenger_objs()
+    kits = [_kit(keywords=[], passenger_ids=["p_add"])]
+    check(len(prep_kits.match_kits_for_event(_ev(), kits, pax)) == 1,
+          "passenger id resolves through their calendar id")
+    check(prep_kits.match_kits_for_event(_ev(calendar_ids=["ben@cal"]), kits, pax) == [],
+          "other kid's event misses Addison's kit")
+    with storage.db_lock:
+        storage.passengers_table.truncate()
 
 
 def scenario_items_dedupe_across_kits():
-    both = {"id": "k4", "name": "SwimSoccer", "keywords": ["biathlon"], "items": [], "enabled": True}
-    kits = [SOCCER, SWIM, both]
-    items = prep_kits.items_for_title("Soccer then swim meet", kits)
+    kits = [_kit(), _kit(id="k2", name="Swim", keywords=["swim"],
+                  items=["Goggles", "Towel", "Water Bottle"])]
+    items = prep_kits.items_for_event(_ev(title="Soccer then swim meet"), kits)
     check(items == ["Cleats", "Shin Guards", "Water Bottle", "Goggles", "Towel"],
           f"items merge in kit order, 'Water Bottle' deduped case-insensitively, got {items}")
+    check(prep_kits.items_for_event({"title": "Soccer", "start": "garbage"}, kits) == [],
+          "unparseable event start matches nothing (never crashes)")
 
 
 def scenario_storage_crud():
     storage.prep_kits_table.truncate()
-    storage.add_prep_kit(dict(SOCCER))
+    storage.add_prep_kit(_kit())
     check(len(storage.get_prep_kits()) == 1, "add + get")
     check(storage.update_prep_kit("k1", {"enabled": False}), "update by id returns True")
     check(storage.get_prep_kits()[0]["enabled"] is False, "update persisted")
@@ -54,13 +116,9 @@ def scenario_suggest_normalization():
     orig_llm, orig_settings = llm._call_llm_json, storage.get_settings
     storage.get_settings = lambda: {"calendar_ids": ["p"], "llm_gemini_api_key": "test-key"}
     llm._call_llm_json = lambda *a, **kw: {"kits": [
-        # valid: keyword grounded in a real title
         {"name": "Soccer", "keywords": ["soccer", "quidditch"], "items": ["Cleats", "  Ball  "]},
-        # every keyword ungrounded -> dropped entirely
         {"name": "Fencing", "keywords": ["fencing"], "items": ["Foil"]},
-        # keywords fully covered by an existing kit -> dropped as duplicate
         {"name": "Swimming", "keywords": ["swim"], "items": ["Goggles"]},
-        # malformed entries never crash the pipeline
         {"name": "", "keywords": ["soccer"], "items": ["X"]},
         "not-a-dict",
     ]}
@@ -89,7 +147,9 @@ def scenario_suggest_requires_key():
 
 
 SCENARIOS = [
-    scenario_matching,
+    scenario_keyword_matching,
+    scenario_rule_filters,
+    scenario_passenger_filter,
     scenario_items_dedupe_across_kits,
     scenario_storage_crud,
     scenario_suggest_normalization,

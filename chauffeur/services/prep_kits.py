@@ -1,39 +1,88 @@
-"""Prep kits: keyword-matched packing lists for events.
+"""Prep kits: rule-filtered packing lists for events.
 
-A kit is {name, keywords, items, enabled}. Matching is the same family as
-rule keywords: case-insensitive substring, any keyword matches. Items surface
-on My Day ride cards and in the tomorrow digest, so the "what do we need to
-bring" scramble happens at kit-setup time — once — instead of five minutes
-before every departure.
+A kit is {name, items, enabled} plus the SAME filter criteria routing rules
+use — keywords (any/all), passengers (any/all), days of week, time window,
+date window, location substring. Matching delegates to the solver's
+`does_event_match_rule`, so kit semantics are identical to rule semantics by
+construction (AND across criteria types, at least one criterion required).
+Items surface on My Day ride cards and in the tomorrow digest, so the "what
+do we need to bring" scramble happens at kit-setup time — once — instead of
+five minutes before every departure.
 
 Setup itself is agent-assisted: suggest_kits() runs ONE LLM request over the
 family's real upcoming event titles and returns proposed kits for the parent
 to review/edit on the /routines page. Nothing is saved until approved.
 """
+import datetime
+from types import SimpleNamespace
+
 from services import storage
 
+# The rule-filter fields a kit shares with Rule (see _kit_rule_obj).
+FILTER_FIELDS = ('keywords', 'keywords_match_all', 'passenger_ids',
+                 'passengers_match_all', 'days_of_week', 'time_start',
+                 'time_end', 'start_date', 'end_date', 'location')
 
-def match_kits(title: str, kits: list = None) -> list:
-    """Enabled kits whose any keyword appears in the event title."""
+
+def _event_obj(ev: dict):
+    """Cache-event dict -> the attribute shape does_event_match_rule reads.
+    None when the event has no parseable start (nothing to match on)."""
+    try:
+        start = datetime.datetime.fromisoformat(str(ev.get('start')))
+        end = datetime.datetime.fromisoformat(str(ev.get('end') or ev.get('start')))
+    except (TypeError, ValueError):
+        return None
+    return SimpleNamespace(
+        title=ev.get('title') or '', description=ev.get('description') or '',
+        start=start, end=end, location=ev.get('location') or '',
+        calendar_ids=[str(c) for c in (ev.get('calendar_ids') or [])])
+
+
+def _kit_rule_obj(kit: dict):
+    return SimpleNamespace(
+        keywords=kit.get('keywords') or [],
+        keywords_match_all=bool(kit.get('keywords_match_all')),
+        passenger_ids=[str(p) for p in (kit.get('passenger_ids') or [])],
+        passengers_match_all=bool(kit.get('passengers_match_all')),
+        days_of_week=kit.get('days_of_week') or [],
+        time_start=kit.get('time_start') or None,
+        time_end=kit.get('time_end') or None,
+        start_date=kit.get('start_date') or None,
+        end_date=kit.get('end_date') or None,
+        location=kit.get('location') or None)
+
+
+def passenger_objs(passengers: list = None) -> list:
+    """Passenger records -> the shape the matcher resolves passenger filters
+    against (id / calendar_ids / name). Compute once per request and reuse."""
+    if passengers is None:
+        passengers = storage.get_all_passengers()
+    return [SimpleNamespace(id=str(p.get('id')),
+                            calendar_ids=[str(c) for c in (p.get('calendar_ids') or [])],
+                            name=p.get('name') or '')
+            for p in passengers]
+
+
+def match_kits_for_event(ev: dict, kits: list = None, passengers: list = None) -> list:
+    """Enabled kits whose rule-filters match the event — exact routing-rule
+    semantics via the solver's own does_event_match_rule."""
+    from solver.matcher import does_event_match_rule
     if kits is None:
         kits = storage.get_prep_kits()
-    title_l = (title or '').lower()
-    if not title_l:
+    event = _event_obj(ev)
+    if event is None:
         return []
-    out = []
-    for k in kits:
-        if k.get('enabled') is False:
-            continue
-        if any(kw.strip().lower() in title_l
-               for kw in (k.get('keywords') or []) if kw and kw.strip()):
-            out.append(k)
-    return out
+    if passengers is None:
+        passengers = passenger_objs()
+    return [k for k in kits
+            if k.get('enabled') is not False
+            and does_event_match_rule(event, _kit_rule_obj(k), passengers)]
 
 
-def items_for_title(title: str, kits: list = None) -> list:
+def items_for_event(ev: dict, kits: list = None, passengers: list = None) -> list:
     """Deduped, order-preserving item list across every matching kit."""
     items, seen = [], set()
-    for k in match_kits(title, kits):
+    for k in match_kits_for_event(ev, kits, passengers):
         for item in (k.get('items') or []):
             key = item.strip().lower()
             if key and key not in seen:
