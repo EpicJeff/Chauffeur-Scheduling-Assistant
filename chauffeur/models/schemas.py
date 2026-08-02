@@ -113,6 +113,7 @@ class ChatMessage(BaseModel):
     type: str = 'text'  # 'text' | 'audio' | 'system' (audio reserved for voice memos)
     body: str
     attachment: Optional[dict] = None  # reserved: {kind, url, duration_s, mime}
+    card: Optional[dict] = None  # interactive card (e.g. action_proposal) rendered in chat
 
 class ChannelRead(BaseModel):
     channel_id: str

@@ -914,7 +914,10 @@
         async function fetchMembers() {
             try {
                 const res = await fetch(`${apiBase}api/members`);
-                membersData = await res.json();
+                // System members (e.g. the Argyle assistant) must never appear in
+                // pickers, passenger lists, or the identity switcher; their names
+                // are resolved specially where messages render.
+                membersData = (await res.json()).filter(m => !m.system);
             } catch (e) {
                 console.error("Failed to fetch members", e);
             }
@@ -1182,15 +1185,50 @@
             const wrap = document.getElementById('thread-messages');
             wrap.innerHTML = msgs.map(m => {
                 const mine = m.sender_member_id === selectedMemberId;
-                const sender = membersData.find(x => x.id === m.sender_member_id) || {};
+                const sender = membersData.find(x => x.id === m.sender_member_id)
+                    || (m.sender_member_id === 'argyle' ? { name: 'Argyle', color_code: '#8b5cf6' } : {});
                 const t = new Date(m.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 return `<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
                     ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
                     <div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words">${mfEscape(m.body)}</div>
+                    ${m.card ? renderCard(m.card) : ''}
                     <div class="text-[10px] text-gray-600 mt-0.5 ${mine ? 'text-right' : ''}">${t}</div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
             wrap.scrollTop = wrap.scrollHeight;
+        }
+
+        function renderCard(card) {
+            if (!card || card.kind !== 'action_proposal') return '';
+            let footer;
+            if (card.status === 'proposed' && (card.actions || []).length) {
+                footer = `<div class="flex gap-2 mt-2">` + card.actions.map(a =>
+                    `<button onclick="actOnProposal('${card.proposal_id}','${a.act}')" class="px-3 py-1 rounded-lg text-[13px] font-semibold ${a.style === 'primary' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}">${mfEscape(a.label)}</button>`
+                ).join('') + `</div>`;
+            } else {
+                const label = card.status === 'approved' ? '✓ Approved' : (card.status === 'dismissed' ? 'Dismissed' : card.status);
+                footer = `<div class="text-[12px] mt-1 ${card.status === 'approved' ? 'text-green-400' : 'text-gray-500'}">${mfEscape(label)}</div>`;
+            }
+            return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
+                <div class="text-[13px] text-gray-200 font-medium">${mfEscape(card.title || '')}</div>
+                ${footer}
+            </div>`;
+        }
+
+        async function actOnProposal(proposalId, act) {
+            if (!selectedMemberId) return;
+            try {
+                const res = await fetch(`${apiBase}api/action-proposals/${proposalId}/act`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ act: act, member_id: selectedMemberId })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (data && data.status === 'error' && data.message) showGlobalAlert(data.message);
+                await refreshThread();
+            } catch (e) {
+                showGlobalAlert('Action failed');
+            }
         }
 
         async function submitThreadMessage(e) {

@@ -130,7 +130,12 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
             system_prompt += (f"\nYou are speaking with {_nm} (role: {_role}) in the family chat. "
                               f"Resolve 'me', 'my', 'I', and 'mine' to {_nm}. For messaging and chore tools, "
                               f"pass from_member/member_name as \"{_nm}\" automatically — never ask who is "
-                              f"speaking, you already know.\n")
+                              f"speaking, you already know.\n"
+                              "When the request would CHANGE the schedule (reassign a driver, mark someone "
+                              "unavailable, add/remove a routing or priority rule, or add an errand), call "
+                              "propose_family_action with a clear one-sentence summary instead of doing it "
+                              "silently — a parent approves it with one tap. Answer questions, read the "
+                              "schedule, send messages, and claim chores directly.\n")
             if not _is_admin_member(acting_member):
                 system_prompt += ("This person is NOT a parent/admin: answer questions, send their messages, and "
                                   "manage their own chores, but you cannot change global scheduling (routing/priority "
@@ -261,6 +266,7 @@ sending or claiming, and never pass from_member/member_name for them.
     ui_action = None
     target_driver_id = None
     schedule_dirty = False
+    card = None
     agent_message = "I have processed your request."
     
     for iteration in range(max_iterations):
@@ -453,6 +459,17 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = complete_route(driver_id, args.get("event_name", ""),
                                              args.get("action", "completed"), args.get("target_date", "today"))
                     if res.get("message"): agent_message = res["message"]
+                elif func_name == "propose_family_action":
+                    # Post a confirmation card instead of mutating directly. The
+                    # card rides Argyle's reply; the parent's Approve tap is what
+                    # executes the action (scope enforced at approval time).
+                    from services.agent_tools_v2 import propose_family_action
+                    res = propose_family_action(
+                        args.get("action_type"), args.get("summary"),
+                        payload=args.get("payload") or {},
+                        created_by_member_id=(acting_member or {}).get("id"))
+                    if res.get("card"): card = res["card"]
+                    if res.get("message"): agent_message = res["message"]
                 elif func_name in BRIDGED_V1_TOOLS and bridge_ok:
                     # Full-parity bridge: scheduling-core, errand, memory,
                     # places and deep trip-planning tools delegate to v1's
@@ -496,5 +513,6 @@ sending or claiming, and never pass from_member/member_name for them.
         "target_element_id": target_id,
         "ui_action": ui_action,
         "target_driver_id": target_driver_id,
-        "schedule_dirty": schedule_dirty
+        "schedule_dirty": schedule_dirty,
+        "card": card
     }

@@ -507,14 +507,15 @@ def _resolve_actor(sender_driver_id: str = None, member_name: str = None):
                   "message": "I need to know who this is from — tell me your name (for example: \"this is Mom\")."}
 
 
-def _post_chat_message(channel: dict, sender: dict, body: str) -> dict:
+def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None) -> dict:
     """Store a chat message and fire the same SSE + push fan-out as the
     /api/channels POST endpoint. main is lazily imported (it is the running
-    app module); in tests it is absent and fan-out is skipped silently."""
+    app module); in tests it is absent and fan-out is skipped silently.
+    An optional card renders as an interactive element (e.g. an action proposal)."""
     from models.schemas import ChatMessage
     from services import storage
     message = ChatMessage(channel_id=channel['id'], sender_member_id=sender['id'],
-                          body=body).model_dump()
+                          body=body, card=card).model_dump()
     storage.add_chat_message(message)
     storage.set_last_read(channel['id'], sender['id'], message['ts'])
     try:
@@ -706,6 +707,15 @@ def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dic
     if res.get("status") == "success":
         res["ui_action"] = "sync"
     return res
+
+
+def propose_family_action(action_type: str, summary: str, payload: dict = None,
+                          created_by_member_id: str = None) -> Dict[str, Any]:
+    """Create a schedule-changing action proposal to be confirmed in chat. The
+    result carries a `card` the router surfaces onto Argyle's reply message."""
+    from services import chat_actions
+    return chat_actions.create_action_proposal(action_type, summary, payload or {},
+                                               created_by_member_id=created_by_member_id)
 
 
 def get_available_tools() -> List[Dict]:
@@ -933,6 +943,21 @@ def get_available_tools() -> List[Dict]:
                     "note": {"type": "string", "description": "Short reason shown in the points history, e.g. 'Helped carry groceries'."}
                 },
                 "required": ["member_name"]
+            }
+        },
+        {
+            "name": "propose_family_action",
+            "description": "Propose a schedule-CHANGING action for a parent to approve with one tap in the chat, instead of doing it silently. Use this in the family chat whenever the request would reassign a driver, mark a driver unavailable / add or remove a routing or priority rule, or add an errand. Do NOT use it for questions, reading the schedule, sending messages, or chore claims — handle those directly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action_type": {"type": "string",
+                                    "enum": ["reassign_driver", "add_routing_rule", "delete_routing_rule", "add_priority_rule", "add_errand"],
+                                    "description": "Which action to propose."},
+                    "summary": {"type": "string", "description": "One short human sentence describing the change, shown on the card, e.g. \"Reassign Emma's 3pm pickup to Mom\" or \"Mark Dad unavailable Thursday afternoon\"."},
+                    "payload": {"type": "object", "description": "Arguments matching that action's own tool: reassign_driver -> {event_name, driver_name, target_date}; add_routing_rule -> {constraint_type, driver_id, ...}; add_errand -> {title, duration_mins, location, ...}."}
+                },
+                "required": ["action_type", "summary", "payload"]
             }
         }
     ]

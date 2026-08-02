@@ -138,6 +138,7 @@ with db_lock:
     redemptions_table = db.table('redemptions')
     ics_feeds_table = db.table('ics_feeds')
     event_proposals_table = db.table('event_proposals')
+    agent_action_proposals_table = db.table('agent_action_proposals')
     ingest_log_table = db.table('ingest_log')
 
     if BACKEND != 'sqlite':
@@ -2154,6 +2155,30 @@ def add_proposal(proposal: dict) -> str:
 def update_proposal(proposal_id: str, updates: dict) -> None:
     with db_lock:
         event_proposals_table.update(updates, Query().id == proposal_id)
+
+
+# --- Agent action proposals (chat "propose -> approve" cards) -----------------
+# Distinct from event_proposals (email intake): these carry a typed action the
+# agent wants a human to approve before it mutates the schedule.
+
+def add_action_proposal(proposal: dict) -> str:
+    import uuid, time
+    proposal = dict(proposal)
+    proposal.setdefault('id', uuid.uuid4().hex)
+    proposal.setdefault('status', 'proposed')
+    proposal.setdefault('created_at', time.time())
+    with db_lock:
+        agent_action_proposals_table.insert(proposal)
+    return proposal['id']
+
+def get_action_proposal(proposal_id: str) -> Optional[dict]:
+    with db_lock:
+        res = agent_action_proposals_table.search(Query().id == proposal_id)
+        return dict(res[0]) if res else None
+
+def update_action_proposal(proposal_id: str, updates: dict) -> None:
+    with db_lock:
+        agent_action_proposals_table.update(updates, Query().id == proposal_id)
 
 def add_ingest_log(entry: dict, cap: int = 200) -> None:
     import time

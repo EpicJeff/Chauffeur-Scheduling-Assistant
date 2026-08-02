@@ -45,6 +45,7 @@ INDEX_SPEC = {
     "routine_checks": [["member_id", "date_str"], ["routine_id"]],
     "rewards": [["id"]],
     "redemptions": [["id"], ["member_id"], ["state"]],
+    "agent_action_proposals": [["id"], ["status"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

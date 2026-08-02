@@ -2586,6 +2586,33 @@ def ignore_proposal(proposal_id: str):
     storage.update_proposal(proposal_id, {'status': 'ignored'})
     return {"status": "ignored"}
 
+
+class ActionProposalAct(BaseModel):
+    act: str            # 'approve' | 'dismiss'
+    member_id: str      # the family member tapping the button
+
+
+@app.post("/api/action-proposals/{proposal_id}/act")
+def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_tasks: BackgroundTasks):
+    """Approve or dismiss an agent action proposal from a chat card. Approval
+    executes the typed action (parent-scoped) and Argyle posts the outcome —
+    with the updated card — back into the proposal's origin channel."""
+    from services import chat_actions
+    from services.agent_tools_v2 import _post_chat_message
+    approver = storage.get_member(req.member_id)
+    res = chat_actions.act_on_proposal(proposal_id, (req.act or '').strip().lower(), approver)
+
+    prop = storage.get_action_proposal(proposal_id)
+    channel = storage.get_channel(prop.get('channel_id')) if prop and prop.get('channel_id') else None
+    if channel and res.get('message'):
+        try:
+            _post_chat_message(channel, storage.ensure_argyle_member(), res['message'], card=res.get('card'))
+        except Exception as e:
+            logger.error(f"Action-proposal follow-up post failed: {e}")
+    if res.get('schedule_dirty'):
+        background_tasks.add_task(trigger_background_refresh)
+    return res
+
 # --- Family Members API (overlay over drivers/passengers) ---
 
 def _public_member(m: dict) -> dict:
@@ -3897,17 +3924,23 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
     if not query:
         query = ("The user mentioned you in the family chat without asking anything. "
                  "Greet them briefly by name and ask how you can help.")
+    card = None
     try:
         res = process_agent_request(query, source="family", acting_member=sender)
         reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
+        card = res.get("card")
         if res.get("schedule_dirty"):
             trigger_background_refresh()
     except Exception as e:
         logger.error(f"Argyle mention handling failed: {e}")
         reply = "Sorry — I hit an error handling that."
+    # Bind any proposed action to this channel so its Approve/Dismiss follow-up
+    # posts back here.
+    if card and card.get("proposal_id"):
+        storage.update_action_proposal(card["proposal_id"], {"channel_id": channel["id"]})
     try:
         argyle = storage.ensure_argyle_member()
-        _post_chat_message(channel, argyle, reply)
+        _post_chat_message(channel, argyle, reply, card=card)
     except Exception as e:
         logger.error(f"Argyle reply post failed: {e}")
 

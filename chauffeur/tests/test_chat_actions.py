@@ -1,0 +1,135 @@
+"""Tests for Layer 2: typed agent action-proposals + interactive chat cards
+(services/chat_actions.py + propose_family_action in agent_router).
+
+The agent proposes a schedule-changing action as a card; a parent approves; the
+approval tap executes the action and is where the admin gate is enforced. These
+lock down the lifecycle, scope, idempotency, and that the router surfaces the
+card onto the reply.
+
+Run from chauffeur/:  python tests/test_chat_actions.py
+"""
+from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
+
+from services import agent_router, chat_actions, storage
+
+
+def _seed():
+    storage.members_table.truncate()
+    storage.rules_table.truncate()
+    storage.agent_action_proposals_table.truncate()
+    storage.add_member({"id": "mom", "name": "Mom", "role": "parent", "is_child": False})
+    storage.add_member({"id": "kid", "name": "Jack", "role": "child", "is_child": True})
+
+
+def _propose():
+    return chat_actions.create_action_proposal(
+        "add_routing_rule", "Mark Dad unavailable Thursday",
+        {"constraint_type": "unavailable", "driver_id": "dad"}, created_by_member_id="mom")
+
+
+def scenario_propose_builds_open_card():
+    _seed()
+    p = _propose()
+    check(p["status"] == "success" and p.get("proposal_id"), "proposal is created")
+    card = p["card"]
+    check(card["kind"] == "action_proposal" and card["status"] == "proposed", "card starts proposed")
+    check([a["act"] for a in card["actions"]] == ["approve", "dismiss"], "open card offers approve + dismiss")
+
+
+def scenario_unknown_action_rejected():
+    _seed()
+    p = chat_actions.create_action_proposal("frobnicate", "do a thing", {})
+    check(p["status"] == "error", "an unproposable action type is refused")
+
+
+def scenario_parent_approve_executes_and_resolves():
+    _seed()
+    pid = _propose()["proposal_id"]
+    before = len(storage.get_all_rules())
+    res = chat_actions.act_on_proposal(pid, "approve", storage.get_member("mom"))
+    check(res["status"] == "success" and len(storage.get_all_rules()) == before + 1,
+          "parent approval executes the action (rule persisted)")
+    check(res["card"]["status"] == "approved" and not res["card"]["actions"],
+          "approved card is static (no live buttons)")
+    check(res.get("schedule_dirty") is True, "a schedule-changing approval flags a re-solve")
+
+
+def scenario_child_approve_denied():
+    _seed()
+    pid = _propose()["proposal_id"]
+    before = len(storage.get_all_rules())
+    res = chat_actions.act_on_proposal(pid, "approve", storage.get_member("kid"))
+    check(res["status"] == "error" and len(storage.get_all_rules()) == before,
+          "a child cannot approve an admin action — nothing executes")
+    # still open for a parent afterward
+    reopened = storage.get_action_proposal(pid)
+    check(reopened["status"] == "proposed", "a denied approval leaves the proposal open")
+
+
+def scenario_dismiss_does_not_execute():
+    _seed()
+    pid = _propose()["proposal_id"]
+    before = len(storage.get_all_rules())
+    res = chat_actions.act_on_proposal(pid, "dismiss", storage.get_member("kid"))
+    check(res["status"] == "success" and res["card"]["status"] == "dismissed", "dismiss resolves the card")
+    check(len(storage.get_all_rules()) == before, "dismiss executes nothing")
+
+
+def scenario_idempotent_after_resolution():
+    _seed()
+    pid = _propose()["proposal_id"]
+    chat_actions.act_on_proposal(pid, "approve", storage.get_member("mom"))
+    again = chat_actions.act_on_proposal(pid, "approve", storage.get_member("mom"))
+    check(again["status"] == "error" and "already" in again["message"],
+          "an already-approved proposal cannot be re-run")
+
+
+def scenario_router_surfaces_card():
+    _seed()
+    call = {"name": "propose_family_action",
+            "arguments": {"action_type": "reassign_driver",
+                          "summary": "Reassign Emma's pickup to Mom",
+                          "payload": {"event_name": "pickup", "driver_name": "Mom", "target_date": "2026-08-05"}}}
+    state = {"n": 0}
+
+    def fake(prompt, tools, system_prompt):
+        state["n"] += 1
+        if state["n"] == 1:
+            return {"message": "ok", "tool_calls": [call]}
+        return {"message": "done", "tool_calls": []}
+
+    orig = agent_router.call_gemma_with_fallback
+    agent_router.call_gemma_with_fallback = fake
+    try:
+        res = agent_router.process_agent_request("reassign emma", source="family",
+                                                 acting_member=storage.get_member("mom"))
+    finally:
+        agent_router.call_gemma_with_fallback = orig
+    check(res.get("card") and res["card"]["status"] == "proposed",
+          f"router surfaces the proposal card onto the reply, got {res.get('card')}")
+    check(res["card"]["action_type"] == "reassign_driver", "card carries the proposed action type")
+
+
+SCENARIOS = [
+    scenario_propose_builds_open_card,
+    scenario_unknown_action_rejected,
+    scenario_parent_approve_executes_and_resolves,
+    scenario_child_approve_denied,
+    scenario_dismiss_does_not_execute,
+    scenario_idempotent_after_resolution,
+    scenario_router_surfaces_card,
+]
+
+if __name__ == "__main__":
+    import traceback
+    failed = 0
+    for fn in SCENARIOS:
+        try:
+            fn()
+            print(f"PASS  {fn.__name__}")
+        except Exception:
+            failed += 1
+            print(f"FAIL  {fn.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(SCENARIOS) - failed}/{len(SCENARIOS)} scenarios passed")
+    raise SystemExit(1 if failed else 0)
