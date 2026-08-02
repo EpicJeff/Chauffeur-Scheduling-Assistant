@@ -2226,14 +2226,29 @@ def update_action_proposal(proposal_id: str, updates: dict) -> None:
         agent_action_proposals_table.update(updates, Query().id == proposal_id)
 
 def add_ingest_log(entry: dict, cap: int = 200) -> None:
+    """Append an accountability row. CONSECUTIVE IDENTICAL rows (same
+    from/subject/outcome — in practice a repeated '(poll)' error while the
+    mailbox is unreachable, e.g. a DNS outage hitting every 10-minute poll)
+    collapse into the previous row: ts bumps to the latest occurrence,
+    `count` increments, `first_ts` keeps the start. A day-long outage is one
+    line of history instead of the entire capped log."""
     import time
     entry = dict(entry)
     entry.setdefault('ts', time.time())
     with db_lock:
-        ingest_log_table.insert(entry)
         rows = sorted(ingest_log_table.all(), key=lambda r: r.get('ts', 0))
-        if len(rows) > cap:
-            for r in rows[:len(rows) - cap]:
+        if rows:
+            last = rows[-1]
+            if all(last.get(k) == entry.get(k) for k in ('from', 'subject', 'outcome')):
+                ingest_log_table.update(
+                    {'ts': entry['ts'],
+                     'count': int(last.get('count') or 1) + 1,
+                     'first_ts': last.get('first_ts') or last.get('ts')},
+                    doc_ids=[last.doc_id])
+                return
+        ingest_log_table.insert(entry)
+        if len(rows) + 1 > cap:
+            for r in rows[:len(rows) + 1 - cap]:
                 ingest_log_table.remove(doc_ids=[r.doc_id])
 
 def get_ingest_log(limit: int = 50) -> List[dict]:

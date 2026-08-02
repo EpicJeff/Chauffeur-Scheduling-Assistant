@@ -181,9 +181,37 @@ def test_run_ingest():
         email_ingest.extract_items = real_extract
 
 
+def test_log_collapse():
+    print("ingest log collapse ...")
+    storage.ingest_log_table.truncate()
+    # Repeated poll errors (mailbox unreachable, e.g. DNS outage) collapse
+    # into one row with a count instead of flooding the capped log.
+    for i in range(5):
+        storage.add_ingest_log({'from': '', 'subject': '(poll)',
+                                'outcome': 'error: IMAP error: [Errno -3] Temporary failure in name resolution',
+                                'ts': 1000.0 + i * 600})
+    log = storage.get_ingest_log()
+    check(len(log) == 1, f"5 identical consecutive errors -> 1 row, got {len(log)}")
+    check(log[0].get('count') == 5 and log[0].get('first_ts') == 1000.0
+          and log[0].get('ts') == 1000.0 + 4 * 600,
+          f"collapsed row carries count + first/latest ts, got {log[0]}")
+    # A different outcome breaks the run; a later identical error starts a NEW
+    # row (consecutive-only — chronology stays honest).
+    storage.add_ingest_log({'from': 'a@b.c', 'subject': 'Newsletter',
+                            'outcome': 'no actionable items', 'ts': 5000.0})
+    storage.add_ingest_log({'from': '', 'subject': '(poll)',
+                            'outcome': 'error: IMAP error: [Errno -3] Temporary failure in name resolution',
+                            'ts': 6000.0})
+    log = storage.get_ingest_log()
+    check(len(log) == 3, f"non-identical rows never collapse, got {len(log)}")
+    check(log[0].get('count') is None, "fresh error row after an interleaved row starts at count 1")
+    storage.ingest_log_table.truncate()
+
+
 if __name__ == '__main__':
     test_mime_and_allowlist()
     test_normalize()
     test_run_ingest()
+    test_log_collapse()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

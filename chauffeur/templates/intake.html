@@ -126,6 +126,8 @@
                             <span class="shrink-0 font-medium"
                                 :class="(row.outcome || '').startsWith('proposed') ? 'text-green-400' : ((row.outcome || '').startsWith('error') ? 'text-red-400' : 'text-gray-500')"
                                 x-text="row.outcome"></span>
+                            <span x-show="(row.count || 1) > 1" class="shrink-0 text-xs font-bold text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded-full"
+                                x-text="'×' + row.count + ' since ' + tsLabel(row.first_ts)"></span>
                         </div>
                     </template>
                 </div>
