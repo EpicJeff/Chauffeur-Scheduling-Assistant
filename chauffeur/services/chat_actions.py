@@ -140,6 +140,11 @@ def _create_event(payload: dict) -> dict:
             return {"status": "error",
                     "message": f"The end time ({end}) isn't after the start time ({start})."}
         body_start, body_end = {"dateTime": s_dt.isoformat()}, {"dateTime": e_dt.isoformat()}
+        # Name the calendar's real zone — an offset-only dateTime pins the
+        # event to a fixed GMT offset in the Calendar edit UI.
+        tz = gcal.get_calendar_timezone(calendar_id)
+        if tz:
+            body_start["timeZone"] = body_end["timeZone"] = tz
     body = {"summary": title, "start": body_start, "end": body_end}
     if payload.get("location"):
         body["location"] = payload["location"]

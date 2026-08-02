@@ -2629,6 +2629,11 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         body_start, body_end = {'date': start[:10]}, {'date': end[:10]}
     else:
         body_start, body_end = {'dateTime': start}, {'dateTime': end}
+        # Name the calendar's real zone — an offset-only dateTime pins the
+        # event to a fixed GMT offset in the Calendar edit UI.
+        tz = gcal.get_calendar_timezone(req.calendar_id)
+        if tz:
+            body_start['timeZone'] = body_end['timeZone'] = tz
     body = {
         'summary': title,
         'start': body_start,

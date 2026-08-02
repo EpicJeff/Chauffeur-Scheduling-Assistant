@@ -411,6 +411,26 @@ def create_event(calendar_id: str, title: str, start: str, end: str, location: s
         print(f"Error creating event in {calendar_id}: {ex}")
         return None
 
+_CALENDAR_TZ_CACHE = {}
+
+def get_calendar_timezone(calendar_id: str):
+    """The calendar's own IANA timezone (e.g. 'America/Chicago'), cached for
+    the process lifetime. Used to stamp start/end.timeZone on inserted events:
+    an offset-only dateTime is a correct instant, but Google then pins the
+    event to a fixed 'GMT-05:00' pseudo-zone, which looks broken in the
+    Calendar edit UI. None when the lookup fails — callers just omit the
+    field and keep today's offset-only behavior."""
+    if calendar_id in _CALENDAR_TZ_CACHE:
+        return _CALENDAR_TZ_CACHE[calendar_id]
+    try:
+        service = get_calendar_service()
+        tz = service.calendars().get(calendarId=calendar_id).execute().get('timeZone')
+    except Exception as ex:
+        print(f"Error fetching timezone for {calendar_id}: {ex}")
+        return None
+    _CALENDAR_TZ_CACHE[calendar_id] = tz
+    return tz
+
 def insert_event(calendar_id: str, body: dict):
     """Insert a raw event body (supports all-day 'date' starts, extended
     properties, etc. — unlike create_event's dateTime-only signature).

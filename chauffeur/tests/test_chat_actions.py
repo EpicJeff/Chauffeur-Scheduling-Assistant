@@ -155,13 +155,17 @@ def scenario_create_event_normalizes_datetimes():
     # requires-calendar scenario above).
     def _payload(**kw):
         return {"title": "Soccer", "calendar_id": "fam@cal", **kw}
-    with mock.patch.object(gcal, 'insert_event', side_effect=fake_insert):
+    with mock.patch.object(gcal, 'insert_event', side_effect=fake_insert), \
+         mock.patch.object(gcal, 'get_calendar_timezone', return_value='America/Chicago'):
         res = chat_actions._create_event(
             _payload(start="2026-08-06T16:00:00", end="2026-08-06T17:00:00"))
         check(res["status"] == "success", f"naive datetimes accepted, got {res}")
         s = sent['body']['start']['dateTime']
         check(('+' in s[10:] or '-' in s[10:]) and s.startswith('2026-08-06T16:00:00'),
               f"naive start gained the server's local offset, got {s}")
+        check(sent['body']['start'].get('timeZone') == 'America/Chicago'
+              and sent['body']['end'].get('timeZone') == 'America/Chicago',
+              f"calendar's IANA zone stamped (no GMT pseudo-zone in the edit UI), got {sent['body']['start']}")
 
         # already-zoned datetimes pass through unchanged
         res = chat_actions._create_event(
