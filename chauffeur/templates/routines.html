@@ -44,7 +44,7 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="routinesPage()" x-init="init()" x-cloak>
-        <div class="max-w-5xl mx-auto p-6 lg:p-10">
+        <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
 
             <header class="mb-8 flex items-start justify-between gap-4 flex-wrap">
                 <div>
@@ -69,37 +69,72 @@
                 </div>
             </header>
 
-            <!-- ===== Kiosk: streak board only ===== -->
+            <!-- ===== Kiosk: compact streak strip + interactive per-child lanes ===== -->
             <template x-if="isKiosk">
                 <div>
                     <div x-show="streaks.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
                         No routines set up yet.
                     </div>
-                    <div class="grid gap-4 md:grid-cols-2">
-                        <template x-for="s in streaks" :key="s.member_id">
-                            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-6 shadow-lg">
-                                <div class="flex items-center gap-4 mb-4">
-                                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-bold text-2xl text-white shrink-0"
+
+                    <!-- Compact streak strip (minimal vertical space) -->
+                    <div class="flex flex-wrap gap-3 mb-6">
+                        <template x-for="s in streaks" :key="'st-' + s.member_id">
+                            <div class="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-2.5 shadow">
+                                <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white shrink-0"
+                                    :style="'background-color:' + (s.color_code || '#3b82f6')"
+                                    x-text="s.avatar || (s.name || '?').charAt(0)"></div>
+                                <div class="font-bold text-white" x-text="s.name"></div>
+                                <div class="font-black text-orange-400 text-xl leading-none">
+                                    <span x-text="s.streak.current"></span>🔥
+                                </div>
+                                <div class="text-xs font-bold shrink-0"
+                                    :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-500'"
+                                    x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total) : 'rest'"></div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Interactive lanes: tap an item to check it off as that child -->
+                    <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
+                        <template x-for="s in streaks" :key="'lane-' + s.member_id">
+                            <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
+                                <!-- Lane header -->
+                                <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
                                         :style="'background-color:' + (s.color_code || '#3b82f6')"
                                         x-text="s.avatar || (s.name || '?').charAt(0)"></div>
-                                    <div class="text-2xl font-bold text-white" x-text="s.name"></div>
-                                    <div class="ml-auto text-right">
-                                        <div class="text-5xl font-black text-orange-400">
-                                            <span x-text="s.streak.current"></span><span class="text-2xl">🔥</span>
-                                        </div>
-                                        <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">day streak</div>
+                                    <div class="font-bold text-white text-lg flex-1 truncate" x-text="s.name"></div>
+                                    <div class="font-black text-orange-400 text-lg shrink-0">
+                                        <span x-text="s.streak.current"></span>🔥
                                     </div>
                                 </div>
-                                <div class="flex items-center gap-3">
-                                    <div class="flex-1 bg-gray-900 rounded-full h-3 overflow-hidden">
+
+                                <!-- Today progress -->
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 bg-gray-900 rounded-full h-2 overflow-hidden">
                                         <div class="bg-green-500 h-full rounded-full transition-all"
                                             :style="'width:' + (s.streak.today_total ? Math.round(100 * s.streak.today_done / s.streak.today_total) : 0) + '%'"></div>
                                     </div>
-                                    <div class="text-sm font-bold shrink-0"
+                                    <div class="text-xs font-bold shrink-0"
                                         :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-400'"
-                                        x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total + ' today') : 'rest day'"></div>
+                                        x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total) : 'rest day'"></div>
                                 </div>
-                                <div class="text-xs text-gray-500 mt-2" x-text="'Best: ' + s.streak.best + ' days'"></div>
+
+                                <!-- Today's checklist -->
+                                <div class="space-y-2">
+                                    <template x-for="it in dayItemsFor(s.member_id)" :key="'it-' + s.member_id + '-' + it.id">
+                                        <button type="button" @click="toggleRoutineCheck(it.id, s.member_id, !it.checked)"
+                                            class="w-full text-left border rounded-xl p-3 flex items-center gap-3 transition-colors"
+                                            :class="it.checked ? 'border-green-600/60 bg-green-900/20' : 'border-gray-800 bg-gray-900'">
+                                            <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 text-sm font-bold"
+                                                :class="it.checked ? 'bg-green-500 border-green-500 text-white' : 'border-gray-600 text-transparent'">✓</div>
+                                            <span class="text-blue-400 font-bold text-xs w-12 shrink-0" x-text="it.time_of_day || ''"></span>
+                                            <span class="font-semibold" :class="it.checked ? 'text-gray-400 line-through' : 'text-white'" x-text="it.title"></span>
+                                        </button>
+                                    </template>
+                                    <div x-show="dayItemsFor(s.member_id).length === 0"
+                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing today — rest day 🎉</div>
+                                </div>
                             </div>
                         </template>
                     </div>
@@ -226,10 +261,12 @@
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                winW: window.innerWidth,
                 dayNames: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
                 members: [],
                 routines: [],
                 streaks: [],
+                dayItems: {},   // memberId -> today's checklist items (kiosk lanes)
                 newRoutineMemberId: '',
                 // Members with an empty just-started block (no items saved yet):
                 // purely client-side; the block materializes once the first
@@ -242,10 +279,54 @@
                 async init() {
                     if (this.isKiosk) {
                         await this.loadStreaks();
-                        setInterval(() => this.loadStreaks(), 60000);
+                        await this.loadAllDayItems();
+                        setInterval(() => this.reloadKiosk(), 30000);
+                        window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
                     await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks()]);
+                },
+
+                // --- Kiosk lanes: today's checklist per child, checked off with
+                // that child's identity (per-lane member_id → the /check endpoint,
+                // which validates the routine belongs to them). ---
+                async loadAllDayItems() {
+                    const entries = await Promise.all(this.streaks.map(async s => {
+                        try {
+                            const res = await fetch(`${this.apiBase}api/routines/day?member_id=${encodeURIComponent(s.member_id)}`);
+                            const data = await res.json();
+                            return [s.member_id, data.items || []];
+                        } catch (e) { return [s.member_id, []]; }
+                    }));
+                    const map = {};
+                    for (const [id, items] of entries) map[id] = items;
+                    this.dayItems = map;
+                },
+                async reloadKiosk() {
+                    await this.loadStreaks();
+                    await this.loadAllDayItems();
+                },
+                dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+                laneColumns() {
+                    const n = this.streaks.length;
+                    if (n <= 1) return 1;
+                    const minLane = 320, pad = 96;
+                    const avail = Math.max(minLane, this.winW - pad);
+                    const maxFit = Math.max(1, Math.floor(avail / minLane));
+                    if (maxFit >= n) return n;
+                    const rows = Math.ceil(n / maxFit);
+                    return Math.ceil(n / rows);
+                },
+                async toggleRoutineCheck(routineId, memberId, checked) {
+                    const res = await fetch(`${this.apiBase}api/routines/${routineId}/check`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: memberId, checked: checked })
+                    });
+                    if (!res.ok) {
+                        const e = await res.json().catch(() => ({}));
+                        showGlobalAlert(e.detail || 'Could not update');
+                    }
+                    await this.reloadKiosk();
                 },
 
                 async loadMembers() {

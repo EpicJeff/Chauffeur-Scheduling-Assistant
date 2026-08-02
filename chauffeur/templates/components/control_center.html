@@ -857,6 +857,16 @@ function closeChatHelpModal() {
         window.dispatchEvent(new CustomEvent('sidebarToggled', { detail: { isOpen: isOperationsSidebarOpen } }));
     }
     
+    // Per-instance switch to hide the Argyle chat bar — e.g. a display-only
+    // wall-panel card. ?chat=none (also off / 0 / false / hide).
+    document.addEventListener('DOMContentLoaded', () => {
+        const chatParam = (new URLSearchParams(window.location.search).get('chat') || '').toLowerCase();
+        if (['none', 'off', '0', 'false', 'hide'].includes(chatParam)) {
+            const el = document.getElementById('chat-overlay-container');
+            if (el) el.style.display = 'none';
+        }
+    });
+
     document.addEventListener('DOMContentLoaded', () => {
         // Kiosk is a display surface — never restore an open control center
         // there, even if this browser left it open in normal mode.

@@ -44,7 +44,7 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="choresPage()" x-init="init()" x-cloak>
-        <div class="max-w-5xl mx-auto p-6 lg:p-10">
+        <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
 
             <header class="mb-8">
                 <h2 class="text-3xl font-bold text-white mb-2">Chores & Rewards</h2>
@@ -153,8 +153,7 @@
                     <div x-show="balances.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
                         No children set up yet.
                     </div>
-                    <div class="grid gap-5"
-                        :class="balances.length >= 3 ? 'lg:grid-cols-3 sm:grid-cols-2' : (balances.length === 2 ? 'sm:grid-cols-2' : 'grid-cols-1')">
+                    <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
                         <template x-for="b in balances" :key="'lane-' + b.member_id">
                             <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
                                 <!-- Lane header -->
@@ -415,6 +414,7 @@
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                winW: window.innerWidth,
                 balances: [],
                 ledgers: {},
                 tools: {},
@@ -439,7 +439,23 @@
                         // a timer so lanes reflect others' taps and parent OKs.
                         await Promise.all([this.loadChores(), this.loadRewards(), this.loadRedemptions()]);
                         setInterval(() => this.reloadKiosk(), 30000);
+                        window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                     }
+                },
+
+                // Balance lanes across the full width: one row when they all fit
+                // (each >= a min width), otherwise the fewest even rows — never a
+                // lonely last lane. Pure CSS auto-fit can't balance groups; the
+                // column count is the one thing that must be computed here.
+                laneColumns() {
+                    const n = this.balances.length;
+                    if (n <= 1) return 1;
+                    const minLane = 320, pad = 96;
+                    const avail = Math.max(minLane, this.winW - pad);
+                    const maxFit = Math.max(1, Math.floor(avail / minLane));
+                    if (maxFit >= n) return n;            // all fit → single full-width row
+                    const rows = Math.ceil(n / maxFit);
+                    return Math.ceil(n / rows);           // even rows, no orphan lane
                 },
 
                 async reloadKiosk() {
