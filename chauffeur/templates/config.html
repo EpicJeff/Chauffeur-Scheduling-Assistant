@@ -598,6 +598,38 @@
                                 omitted when Home Assistant is unreachable.
                             </p>
                         </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="weeklyDigestEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Weekly Family Digest</span>
+                            </div>
+                            <div x-show="weeklyDigestEnabled" class="flex items-center gap-2 shrink-0">
+                                <select x-model="weeklyDigestDay" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                    <option value="0">Monday</option>
+                                    <option value="1">Tuesday</option>
+                                    <option value="2">Wednesday</option>
+                                    <option value="3">Thursday</option>
+                                    <option value="4">Friday</option>
+                                    <option value="5">Saturday</option>
+                                    <option value="6">Sunday</option>
+                                </select>
+                                <input type="time" x-model="weeklyDigestTime" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                Once a week Argyle posts a "Family Week in Review" into the family chat: drives per
+                                driver, kids' activity counts, chores verified and points earned, rewards granted,
+                                and routine completion with streaks. Everyone gets it through the normal message
+                                notifications.
+                            </p>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
@@ -2657,6 +2689,9 @@
                 tomorrowDigestTime: '20:00',
                 weatherEntity: '',
                 weatherEntities: [],
+                weeklyDigestEnabled: true,
+                weeklyDigestDay: 6,
+                weeklyDigestTime: '19:00',
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -3015,6 +3050,9 @@
                     this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
                     this.tomorrowDigestTime = data.tomorrow_digest_time || '20:00';
                     this.weatherEntity = data.weather_entity || '';
+                    this.weeklyDigestEnabled = data.weekly_digest_enabled !== false;
+                    this.weeklyDigestDay = data.weekly_digest_day ?? 6;
+                    this.weeklyDigestTime = data.weekly_digest_time || '19:00';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -3102,7 +3140,10 @@
                             chat_suggestions_enabled: this.chatSuggestionsEnabled,
                             tomorrow_digest_enabled: this.tomorrowDigestEnabled,
                             tomorrow_digest_time: this.tomorrowDigestTime || '20:00',
-                            weather_entity: this.weatherEntity || ''
+                            weather_entity: this.weatherEntity || '',
+                            weekly_digest_enabled: this.weeklyDigestEnabled,
+                            weekly_digest_day: parseInt(this.weeklyDigestDay),
+                            weekly_digest_time: this.weeklyDigestTime || '19:00'
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

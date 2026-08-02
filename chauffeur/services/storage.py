@@ -141,6 +141,7 @@ with db_lock:
     agent_action_proposals_table = db.table('agent_action_proposals')
     ingest_log_table = db.table('ingest_log')
     prep_kits_table = db.table('prep_kits')
+    daily_stats_table = db.table('daily_stats')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1246,6 +1247,19 @@ def update_prep_kit(kit_id: str, data: dict) -> bool:
 def delete_prep_kit(kit_id: str):
     with db_lock:
         prep_kits_table.remove(Query().id == kit_id)
+
+# --- Daily stats snapshots (weekly family digest) ---
+# The combined schedule cache is forward-looking, so each evening's
+# per-driver/per-kid numbers are snapshotted here before the day rolls out.
+
+def upsert_daily_stats(date_str: str, data: dict):
+    with db_lock:
+        daily_stats_table.upsert(data, Query().date == date_str)
+
+def get_daily_stats(date_strs: List[str]) -> List[dict]:
+    wanted = set(date_strs)
+    with db_lock:
+        return [dict(r) for r in daily_stats_table.all() if r.get('date') in wanted]
 
 # --- Rewards + redemptions ---
 

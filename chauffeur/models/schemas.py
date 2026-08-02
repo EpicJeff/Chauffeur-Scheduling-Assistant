@@ -275,6 +275,13 @@ class Settings(BaseModel):
     # HA weather entity for the digest's forecast line. Empty = auto-detect
     # the first weather.* entity; weather silently drops out if HA is absent.
     weather_entity: str = ""
+    # Weekly "Family Week in Review" recap Argyle posts into the family chat
+    # channel: driving per driver, kid activities, chores/points, rewards,
+    # routine completion. Sourced from evening daily_stats snapshots plus the
+    # durable ledgers (services/family_digest.py).
+    weekly_digest_enabled: bool = True
+    weekly_digest_day: int = 6        # 0=Mon .. 6=Sun
+    weekly_digest_time: str = "19:00"  # HH:MM, server-local time
     calendar_ids: List[str]
     # One of calendar_ids, starred in Config → General. The family's shared
     # calendar: intake proposals with no clear owner (and whole-family /

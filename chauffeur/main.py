@@ -126,6 +126,36 @@ async def push_notification_loop():
             except Exception as de:
                 print(f"Tomorrow digest error: {de}")
 
+            # --- Daily stats snapshot (late evening, before the day rolls out
+            # of the forward-looking schedule cache) ---
+            try:
+                now_dt = datetime.now()
+                today_str = now_dt.strftime('%Y-%m-%d')
+                if now_dt.hour >= 21 and storage.get_app_state("daily_stats_last_date") != today_str:
+                    from services import family_digest
+                    family_digest.record_daily_stats(today_str)
+                    storage.set_app_state("daily_stats_last_date", today_str)
+            except Exception as se:
+                print(f"Daily stats snapshot error: {se}")
+
+            # --- Weekly family digest (Argyle posts to the family channel) ---
+            try:
+                settings = storage.get_settings() or {}
+                if settings.get("weekly_digest_enabled", True):
+                    now_dt = datetime.now()
+                    hh, mm = [int(x) for x in str(settings.get("weekly_digest_time", "19:00")).split(":")[:2]]
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    if now_dt.weekday() == int(settings.get("weekly_digest_day", 6)) \
+                            and (now_dt.hour, now_dt.minute) >= (hh, mm) \
+                            and storage.get_app_state("weekly_digest_last_sent") != today_str:
+                        # Marker set FIRST: a failing post must not retry every
+                        # 30s and spam the family channel when it half-works.
+                        storage.set_app_state("weekly_digest_last_sent", today_str)
+                        from services import family_digest
+                        family_digest.post_weekly_digest()
+            except Exception as wde:
+                print(f"Weekly digest error: {wde}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
