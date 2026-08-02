@@ -4,6 +4,9 @@ from typing import Dict, Any, Optional, List
 
 from services.agent_tools_v2 import (
     get_available_tools,
+    get_bridged_v1_tools,
+    BRIDGED_V1_TOOLS,
+    SCHEDULE_MUTATING_V1_TOOLS,
     get_calendar_events,
     assign_driver_to_event_fuzzy,
     add_trip_poi,
@@ -188,6 +191,11 @@ sending or claiming, and never pass from_member/member_name for them.
     if driver:
         from services.agent_tools_v2 import get_driver_tools
         tools = tools + get_driver_tools()
+    else:
+        # Admin/family-hub context gets the full-parity v1 bridge tools
+        # (routing/priority rules, errands, solver, memory, places, deep trip
+        # planning). Never exposed in PWA driver mode.
+        tools = tools + get_bridged_v1_tools()
 
     import time as _time
     request_start = _time.time()
@@ -419,6 +427,21 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = complete_route(driver_id, args.get("event_name", ""),
                                              args.get("action", "completed"), args.get("target_date", "today"))
                     if res.get("message"): agent_message = res["message"]
+                elif func_name in BRIDGED_V1_TOOLS and not driver:
+                    # Full-parity bridge: scheduling-core, errand, memory,
+                    # places and deep trip-planning tools delegate to v1's
+                    # tested handlers. Admin context only — the `not driver`
+                    # guard mirrors the toolset gating so a hallucinated tool
+                    # name can't execute in PWA driver mode. Schedule-mutating
+                    # tools flag schedule_dirty so the client re-solves, exactly
+                    # like the override tools above.
+                    from services import agent_tools
+                    res = agent_tools.execute_tool(func_name, args)
+                    if isinstance(res, dict) and res.get("status") == "success" \
+                            and func_name in SCHEDULE_MUTATING_V1_TOOLS:
+                        schedule_dirty = True
+                    if isinstance(res, dict) and res.get("message"):
+                        agent_message = res["message"]
             except Exception as e:
                 res = {"error": str(e)}
 

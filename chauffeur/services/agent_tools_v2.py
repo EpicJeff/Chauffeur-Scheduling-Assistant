@@ -936,6 +936,58 @@ def get_available_tools() -> List[Dict]:
         }
     ]
 
+# ---------------------------------------------------------------------------
+# v1 tool bridge — full-parity access to the scheduling-core, errand, memory,
+# places, and deep trip-planning tools that were never natively ported to v2.
+# Schemas come straight from v1's Pydantic models (single source of truth via
+# agent_tools.get_openai_tools); execution delegates to agent_tools.execute_tool
+# in the router. Admin context only — these are NEVER added to the PWA driver
+# toolset, since a driver on the go must not reconfigure global scheduling.
+# ---------------------------------------------------------------------------
+BRIDGED_V1_TOOLS = [
+    "get_current_state",
+    "add_routing_rule", "delete_routing_rule",
+    "add_priority_rule", "delete_priority_rule",
+    "run_solver",
+    "add_errand", "update_errand", "delete_errand", "get_errands",
+    "add_errand_rule", "delete_errand_rule",
+    "update_memory", "search_places",
+    "generate_trip_plan",
+    "add_trip_accommodation", "edit_trip_accommodation", "edit_trip_poi",
+]
+
+# Subset whose success means the driver schedule changed and the client must
+# re-solve — the router sets schedule_dirty for these, mirroring the override
+# tools. Reads (get_current_state, get_errands) and non-schedule writes
+# (update_memory, search_places, trip-planning) are excluded.
+SCHEDULE_MUTATING_V1_TOOLS = {
+    "add_routing_rule", "delete_routing_rule",
+    "add_priority_rule", "delete_priority_rule",
+    "run_solver",
+    "add_errand", "update_errand", "delete_errand",
+    "add_errand_rule", "delete_errand_rule",
+}
+
+
+def get_bridged_v1_tools() -> List[Dict]:
+    """v1 tool schemas reshaped into v2's flat {name, description, parameters}
+    format for the admin (non-driver) toolset. Pulled live from v1's
+    get_openai_tools() so the Pydantic models stay the single source of truth."""
+    from services import agent_tools
+    by_name = {t["function"]["name"]: t["function"] for t in agent_tools.get_openai_tools()}
+    bridged = []
+    for name in BRIDGED_V1_TOOLS:
+        fn = by_name.get(name)
+        if not fn:
+            continue
+        bridged.append({
+            "name": name,
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return bridged
+
+
 def auto_schedule_trip_itinerary(trip_id: str) -> Dict[str, Any]:
     """
     Returns a UI action instructing the frontend to auto schedule all unscheduled POIs.
