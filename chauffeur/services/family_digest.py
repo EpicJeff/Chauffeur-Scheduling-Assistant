@@ -132,7 +132,7 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
     def name_of(member_id):
         return (members.get(member_id) or {}).get('name') or member_id
 
-    sections = []
+    sections = []   # (header, [bullet lines]) — rendered one bullet per line
 
     # Driving (from snapshots)
     drivers = {}
@@ -142,10 +142,10 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
             agg['drives'] += d.get('drives', 0)
             agg['minutes'] += d.get('minutes', 0)
     if drivers:
-        parts = [f"{_driver_name(d_id)} {d['drives']} drive{'s' if d['drives'] != 1 else ''}"
+        lines = [f"• {_driver_name(d_id)} — {d['drives']} drive{'s' if d['drives'] != 1 else ''}"
                  + (f" · {_fmt_minutes(d['minutes'])}" if d['minutes'] else "")
                  for d_id, d in sorted(drivers.items(), key=lambda kv: -kv[1]['drives'])]
-        sections.append("🚗 Driving: " + "  |  ".join(parts))
+        sections.append(("🚗 Driving", lines))
 
     # Kid activities (from snapshots)
     kids = {}
@@ -153,9 +153,9 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
         for m_id, n in (row.get('kids') or {}).items():
             kids[m_id] = kids.get(m_id, 0) + n
     if kids:
-        parts = [f"{name_of(m_id)} {n}" for m_id, n
-                 in sorted(kids.items(), key=lambda kv: -kv[1])]
-        sections.append("🏃 Activities: " + "  |  ".join(parts))
+        lines = [f"• {name_of(m_id)} — {n} activit{'ies' if n != 1 else 'y'}"
+                 for m_id, n in sorted(kids.items(), key=lambda kv: -kv[1])]
+        sections.append(("🏃 Activities", lines))
 
     # Chores + points (ledger is durable history — no snapshot needed)
     chore_entries = [e for e in storage.points_ledger_table.all()
@@ -165,21 +165,23 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
         per_kid = {}
         for e in chore_entries:
             per_kid[e['member_id']] = per_kid.get(e['member_id'], 0) + e['delta']
-        parts = [f"{name_of(m_id)} +{pts} pts" for m_id, pts
-                 in sorted(per_kid.items(), key=lambda kv: -kv[1])]
         n = len(chore_entries)
-        sections.append(f"✅ Chores: {n} verified — " + ", ".join(parts))
+        lines = [f"• {name_of(m_id)} — +{pts} pts" for m_id, pts
+                 in sorted(per_kid.items(), key=lambda kv: -kv[1])]
+        sections.append((f"✅ Chores — {n} verified", lines))
 
     # Rewards granted this week
     granted = [r for r in storage.get_redemptions()
                if r.get('state') == 'approved' and (r.get('decided_at') or 0) >= start_ts]
     if granted:
-        titles = ", ".join(f"{name_of(r['member_id'])}: {r.get('reward_title')}" for r in granted[:4])
-        sections.append(f"🎁 Rewards: {len(granted)} granted ({titles})")
+        lines = [f"• {name_of(r['member_id'])} — {r.get('reward_title')}" for r in granted[:4]]
+        if len(granted) > 4:
+            lines.append(f"• …and {len(granted) - 4} more")
+        sections.append((f"🎁 Rewards — {len(granted)} granted", lines))
 
     # Routines: days complete this week + current streak
     routine_members = {r['member_id'] for r in storage.get_routines()}
-    routine_parts = []
+    routine_lines = []
     for m_id in sorted(routine_members, key=name_of):
         scheduled_days = complete_days = 0
         for ds in day_strs:
@@ -192,18 +194,19 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
         if not scheduled_days:
             continue
         streak = storage.compute_streak(m_id)
-        chip = f"{name_of(m_id)} {complete_days}/{scheduled_days} days"
+        line = f"• {name_of(m_id)} — {complete_days}/{scheduled_days} days"
         if streak.get('current'):
-            chip += f" (🔥 {streak['current']})"
-        routine_parts.append(chip)
-    if routine_parts:
-        sections.append("📋 Routines: " + "  |  ".join(routine_parts))
+            line += f" · 🔥 {streak['current']}"
+        routine_lines.append(line)
+    if routine_lines:
+        sections.append(("📋 Routines", routine_lines))
 
     if not sections:
         return None
     period = (f"{start_date.strftime('%b')} {start_date.day} – "
               f"{end_date.strftime('%b')} {end_date.day}")
-    return f"📊 Family Week in Review ({period})\n\n" + "\n".join(sections)
+    blocks = [f"{header}\n" + "\n".join(lines) for header, lines in sections]
+    return f"📊 Family Week in Review ({period})\n\n" + "\n\n".join(blocks)
 
 
 def post_weekly_digest() -> bool:

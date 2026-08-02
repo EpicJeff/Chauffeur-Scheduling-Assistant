@@ -92,11 +92,13 @@ def scenario_build_weekly_digest():
 
     text = family_digest.build_weekly_digest(end_date=TODAY)
     check(text is not None and text.startswith("📊 Family Week in Review"), "digest built with header")
-    check("Dad 5 drives · 2h 40m" in text, f"driving sums the week's snapshots only, got: {text}")
-    check("Addison 4" in text, "kid activities summed across snapshot days")
-    check("1 verified" in text and "Addison +25 pts" in text, "chores count earns only, not spends")
-    check("Movie night" in text, "granted rewards listed")
-    check("📋 Routines" in text and "Addison 1/" in text, "routine completion line present")
+    check("• Dad — 5 drives · 2h 40m" in text, f"driving sums the week's snapshots only, got: {text}")
+    check("• Addison — 4 activities" in text, "kid activities summed across snapshot days")
+    check("Chores — 1 verified" in text and "• Addison — +25 pts" in text,
+          "chores count earns only, not spends")
+    check("• Addison — Movie night" in text, "granted rewards listed")
+    check("📋 Routines" in text and "• Addison — 1/" in text, "routine completion line present")
+    check("\n\n🚗 Driving\n• " in text, "sections are blank-line separated with one bullet per line")
 
 
 def scenario_empty_digest_is_none():
