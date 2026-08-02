@@ -488,7 +488,8 @@ def _find_member_fuzzy(name: str):
 
 def _member_names() -> str:
     from services.storage import get_all_members
-    return ', '.join(m.get('name') for m in get_all_members() if m.get('name'))
+    return ', '.join(m.get('name') for m in get_all_members()
+                     if m.get('name') and not m.get('system'))
 
 
 def _resolve_actor(sender_driver_id: str = None, member_name: str = None):

@@ -331,6 +331,33 @@ def ensure_family_channel():
             'archived': False,
         })
 
+
+# Fixed id for the Argyle assistant, the system member that agent chat replies
+# are posted as. `system: True` lets the UI exclude it from the human family
+# roster while still resolving "Argyle" as a message sender name.
+ARGYLE_MEMBER_ID = "argyle"
+
+
+def ensure_argyle_member() -> dict:
+    """Idempotently create + return the Argyle system member."""
+    import time
+    with db_lock:
+        res = members_table.search(Query().id == ARGYLE_MEMBER_ID)
+        if res:
+            return dict(res[0])
+        member = {
+            'id': ARGYLE_MEMBER_ID,
+            'name': 'Argyle',
+            'role': 'assistant',
+            'is_child': False,
+            'system': True,
+            'driver_id': None,
+            'passenger_id': None,
+            'created_at': time.time(),
+        }
+        members_table.insert(member)
+        return member
+
 ensure_family_channel()
 
 def stamp_member_on_push_subscriptions():

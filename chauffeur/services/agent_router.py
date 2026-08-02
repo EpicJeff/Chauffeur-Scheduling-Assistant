@@ -82,13 +82,23 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
         logger.error(f"Error calling Gemma fallback model: {e}")
         return {"error": str(e), "transient": _is_transient(str(e))}
 
+def _is_admin_member(member) -> bool:
+    """Parents/adults may drive the scheduling-core (bridge) tools; children and
+    helpers may not. Used to scope @argyle in the family chat by who is asking."""
+    return bool(member) and member.get('role') in ('parent', 'adult')
+
+
 def process_agent_request(user_prompt: str, context: Optional[Dict] = None, history: Optional[List[Dict]] = None,
-                          source: str = "admin", driver_id: Optional[str] = None) -> Dict[str, Any]:
+                          source: str = "admin", driver_id: Optional[str] = None,
+                          acting_member: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Main entrypoint for the Agent Orchestrator.
     Decides whether to route to Gemma (tools) or Gemini (heavy lifting).
     source/driver_id come from the chat payload: the PWA sends source='pwa'
     plus the logged-in driver's id, which switches on driver context.
+    acting_member (the resolved family member) is set for @argyle in the family
+    chat: it supplies a known identity for 'me'/from_member resolution and gates
+    the admin scheduling tools to parents/adults.
     """
     # Resolve driver context (PWA chat only). The driver must actually exist —
     # a stale localStorage id must not grant driver tools acting on nobody.
@@ -114,10 +124,22 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "before calling tools, and pass tool dates as YYYY-MM-DD.\n")
 
     if not driver:
-        system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
-                          "but you do NOT know who is speaking in this context. If the speaker has identified "
-                          "themselves (or the request implies it: 'tell Mom Dad is on his way' -> from Dad), pass "
-                          "from_member/member_name. Otherwise ask who it is BEFORE sending or claiming — never guess.\n")
+        if acting_member is not None:
+            _nm = acting_member.get('name') or 'this family member'
+            _role = acting_member.get('role') or 'adult'
+            system_prompt += (f"\nYou are speaking with {_nm} (role: {_role}) in the family chat. "
+                              f"Resolve 'me', 'my', 'I', and 'mine' to {_nm}. For messaging and chore tools, "
+                              f"pass from_member/member_name as \"{_nm}\" automatically — never ask who is "
+                              f"speaking, you already know.\n")
+            if not _is_admin_member(acting_member):
+                system_prompt += ("This person is NOT a parent/admin: answer questions, send their messages, and "
+                                  "manage their own chores, but you cannot change global scheduling (routing/priority "
+                                  "rules, the solver, or errands) — those tools are not available to them.\n")
+        else:
+            system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
+                              "but you do NOT know who is speaking in this context. If the speaker has identified "
+                              "themselves (or the request implies it: 'tell Mom Dad is on his way' -> from Dad), pass "
+                              "from_member/member_name. Otherwise ask who it is BEFORE sending or claiming — never guess.\n")
 
     if driver:
         system_prompt += f"""
@@ -187,14 +209,18 @@ sending or claiming, and never pass from_member/member_name for them.
                         system_prompt += (f"- {f.get('airline') or 'TBD'} {f.get('flight_number') or ''} "
                                           f"{f.get('origin')} -> {f.get('destination')} (id: {f.get('id')})\n")
                         
+    # Bridge (admin scheduling) tools are offered when NOT in driver mode and the
+    # asker is authorized: either a legacy call with no acting_member (admin
+    # dashboard / HA voice) or an acting_member who is a parent/adult. Children
+    # and helpers using @argyle never get them.
+    bridge_ok = (not driver) and (acting_member is None or _is_admin_member(acting_member))
     tools = get_available_tools()
     if driver:
         from services.agent_tools_v2 import get_driver_tools
         tools = tools + get_driver_tools()
-    else:
-        # Admin/family-hub context gets the full-parity v1 bridge tools
-        # (routing/priority rules, errands, solver, memory, places, deep trip
-        # planning). Never exposed in PWA driver mode.
+    elif bridge_ok:
+        # Full-parity v1 bridge tools (routing/priority rules, errands, solver,
+        # memory, places, deep trip planning).
         tools = tools + get_bridged_v1_tools()
 
     import time as _time
@@ -427,12 +453,13 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = complete_route(driver_id, args.get("event_name", ""),
                                              args.get("action", "completed"), args.get("target_date", "today"))
                     if res.get("message"): agent_message = res["message"]
-                elif func_name in BRIDGED_V1_TOOLS and not driver:
+                elif func_name in BRIDGED_V1_TOOLS and bridge_ok:
                     # Full-parity bridge: scheduling-core, errand, memory,
                     # places and deep trip-planning tools delegate to v1's
-                    # tested handlers. Admin context only — the `not driver`
+                    # tested handlers. Admin context only — the `bridge_ok`
                     # guard mirrors the toolset gating so a hallucinated tool
-                    # name can't execute in PWA driver mode. Schedule-mutating
+                    # name can't execute in PWA driver mode or for a
+                    # non-admin @argyle asker. Schedule-mutating
                     # tools flag schedule_dirty so the client re-solves, exactly
                     # like the override tools above.
                     from services import agent_tools

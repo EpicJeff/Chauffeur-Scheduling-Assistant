@@ -3877,6 +3877,41 @@ class SendMessageRequest(BaseModel):
     sender_member_id: str
     body: str
 
+import re as _re
+# Matches an @argyle mention anywhere in a message (case-insensitive).
+_ARGYLE_MENTION = _re.compile(r'@argyle\b', _re.IGNORECASE)
+
+
+def _mentions_argyle(body: str) -> bool:
+    return bool(body) and bool(_ARGYLE_MENTION.search(body))
+
+
+def _run_argyle_mention(channel: dict, sender: dict, body: str):
+    """Background worker: a family-chat message @mentioned Argyle. Route the
+    question to the agent as the sending member (known identity + role scope)
+    and post the reply back into the same channel as the Argyle system member.
+    Runs off-request because an agent turn can take tens of seconds."""
+    from services.agent_router import process_agent_request
+    from services.agent_tools_v2 import _post_chat_message
+    query = _ARGYLE_MENTION.sub('', body).strip()
+    if not query:
+        query = ("The user mentioned you in the family chat without asking anything. "
+                 "Greet them briefly by name and ask how you can help.")
+    try:
+        res = process_agent_request(query, source="family", acting_member=sender)
+        reply = (res or {}).get("message") or "Sorry — I couldn't work that out."
+        if res.get("schedule_dirty"):
+            trigger_background_refresh()
+    except Exception as e:
+        logger.error(f"Argyle mention handling failed: {e}")
+        reply = "Sorry — I hit an error handling that."
+    try:
+        argyle = storage.ensure_argyle_member()
+        _post_chat_message(channel, argyle, reply)
+    except Exception as e:
+        logger.error(f"Argyle reply post failed: {e}")
+
+
 @app.post("/api/channels/{channel_id}/messages")
 def send_message(channel_id: str, req: SendMessageRequest, background_tasks: BackgroundTasks):
     channel = storage.get_channel(channel_id)
@@ -3905,6 +3940,11 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     recipients = channel.get('member_ids') if channel.get('kind') == 'dm' else None
     _push_message_event(channel_id, recipients)
     background_tasks.add_task(_fanout_message_notifications, channel, message)
+    # @argyle turns the family chat into a vector of action: hand the message to
+    # the agent as the sender and let it reply in-channel. Never re-trigger on
+    # Argyle's own posts.
+    if req.sender_member_id != storage.ARGYLE_MEMBER_ID and _mentions_argyle(body):
+        background_tasks.add_task(_run_argyle_mention, channel, sender, body)
     return message
 
 class ChannelReadRequest(BaseModel):
