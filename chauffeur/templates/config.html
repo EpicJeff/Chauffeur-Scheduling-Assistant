@@ -492,6 +492,28 @@
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700">
+                        <h4 class="font-bold text-white mb-4">Family Chat Assistant</h4>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="chatSuggestionsEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Proactive Chat Suggestions</span>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                When on, Argyle watches the family chat for action-shaped messages ("I can't drive
+                                Thursday", "we're out of milk") and offers a one-tap suggestion card. It never acts on
+                                its own &mdash; a parent always approves. Requires an AI key above. You can always
+                                summon Argyle directly with <span class="font-mono text-gray-400">@argyle</span>.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-6 border-t border-gray-700">
                         <h4 class="font-bold text-white mb-4">Solver Behavior</h4>
                         <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <div class="flex items-center space-x-3 shrink-0">
@@ -2593,6 +2615,7 @@
                 loadBalancingEnabled: false,
                 loadBalancingMetric: 'occupied_time',
                 suggestedRoutesEnabled: true,
+                chatSuggestionsEnabled: false,
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -2947,6 +2970,7 @@
                     this.loadBalancingEnabled = data.load_balancing_enabled === true;
                     this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
+                    this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
 
                     await this.fetchCalendarMetadata(this.calendarIds);
                 },
@@ -3023,7 +3047,8 @@
                             enable_ai_themes: this.enableAiThemes,
                             load_balancing_enabled: this.loadBalancingEnabled,
                             load_balancing_metric: this.loadBalancingMetric,
-                            suggested_routes_enabled: this.suggestedRoutesEnabled
+                            suggested_routes_enabled: this.suggestedRoutesEnabled,
+                            chat_suggestions_enabled: this.chatSuggestionsEnabled
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

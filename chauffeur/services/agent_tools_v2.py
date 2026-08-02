@@ -947,15 +947,15 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "propose_family_action",
-            "description": "Propose a schedule-CHANGING action for a parent to approve with one tap in the chat, instead of doing it silently. Use this in the family chat whenever the request would reassign a driver, mark a driver unavailable / add or remove a routing or priority rule, or add an errand. Do NOT use it for questions, reading the schedule, sending messages, or chore claims — handle those directly.",
+            "description": "Propose a schedule- or calendar-CHANGING action for a parent to approve with one tap in the chat, instead of doing it silently. Use this in the family chat whenever the request would reassign or clear a driver, add/remove a routing or priority rule (e.g. mark a driver unavailable), add/update/remove an errand, or add a calendar event. Do NOT use it for questions, reading the schedule, sending messages, or chore claims — handle those directly.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action_type": {"type": "string",
-                                    "enum": ["reassign_driver", "add_routing_rule", "delete_routing_rule", "add_priority_rule", "add_errand"],
+                                    "enum": ["reassign_driver", "clear_assignment", "add_routing_rule", "delete_routing_rule", "add_priority_rule", "delete_priority_rule", "add_errand", "update_errand", "delete_errand", "add_errand_rule", "create_event"],
                                     "description": "Which action to propose."},
-                    "summary": {"type": "string", "description": "One short human sentence describing the change, shown on the card, e.g. \"Reassign Emma's 3pm pickup to Mom\" or \"Mark Dad unavailable Thursday afternoon\"."},
-                    "payload": {"type": "object", "description": "Arguments matching that action's own tool: reassign_driver -> {event_name, driver_name, target_date}; add_routing_rule -> {constraint_type, driver_id, ...}; add_errand -> {title, duration_mins, location, ...}."}
+                    "summary": {"type": "string", "description": "One short human sentence describing the change, shown on the card, e.g. \"Reassign Emma's 3pm pickup to Mom\", \"Mark Dad unavailable Thursday afternoon\", or \"Add Soccer practice Thu 4-5pm\"."},
+                    "payload": {"type": "object", "description": "Arguments matching that action's own tool: reassign_driver -> {event_name, driver_name, target_date}; clear_assignment -> {event_name, target_date}; add_routing_rule -> {constraint_type, driver_id, ...}; add_errand -> {title, duration_mins, location, ...}; create_event -> {title, start (ISO 8601), end (ISO 8601), location?, all_day?}."}
                 },
                 "required": ["action_type", "summary", "payload"]
             }

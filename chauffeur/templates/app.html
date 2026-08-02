@@ -1209,7 +1209,11 @@
                 const label = card.status === 'approved' ? '✓ Approved' : (card.status === 'dismissed' ? 'Dismissed' : card.status);
                 footer = `<div class="text-[12px] mt-1 ${card.status === 'approved' ? 'text-green-400' : 'text-gray-500'}">${mfEscape(label)}</div>`;
             }
+            const badge = card.action_label
+                ? `<div class="inline-block text-[10px] uppercase tracking-wide font-bold text-violet-300 bg-violet-900/40 px-2 py-0.5 rounded mb-1">${mfEscape(card.action_label)}</div>`
+                : '';
             return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
+                ${badge}
                 <div class="text-[13px] text-gray-200 font-medium">${mfEscape(card.title || '')}</div>
                 ${footer}
             </div>`;

@@ -64,17 +64,60 @@ def classify_actionable(body: str) -> Dict[str, Any]:
         logger.warning(f"classify_actionable failed (fail-closed): {e}")
         return {"actionable": False, "confidence": 0.0}
 
-# Actions the agent may propose. Every one mutates global scheduling, so each
-# requires an approving parent/adult and flags a re-solve on success.
+# Actions the agent may propose. Every one changes the schedule/calendar, so
+# each requires an approving parent/adult and flags a re-solve on success.
 ADMIN_ACTIONS = {
+    "reassign_driver", "clear_assignment",
     "add_routing_rule", "delete_routing_rule",
     "add_priority_rule", "delete_priority_rule",
-    "add_errand", "reassign_driver",
+    "add_errand", "update_errand", "delete_errand", "add_errand_rule",
+    "create_event",
+}
+
+# Human-friendly label shown as the card's action badge.
+ACTION_LABELS = {
+    "reassign_driver": "Reassign driver",
+    "clear_assignment": "Clear assignment",
+    "add_routing_rule": "Add rule",
+    "delete_routing_rule": "Remove rule",
+    "add_priority_rule": "Add priority",
+    "delete_priority_rule": "Remove priority",
+    "add_errand": "Add errand",
+    "update_errand": "Update errand",
+    "delete_errand": "Remove errand",
+    "add_errand_rule": "Add errand rule",
+    "create_event": "Add to calendar",
 }
 
 
 def _is_admin(member) -> bool:
     return bool(member) and member.get('role') in ('parent', 'adult')
+
+
+def _create_event(payload: dict) -> dict:
+    """Insert a calendar event from a proposed create_event action."""
+    from services import storage
+    from services import calendar as gcal
+    title = (payload.get("title") or "").strip()
+    start, end = payload.get("start"), payload.get("end")
+    if not title or not start or not end:
+        return {"status": "error", "message": "I need a title, start, and end time to create an event."}
+    calendar_id = payload.get("calendar_id") or storage.get_settings().get("default_calendar_id")
+    if not calendar_id:
+        return {"status": "error", "message": "No default calendar is set — set one in settings first."}
+    if payload.get("all_day"):
+        body_start, body_end = {"date": start[:10]}, {"date": end[:10]}
+    else:
+        body_start, body_end = {"dateTime": start}, {"dateTime": end}
+    body = {"summary": title, "start": body_start, "end": body_end}
+    if payload.get("location"):
+        body["location"] = payload["location"]
+    if payload.get("description"):
+        body["description"] = payload["description"]
+    gid = gcal.insert_event(calendar_id, body)
+    if not gid:
+        return {"status": "error", "message": "The calendar rejected the event."}
+    return {"status": "success", "message": f"Added '{title}' to the calendar."}
 
 
 def _execute(action_type: str, payload: dict) -> dict:
@@ -85,6 +128,12 @@ def _execute(action_type: str, payload: dict) -> dict:
         return assign_driver_to_event_fuzzy(payload.get("event_name"),
                                             payload.get("driver_name"),
                                             payload.get("target_date"))
+    if action_type == "clear_assignment":
+        from services.agent_tools_v2 import remove_override_for_event_fuzzy
+        return remove_override_for_event_fuzzy(payload.get("event_name"),
+                                               payload.get("target_date"))
+    if action_type == "create_event":
+        return _create_event(payload)
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
@@ -133,6 +182,7 @@ def build_card(proposal_id: str, action_type: str, summary: str, status: str) ->
         "kind": "action_proposal",
         "proposal_id": proposal_id,
         "action_type": action_type,
+        "action_label": ACTION_LABELS.get(action_type, action_type),
         "title": summary,
         "status": status,          # proposed | approved | dismissed
         "actions": actions,

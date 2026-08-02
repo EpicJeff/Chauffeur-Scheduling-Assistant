@@ -110,8 +110,38 @@ def scenario_router_surfaces_card():
     check(res["card"]["action_type"] == "reassign_driver", "card carries the proposed action type")
 
 
+def scenario_new_actions_proposable_and_labeled():
+    _seed()
+    for at, summ in [("clear_assignment", "Clear Emma's pickup override"),
+                     ("delete_errand", "Remove the dog-food errand"),
+                     ("create_event", "Add Soccer Thu 4-5pm"),
+                     ("update_errand", "Bump grocery run to 30 min"),
+                     ("delete_priority_rule", "Drop the Mom-first rule")]:
+        p = chat_actions.create_action_proposal(at, summ, {})
+        check(p["status"] == "success", f"{at} is proposable")
+        check(p["card"]["action_label"] and p["card"]["action_label"] != at,
+              f"{at} card carries a human label, got {p['card'].get('action_label')}")
+
+
+def scenario_create_event_requires_calendar():
+    _seed()
+    s = storage.get_settings()
+    s.pop('default_calendar_id', None)
+    storage.update_settings(s)
+    pid = chat_actions.create_action_proposal(
+        "create_event", "Add Soccer",
+        {"title": "Soccer", "start": "2026-08-06T16:00:00", "end": "2026-08-06T17:00:00"})["proposal_id"]
+    res = chat_actions.act_on_proposal(pid, "approve", storage.get_member("mom"))
+    check(res["status"] == "error" and "calendar" in res["message"].lower(),
+          f"create_event without a default calendar errors clearly, got {res}")
+    check(storage.get_action_proposal(pid)["status"] == "proposed",
+          "a failed execution leaves the proposal open to retry")
+
+
 SCENARIOS = [
     scenario_propose_builds_open_card,
+    scenario_new_actions_proposable_and_labeled,
+    scenario_create_event_requires_calendar,
     scenario_unknown_action_rejected,
     scenario_parent_approve_executes_and_resolves,
     scenario_child_approve_denied,

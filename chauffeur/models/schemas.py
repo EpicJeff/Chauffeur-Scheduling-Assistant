@@ -320,6 +320,10 @@ class Settings(BaseModel):
     # When False, the solver never invents "suggested driver" (ghost) routes
     # for unassigned events; they simply stay in the triage bucket.
     suggested_routes_enabled: bool = True
+    # When True, Argyle watches the family chat for action-shaped messages and
+    # offers a one-tap proposal card (implicit detection funnel). Opt-in: off by
+    # default so the bot never butts into ordinary chatter.
+    chat_suggestions_enabled: bool = False
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app
