@@ -3978,6 +3978,12 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     # Argyle's own posts.
     if req.sender_member_id != storage.ARGYLE_MEMBER_ID and _mentions_argyle(body):
         background_tasks.add_task(_run_argyle_mention, channel, sender, body)
+    elif req.sender_member_id != storage.ARGYLE_MEMBER_ID:
+        # Implicit detection (opt-in): Tier 1 keyword pre-filter gates the
+        # expensive funnel so ordinary chatter never reaches the agent.
+        from services import chat_actions
+        if storage.get_settings().get('chat_suggestions_enabled') and chat_actions.suggests_action(body):
+            background_tasks.add_task(chat_actions.run_suggestion_funnel, channel, sender, body)
     return message
 
 class ChannelReadRequest(BaseModel):

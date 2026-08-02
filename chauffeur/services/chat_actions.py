@@ -10,9 +10,59 @@ Distinct from services/email_ingest event proposals (which create calendar
 events from email) — these carry a typed *action* over the scheduler.
 """
 import logging
+import re
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# --- Implicit detection funnel (Layer 3) -------------------------------------
+# Tier 1: a cheap, deterministic keyword pre-filter. High-precision phrases only
+# — the cost of a miss (someone must @argyle explicitly) is far lower than the
+# cost of the bot butting into ordinary chatter. Expand as measured precision
+# from real @argyle usage justifies it.
+SUGGESTION_PATTERNS = [
+    r"can'?t drive", r"cannot drive", r"can'?t make it", r"won'?t make it",
+    r"can'?t do the (pick|drop)", r"can someone (drive|take|pick|grab)",
+    r"we'?re out of", r"we are out of", r"need to (buy|grab|pick up)",
+    r"reschedul", r"swap (the )?(drive|pickup|dropoff)",
+]
+_SUGGESTION_RE = re.compile("|".join(SUGGESTION_PATTERNS), re.IGNORECASE)
+
+# Tier 2 confidence needed before the agent is even run on an unsolicited line.
+SUGGESTION_CONFIDENCE_THRESHOLD = 0.6
+
+
+def suggests_action(body: str) -> bool:
+    """Tier 1: does this line plausibly imply a schedulable action?"""
+    return bool(body) and bool(_SUGGESTION_RE.search(body))
+
+
+def classify_actionable(body: str) -> Dict[str, Any]:
+    """Tier 2: one cheap single-shot LLM classification of whether a family-chat
+    line implies a schedule action the agent should offer to handle. Fail-closed
+    — any error or missing key returns actionable=False so the funnel never
+    butts in on uncertainty. Mocked in tests."""
+    from services.storage import get_settings
+    settings = get_settings()
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key:
+        return {"actionable": False, "confidence": 0.0}
+    model = settings.get('agent_fallback_model') or 'gemma-4-31b-it'
+    system = (
+        "You are a strict classifier for a family logistics app. Decide whether the message "
+        "implies an action the assistant should offer to handle: reassigning a driver, marking "
+        "someone unavailable, changing/rescheduling a drive, or adding an errand/shopping item. "
+        "Casual chatter, jokes, and general talk are NOT actionable. Respond ONLY as JSON: "
+        '{\"actionable\": true|false, \"confidence\": 0.0-1.0}.'
+    )
+    try:
+        from services.llm import _call_llm_json
+        res = _call_llm_json('gemini', '', api_key, model, system, body, tools=None, timeout_s=20)
+        return {"actionable": bool(res.get("actionable")),
+                "confidence": float(res.get("confidence") or 0.0)}
+    except Exception as e:
+        logger.warning(f"classify_actionable failed (fail-closed): {e}")
+        return {"actionable": False, "confidence": 0.0}
 
 # Actions the agent may propose. Every one mutates global scheduling, so each
 # requires an approving parent/adult and flags a re-solve on success.
@@ -38,6 +88,35 @@ def _execute(action_type: str, payload: dict) -> dict:
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}
+
+
+def run_suggestion_funnel(channel: dict, sender: dict, body: str) -> Optional[dict]:
+    """Implicit detection (Layer 3), opt-in per family. Tier 1 (keyword) is
+    gated by the caller. Here: Tier 2 cheap classify, then run the agent and
+    surface a dismissible proposal card ONLY if it produced one. Never mutates
+    anything and never posts plain chatter — worst case is a suggestion a parent
+    ignores. Suggestion, never action. Returns the posted message (or None)."""
+    from services import storage
+    from services.agent_router import process_agent_request
+    from services.agent_tools_v2 import _post_chat_message
+    verdict = classify_actionable(body)
+    if not verdict.get("actionable") or verdict.get("confidence", 0) < SUGGESTION_CONFIDENCE_THRESHOLD:
+        return None
+    try:
+        res = process_agent_request(body, source="family", acting_member=sender)
+    except Exception as e:
+        logger.error(f"Suggestion funnel agent run failed: {e}")
+        return None
+    card = (res or {}).get("card")
+    if not card or not card.get("proposal_id"):
+        return None  # agent produced no concrete action — stay silent
+    storage.update_action_proposal(card["proposal_id"], {"channel_id": channel["id"]})
+    lead = f"It sounds like this might need a change — {res.get('message') or 'want me to handle it?'}"
+    try:
+        return _post_chat_message(channel, storage.ensure_argyle_member(), lead, card=card)
+    except Exception as e:
+        logger.error(f"Suggestion post failed: {e}")
+        return None
 
 
 def build_card(proposal_id: str, action_type: str, summary: str, status: str) -> dict:
