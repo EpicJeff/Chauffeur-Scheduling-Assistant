@@ -23,6 +23,14 @@ def scenario_status_for_thresholds():
     check(sf(75, list(reversed(tiers)))["name"] == "B", "tier order in the config doesn't matter")
 
 
+def scenario_zero_threshold_is_a_default_level():
+    sf = status_tiers.status_for
+    tiers = [{"name": "Rookie", "threshold": 0}, {"name": "Star", "threshold": 50}]
+    check(sf(0, tiers)["name"] == "Rookie", "a threshold-0 level is a default every kid starts with")
+    check(sf(49, tiers)["name"] == "Rookie", "still Rookie just under the next level")
+    check(sf(50, tiers)["name"] == "Star", "outgrows the default at the next threshold")
+
+
 def scenario_chore_status_is_monotonic():
     storage.members_table.truncate()
     storage.points_ledger_table.truncate()
@@ -73,6 +81,7 @@ def scenario_separate_configured_ladders():
 
 SCENARIOS = [
     scenario_status_for_thresholds,
+    scenario_zero_threshold_is_a_default_level,
     scenario_chore_status_is_monotonic,
     scenario_tracks_are_independent,
     scenario_separate_configured_ladders,

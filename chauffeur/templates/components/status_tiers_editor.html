@@ -31,7 +31,7 @@
                         class="w-16 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-center">
                     <input type="text" x-model="t.name" placeholder="Super Helper"
                         class="flex-1 min-w-[10rem] bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
-                    <input type="number" min="1" x-model.number="t.threshold"
+                    <input type="number" min="0" x-model.number="t.threshold"
                         :placeholder="kind === 'routine' ? 'days' : 'points'"
                         class="w-40 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
                     <button @click="removeTier(i)" title="Remove"
@@ -67,8 +67,12 @@
                 async save() {
                     for (const t of this.tiers) {
                         if (!(t.name || '').trim()) { showGlobalAlert('Every level needs a name'); return; }
-                        if ((Number(t.threshold) || 0) <= 0) {
-                            showGlobalAlert(`"${t.name || 'A level'}" needs a threshold above 0`); return;
+                        // 0 is valid — a threshold-0 level is a default status every
+                        // kid starts with. Only blank/negative is rejected, so an
+                        // accidentally-empty box can't silently become a default.
+                        if (t.threshold === '' || t.threshold === null || t.threshold === undefined
+                            || Number.isNaN(Number(t.threshold)) || Number(t.threshold) < 0) {
+                            showGlobalAlert(`"${t.name || 'A level'}" needs a threshold (0 = everyone starts with it)`); return;
                         }
                     }
                     const payload = {
