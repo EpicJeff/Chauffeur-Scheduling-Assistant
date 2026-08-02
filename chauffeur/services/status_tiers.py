@@ -7,7 +7,7 @@ reached across both tracks. Both inputs are monotonic (lifetime earned never
 drops when rewards are redeemed; best streak only rises), so a status is never
 taken away — it is recognition, not a scoreboard that can demote you.
 """
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 # Built-in default ladder, low -> high. A member reaches a tier when
 # points_earned >= points OR best_streak >= streak. Families can override the

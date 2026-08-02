@@ -6,7 +6,7 @@ from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse, HTMLResponse
 import asyncio
