@@ -1,21 +1,27 @@
-<!-- Shared status-tier editor, included on the Chores and Routines admin pages.
-     Self-contained Alpine component (its own x-data) so it drops into either
-     page. Edits settings['status_tiers'] via GET/PUT /api/status-tiers. -->
+<!-- Shared status-tier editor. The including page sets the Jinja var tier_kind
+     to "chore" or "routine" before the include (do not write the set-tag here in
+     a comment — Jinja executes tags even inside HTML comments). Each ladder is
+     single-metric (points for chores, best streak for routines), edited via
+     GET/PUT /api/status-tiers?kind=... -->
 <section class="mb-10" x-data="statusTiersEditor()" x-init="init()" x-cloak>
-    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-1">Status Levels</h3>
-    <p class="text-gray-500 text-sm mb-3">
-        Kids earn a status badge when their <span class="text-amber-200 font-bold">lifetime points earned</span>
-        OR their <span class="text-orange-300 font-bold">best routine streak</span> reaches a level — the highest
-        reached wins, and it's never lost when they spend points. Order doesn't matter; leave a threshold at 0 to
-        ignore that track for a level.
+    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-1"
+        x-text="kind === 'routine' ? 'Routine Status Levels' : 'Chore Status Levels'"></h3>
+    <p class="text-gray-500 text-sm mb-3" x-show="kind === 'routine'">
+        Kids earn a status badge on their routine when their
+        <span class="text-orange-300 font-bold">best streak</span> reaches a level. Highest reached wins, and a best
+        streak only ever rises — so the badge is never lost.
+    </p>
+    <p class="text-gray-500 text-sm mb-3" x-show="kind !== 'routine'">
+        Kids earn a status badge on chores when their
+        <span class="text-amber-200 font-bold">lifetime points earned</span> reaches a level. Highest reached wins,
+        and spending points on a reward never lowers it.
     </p>
 
     <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
         <div class="hidden sm:flex gap-2 items-center px-1 pb-2 text-[10px] font-black uppercase tracking-widest text-gray-500">
             <div class="w-16">Emoji</div>
             <div class="flex-1">Name</div>
-            <div class="w-28">Points ≥</div>
-            <div class="w-28">Streak ≥</div>
+            <div class="w-40" x-text="(kind === 'routine' ? 'Best streak (days)' : 'Points earned') + ' ≥'"></div>
             <div class="w-8"></div>
         </div>
         <div class="space-y-2">
@@ -25,10 +31,9 @@
                         class="w-16 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-center">
                     <input type="text" x-model="t.name" placeholder="Super Helper"
                         class="flex-1 min-w-[10rem] bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
-                    <input type="number" min="0" x-model.number="t.points" placeholder="0"
-                        class="w-28 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
-                    <input type="number" min="0" x-model.number="t.streak" placeholder="0"
-                        class="w-28 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
+                    <input type="number" min="1" x-model.number="t.threshold"
+                        :placeholder="kind === 'routine' ? 'days' : 'points'"
+                        class="w-40 bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white">
                     <button @click="removeTier(i)" title="Remove"
                         class="w-8 h-8 shrink-0 text-red-400 hover:text-red-300 bg-red-500/10 rounded-lg font-bold">✕</button>
                 </div>
@@ -49,31 +54,31 @@
         function statusTiersEditor() {
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                kind: '{{ tier_kind | default("chore") }}',
                 tiers: [],
                 async init() {
                     try {
-                        const res = await fetch(`${this.apiBase}api/status-tiers`);
+                        const res = await fetch(`${this.apiBase}api/status-tiers?kind=${this.kind}`);
                         this.tiers = await res.json();
                     } catch (e) { this.tiers = []; }
                 },
-                addTier() { this.tiers.push({ emoji: '⭐', name: '', points: 0, streak: 0 }); },
+                addTier() { this.tiers.push({ emoji: '⭐', name: '', threshold: 0 }); },
                 removeTier(i) { this.tiers.splice(i, 1); },
                 async save() {
                     for (const t of this.tiers) {
                         if (!(t.name || '').trim()) { showGlobalAlert('Every level needs a name'); return; }
-                        if ((Number(t.points) || 0) <= 0 && (Number(t.streak) || 0) <= 0) {
-                            showGlobalAlert(`"${t.name || 'A level'}" needs a points or streak threshold above 0`); return;
+                        if ((Number(t.threshold) || 0) <= 0) {
+                            showGlobalAlert(`"${t.name || 'A level'}" needs a threshold above 0`); return;
                         }
                     }
                     const payload = {
                         tiers: this.tiers.map(t => ({
                             name: (t.name || '').trim(),
                             emoji: (t.emoji || '').trim(),
-                            points: Math.max(0, Number(t.points) || 0),
-                            streak: Math.max(0, Number(t.streak) || 0),
+                            threshold: Math.max(0, Number(t.threshold) || 0),
                         }))
                     };
-                    const res = await fetch(`${this.apiBase}api/status-tiers`, {
+                    const res = await fetch(`${this.apiBase}api/status-tiers?kind=${this.kind}`, {
                         method: 'PUT', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
@@ -87,8 +92,8 @@
                 },
                 async resetDefaults() {
                     if (!await promptConfirm('Reset status levels', 'Restore the built-in status levels?', 'Reset')) return;
-                    // Saving an empty list falls back to defaults server-side; re-fetch to show them.
-                    await fetch(`${this.apiBase}api/status-tiers`, {
+                    // An empty list falls back to defaults server-side; re-fetch to show them.
+                    await fetch(`${this.apiBase}api/status-tiers?kind=${this.kind}`, {
                         method: 'PUT', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ tiers: [] })
                     });

@@ -3295,24 +3295,26 @@ def all_points():
     from services import status_tiers
     balances = storage.get_all_point_balances()
     for b in balances:
-        b['status'] = status_tiers.compute_member_status(b['member_id'])
+        b['status'] = status_tiers.compute_member_status(b['member_id'], 'chore')
     return balances
 
 @app.get("/api/status-tiers")
-def get_status_tiers_endpoint():
-    """The effective status ladder (configured or built-in defaults)."""
+def get_status_tiers_endpoint(kind: str = "chore"):
+    """The effective ladder (configured or defaults) for kind=chore|routine."""
     from services import status_tiers
-    return status_tiers.get_tiers()
+    return status_tiers.get_tiers(kind)
 
 class StatusTiersUpdate(BaseModel):
     tiers: List[StatusTier]
 
 @app.put("/api/status-tiers")
-def put_status_tiers_endpoint(req: StatusTiersUpdate):
+def put_status_tiers_endpoint(req: StatusTiersUpdate, kind: str = "chore"):
     # Stored ascending by threshold so "highest reached wins" is unambiguous.
     # patch_settings (not update_settings): tiers never affect the solver.
-    tiers = sorted((t.model_dump() for t in req.tiers), key=lambda t: (t['points'], t['streak']))
-    storage.patch_settings({'status_tiers': tiers})
+    k = 'routine' if kind == 'routine' else 'chore'
+    key = 'routine_status_tiers' if k == 'routine' else 'chore_status_tiers'
+    tiers = sorted((t.model_dump() for t in req.tiers), key=lambda t: t['threshold'])
+    storage.patch_settings({key: tiers})
     return {'status': 'ok', 'tiers': tiers}
 
 class PointsAdjustRequest(BaseModel):
@@ -3456,7 +3458,7 @@ def routines_streaks():
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
             'streak': storage.compute_streak(m['id']),
-            'status': status_tiers.compute_member_status(m['id']),
+            'status': status_tiers.compute_member_status(m['id'], 'routine'),
         })
     out.sort(key=lambda x: (-x['streak']['current'], x['name'] or ''))
     return out

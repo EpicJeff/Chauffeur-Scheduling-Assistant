@@ -255,8 +255,7 @@ class ManualOverride(BaseModel):
 class StatusTier(BaseModel):
     name: str
     emoji: str = ''
-    points: int = 0     # lifetime points-earned threshold
-    streak: int = 0     # best-streak (days) threshold
+    threshold: int = 0  # chore ladder: lifetime points earned; routine ladder: best-streak days
 
 class Settings(BaseModel):
     # Evening push digest listing each driver's assignments for tomorrow.
@@ -330,10 +329,12 @@ class Settings(BaseModel):
     # offers a one-tap proposal card (implicit detection funnel). Opt-in: off by
     # default so the bot never butts into ordinary chatter.
     chat_suggestions_enabled: bool = False
-    # Customizable kid status tiers (name/emoji/points/streak). None = built-in
-    # defaults (status_tiers.DEFAULT_TIERS). In the model so config-page saves
-    # (a strict-whitelist merge) never drop it.
-    status_tiers: Optional[List[StatusTier]] = None
+    # Customizable kid status tiers — two independent single-metric ladders.
+    # None = built-in defaults (status_tiers.DEFAULT_CHORE_TIERS /
+    # DEFAULT_ROUTINE_TIERS). In the model so config-page saves (a strict-
+    # whitelist merge) never drop them.
+    chore_status_tiers: Optional[List[StatusTier]] = None      # thresholds = lifetime points
+    routine_status_tiers: Optional[List[StatusTier]] = None    # thresholds = best-streak days
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app

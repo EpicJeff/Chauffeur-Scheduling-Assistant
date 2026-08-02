@@ -1,7 +1,8 @@
 """Tests for auto-earned status tiers (services/status_tiers.py).
 
-The load-bearing property: status is monotonic — based on lifetime points EARNED
-and BEST streak, so spending points on a reward never demotes a kid.
+Two independent single-metric ladders: chore status from lifetime points EARNED,
+routine status from BEST streak. The load-bearing property is monotonicity —
+spending points on a reward never demotes a kid.
 
 Run from chauffeur/:  python tests/test_status_tiers.py
 """
@@ -12,17 +13,17 @@ from services import status_tiers, storage
 
 def scenario_status_for_thresholds():
     sf = status_tiers.status_for
-    check(sf(0, 0) is None, "below the first threshold = no status yet")
-    check(sf(25, 0)["name"] == "Rising Star", "25 pts earned reaches Rising Star")
-    check(sf(0, 3)["name"] == "Rising Star", "a 3-day streak reaches Rising Star on the streak track")
-    check(sf(100, 0)["name"] == "Super Helper", "100 pts = Super Helper")
-    check(sf(0, 30)["name"] == "Legend", "a 30-day streak = Legend")
-    check(sf(500, 5)["name"] == "Legend", "the highest tier reached wins")
-    check(sf(120, 14)["name"] == "Everyday Hero", "either track counts; 14-day streak lifts to Everyday Hero")
-    check(sf(24, 2) is None, "just under both thresholds = still no status")
+    tiers = [{"name": "A", "threshold": 10}, {"name": "B", "threshold": 50}, {"name": "C", "threshold": 100}]
+    check(sf(0, tiers) is None, "below the first threshold = no status yet")
+    check(sf(9, tiers) is None, "just under the first threshold = still none")
+    check(sf(10, tiers)["name"] == "A", "meeting the first threshold reaches it")
+    check(sf(75, tiers)["name"] == "B", "highest tier met wins")
+    check(sf(1000, tiers)["name"] == "C", "far past the top still caps at the top tier")
+    # order-independence: shuffled input still evaluates highest-met
+    check(sf(75, list(reversed(tiers)))["name"] == "B", "tier order in the config doesn't matter")
 
 
-def scenario_earned_is_monotonic():
+def scenario_chore_status_is_monotonic():
     storage.members_table.truncate()
     storage.points_ledger_table.truncate()
     storage.add_member({"id": "kid", "name": "Jack", "role": "child", "is_child": True})
@@ -30,44 +31,51 @@ def scenario_earned_is_monotonic():
     storage.points_ledger_table.insert({"member_id": "kid", "delta": -50, "ts": 2})   # redeemed a reward
     check(storage.get_points_balance("kid") == 70, "current balance nets the redemption to 70")
     check(storage.get_points_earned("kid") == 120, "lifetime earned counts only positives (monotonic)")
-    st = status_tiers.compute_member_status("kid")
+    st = status_tiers.compute_member_status("kid", "chore")
     check(st and st["name"] == "Super Helper",
-          f"status comes from lifetime earned (120 -> Super Helper), not balance (70), got {st}")
+          f"chore status uses lifetime earned (120 -> Super Helper), not balance (70), got {st}")
 
 
-def scenario_no_ledger_no_status():
+def scenario_tracks_are_independent():
+    # A kid with lots of chore points but no routine streak is a chore Legend
+    # yet has NO routine status — the old shared design wrongly showed Legend on
+    # both boards.
     storage.members_table.truncate()
     storage.points_ledger_table.truncate()
-    storage.add_member({"id": "new", "name": "New", "role": "child", "is_child": True})
-    check(status_tiers.compute_member_status("new") is None, "a fresh kid with no points/streak has no status")
+    storage.routines_table.truncate()
+    storage.routine_checks_table.truncate()
+    storage.add_member({"id": "kid", "name": "Jack", "role": "child", "is_child": True})
+    storage.points_ledger_table.insert({"member_id": "kid", "delta": 600, "ts": 1})
+    chore = status_tiers.compute_member_status("kid", "chore")
+    routine = status_tiers.compute_member_status("kid", "routine")
+    check(chore and chore["name"] == "Legend", f"chore track = Legend from 600 pts, got {chore}")
+    check(routine is None, f"routine track = no status (zero streak), got {routine}")
 
 
-def scenario_configured_tiers_override_defaults():
-    # The harness mocks storage.get_settings to a fixed dict, so override it here
-    # to exercise get_tiers reading a configured ladder.
-    storage.members_table.truncate()
-    storage.points_ledger_table.truncate()
+def scenario_separate_configured_ladders():
+    # The harness mocks storage.get_settings, so override it to serve two ladders.
     orig = storage.get_settings
-    storage.get_settings = lambda: {"calendar_ids": ["primary"],
-                                    "status_tiers": [{"name": "Champ", "emoji": "🏆", "points": 10, "streak": 0}]}
+    storage.get_settings = lambda: {
+        "calendar_ids": ["primary"],
+        "chore_status_tiers": [{"name": "Chore Champ", "emoji": "🏆", "threshold": 10}],
+        "routine_status_tiers": [{"name": "Streak Boss", "emoji": "🔥", "threshold": 2}],
+    }
     try:
-        storage.add_member({"id": "kid", "name": "Jack", "role": "child", "is_child": True})
-        storage.points_ledger_table.insert({"member_id": "kid", "delta": 15, "ts": 1})
-        check([t["name"] for t in status_tiers.get_tiers()] == ["Champ"], "get_tiers reads the configured ladder")
-        st = status_tiers.compute_member_status("kid")
-        check(st and st["name"] == "Champ", f"configured tiers override the built-in defaults, got {st}")
-        # An empty configured list falls back to the built-in defaults.
-        storage.get_settings = lambda: {"calendar_ids": ["primary"], "status_tiers": []}
-        check(status_tiers.get_tiers() == status_tiers.DEFAULT_TIERS, "an empty config falls back to defaults")
+        check([t["name"] for t in status_tiers.get_tiers("chore")] == ["Chore Champ"], "chore ladder is read")
+        check([t["name"] for t in status_tiers.get_tiers("routine")] == ["Streak Boss"], "routine ladder is read")
+        # empty falls back to that track's defaults
+        storage.get_settings = lambda: {"calendar_ids": ["primary"], "chore_status_tiers": []}
+        check(status_tiers.get_tiers("chore") == status_tiers.DEFAULT_CHORE_TIERS, "empty chore config -> chore defaults")
+        check(status_tiers.get_tiers("routine") == status_tiers.DEFAULT_ROUTINE_TIERS, "unset routine config -> routine defaults")
     finally:
         storage.get_settings = orig
 
 
 SCENARIOS = [
     scenario_status_for_thresholds,
-    scenario_earned_is_monotonic,
-    scenario_no_ledger_no_status,
-    scenario_configured_tiers_override_defaults,
+    scenario_chore_status_is_monotonic,
+    scenario_tracks_are_independent,
+    scenario_separate_configured_ladders,
 ]
 
 if __name__ == "__main__":
