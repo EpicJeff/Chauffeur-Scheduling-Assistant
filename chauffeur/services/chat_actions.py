@@ -95,7 +95,16 @@ def _is_admin(member) -> bool:
 
 
 def _create_event(payload: dict) -> dict:
-    """Insert a calendar event from a proposed create_event action."""
+    """Insert a calendar event from a proposed create_event action.
+
+    The payload comes straight from the LLM, which reliably emits NAIVE ISO
+    datetimes ("2026-08-05T16:00:00") — Google rejects any dateTime without a
+    zone ("Missing time zone definition"), which surfaced to parents as a bare
+    "the calendar rejected the event" after they'd already tapped Approve. So
+    normalize here: naive datetimes get the server's local offset, all-day
+    ends are made exclusive (Google's convention), and unparseable times get
+    a specific message instead of the generic rejection."""
+    from datetime import date, datetime, timedelta
     from services import storage
     from services import calendar as gcal
     title = (payload.get("title") or "").strip()
@@ -106,9 +115,31 @@ def _create_event(payload: dict) -> dict:
     if not calendar_id:
         return {"status": "error", "message": "No default calendar is set — set one in settings first."}
     if payload.get("all_day"):
-        body_start, body_end = {"date": start[:10]}, {"date": end[:10]}
+        try:
+            s = date.fromisoformat(str(start)[:10])
+            e = date.fromisoformat(str(end)[:10])
+        except ValueError:
+            return {"status": "error",
+                    "message": f"I couldn't understand those dates ({start} – {end})."}
+        if e <= s:
+            e = s + timedelta(days=1)   # Google's all-day end date is exclusive
+        body_start, body_end = {"date": s.isoformat()}, {"date": e.isoformat()}
     else:
-        body_start, body_end = {"dateTime": start}, {"dateTime": end}
+        try:
+            s_dt = datetime.fromisoformat(str(start))
+            e_dt = datetime.fromisoformat(str(end))
+        except ValueError:
+            return {"status": "error",
+                    "message": f"I couldn't understand those times ({start} – {end}). "
+                               "Try again with a specific date and time."}
+        if s_dt.tzinfo is None:
+            s_dt = s_dt.astimezone()   # naive = server-local
+        if e_dt.tzinfo is None:
+            e_dt = e_dt.astimezone()
+        if e_dt <= s_dt:
+            return {"status": "error",
+                    "message": f"The end time ({end}) isn't after the start time ({start})."}
+        body_start, body_end = {"dateTime": s_dt.isoformat()}, {"dateTime": e_dt.isoformat()}
     body = {"summary": title, "start": body_start, "end": body_end}
     if payload.get("location"):
         body["location"] = payload["location"]
@@ -116,7 +147,9 @@ def _create_event(payload: dict) -> dict:
         body["description"] = payload["description"]
     gid = gcal.insert_event(calendar_id, body)
     if not gid:
-        return {"status": "error", "message": "The calendar rejected the event."}
+        return {"status": "error",
+                "message": f"The calendar rejected the event — check that '{calendar_id}' "
+                           "is writable (the server log has Google's exact error)."}
     return {"status": "success", "message": f"Added '{title}' to the calendar."}
 
 

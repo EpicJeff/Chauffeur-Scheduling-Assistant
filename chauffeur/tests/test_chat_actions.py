@@ -138,10 +138,58 @@ def scenario_create_event_requires_calendar():
           "a failed execution leaves the proposal open to retry")
 
 
+def scenario_create_event_normalizes_datetimes():
+    # The LLM emits NAIVE ISO datetimes; Google 400s any dateTime without a
+    # zone ("Missing time zone definition") — the field failure where an
+    # approved card came back "the calendar rejected the event".
+    from unittest import mock
+    from services import calendar as gcal
+    _seed()
+
+    sent = {}
+    def fake_insert(calendar_id, body):
+        sent['calendar_id'], sent['body'] = calendar_id, body
+        return 'gid123'
+    # calendar_id in the payload (the harness stubs get_settings, so the
+    # default-calendar fallback isn't reachable here — covered by the
+    # requires-calendar scenario above).
+    def _payload(**kw):
+        return {"title": "Soccer", "calendar_id": "fam@cal", **kw}
+    with mock.patch.object(gcal, 'insert_event', side_effect=fake_insert):
+        res = chat_actions._create_event(
+            _payload(start="2026-08-06T16:00:00", end="2026-08-06T17:00:00"))
+        check(res["status"] == "success", f"naive datetimes accepted, got {res}")
+        s = sent['body']['start']['dateTime']
+        check(('+' in s[10:] or '-' in s[10:]) and s.startswith('2026-08-06T16:00:00'),
+              f"naive start gained the server's local offset, got {s}")
+
+        # already-zoned datetimes pass through unchanged
+        res = chat_actions._create_event(
+            _payload(start="2026-08-06T16:00:00-05:00", end="2026-08-06T17:00:00-05:00"))
+        check(sent['body']['start']['dateTime'] == '2026-08-06T16:00:00-05:00',
+              "zoned datetimes pass through unchanged")
+
+        # all-day: Google's end date is exclusive — same-day proposals bump
+        res = chat_actions._create_event(
+            _payload(all_day=True, start="2026-08-06", end="2026-08-06"))
+        check(res["status"] == "success" and sent['body']['end']['date'] == '2026-08-07',
+              f"same-day all-day end bumped to exclusive, got {sent['body']['end']}")
+
+        # garbage times get a specific message, never a Google round-trip
+        res = chat_actions._create_event(_payload(start="Thursday-ish", end="later"))
+        check(res["status"] == "error" and "couldn't understand" in res["message"],
+              f"unparseable times explained, got {res}")
+        res = chat_actions._create_event(
+            _payload(start="2026-08-06T17:00:00", end="2026-08-06T16:00:00"))
+        check(res["status"] == "error" and "isn't after" in res["message"],
+              f"end-before-start explained, got {res}")
+
+
 SCENARIOS = [
     scenario_propose_builds_open_card,
     scenario_new_actions_proposable_and_labeled,
     scenario_create_event_requires_calendar,
+    scenario_create_event_normalizes_datetimes,
     scenario_unknown_action_rejected,
     scenario_parent_approve_executes_and_resolves,
     scenario_child_approve_denied,
