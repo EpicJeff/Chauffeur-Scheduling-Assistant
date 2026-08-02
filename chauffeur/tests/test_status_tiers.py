@@ -42,10 +42,32 @@ def scenario_no_ledger_no_status():
     check(status_tiers.compute_member_status("new") is None, "a fresh kid with no points/streak has no status")
 
 
+def scenario_configured_tiers_override_defaults():
+    # The harness mocks storage.get_settings to a fixed dict, so override it here
+    # to exercise get_tiers reading a configured ladder.
+    storage.members_table.truncate()
+    storage.points_ledger_table.truncate()
+    orig = storage.get_settings
+    storage.get_settings = lambda: {"calendar_ids": ["primary"],
+                                    "status_tiers": [{"name": "Champ", "emoji": "🏆", "points": 10, "streak": 0}]}
+    try:
+        storage.add_member({"id": "kid", "name": "Jack", "role": "child", "is_child": True})
+        storage.points_ledger_table.insert({"member_id": "kid", "delta": 15, "ts": 1})
+        check([t["name"] for t in status_tiers.get_tiers()] == ["Champ"], "get_tiers reads the configured ladder")
+        st = status_tiers.compute_member_status("kid")
+        check(st and st["name"] == "Champ", f"configured tiers override the built-in defaults, got {st}")
+        # An empty configured list falls back to the built-in defaults.
+        storage.get_settings = lambda: {"calendar_ids": ["primary"], "status_tiers": []}
+        check(status_tiers.get_tiers() == status_tiers.DEFAULT_TIERS, "an empty config falls back to defaults")
+    finally:
+        storage.get_settings = orig
+
+
 SCENARIOS = [
     scenario_status_for_thresholds,
     scenario_earned_is_monotonic,
     scenario_no_ledger_no_status,
+    scenario_configured_tiers_override_defaults,
 ]
 
 if __name__ == "__main__":

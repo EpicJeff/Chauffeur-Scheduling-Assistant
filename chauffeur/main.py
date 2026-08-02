@@ -54,7 +54,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, FamilyMember, TelemetryEvent, Errand, ErrandRule
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -3297,6 +3297,23 @@ def all_points():
     for b in balances:
         b['status'] = status_tiers.compute_member_status(b['member_id'])
     return balances
+
+@app.get("/api/status-tiers")
+def get_status_tiers_endpoint():
+    """The effective status ladder (configured or built-in defaults)."""
+    from services import status_tiers
+    return status_tiers.get_tiers()
+
+class StatusTiersUpdate(BaseModel):
+    tiers: List[StatusTier]
+
+@app.put("/api/status-tiers")
+def put_status_tiers_endpoint(req: StatusTiersUpdate):
+    # Stored ascending by threshold so "highest reached wins" is unambiguous.
+    # patch_settings (not update_settings): tiers never affect the solver.
+    tiers = sorted((t.model_dump() for t in req.tiers), key=lambda t: (t['points'], t['streak']))
+    storage.patch_settings({'status_tiers': tiers})
+    return {'status': 'ok', 'tiers': tiers}
 
 class PointsAdjustRequest(BaseModel):
     member_id: str

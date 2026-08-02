@@ -9,9 +9,10 @@ taken away — it is recognition, not a scoreboard that can demote you.
 """
 from typing import Optional, Dict
 
-# Low -> high. A member reaches a tier when points_earned >= points OR
-# best_streak >= streak. Tune freely; keep it ordered ascending.
-TIERS = [
+# Built-in default ladder, low -> high. A member reaches a tier when
+# points_earned >= points OR best_streak >= streak. Families can override the
+# whole ladder from the Chores/Routines pages (settings['status_tiers']).
+DEFAULT_TIERS = [
     {"name": "Rising Star",   "emoji": "🌱", "points": 25,  "streak": 3},
     {"name": "Super Helper",  "emoji": "⭐", "points": 100, "streak": 7},
     {"name": "Everyday Hero", "emoji": "🦸", "points": 250, "streak": 14},
@@ -19,11 +20,20 @@ TIERS = [
 ]
 
 
-def status_for(points_earned: int, best_streak: int) -> Optional[Dict]:
-    """Highest tier reached, or None before the first threshold."""
+def get_tiers() -> List[Dict]:
+    """The effective ladder: the family's configured tiers, or the defaults."""
+    from services import storage
+    configured = storage.get_settings().get("status_tiers")
+    return configured if isinstance(configured, list) and configured else DEFAULT_TIERS
+
+
+def status_for(points_earned: int, best_streak: int, tiers: Optional[List[Dict]] = None) -> Optional[Dict]:
+    """Highest tier reached, or None before the first threshold. Evaluated in
+    ascending threshold order so 'highest reached wins' regardless of config order."""
+    tiers = tiers if tiers is not None else get_tiers()
     reached = None
-    for t in TIERS:
-        if (points_earned or 0) >= t["points"] or (best_streak or 0) >= t["streak"]:
+    for t in sorted(tiers, key=lambda t: (t.get("points", 0), t.get("streak", 0))):
+        if (points_earned or 0) >= t.get("points", 0) or (best_streak or 0) >= t.get("streak", 0):
             reached = t
     return reached
 

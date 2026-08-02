@@ -252,6 +252,12 @@ class ManualOverride(BaseModel):
     # Used to suppress the redundant "you gained this" push for that driver.
     source: Optional[str] = None
 
+class StatusTier(BaseModel):
+    name: str
+    emoji: str = ''
+    points: int = 0     # lifetime points-earned threshold
+    streak: int = 0     # best-streak (days) threshold
+
 class Settings(BaseModel):
     # Evening push digest listing each driver's assignments for tomorrow.
     tomorrow_digest_enabled: bool = True
@@ -324,6 +330,10 @@ class Settings(BaseModel):
     # offers a one-tap proposal card (implicit detection funnel). Opt-in: off by
     # default so the bot never butts into ordinary chatter.
     chat_suggestions_enabled: bool = False
+    # Customizable kid status tiers (name/emoji/points/streak). None = built-in
+    # defaults (status_tiers.DEFAULT_TIERS). In the model so config-page saves
+    # (a strict-whitelist merge) never drop it.
+    status_tiers: Optional[List[StatusTier]] = None
     # Email intake (intake arc phase 2): a dedicated mailbox polled over IMAP;
     # allowlisted senders' messages are LLM-extracted into event/task
     # proposals a parent approves on /intake. The password is a Gmail app
