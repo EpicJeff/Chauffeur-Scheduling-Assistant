@@ -46,7 +46,7 @@
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="routinesPage()" x-init="init()" x-cloak>
         <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
 
-            <header class="mb-8 flex items-start justify-between gap-4 flex-wrap">
+            <header class="mb-8 flex items-start justify-between gap-4 flex-wrap" x-show="!hideTitle">
                 <div>
                     <h2 class="text-3xl font-bold text-white mb-2">Daily Routines</h2>
                     <p class="text-gray-400" x-show="!isKiosk">Personal checklists (brush teeth, homework…) shown on
@@ -76,24 +76,6 @@
                         No routines set up yet.
                     </div>
 
-                    <!-- Compact streak strip (minimal vertical space) -->
-                    <div class="flex flex-wrap gap-3 mb-6">
-                        <template x-for="s in streaks" :key="'st-' + s.member_id">
-                            <div class="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-2.5 shadow">
-                                <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white shrink-0"
-                                    :style="'background-color:' + (s.color_code || '#3b82f6')"
-                                    x-text="s.avatar || (s.name || '?').charAt(0)"></div>
-                                <div class="font-bold text-white" x-text="s.name"></div>
-                                <div class="font-black text-orange-400 text-xl leading-none">
-                                    <span x-text="s.streak.current"></span>🔥
-                                </div>
-                                <div class="text-xs font-bold shrink-0"
-                                    :class="s.streak.today_complete ? 'text-green-400' : 'text-gray-500'"
-                                    x-text="s.streak.today_total ? (s.streak.today_done + '/' + s.streak.today_total) : 'rest'"></div>
-                            </div>
-                        </template>
-                    </div>
-
                     <!-- Interactive lanes: tap an item to check it off as that child -->
                     <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
                         <template x-for="s in streaks" :key="'lane-' + s.member_id">
@@ -103,7 +85,13 @@
                                     <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
                                         :style="'background-color:' + (s.color_code || '#3b82f6')"
                                         x-text="s.avatar || (s.name || '?').charAt(0)"></div>
-                                    <div class="font-bold text-white text-lg flex-1 truncate" x-text="s.name"></div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="font-bold text-white text-lg truncate" x-text="s.name"></div>
+                                        <template x-if="s.status">
+                                            <span class="inline-block text-[11px] font-bold text-amber-200"
+                                                x-text="s.status.emoji + ' ' + s.status.name"></span>
+                                        </template>
+                                    </div>
                                     <div class="font-black text-orange-400 text-lg shrink-0">
                                         <span x-text="s.streak.current"></span>🔥
                                     </div>
@@ -261,6 +249,8 @@
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
+                    (new URLSearchParams(window.location.search).get('title') || '').toLowerCase()),
                 winW: window.innerWidth,
                 dayNames: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
                 members: [],

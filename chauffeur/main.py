@@ -3292,7 +3292,11 @@ def reject_chore_endpoint(chore_id: str, req: ChoreRejectRequest,
 
 @app.get("/api/points")
 def all_points():
-    return storage.get_all_point_balances()
+    from services import status_tiers
+    balances = storage.get_all_point_balances()
+    for b in balances:
+        b['status'] = status_tiers.compute_member_status(b['member_id'])
+    return balances
 
 class PointsAdjustRequest(BaseModel):
     member_id: str
@@ -3425,6 +3429,7 @@ def routines_day(member_id: str, date: Optional[str] = None):
 def routines_streaks():
     """Per-member streak summary for every member with routine items —
     feeds the routines page header chips and the kiosk streak board."""
+    from services import status_tiers
     member_ids = {r['member_id'] for r in storage.get_routines()}
     out = []
     for m in storage.get_all_members():
@@ -3434,6 +3439,7 @@ def routines_streaks():
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
             'streak': storage.compute_streak(m['id']),
+            'status': status_tiers.compute_member_status(m['id']),
         })
     out.sort(key=lambda x: (-x['streak']['current'], x['name'] or ''))
     return out

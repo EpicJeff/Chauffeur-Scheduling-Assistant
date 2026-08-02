@@ -1046,6 +1046,14 @@ def get_points_balance(member_id: str) -> int:
         return sum(int(e.get('delta', 0))
                    for e in points_ledger_table.search(Query().member_id == member_id))
 
+def get_points_earned(member_id: str) -> int:
+    """Lifetime positive points (chore awards + manual adds). Redemptions and
+    resets are negative and don't subtract here, so this is monotonic — used
+    for status tiers, which should never be taken away when a kid spends points."""
+    with db_lock:
+        return sum(d for e in points_ledger_table.search(Query().member_id == member_id)
+                   if (d := int(e.get('delta', 0))) > 0)
+
 def get_points_ledger(member_id: str, limit: int = 25) -> List[dict]:
     with db_lock:
         rows = [dict(e) for e in points_ledger_table.search(Query().member_id == member_id)]

@@ -46,37 +46,21 @@
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="choresPage()" x-init="init()" x-cloak>
         <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-5xl'">
 
-            <header class="mb-8">
+            <header class="mb-8" x-show="!hideTitle">
                 <h2 class="text-3xl font-bold text-white mb-2">Chores & Rewards</h2>
                 <p class="text-gray-400" x-show="!isKiosk">The family chore pot: kids claim chores in the app, a parent
                     verifies (PIN required there), points land here. Rewards are what points buy.</p>
             </header>
 
             <!-- ===== Leaderboard (the only section in kiosk mode) ===== -->
-            <section class="mb-10">
+            <!-- Leaderboard is the parent admin view; kiosk folds rank into the lanes below -->
+            <section class="mb-10" x-show="!isKiosk">
                 <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">Points Leaderboard</h3>
                 <div x-show="balances.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
                     No children are earning points yet.
                 </div>
-                <!-- Kiosk: compact horizontal strip so the lanes below get the vertical space -->
-                <div x-show="isKiosk" class="flex flex-wrap gap-3">
-                    <template x-for="(b, idx) in balances" :key="'lb-' + b.member_id">
-                        <div class="flex items-center gap-3 bg-gray-800 rounded-xl border border-gray-700 px-4 py-2.5 shadow">
-                            <div class="text-lg font-black w-6 text-center shrink-0"
-                                :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
-                                x-text="'#' + (idx + 1)"></div>
-                            <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white shrink-0"
-                                :style="'background-color:' + (b.color_code || '#3b82f6')"
-                                x-text="b.avatar || (b.name || '?').charAt(0)"></div>
-                            <div class="font-bold text-white" x-text="b.name"></div>
-                            <div class="font-black text-blue-400 text-2xl leading-none" x-text="b.balance"></div>
-                            <div class="text-[10px] uppercase tracking-widest text-gray-500 font-bold">pts</div>
-                        </div>
-                    </template>
-                </div>
 
-                <!-- Non-kiosk: full detail cards with admin point tools -->
-                <div x-show="!isKiosk" class="grid gap-4 grid-cols-1">
+                <div class="grid gap-4 grid-cols-1">
                     <template x-for="(b, idx) in balances" :key="b.member_id">
                         <div class="bg-gray-800 rounded-2xl border border-gray-700 p-5 shadow-lg">
                             <div class="flex items-center gap-4">
@@ -88,6 +72,10 @@
                                     x-text="b.avatar || (b.name || '?').charAt(0)"></div>
                                 <div class="min-w-0 flex-1">
                                     <div class="text-xl font-bold text-white truncate" x-text="b.name"></div>
+                                    <template x-if="b.status">
+                                        <span class="inline-block text-xs font-bold text-amber-200"
+                                            x-text="b.status.emoji + ' ' + b.status.name"></span>
+                                    </template>
                                     <div class="text-sm text-gray-500" x-show="pendingCost(b.member_id) > 0"
                                         x-text="pendingCost(b.member_id) + ' pts in pending reward requests'"></div>
                                 </div>
@@ -154,14 +142,23 @@
                         No children set up yet.
                     </div>
                     <div class="grid gap-5" :style="'grid-template-columns: repeat(' + laneColumns() + ', minmax(0, 1fr))'">
-                        <template x-for="b in balances" :key="'lane-' + b.member_id">
+                        <template x-for="(b, idx) in balances" :key="'lane-' + b.member_id">
                             <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
-                                <!-- Lane header -->
+                                <!-- Lane header: rank, who, earned status, balance -->
                                 <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
+                                    <div class="text-lg font-black w-7 text-center shrink-0"
+                                        :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
+                                        x-text="'#' + (idx + 1)"></div>
                                     <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
                                         :style="'background-color:' + (b.color_code || '#3b82f6')"
                                         x-text="b.avatar || (b.name || '?').charAt(0)"></div>
-                                    <div class="font-bold text-white text-lg flex-1 truncate" x-text="b.name"></div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="font-bold text-white text-lg truncate" x-text="b.name"></div>
+                                        <template x-if="b.status">
+                                            <span class="inline-block text-[11px] font-bold text-amber-200"
+                                                x-text="b.status.emoji + ' ' + b.status.name"></span>
+                                        </template>
+                                    </div>
                                     <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
                                 </div>
 
@@ -414,6 +411,8 @@
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 isKiosk: new URLSearchParams(window.location.search).get('kiosk') === 'true',
+                hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
+                    (new URLSearchParams(window.location.search).get('title') || '').toLowerCase()),
                 winW: window.innerWidth,
                 balances: [],
                 ledgers: {},
