@@ -193,7 +193,11 @@ def scenario_fanout_recipients():
         args, _ = ha_call.call_args
         check(args[0] == 'notify' and args[1] == 'mobile_app_amy', "notify service parsed")
         check(args[2]["data"]["url"].startswith("https://fam.example.com/app?open_channel="),
-              "deep link uses public_base_url")
+              "HA companion deep link uses public_base_url (no origin context)")
+        web_push_url = push.call_args_list[0].args[3]
+        check(web_push_url.startswith("/app?open_channel="),
+              f"web push deep link stays RELATIVE (sw navigates on the PWA's own "
+              f"origin — absolute links 404 when origins mismatch), got {web_push_url}")
         _, first_push = push.call_args_list[0].args[0], push.call_args_list[0]
         check(first_push.args[1] == "Jeff · Family", "family title includes sender")
 

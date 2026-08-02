@@ -2948,18 +2948,19 @@ def _fanout_message_notifications(channel, message):
             title = f"{sender_name} · Family"
         body = (message.get('body') or '')[:180]
         base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
-        url = f"{base}/app?open_channel={channel['id']}" if base \
-            else f"/app?open_channel={channel['id']}"
+        # Relative for web push (sw navigates on the PWA's own origin —
+        # immune to public_base_url mismatch), absolute for HA companion.
+        path = f"/app?open_channel={channel['id']}"
         for m in _channel_recipient_members(channel):
             if m['id'] == message['sender_member_id']:
                 continue
-            send_push_to_member(m['id'], title, body, url)
+            send_push_to_member(m['id'], title, body, path)
             svc = m.get('notify_service')
             if svc:
                 svc_name = svc.split('.', 1)[1] if '.' in svc else svc
                 payload = {"title": title, "message": body}
                 if base:
-                    payload["data"] = {"url": url}
+                    payload["data"] = {"url": f"{base}{path}"}
                 ha_api.call_service('notify', svc_name, payload)
     except Exception as e:
         print(f"Message notification fan-out failed: {e}")
@@ -3148,18 +3149,23 @@ def music_play(req: MusicPlayRequest):
 # integrity gate and requires a parent device token (PIN-backed).
 
 def _notify_member_lanes(member, title, body, path='/app'):
-    """One member, all lanes: web push + HA companion notify."""
+    """One member, all lanes: web push + HA companion notify.
+
+    Web push deep links are RELATIVE: the service worker navigates within
+    whatever origin the PWA is actually installed on (LAN, ingress, tunnel),
+    so a mismatched/stale public_base_url can never 404 the tap — the bug
+    that sent intake-proposal taps to a dead absolute URL. Only the HA
+    companion lane, which has no origin context, gets the absolute link."""
     try:
         base = (storage.get_settings().get('public_base_url') or '').rstrip('/')
-        url = f"{base}{path}" if base else path
-        send_push_to_member(member['id'], title, body, url)
+        send_push_to_member(member['id'], title, body, path)
         svc = member.get('notify_service')
         if svc:
             from services import ha_api
             svc_name = svc.split('.', 1)[1] if '.' in svc else svc
             payload = {"title": title, "message": body}
             if base:
-                payload["data"] = {"url": url}
+                payload["data"] = {"url": f"{base}{path}"}
             ha_api.call_service('notify', svc_name, payload)
     except Exception as e:
         print(f"notify_member_lanes failed: {e}")
