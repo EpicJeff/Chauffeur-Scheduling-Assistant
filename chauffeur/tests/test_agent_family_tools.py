@@ -163,10 +163,44 @@ def test_routines(mom, ben, nanny):
     check(res['status'] == 'error', "unknown member errors")
 
 
+def test_weekly_digest_tool(mom, ben, nanny):
+    print("weekly digest tool ...")
+    from unittest import mock
+    from services import family_digest
+
+    # Children and helpers can't fire the broadcast; the builder never runs.
+    with mock.patch.object(family_digest, 'post_weekly_digest') as post:
+        res = tools.post_weekly_digest_now(acting_member=ben)
+        check(res['status'] == 'error' and post.call_count == 0,
+              f"child refused without posting: {res}")
+        res = tools.post_weekly_digest_now(acting_member=nanny)
+        check(res['status'] == 'error', "helper refused")
+
+    # Parent (and legacy no-actor admin context) posts on demand.
+    with mock.patch.object(family_digest, 'post_weekly_digest', return_value=True) as post:
+        res = tools.post_weekly_digest_now(acting_member=mom)
+        check(res['status'] == 'success' and 'Family Week in Review' in res['message']
+              and post.call_count == 1, f"parent triggers the post: {res}")
+        res = tools.post_weekly_digest_now()   # dashboard/HA voice
+        check(res['status'] == 'success' and post.call_count == 2, "no-actor admin context allowed")
+    with mock.patch.object(family_digest, 'post_weekly_digest', return_value=False):
+        res = tools.post_weekly_digest_now(acting_member=mom)
+        check(res['status'] == 'success' and 'nothing to report' in res['message'],
+              f"empty week reports honestly instead of posting: {res}")
+
+    # Registered in BOTH stacks (the lockstep rule).
+    from services import agent_tools as v1
+    check('post_weekly_digest' in v1.TOOL_SCHEMAS and 'post_weekly_digest' in v1.TOOL_HANDLERS,
+          "v1 stack registration present")
+    check(any(t.get('name') == 'post_weekly_digest' for t in tools.get_available_tools()),
+          "v2 stack schema present")
+
+
 if __name__ == '__main__':
     mom, ben, nanny = setup_family()
     test_messaging(mom, ben, nanny)
     test_chores(mom, ben, nanny)
     test_routines(mom, ben, nanny)
+    test_weekly_digest_tool(mom, ben, nanny)
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

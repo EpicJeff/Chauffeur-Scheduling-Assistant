@@ -251,7 +251,8 @@ sending or claiming, and never pass from_member/member_name for them.
                              # answer (same reasoning as get_point_balances).
                              "send_family_message", "send_direct_message",
                              "get_family_messages", "list_chores",
-                             "claim_chore", "get_routine_status"}
+                             "claim_chore", "get_routine_status",
+                             "post_weekly_digest"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -438,6 +439,19 @@ sending or claiming, and never pass from_member/member_name for them.
                     from services.agent_tools_v2 import get_routine_status
                     res = get_routine_status(args.get("member_name", ""),
                                              args.get("target_date", "today"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "post_weekly_digest":
+                    from services.agent_tools_v2 import post_weekly_digest_now
+                    # The role gate needs an actor: family chat supplies
+                    # acting_member; PWA driver chat resolves the logged-in
+                    # driver's member (a HELPER driver must not broadcast);
+                    # None (dashboard/HA voice) is the trusted open-admin
+                    # context.
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    res = post_weekly_digest_now(acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "adjust_points":
                     from services.agent_tools_v2 import adjust_points

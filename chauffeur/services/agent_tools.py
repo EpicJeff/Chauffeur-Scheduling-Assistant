@@ -400,6 +400,12 @@ class GetRoutineStatusTool(BaseModel):
     member_name: str = Field(..., description="Whose routine to check.")
     target_date: str = Field(default="today", description="Day to check (YYYY-MM-DD, 'today', 'yesterday').")
 
+class PostWeeklyDigestTool(BaseModel):
+    """
+    Posts the 'Family Week in Review' stats digest (driving, activities, chores, rewards, routines) into the family chat right now — the on-demand resend of the weekly automatic post.
+    """
+    pass
+
 # A unified schema registry
 TOOL_SCHEMAS = {
     "start_drive": StartDriveTool.model_json_schema(),
@@ -438,6 +444,7 @@ TOOL_SCHEMAS = {
     "list_chores": ListChoresTool.model_json_schema(),
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
+    "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1454,6 +1461,11 @@ def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
                        member_name=args.get("member_name"))
 
+def handle_post_weekly_digest(args: dict) -> dict:
+    # v1 loop runs only in admin contexts, so no acting-member gate needed.
+    from services.agent_tools_v2 import post_weekly_digest_now
+    return post_weekly_digest_now()
+
 def handle_get_routine_status(args: dict) -> dict:
     from services.agent_tools_v2 import get_routine_status
     return get_routine_status(args.get("member_name", ""),
@@ -1496,6 +1508,7 @@ TOOL_HANDLERS = {
     "list_chores": handle_list_chores,
     "claim_chore": handle_claim_chore,
     "get_routine_status": handle_get_routine_status,
+    "post_weekly_digest": handle_post_weekly_digest,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

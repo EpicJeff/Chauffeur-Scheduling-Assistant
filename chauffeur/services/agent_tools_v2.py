@@ -682,6 +682,23 @@ def get_routine_status(member_name: str, target_date: str = "today") -> Dict[str
     return {"status": "success", "message": msg}
 
 
+def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
+    """On-demand '📊 Family Week in Review' post to the family chat — same
+    builder the weekly schedule uses (services/family_digest). Children and
+    helpers can't fire it (a re-postable broadcast is a parent/adult lever);
+    legacy contexts with no acting member (dashboard chat, HA voice) are
+    trusted admin surfaces, same as the rest of the open-admin toolset."""
+    if acting_member and acting_member.get('role') in ('child', 'helper'):
+        return {"status": "error",
+                "message": "Only parents and adults can send the weekly digest."}
+    from services import family_digest
+    if family_digest.post_weekly_digest():
+        return {"status": "success",
+                "message": "Posted the 📊 Family Week in Review to the family chat."}
+    return {"status": "success",
+            "message": "There's nothing to report for this week yet, so I skipped the digest."}
+
+
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
     """Flight management for the v2 router. Thin wrapper over the validated v1
     handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
@@ -930,6 +947,11 @@ def get_available_tools() -> List[Dict]:
                 },
                 "required": ["member_name"]
             }
+        },
+        {
+            "name": "post_weekly_digest",
+            "description": "Posts the 📊 'Family Week in Review' stats digest (driving per driver, kid activities, chores, rewards, routine streaks) into the family chat RIGHT NOW ('send the weekly digest', 'post the week in review again'). It also goes out automatically on its weekly schedule — this is the on-demand resend.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {
             "name": "adjust_points",
