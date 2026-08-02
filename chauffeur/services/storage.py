@@ -140,6 +140,7 @@ with db_lock:
     event_proposals_table = db.table('event_proposals')
     agent_action_proposals_table = db.table('agent_action_proposals')
     ingest_log_table = db.table('ingest_log')
+    prep_kits_table = db.table('prep_kits')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -1223,6 +1224,28 @@ def compute_streak(member_id: str, window_days: int = 90) -> dict:
     return {'current': current, 'best': best,
             'today_complete': bool(today_sched) and today_done == len(today_sched),
             'today_total': len(today_sched), 'today_done': today_done}
+
+# --- Prep kits ---
+# Packing lists matched to events by title keywords. Setup is meant to be
+# agent-assisted (the /routines page's Suggest flow), kept honest by parent
+# review before saving.
+
+def get_prep_kits() -> List[dict]:
+    with db_lock:
+        return [dict(k) for k in prep_kits_table.all()]
+
+def add_prep_kit(data: dict) -> str:
+    with db_lock:
+        prep_kits_table.insert(data)
+        return data['id']
+
+def update_prep_kit(kit_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(prep_kits_table.update(data, Query().id == kit_id))
+
+def delete_prep_kit(kit_id: str):
+    with db_lock:
+        prep_kits_table.remove(Query().id == kit_id)
 
 # --- Rewards + redemptions ---
 

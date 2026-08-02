@@ -150,6 +150,17 @@ class RoutineItem(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
     created_at: float = Field(default_factory=time.time)
 
+class PrepKit(BaseModel):
+    # Packing list matched to events by title keyword (any-match, substring,
+    # case-insensitive — same matching family as rule keywords). Items surface
+    # on My Day ride cards and in the tomorrow digest push.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    keywords: List[str] = Field(default_factory=list)
+    items: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    created_at: float = Field(default_factory=time.time)
+
 class Reward(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     title: str

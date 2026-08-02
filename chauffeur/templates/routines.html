@@ -240,6 +240,114 @@
                         </section>
                     </template>
 
+                    <!-- ===== Prep Kits ===== -->
+                    <section class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
+                        <div class="flex items-center gap-3 px-5 py-4 bg-gray-800 border-b border-gray-700/70 flex-wrap">
+                            <h3 class="text-xl font-bold text-white">🎒 Prep Kits</h3>
+                            <p class="text-xs text-gray-500 font-semibold">Packing lists matched to events by title keywords — shown on My Day cards and in the tomorrow digest.</p>
+                            <button @click="suggestKits()" :disabled="suggesting"
+                                class="ml-auto bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-lg text-sm shrink-0"
+                                x-text="suggesting ? 'Thinking…' : '✨ Suggest kits'"></button>
+                        </div>
+
+                        <!-- Suggested kits: review/edit before anything saves -->
+                        <template x-if="suggestedKits.length">
+                            <div class="px-5 py-4 bg-purple-900/15 border-b border-purple-700/30 space-y-3">
+                                <p class="text-purple-300 text-xs font-bold uppercase">Suggested from your upcoming events — edit, then save the ones you want</p>
+                                <template x-for="(s, idx) in suggestedKits" :key="idx">
+                                    <div class="bg-gray-900/60 border border-purple-700/40 rounded-xl p-4 flex flex-col gap-2">
+                                        <div class="flex gap-3 flex-wrap items-end">
+                                            <div class="min-w-[10rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Kit name</label>
+                                                <input type="text" x-model="s.name" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                            <div class="flex-1 min-w-[12rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Keywords (comma-separated)</label>
+                                                <input type="text" x-model="s._keywords" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items (comma-separated)</label>
+                                            <input type="text" x-model="s._items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                        </div>
+                                        <div class="flex gap-2 justify-end">
+                                            <button @click="approveSuggested(idx)"
+                                                class="bg-purple-600 hover:bg-purple-500 text-white font-bold px-4 py-2 rounded-lg text-sm">✓ Save kit</button>
+                                            <button @click="suggestedKits.splice(idx, 1)"
+                                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded-lg text-sm">✗ Dismiss</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- Existing kits -->
+                        <div class="divide-y divide-gray-700/50">
+                            <div x-show="!prepKits.length && !suggestedKits.length" class="px-5 py-6 text-gray-500 text-sm">
+                                No kits yet. Try <span class="font-bold text-purple-400">✨ Suggest kits</span> to have Argyle draft them from your real events, or add one below.
+                            </div>
+                            <template x-for="k in prepKits" :key="k.id">
+                                <div>
+                                    <div x-show="editKitId !== k.id" class="flex items-center gap-3 px-5 py-3 flex-wrap"
+                                        :class="k.enabled === false ? 'opacity-50' : ''">
+                                        <span class="text-white font-bold" x-text="k.name"></span>
+                                        <template x-for="kw in (k.keywords || [])" :key="kw">
+                                            <span class="px-2 py-0.5 bg-blue-900/40 text-blue-300 rounded text-xs font-bold" x-text="kw"></span>
+                                        </template>
+                                        <span class="text-gray-400 text-sm" x-text="(k.items || []).join(' · ')"></span>
+                                        <div class="ml-auto flex gap-2 shrink-0 items-center">
+                                            <button @click="toggleKit(k)"
+                                                class="px-3 py-1.5 rounded-lg font-bold text-xs"
+                                                :class="k.enabled === false ? 'text-gray-400 bg-gray-700/60' : 'text-green-400 bg-green-500/10'"
+                                                x-text="k.enabled === false ? 'Off' : 'On'"></button>
+                                            <button @click="startEditKit(k)"
+                                                class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Edit</button>
+                                            <button @click="deleteKit(k)"
+                                                class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg font-bold text-xs">Delete</button>
+                                        </div>
+                                    </div>
+                                    <div x-show="editKitId === k.id" class="px-5 py-3 bg-gray-900/40 flex flex-col gap-2">
+                                        <div class="flex gap-3 flex-wrap items-end">
+                                            <div class="min-w-[10rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Kit name</label>
+                                                <input type="text" x-model="kitEdit.name" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                            <div class="flex-1 min-w-[12rem]">
+                                                <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Keywords (comma-separated)</label>
+                                                <input type="text" x-model="kitEdit.keywords" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 mb-1 text-xs font-bold uppercase">Items (comma-separated)</label>
+                                            <input type="text" x-model="kitEdit.items" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white">
+                                        </div>
+                                        <div class="flex gap-2 justify-end">
+                                            <button @click="saveEditKit()"
+                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded text-sm">Save</button>
+                                            <button @click="editKitId = null"
+                                                class="bg-gray-700 hover:bg-gray-600 text-white font-bold px-3 py-2 rounded text-sm">Cancel</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Quick-add kit row -->
+                        <div class="px-5 py-4 bg-gray-900/30 border-t border-gray-700/50">
+                            <div class="flex gap-3 items-end flex-wrap">
+                                <input type="text" x-model="newKit.name" placeholder="Kit name… e.g. Soccer"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white min-w-[10rem]">
+                                <input type="text" x-model="newKit.keywords" placeholder="Keywords… e.g. soccer, futsal"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white flex-1 min-w-[10rem]">
+                                <input type="text" x-model="newKit.items" placeholder="Items… e.g. Cleats, Shin guards, Water bottle"
+                                    class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white flex-[2] min-w-[14rem]"
+                                    @keydown.enter="addKit()">
+                                <button @click="addKit()"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-5 py-2.5 rounded-lg">Add</button>
+                            </div>
+                        </div>
+                    </section>
+
                     {% set tier_kind = 'routine' %}
                     {% include 'components/status_tiers_editor.html' %}
                 </div>
@@ -268,6 +376,12 @@
                 quickAdd: {},
                 editItemId: null,
                 editItem: { title: '', time_of_day: '', days_of_week: [] },
+                prepKits: [],
+                suggestedKits: [],
+                suggesting: false,
+                editKitId: null,
+                kitEdit: { name: '', keywords: '', items: '' },
+                newKit: { name: '', keywords: '', items: '' },
 
                 async init() {
                     if (this.isKiosk) {
@@ -278,7 +392,7 @@
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
-                    await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks()]);
+                    await Promise.all([this.loadMembers(), this.loadRoutines(), this.loadStreaks(), this.loadPrepKits()]);
                 },
 
                 _celebrateSweep() {
@@ -449,6 +563,111 @@
                     await fetch(`${this.apiBase}api/routines/${r.id}`, { method: 'DELETE' });
                     await Promise.all([this.loadRoutines(), this.loadStreaks()]);
                 },
+                // --- Prep kits ---
+                _parseList(str) {
+                    return String(str || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+                },
+                async loadPrepKits() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits`);
+                        this.prepKits = await res.json();
+                    } catch (e) { this.prepKits = []; }
+                },
+                async _postKit(payload, method, id) {
+                    const url = `${this.apiBase}api/prep-kits${id ? '/' + id : ''}`;
+                    const res = await fetch(url, {
+                        method: method, headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        showGlobalAlert(err.detail || 'Could not save kit');
+                        return false;
+                    }
+                    return true;
+                },
+                async addKit() {
+                    const payload = {
+                        name: (this.newKit.name || '').trim(),
+                        keywords: this._parseList(this.newKit.keywords),
+                        items: this._parseList(this.newKit.items),
+                        enabled: true,
+                    };
+                    if (await this._postKit(payload, 'POST')) {
+                        this.newKit = { name: '', keywords: '', items: '' };
+                        await this.loadPrepKits();
+                    }
+                },
+                startEditKit(k) {
+                    this.editKitId = k.id;
+                    this.kitEdit = {
+                        name: k.name,
+                        keywords: (k.keywords || []).join(', '),
+                        items: (k.items || []).join(', '),
+                        enabled: k.enabled !== false,
+                    };
+                },
+                async saveEditKit() {
+                    const payload = {
+                        name: (this.kitEdit.name || '').trim(),
+                        keywords: this._parseList(this.kitEdit.keywords),
+                        items: this._parseList(this.kitEdit.items),
+                        enabled: this.kitEdit.enabled,
+                    };
+                    if (await this._postKit(payload, 'PUT', this.editKitId)) {
+                        this.editKitId = null;
+                        await this.loadPrepKits();
+                    }
+                },
+                async toggleKit(k) {
+                    await this._postKit({
+                        name: k.name, keywords: k.keywords || [], items: k.items || [],
+                        enabled: k.enabled === false,
+                    }, 'PUT', k.id);
+                    await this.loadPrepKits();
+                },
+                async deleteKit(k) {
+                    if (!await promptConfirm('Delete kit', `Delete the "${k.name}" prep kit?`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/prep-kits/${k.id}`, { method: 'DELETE' });
+                    await this.loadPrepKits();
+                },
+                async suggestKits() {
+                    this.suggesting = true;
+                    try {
+                        const res = await fetch(`${this.apiBase}api/prep-kits/suggest`, { method: 'POST' });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            showGlobalAlert(data.detail || 'Suggestion failed');
+                            return;
+                        }
+                        const kits = data.kits || [];
+                        if (!kits.length) {
+                            showGlobalAlert('No new kits to suggest — your events look covered.');
+                            return;
+                        }
+                        this.suggestedKits = kits.map(k => ({
+                            name: k.name,
+                            _keywords: (k.keywords || []).join(', '),
+                            _items: (k.items || []).join(', '),
+                        }));
+                    } finally {
+                        this.suggesting = false;
+                    }
+                },
+                async approveSuggested(idx) {
+                    const s = this.suggestedKits[idx];
+                    const payload = {
+                        name: (s.name || '').trim(),
+                        keywords: this._parseList(s._keywords),
+                        items: this._parseList(s._items),
+                        enabled: true,
+                    };
+                    if (await this._postKit(payload, 'POST')) {
+                        this.suggestedKits.splice(idx, 1);
+                        await this.loadPrepKits();
+                    }
+                },
+
                 async deleteBlock(member) {
                     const items = this.itemsFor(member.id);
                     if (items.length &&

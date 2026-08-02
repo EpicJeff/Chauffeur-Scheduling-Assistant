@@ -136,11 +136,12 @@ def _send_tomorrow_digests(subs):
     (events via the combined cache's assignments map, plus scheduled errands).
     Drivers with nothing tomorrow get no push."""
     import datetime as _dt
-    from services import storage
+    from services import storage, prep_kits
 
     cache = storage.get_cached_schedule() or {}
     events = {e.get("id"): e for e in cache.get("events", [])}
     assignments = cache.get("assignments") or {}
+    kits = storage.get_prep_kits()
     tomorrow = _dt.date.today() + _dt.timedelta(days=1)
 
     per_driver = {}
@@ -156,7 +157,11 @@ def _send_tomorrow_digests(subs):
             continue
         if start.date() != tomorrow:
             continue
-        per_driver.setdefault(d_id, []).append((start, ev.get("title") or "Event"))
+        title = ev.get("title") or "Event"
+        prep = prep_kits.items_for_title(title, kits)
+        if prep:
+            title += f" (bring: {', '.join(prep[:4])})"
+        per_driver.setdefault(d_id, []).append((start, title))
 
     for er in cache.get("scheduled_errands", []):
         d_id = (er.get("driver") or {}).get("id")
@@ -3465,6 +3470,71 @@ def routines_streaks():
     out.sort(key=lambda x: (-x['streak']['current'], x['name'] or ''))
     return out
 
+# --- Prep kits (packing lists matched to events by title keywords) ---
+
+class PrepKitRequest(BaseModel):
+    name: str
+    keywords: List[str] = []
+    items: List[str] = []
+    enabled: bool = True
+
+def _validate_prep_kit(req: PrepKitRequest):
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Kit name is required")
+    if not [k for k in req.keywords if k.strip()]:
+        raise HTTPException(status_code=400, detail="At least one keyword is required")
+    if not [i for i in req.items if i.strip()]:
+        raise HTTPException(status_code=400, detail="At least one item is required")
+
+def _prep_kit_fields(req: PrepKitRequest) -> dict:
+    return {'name': req.name.strip(),
+            'keywords': [k.strip().lower() for k in req.keywords if k.strip()],
+            'items': [i.strip() for i in req.items if i.strip()],
+            'enabled': req.enabled}
+
+@app.get("/api/prep-kits")
+def list_prep_kits():
+    kits = storage.get_prep_kits()
+    kits.sort(key=lambda k: (k.get('name') or '').lower())
+    return kits
+
+@app.post("/api/prep-kits")
+def create_prep_kit(req: PrepKitRequest):
+    from models.schemas import PrepKit
+    _validate_prep_kit(req)
+    kit = PrepKit(**_prep_kit_fields(req)).model_dump()
+    storage.add_prep_kit(kit)
+    return kit
+
+@app.put("/api/prep-kits/{kit_id}")
+def edit_prep_kit(kit_id: str, req: PrepKitRequest):
+    _validate_prep_kit(req)
+    if not storage.update_prep_kit(kit_id, _prep_kit_fields(req)):
+        raise HTTPException(status_code=404, detail="Kit not found")
+    return {"status": "updated"}
+
+@app.delete("/api/prep-kits/{kit_id}")
+def remove_prep_kit(kit_id: str):
+    storage.delete_prep_kit(kit_id)
+    return {"status": "deleted"}
+
+@app.post("/api/prep-kits/suggest")
+def suggest_prep_kits():
+    """One LLM request over upcoming event titles -> proposed kits for review.
+    Nothing is saved here — the client edits and POSTs the ones it keeps."""
+    from services import prep_kits
+    cache = storage.get_cached_schedule() or {}
+    titles = {e.get('title') for e in cache.get('events', [])
+              if e.get('title') and e.get('event_type') != 'errand'
+              and not e.get('trip_suppressed')}
+    if not titles:
+        raise HTTPException(status_code=400, detail="No upcoming events to analyze yet")
+    try:
+        kits = prep_kits.suggest_kits(sorted(titles))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"kits": kits}
+
 class RoutineCheckRequest(BaseModel):
     member_id: str
     date: Optional[str] = None
@@ -3761,6 +3831,9 @@ def member_day(member_id: str, date: Optional[str] = None):
             continue
         matched.append((ev, ev_id, parent_id))
 
+    from services import prep_kits as _prep
+    _kits = storage.get_prep_kits()
+
     def _ride(ev, ev_id, legs=None):
         return {
             'id': ev.get('id'),
@@ -3772,6 +3845,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             'driver': _driver_member(assignments.get(ev_id)),
             'status': status_by_event.get(ev_id),
             'legs': legs or [],
+            'prep': _prep.items_for_title(ev.get('title'), _kits),
         }
 
     groups = {}

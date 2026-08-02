@@ -730,6 +730,10 @@
                 </div>
                 <div class="text-white font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
                 ${r.location ? `<div class="text-gray-400 text-sm mt-1 truncate">${mfEscape(r.location)}</div>` : ''}
+                ${(r.prep && r.prep.length) ? `<div class="flex flex-wrap items-center gap-1.5 mt-2">
+                    <span class="text-[10px] font-black uppercase text-amber-300">🎒 Bring</span>
+                    ${r.prep.map(p => `<span class="text-[11px] font-bold bg-amber-500/10 text-amber-200 border border-amber-500/30 px-2 py-0.5 rounded-full">${mfEscape(p)}</span>`).join('')}
+                </div>` : ''}
                 ${driverRow}
             </div>`;
         }
