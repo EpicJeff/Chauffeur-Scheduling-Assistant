@@ -3435,6 +3435,7 @@ def remove_routine(routine_id: str):
 @app.get("/api/routines/day")
 def routines_day(member_id: str, date: Optional[str] = None):
     import datetime as _dt
+    from services import status_tiers
     date_str = date or _dt.date.today().isoformat()
     if not storage.get_member(member_id):
         raise HTTPException(status_code=404, detail="Member not found")
@@ -3442,6 +3443,7 @@ def routines_day(member_id: str, date: Optional[str] = None):
         'date': date_str,
         'items': storage.routines_for_day(member_id, date_str),
         'streak': storage.compute_streak(member_id),
+        'status': status_tiers.compute_member_status(member_id, 'routine'),
     }
 
 @app.get("/api/routines/streaks")
@@ -3471,10 +3473,12 @@ class RoutineCheckRequest(BaseModel):
 @app.post("/api/routines/{routine_id}/check")
 def check_routine(routine_id: str, req: RoutineCheckRequest):
     import datetime as _dt
+    from services import status_tiers
     date_str = req.date or _dt.date.today().isoformat()
     if not storage.set_routine_check(routine_id, req.member_id, date_str, req.checked):
         raise HTTPException(status_code=403, detail="Not your routine")
-    return {'status': 'ok', 'streak': storage.compute_streak(req.member_id)}
+    return {'status': 'ok', 'streak': storage.compute_streak(req.member_id),
+            'tier_status': status_tiers.compute_member_status(req.member_id, 'routine')}
 
 # --- Rewards + redemptions API ---
 

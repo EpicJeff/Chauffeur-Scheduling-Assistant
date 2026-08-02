@@ -597,6 +597,7 @@
                     <div class="flex items-center gap-2">
                         <span class="text-xs text-gray-500 font-bold">${s.today_done || 0}/${s.today_total || routineData.items.length}</span>
                         ${streakChip}
+                        ${statusBadge(routineData.status)}
                     </div>
                 </div>
                 <div class="divide-y divide-gray-800">${rows}</div>
@@ -612,6 +613,8 @@
                 });
                 if (!res.ok) throw new Error();
                 const data = await res.json();
+                // Tier celebration first — it's the bigger moment than the daily streak toast.
+                maybeCelebrateStatus('routine', data.tier_status);
                 if (data.streak && data.streak.today_complete && checked) {
                     showGlobalAlert(`Routine complete! 🔥 ${data.streak.current} day streak`);
                 }
@@ -635,6 +638,7 @@
                 if (!res.ok) throw new Error('bad response');
                 const data = await res.json();
                 const routineData = routineRes.ok ? await routineRes.json() : null;
+                if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
                 const routineHtml = renderRoutineSection(routineData, requestedOffset);
                 wrap.innerHTML = routineHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
@@ -1314,6 +1318,64 @@
             badge.style.display = n > 0 ? 'flex' : 'none';
         }
 
+        // --- Status-tier badges + celebration ------------------------------
+        // Fires a confetti overlay when the logged-in child's tier CHANGES
+        // upward. Last-seen tier is kept per member+track in localStorage:
+        // seeded silently on first sight (no stale celebration for an existing
+        // Legend on a new device), compared by threshold so ladder renames or
+        // config edits don't false-fire.
+        function maybeCelebrateStatus(track, status) {
+            if (!selectedMemberId || currentMemberRole() !== 'child') return;
+            const key = `chauffeur_status_${track}_${selectedMemberId}`;
+            const prevRaw = localStorage.getItem(key);
+            localStorage.setItem(key, JSON.stringify(status
+                ? { name: status.name, threshold: status.threshold || 0 } : null));
+            if (prevRaw === null) return;                    // first sighting: seed silently
+            if (!status) return;
+            let prev = null;
+            try { prev = JSON.parse(prevRaw); } catch (e) { }
+            if (prev && prev.name === status.name) return;   // unchanged
+            if (prev && (prev.threshold || 0) >= (status.threshold || 0)) return; // not an upgrade
+            celebrateStatus(status, track);
+        }
+
+        function celebrateStatus(status, track) {
+            const label = track === 'routine' ? 'Routine Status' : 'Chore Status';
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center overflow-hidden';
+            overlay.style.background = 'rgba(0,0,0,0.72)';
+            const emojis = ['🎉', '✨', '⭐', '🎊', '🌟'];
+            let confetti = '';
+            for (let i = 0; i < 20; i++) {
+                const e = emojis[i % emojis.length];
+                const left = Math.random() * 100, delay = Math.random() * 0.9,
+                    dur = 2.2 + Math.random() * 1.6, size = 16 + Math.random() * 24;
+                confetti += `<span style="position:absolute;top:-48px;left:${left}%;font-size:${size}px;` +
+                    `animation:statusConfetti ${dur}s linear ${delay}s forwards;">${e}</span>`;
+            }
+            overlay.innerHTML = `
+                <style>
+                    @keyframes statusConfetti { to { transform: translateY(115vh) rotate(340deg); opacity: .9; } }
+                    @keyframes statusPop { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.12); } 100% { transform: scale(1); opacity: 1; } }
+                </style>
+                ${confetti}
+                <div style="animation:statusPop .5s ease-out forwards"
+                    class="relative text-center px-8 py-8 bg-gray-900 border border-amber-500/40 rounded-3xl shadow-2xl mx-6">
+                    <div class="text-6xl mb-3">${status.emoji || '🏅'}</div>
+                    <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1">New ${label}</div>
+                    <div class="text-2xl font-black text-amber-300">${mfEscape(status.name)}</div>
+                    <div class="text-sm text-gray-400 mt-2">Amazing work — keep it up! 🎉</div>
+                </div>`;
+            overlay.addEventListener('click', () => overlay.remove());
+            document.body.appendChild(overlay);
+            setTimeout(() => overlay.remove(), 5000);
+        }
+
+        function statusBadge(status, extraCls) {
+            if (!status) return '';
+            return `<span class="inline-flex items-center gap-1 text-[11px] font-black text-amber-200 bg-amber-500/10 border border-amber-500/40 px-2 py-0.5 rounded-full ${extraCls || ''}">${status.emoji || ''} ${mfEscape(status.name)}</span>`;
+        }
+
         function choreEligibleForMe(c) {
             const el = c.eligible_member_ids || [];
             return !el.length || el.includes(selectedMemberId);
@@ -1345,8 +1407,12 @@
             // Points header
             if (role === 'child') {
                 const mine = (balances || []).find(b => b.member_id === selectedMemberId);
+                maybeCelebrateStatus('chore', mine && mine.status);
                 parts.push(`<div class="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-800/60 rounded-2xl p-4 flex items-center justify-between">
-                    <span class="text-gray-300 font-bold">My points</span>
+                    <div>
+                        <span class="text-gray-300 font-bold">My points</span>
+                        ${mine && mine.status ? '<div class="mt-1">' + statusBadge(mine.status) + '</div>' : ''}
+                    </div>
                     <span class="text-3xl font-black text-white">${mine ? mine.balance : 0} ⭐</span>
                 </div>`);
             } else if (balances && balances.length) {
