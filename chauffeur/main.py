@@ -131,6 +131,39 @@ async def push_notification_loop():
 
         await asyncio.sleep(30)
 
+_WEATHER_EMOJI = {
+    'sunny': '☀️', 'clear-night': '🌙', 'partlycloudy': '⛅', 'cloudy': '☁️',
+    'rainy': '🌧️', 'pouring': '🌧️', 'lightning': '⛈️', 'lightning-rainy': '⛈️',
+    'snowy': '❄️', 'snowy-rainy': '🌨️', 'hail': '🌨️', 'fog': '🌫️',
+    'windy': '💨', 'windy-variant': '💨', 'exceptional': '⚠️',
+}
+
+def _tomorrow_weather_line(tomorrow):
+    """One-line forecast for the digest ("🌧️ 78°/61° · rain 60%"), or None.
+    Uses the configured weather_entity (auto-detect when unset); any HA
+    problem just drops the line — weather never blocks a digest."""
+    try:
+        from services import storage, ha_api
+        settings = storage.get_settings() or {}
+        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
+        for f in forecast:
+            if str(f.get('datetime') or '')[:10] != tomorrow.isoformat():
+                continue
+            cond = str(f.get('condition') or '')
+            parts = []
+            hi, lo = f.get('temperature'), f.get('templow')
+            if hi is not None:
+                parts.append(f"{round(hi)}°" + (f"/{round(lo)}°" if lo is not None else ""))
+            precip = f.get('precipitation_probability')
+            if precip:
+                parts.append(f"rain {round(precip)}%")
+            if not parts and not cond:
+                return None
+            return f"{_WEATHER_EMOJI.get(cond, '🌤️')} " + (" · ".join(parts) or cond)
+    except Exception as we:
+        print(f"Digest weather error: {we}")
+    return None
+
 def _send_tomorrow_digests(subs):
     """One evening push per subscribed driver listing tomorrow's assignments
     (events via the combined cache's assignments map, plus scheduled errands).
@@ -143,6 +176,7 @@ def _send_tomorrow_digests(subs):
     assignments = cache.get("assignments") or {}
     kits = storage.get_prep_kits()
     tomorrow = _dt.date.today() + _dt.timedelta(days=1)
+    weather_line = _tomorrow_weather_line(tomorrow)
 
     per_driver = {}
     for ev_id, d_id in assignments.items():
@@ -183,6 +217,8 @@ def _send_tomorrow_digests(subs):
         lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}" for start, title in items[:6]]
         if len(items) > 6:
             lines.append(f"...and {len(items) - 6} more")
+        if weather_line:
+            lines.insert(0, weather_line)
         n = len(items)
         send_push(d_id, subs, f"Tomorrow: {n} drive{'s' if n != 1 else ''}",
                   "\n".join(lines), f"digest_{tomorrow.isoformat()}", actions=[])

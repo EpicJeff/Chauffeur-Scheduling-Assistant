@@ -272,6 +272,9 @@ class Settings(BaseModel):
     # Evening push digest listing each driver's assignments for tomorrow.
     tomorrow_digest_enabled: bool = True
     tomorrow_digest_time: str = "20:00"  # HH:MM, server-local time
+    # HA weather entity for the digest's forecast line. Empty = auto-detect
+    # the first weather.* entity; weather silently drops out if HA is absent.
+    weather_entity: str = ""
     calendar_ids: List[str]
     # One of calendar_ids, starred in Config → General. The family's shared
     # calendar: intake proposals with no clear owner (and whole-family /

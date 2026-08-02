@@ -563,6 +563,43 @@
                         </div>
                     </div>
 
+                    <div class="mt-6 pt-6 border-t border-gray-700">
+                        <h4 class="font-bold text-white mb-4">Digests & Weather</h4>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="tomorrowDigestEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Tomorrow Digest</span>
+                            </div>
+                            <div x-show="tomorrowDigestEnabled" class="flex items-center gap-2 shrink-0">
+                                <label class="text-sm text-gray-400 font-semibold" for="tomorrowDigestTime">Send after</label>
+                                <input type="time" id="tomorrowDigestTime" x-model="tomorrowDigestTime" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <label class="text-sm text-gray-400 font-semibold" for="weatherEntity">Weather</label>
+                                <select id="weatherEntity" x-model="weatherEntity" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                    <option value="">Auto-detect</option>
+                                    <template x-for="w in weatherEntities" :key="w.entity_id">
+                                        <option :value="w.entity_id" x-text="w.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                Each evening, subscribed drivers get one push listing tomorrow's drives (with any
+                                prep-kit items to bring) topped by a forecast line from the chosen Home Assistant
+                                weather integration. Auto-detect uses the first weather entity; the line is simply
+                                omitted when Home Assistant is unreachable.
+                            </p>
+                        </div>
+                    </div>
+
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
                         <div>
                             <h4 class="font-bold text-white">System Cache & Database</h4>
@@ -2616,6 +2653,10 @@
                 loadBalancingMetric: 'occupied_time',
                 suggestedRoutesEnabled: true,
                 chatSuggestionsEnabled: false,
+                tomorrowDigestEnabled: true,
+                tomorrowDigestTime: '20:00',
+                weatherEntity: '',
+                weatherEntities: [],
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -2971,8 +3012,18 @@
                     this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
                     this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
+                    this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
+                    this.tomorrowDigestTime = data.tomorrow_digest_time || '20:00';
+                    this.weatherEntity = data.weather_entity || '';
+                    this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
+                },
+                async loadWeatherEntities() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/ha/entities?domain=weather`);
+                        this.weatherEntities = res.ok ? await res.json() : [];
+                    } catch (e) { this.weatherEntities = []; }
                 },
                 async addCalendarId() {
                     const val = this.newCalendarIdInput.trim();
@@ -3048,7 +3099,10 @@
                             load_balancing_enabled: this.loadBalancingEnabled,
                             load_balancing_metric: this.loadBalancingMetric,
                             suggested_routes_enabled: this.suggestedRoutesEnabled,
-                            chat_suggestions_enabled: this.chatSuggestionsEnabled
+                            chat_suggestions_enabled: this.chatSuggestionsEnabled,
+                            tomorrow_digest_enabled: this.tomorrowDigestEnabled,
+                            tomorrow_digest_time: this.tomorrowDigestTime || '20:00',
+                            weather_entity: this.weatherEntity || ''
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

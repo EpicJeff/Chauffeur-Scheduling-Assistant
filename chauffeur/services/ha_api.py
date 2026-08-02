@@ -176,3 +176,26 @@ def call_service(domain: str, service: str, data: dict = None,
     params = {'return_response': 'true'} if return_response else None
     return _request('POST', f'/services/{domain}/{service}',
                     json_body=data or {}, params=params)
+
+
+def get_weather_forecast(entity_id: str = None, kind: str = 'daily') -> list:
+    """Forecast entries for a weather entity via weather.get_forecasts
+    (each ~{datetime, condition, temperature, templow,
+    precipitation_probability}). entity_id None/'' auto-detects the first
+    weather.* entity. Returns [] whenever HA, the entity, or the service is
+    unavailable — weather is garnish and must never break a caller."""
+    try:
+        if not entity_id:
+            ents = get_entities('weather')
+            entity_id = ents[0]['entity_id'] if ents else None
+        if not entity_id:
+            return []
+        resp = call_service('weather', 'get_forecasts',
+                            {'entity_id': entity_id, 'type': kind},
+                            return_response=True)
+        sr = (resp or {}).get('service_response') or resp or {}
+        forecast = (sr.get(entity_id) or {}).get('forecast')
+        return forecast if isinstance(forecast, list) else []
+    except Exception as e:
+        print(f"[ha_api] weather forecast failed: {e}")
+        return []
