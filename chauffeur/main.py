@@ -156,6 +156,22 @@ async def push_notification_loop():
             except Exception as wde:
                 print(f"Weekly digest error: {wde}")
 
+            # --- Proactive parent watchers (one consolidated Argyle DM) ---
+            try:
+                settings = storage.get_settings() or {}
+                if settings.get("proactive_watchers_enabled", True):
+                    last = float(storage.get_app_state("watchers_last_run") or 0)
+                    if time.time() - last >= 1800:
+                        # Marker set FIRST — a crashing sweep must not retry
+                        # every 30s (same reasoning as the weekly digest).
+                        storage.set_app_state("watchers_last_run", time.time())
+                        from services import watchers
+                        # to_thread: the weekly prep-kit check can sit on a
+                        # slow gemma call; never block pending pushes on it.
+                        await asyncio.to_thread(watchers.run_watchers)
+            except Exception as we:
+                print(f"Watcher sweep error: {we}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
@@ -189,7 +205,11 @@ def _tomorrow_weather_line(tomorrow):
                 parts.append(f"rain {round(precip)}%")
             if not parts and not cond:
                 return None
-            return f"{_WEATHER_EMOJI.get(cond, '🌤️')} " + (" · ".join(parts) or cond)
+            line = f"{_WEATHER_EMOJI.get(cond, '🌤️')} " + (" · ".join(parts) or cond)
+            # ≥50% rain: say the actionable thing, not just the number
+            if (precip or 0) >= 50:
+                line += " — pack rain gear ☔"
+            return line
     except Exception as we:
         print(f"Digest weather error: {we}")
     return None

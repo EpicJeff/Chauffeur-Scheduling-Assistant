@@ -385,6 +385,14 @@ class Settings(BaseModel):
     # offers a one-tap proposal card (implicit detection funnel). Opt-in: off by
     # default so the bot never butts into ordinary chatter.
     chat_suggestions_enabled: bool = False
+    # Proactive parent watchers (services/watchers.py): a 30-minute sweep for
+    # stuck state — unassigned events in the next 3 days, intake proposals
+    # pending 3+ days, chores awaiting verification 48h+, week-old unclaimed
+    # chores, stale reward requests, past-due errands, plus a WEEKLY prep-kit
+    # idea check (the sweep's only LLM use; background tier). Each finding
+    # notifies exactly once, delivered as ONE consolidated Argyle DM per
+    # parent; quiet hours 21:00-08:00.
+    proactive_watchers_enabled: bool = True
     # Customizable kid status tiers — two independent single-metric ladders.
     # None = built-in defaults (status_tiers.DEFAULT_CHORE_TIERS /
     # DEFAULT_ROUTINE_TIERS). In the model so config-page saves (a strict-

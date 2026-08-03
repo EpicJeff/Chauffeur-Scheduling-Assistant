@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-01 (v2.25.0).
+up cold. Last updated: 2026-08-03 (v2.32.0).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -94,6 +94,19 @@ genuinely one-tap or it's data entry with extra steps.
   (spring break, early dismissal) is where extraction embarrasses — v1
   handles single + simple-weekly events only.
 
+## The kid support arc (decided 2026-08-03 — the next big thing)
+
+Priority straight from the family: **help the kids manage stress and be
+successful.** Chauffeur models a kid's life as rides + chores; the school
+day is invisible. Full design brief: `docs/kid_support_design.md` (phases,
+principles — reassurance over reminders, agency not surveillance, kids as
+sensors). Phase order: K1 kid evening digest → K2 pickup-clarity pushes →
+K3 kid-as-sensor proposals → K4 school model + homework/deadline domain
+(check district ICS/Classroom first) → K5 school-rhythm prep + morning
+launch. Prerequisite shipped 2026-08-03 (v2.32.0): proactive parent
+watchers (`services/watchers.py`) — the parent-side proactive gaps are
+closed, so kid-facing proactivity builds on proven rails.
+
 ## The native app track (Capacitor wrapper — the big unlock)
 
 Wrap the existing PWA (NOT a rewrite; days not months) and distribute via
@@ -141,7 +154,8 @@ App Store is the destination.**
 
 - Chore fairness nudges via the solver (rotation suggestions for chronically
   unclaimed chores, "Lily did 80% of dishes this month"). The marketplace
-  stays primary — this decorates it.
+  stays primary — this decorates it. (The week-old-unclaimed nudge shipped
+  in the v2.32.0 watchers; rotation/percentage analysis still open.)
 - Routine reminders (opt-in per item, at `time_of_day`) — deliberately NOT
   default; avoid becoming a nag machine.
 - Badge/achievement engine beyond computed streaks — only if the kids ask.

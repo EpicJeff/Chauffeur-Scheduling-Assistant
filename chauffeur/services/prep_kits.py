@@ -112,9 +112,12 @@ Rules:
 - No matching activities at all -> {"kits": []}."""
 
 
-def suggest_kits(event_titles: list, existing_kits: list = None) -> list:
+def suggest_kits(event_titles: list, existing_kits: list = None,
+                 tier: str = 'interactive') -> list:
     """One LLM request -> proposed kit dicts (NOT saved). Raises RuntimeError
-    when no key is configured or the call fails."""
+    when no key is configured or the call fails. tier='interactive' when a
+    user clicked Suggest and is waiting (lite pool); the weekly watcher sweep
+    passes 'background' (gemma-first — nobody is waiting)."""
     from services import model_pools
     settings = storage.get_settings() or {}
     api_key = settings.get('llm_gemini_api_key', '')
@@ -129,9 +132,10 @@ def suggest_kits(event_titles: list, existing_kits: list = None) -> list:
     prompt = (f"Existing kits (do not duplicate):\n{existing_desc}\n\n"
               f"Upcoming event titles:\n" + '\n'.join(f"- {t}" for t in titles[:60]))
 
-    # Interactive tier: the user clicked "suggest" and is waiting — lite pool.
-    res = model_pools.call_pool_json('interactive', api_key, SUGGEST_SYSTEM, prompt,
-                                     temperature=0.2, timeout_s=60, settings=settings)
+    res = model_pools.call_pool_json(tier, api_key, SUGGEST_SYSTEM, prompt,
+                                     temperature=0.2,
+                                     timeout_s=60 if tier == 'interactive' else 120,
+                                     settings=settings)
     if not isinstance(res, dict):
         return []
     if res.get('error'):

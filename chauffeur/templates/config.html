@@ -630,6 +630,25 @@
                                 notifications.
                             </p>
                         </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="proactiveWatchersEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">Proactive Heads-ups</span>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                Argyle periodically sweeps for stuck things and DMs parents one consolidated
+                                heads-up: events with no driver in the next 3 days, intake proposals waiting 3+
+                                days, chores awaiting your OK for 2+ days, chores unclaimed for a week, stale
+                                reward requests, past-due errands, and a weekly prep-kit idea check. Each item is
+                                mentioned exactly once, never between 9pm and 8am.
+                            </p>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
@@ -2692,6 +2711,7 @@
                 weeklyDigestEnabled: true,
                 weeklyDigestDay: 6,
                 weeklyDigestTime: '19:00',
+                proactiveWatchersEnabled: true,
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -3053,6 +3073,7 @@
                     this.weeklyDigestEnabled = data.weekly_digest_enabled !== false;
                     this.weeklyDigestDay = data.weekly_digest_day ?? 6;
                     this.weeklyDigestTime = data.weekly_digest_time || '19:00';
+                    this.proactiveWatchersEnabled = data.proactive_watchers_enabled !== false;
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -3143,7 +3164,8 @@
                             weather_entity: this.weatherEntity || '',
                             weekly_digest_enabled: this.weeklyDigestEnabled,
                             weekly_digest_day: parseInt(this.weeklyDigestDay),
-                            weekly_digest_time: this.weeklyDigestTime || '19:00'
+                            weekly_digest_time: this.weeklyDigestTime || '19:00',
+                            proactive_watchers_enabled: this.proactiveWatchersEnabled
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {
