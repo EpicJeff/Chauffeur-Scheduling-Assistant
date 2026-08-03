@@ -147,6 +147,19 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                 system_prompt += ("This person is NOT a parent/admin: answer questions, send their messages, and "
                                   "manage their own chores, but you cannot change global scheduling (routing/priority "
                                   "rules, the solver, or errands) — those tools are not available to them.\n")
+            if (acting_member.get('role') or '') == 'child':
+                system_prompt += (
+                    "SPEAKING WITH A CHILD — they are often the FIRST to know about logistics changes, "
+                    "so treat their reports as valuable. When they report schedule information (practice "
+                    "moved or cancelled, a new event, needing money or supplies by a date, a ride "
+                    "arrangement they heard about), call propose_family_action so a parent can approve "
+                    "it with one tap — create_event for new events and date-bound needs, add_errand for "
+                    "things to buy, reassign_driver/clear_assignment for driver facts — and in your reply "
+                    "tell them you've flagged it for their parents. Ask at most ONE short clarifying "
+                    "question; if they don't know, propose with what you have and note the gap in the "
+                    "summary. Be warm, brief, and reassuring. Never lecture, never guilt-trip about "
+                    "chores, points, or streaks. You never change the schedule directly for a child — "
+                    "always the proposal card.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "

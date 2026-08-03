@@ -50,16 +50,18 @@ restate). Deferred to after K4 (needs school hours): the scheduled
 end-of-school-day "you're getting picked up by Mom at 3:15" push.
 Tests: `tests/test_kid_pushes.py`.
 
-## Phase K3 — Kid-as-sensor (capture from the kid's Argyle DM)
+## Phase K3 — Kid-as-sensor — SHIPPED v2.33.2 (2026-08-05)
 
-Kid tells Argyle "practice moved to 5pm Thursday" → agent turns it into an
-`action_proposal` card posted to the parents (family channel or parent DMs).
-Rails: Argyle DMs already route kids to the agent with role-scoped tools;
-`propose_family_action` already exists and children's approval taps are
-already refused server-side. New: prompt work (kid persona: always propose,
-never execute; never interrogate), plus allowing the kid-context agent to
-OFFER proposals (today the bridge tools are admin-gated — the proposal tool
-must be reachable without the admin toolset).
+SHIPPED v2.33.2 (2026-08-05). Corrected assumption from this brief:
+`propose_family_action` was never admin-gated (approval is the gate) — the
+REAL gap was visibility: a card created in the kid's private Argyle DM never
+reached the approvers. Shipped: kid-DM proposal cards mirror into the family
+channel ("💡 Addison flagged this for a parent:") with the proposal re-bound
+there so the approval outcome lands where parents saw it; kid-persona prompt
+(propose + tell them you flagged it, ONE clarifying question max — missing
+info goes in the summary as a gap, never an interrogation; no lecturing
+about chores/points ever). Child Approve taps remain refused server-side.
+Tests: `tests/test_kid_sensor.py`.
 
 ## Phase K4 — School model + homework/deadlines (the big one)
 

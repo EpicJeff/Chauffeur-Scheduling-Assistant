@@ -1138,7 +1138,7 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "propose_family_action",
-            "description": "Propose a schedule- or calendar-CHANGING action for a parent to approve with one tap in the chat, instead of doing it silently. Use this in the family chat whenever the request would reassign or clear a driver, add/remove a routing or priority rule (e.g. mark a driver unavailable), add/update/remove an errand, or add a calendar event. Do NOT use it for questions, reading the schedule, sending messages, or chore claims — handle those directly.",
+            "description": "Propose a schedule- or calendar-CHANGING action for a parent to approve with one tap in the chat, instead of doing it silently. Use this in the family chat whenever the request would reassign or clear a driver, add/remove a routing or priority rule (e.g. mark a driver unavailable), add/update/remove an errand, or add a calendar event. ALSO the correct tool when a CHILD reports logistics news ('practice moved to 5', 'I need $12 by Friday', 'the game got cancelled') — the card reaches their parents for approval. Do NOT use it for questions, reading the schedule, sending messages, or chore claims — handle those directly.",
             "parameters": {
                 "type": "object",
                 "properties": {

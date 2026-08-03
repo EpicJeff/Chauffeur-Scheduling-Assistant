@@ -119,12 +119,18 @@ settings, not hardcoded.
   push on first leg start (both PWA + agent paths, once per event/day) and
   near-term gains-only driver-change pushes riding the netted flush buffer;
   kid quiet hours skip. Details in system_capabilities.md.
-- **K3 — kid-as-sensor. NEXT.** Kid tells Argyle "practice moved to 5" in
-  their DM → the agent creates an action-proposal card for parents (the
-  propose_family_action rail; children's approval taps already refused
-  server-side). Needs: the proposal tool offered in kid/child agent
-  context (today it rides the admin bridge gate), kid-persona prompt
-  guidance (always propose, never execute, never interrogate).
+- **K3 — kid-as-sensor. SHIPPED v2.33.2 (2026-08-05).** Kid DM proposal
+  cards mirror into the family channel (re-bound so the outcome lands with
+  parents); kid-persona prompt (propose + reassure, one question max,
+  never lecture). The tool was never admin-gated — approval was always
+  the gate; visibility was the real gap. Details in system_capabilities.md.
+- **K4 — school model + homework/deadline domain. NEXT** (its own arc).
+  Per-kid school profile + kid tasks with due dates; intake via
+  per-student ICS feeds (rides existing ics_sync) → Google Classroom API;
+  My Day "Due soon" + digest lines; milestone-breakdown proposals.
+  Build generalized regardless of the local district (decision
+  2026-08-05). Unblocks the deferred school-day-end pickup push (K2) and
+  K5's morning launch.
 - **Deferred from K2** (needs K4's school-hours model): the scheduled
   end-of-school-day "you're getting picked up by X at 3:15" push.
 

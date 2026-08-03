@@ -4515,6 +4515,23 @@ def _run_argyle_mention(channel: dict, sender: dict, body: str):
     try:
         argyle = storage.ensure_argyle_member()
         _post_chat_message(channel, argyle, reply, card=card)
+        # K3 (kid-as-sensor): a child's proposal card created in a private DM
+        # is invisible to the people who can approve it — mirror the card into
+        # the family channel (normal fan-out notifies the parents) and re-bind
+        # the proposal there, so the Approve tap's outcome follow-up lands
+        # where the parents actually saw the card.
+        if card and card.get("proposal_id") and channel.get('kind') == 'dm' \
+                and (sender or {}).get('role') == 'child':
+            try:
+                storage.ensure_family_channel()
+                fam = storage.get_family_channel()
+                storage.update_action_proposal(card["proposal_id"],
+                                               {"channel_id": fam["id"]})
+                _post_chat_message(fam, argyle,
+                                   f"💡 {sender.get('name') or 'One of the kids'} "
+                                   f"flagged this for a parent:", card=card)
+            except Exception as me:
+                logger.error(f"Kid proposal mirror failed: {me}")
     except Exception as e:
         logger.error(f"Argyle reply post failed: {e}")
 
