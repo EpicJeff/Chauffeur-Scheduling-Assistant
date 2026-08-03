@@ -253,6 +253,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              "manage_trip_rules", "manage_trip_flights",
                              "start_route", "complete_route",
                              "adjust_points", "get_point_balances", "reopen_chore",
+                             "get_family_goals", "contribute_to_family_goal",
                              # Family-hub tools: sends are actions; the reads
                              # return a message that IS the complete spoken
                              # answer (same reasoning as get_point_balances).
@@ -412,6 +413,17 @@ sending or claiming, and never pass from_member/member_name for them.
                 elif func_name == "reopen_chore":
                     from services.agent_tools_v2 import reopen_chore
                     res = reopen_chore(args.get("chore_title", ""))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_family_goals":
+                    from services.agent_tools_v2 import get_family_goals
+                    res = get_family_goals()
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "contribute_to_family_goal":
+                    from services.agent_tools_v2 import contribute_to_family_goal
+                    res = contribute_to_family_goal(args.get("reward_title", ""),
+                                                    args.get("amount"),
+                                                    member_name=args.get("member_name"),
+                                                    sender_driver_id=driver_id if driver else None)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "send_family_message":
                     from services.agent_tools_v2 import send_family_message

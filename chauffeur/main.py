@@ -3478,6 +3478,8 @@ def member_points(member_id: str, limit: int = 25):
     return {
         'member_id': member_id,
         'balance': storage.get_points_balance(member_id),
+        'spendable': storage.get_spendable_points(member_id),
+        'pledged': sum(c['amount'] for c in storage.get_pool_contributions(member_id=member_id)),
         'ledger': storage.get_points_ledger(member_id, limit=limit),
     }
 
@@ -3701,11 +3703,16 @@ class RewardRequest(BaseModel):
     title: str
     description: Optional[str] = ""
     cost: int = 50
+    pooled: bool = False
+    min_share: int = 0
 
 @app.get("/api/rewards")
 def list_rewards():
     rewards = storage.get_rewards()
     rewards.sort(key=lambda r: r.get('cost', 0))
+    for r in rewards:
+        if r.get('pooled'):
+            r['pool'] = storage.get_pool_status(r)
     return rewards
 
 @app.post("/api/rewards")
@@ -3715,16 +3722,22 @@ def create_reward(req: RewardRequest):
         raise HTTPException(status_code=400, detail="Title required")
     if not (1 <= int(req.cost) <= 100000):
         raise HTTPException(status_code=400, detail="Cost must be positive")
+    if req.min_share < 0 or (req.pooled and req.min_share > int(req.cost)):
+        raise HTTPException(status_code=400, detail="Minimum share must be between 0 and the cost")
     reward = Reward(title=req.title.strip(), description=req.description or '',
-                    cost=int(req.cost)).model_dump()
+                    cost=int(req.cost), pooled=bool(req.pooled),
+                    min_share=int(req.min_share) if req.pooled else 0).model_dump()
     storage.add_reward(reward)
     return reward
 
 @app.put("/api/rewards/{reward_id}")
 def edit_reward(reward_id: str, req: RewardRequest):
+    if req.min_share < 0 or (req.pooled and req.min_share > int(req.cost)):
+        raise HTTPException(status_code=400, detail="Minimum share must be between 0 and the cost")
     if not storage.update_reward(reward_id, {
             'title': req.title.strip(), 'description': req.description or '',
-            'cost': int(req.cost)}):
+            'cost': int(req.cost), 'pooled': bool(req.pooled),
+            'min_share': int(req.min_share) if req.pooled else 0}):
         raise HTTPException(status_code=404, detail="Reward not found")
     return {"status": "updated"}
 
@@ -3751,8 +3764,10 @@ def redeem_reward(reward_id: str, req: ChoreMemberRequest, background_tasks: Bac
     result = storage.request_redemption(reward_id, req.member_id)
     if result == 'missing':
         raise HTTPException(status_code=404, detail="Reward not found")
+    if result == 'pooled':
+        raise HTTPException(status_code=409, detail="This is a family goal — chip in points instead")
     if result == 'insufficient':
-        raise HTTPException(status_code=409, detail="Not enough points (pending requests count)")
+        raise HTTPException(status_code=409, detail="Not enough points (pending requests and pledges count)")
     reward = next((r for r in storage.get_rewards() if r['id'] == reward_id), {})
 
     def _notify_parents():
@@ -3783,6 +3798,104 @@ def decide_redemption_endpoint(redemption_id: str, req: RedemptionDecision,
                                   'Reward approved 🎁' if req.approve else 'Reward request declined',
                                   body, '/app?view=chores')
     return red
+
+# --- Pooled rewards (family goals) ---
+# Kids pledge points toward one shared reward; a pledge is a hold (nothing
+# hits the ledger) until a parent grants the funded pool. Contribution
+# notifications go to the OTHER children on purpose — peer visibility is
+# the motivator — and to parents only when the pool fills up.
+
+class PoolContributeRequest(BaseModel):
+    member_id: str
+    amount: int
+
+def _notify_pool_contribution(reward: dict, contributor: dict, amount: int):
+    """Shared by the contribute endpoint and the agent tool."""
+    pool = storage.get_pool_status(reward)
+    body = (f"{contributor.get('name')} chipped in {amount} ⭐ toward "
+            f"{reward.get('title')} — {pool['pledged']}/{pool['cost']}")
+    for m in storage.get_all_members():
+        if m.get('role') == 'child' and m['id'] != contributor['id']:
+            _notify_member_lanes(m, 'Family goal 💫', body, '/app?view=chores')
+        elif m.get('role') == 'parent' and pool['funded']:
+            _notify_member_lanes(m, 'Family goal funded 🎉',
+                                 f"{reward.get('title')} is fully funded — grant it in the app",
+                                 '/app?view=chores')
+
+@app.post("/api/rewards/{reward_id}/contribute")
+def contribute_to_pool_endpoint(reward_id: str, req: PoolContributeRequest,
+                                background_tasks: BackgroundTasks):
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.get('role') != 'child':
+        raise HTTPException(status_code=403, detail="Only children chip in points")
+    result, pledged = storage.contribute_to_pool(reward_id, req.member_id, req.amount)
+    if result == 'missing':
+        raise HTTPException(status_code=404, detail="Reward not found")
+    if result == 'not_pooled':
+        raise HTTPException(status_code=409, detail="That reward isn't a family goal")
+    if result == 'invalid':
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    if result == 'full':
+        raise HTTPException(status_code=409, detail="This goal is already fully funded")
+    if result == 'insufficient':
+        raise HTTPException(status_code=409, detail="Not enough spendable points (pending requests and pledges count)")
+    reward = next((r for r in storage.get_rewards() if r['id'] == reward_id), {})
+    background_tasks.add_task(_notify_pool_contribution, reward, member, pledged)
+    return {"status": "pledged", "amount": pledged,
+            "pool": storage.get_pool_status(reward)}
+
+@app.post("/api/rewards/{reward_id}/withdraw")
+def withdraw_pool_pledge_endpoint(reward_id: str, req: ChoreMemberRequest):
+    released = storage.withdraw_pool_pledge(reward_id, req.member_id)
+    if not released:
+        raise HTTPException(status_code=404, detail="No pledge to withdraw")
+    reward = next((r for r in storage.get_rewards() if r['id'] == reward_id), None)
+    return {"status": "withdrawn", "amount": released,
+            "pool": storage.get_pool_status(reward) if reward else None}
+
+class PoolDecision(BaseModel):
+    approve: bool
+    force: bool = False  # grant despite children short of min_share
+
+@app.post("/api/rewards/{reward_id}/pool/decide")
+def decide_pool_endpoint(reward_id: str, req: PoolDecision,
+                         background_tasks: BackgroundTasks,
+                         x_member_token: Optional[str] = Header(None)):
+    parent = require_parent_token(x_member_token)
+    reward = next((r for r in storage.get_rewards() if r['id'] == reward_id), None)
+    if not reward or not reward.get('pooled'):
+        raise HTTPException(status_code=404, detail="Family goal not found")
+    if not req.approve:
+        contribs = storage.get_pool_contributions(reward_id=reward_id)
+        storage.clear_pool(reward_id)
+        for c in contribs:
+            kid = storage.get_member(c['member_id'])
+            if kid:
+                background_tasks.add_task(
+                    _notify_member_lanes, kid, 'Family goal called off',
+                    f"{reward.get('title')} — your {c['amount']} ⭐ pledge is back in your balance",
+                    '/app?view=chores')
+        return {"status": "cleared", "released": len(contribs)}
+    redemption, err = storage.grant_pool(reward_id, parent['id'], force=req.force)
+    if err == 'unfunded':
+        raise HTTPException(status_code=409, detail="Not fully funded yet")
+    if err == 'short':
+        pool = storage.get_pool_status(reward)
+        names = ', '.join(n for n in pool['short'] if n)
+        raise HTTPException(status_code=409,
+                            detail=f"Below the {pool['min_share']}-point minimum share: {names}")
+    if err:
+        raise HTTPException(status_code=404, detail="Family goal not found")
+    for c in redemption['contributions']:
+        kid = storage.get_member(c['member_id'])
+        if kid:
+            background_tasks.add_task(
+                _notify_member_lanes, kid, 'Family goal granted 🎉',
+                f"{redemption['reward_title']} is happening! -{c['amount']} ⭐",
+                '/app?view=chores')
+    return redemption
 
 # --- Sendspin phone-player relay ---
 # The PWA registers as a real Music Assistant player (sendspin-js in the

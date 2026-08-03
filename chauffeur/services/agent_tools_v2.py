@@ -682,6 +682,88 @@ def get_routine_status(member_name: str, target_date: str = "today") -> Dict[str
     return {"status": "success", "message": msg}
 
 
+def get_family_goals() -> Dict[str, Any]:
+    """Pooled ('family goal') rewards with pledge progress."""
+    from services import storage
+    goals = [r for r in storage.get_rewards() if r.get('pooled')]
+    if not goals:
+        return {"status": "success", "goals": [],
+                "message": "There are no family goals set up right now."}
+    parts = []
+    enriched = []
+    for g in goals:
+        pool = storage.get_pool_status(g)
+        enriched.append({**g, 'pool': pool})
+        if pool['funded']:
+            parts.append(f"{g['title']} is fully funded ({pool['cost']} pts) — "
+                         "waiting for a parent to grant it")
+        else:
+            split = ", ".join(f"{c['member_name']} {c['amount']}"
+                              for c in pool['contributions']) or "no pledges yet"
+            parts.append(f"{g['title']}: {pool['pledged']}/{pool['cost']} pts "
+                         f"({split}; {pool['remaining']} to go)")
+    return {"status": "success", "goals": enriched,
+            "message": "Family goals — " + " | ".join(parts) + "."}
+
+
+def contribute_to_family_goal(reward_title: str, amount: int, member_name: str = None,
+                              sender_driver_id: str = None) -> Dict[str, Any]:
+    """Pledge a child's points toward a pooled reward. Same hold semantics
+    as the /contribute endpoint, and fires the same notification fan-out."""
+    from services import storage
+    actor, err = _resolve_actor(sender_driver_id, member_name)
+    if err:
+        if not member_name:
+            err = dict(err, message="Who is chipping in? Tell me the child's name.")
+        return err
+    if actor.get('role') != 'child':
+        return {"status": "error",
+                "message": f"Only children pledge points — {actor.get('name')} isn't a child. "
+                           "Parents can adjust the goal or grant it in the app."}
+    title = (reward_title or '').strip().lower()
+    goals = [r for r in storage.get_rewards() if r.get('pooled')]
+    matches = [g for g in goals if (g.get('title') or '').lower() == title] \
+        or [g for g in goals if title and title in (g.get('title') or '').lower()]
+    if not matches:
+        names = ", ".join(g['title'] for g in goals) or "none set up yet"
+        return {"status": "error",
+                "message": f"I couldn't find a family goal matching '{reward_title}'. Goals: {names}."}
+    if len(matches) > 1:
+        return {"status": "error",
+                "message": "That matches more than one goal: "
+                           + ", ".join(g['title'] for g in matches) + ". Which one?"}
+    goal = matches[0]
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "How many points should be pledged?"}
+    result, pledged = storage.contribute_to_pool(goal['id'], actor['id'], amount)
+    if result == 'full':
+        return {"status": "error", "message": f"'{goal['title']}' is already fully funded."}
+    if result == 'insufficient':
+        spendable = storage.get_spendable_points(actor['id'])
+        return {"status": "error",
+                "message": f"{actor.get('name')} only has {spendable} spendable points "
+                           "(pending requests and pledges count)."}
+    if result != 'ok':
+        return {"status": "error", "message": f"Couldn't pledge to '{goal['title']}' ({result})."}
+    # Same fan-out the endpoint sends, off-thread (see reopen_chore).
+    try:
+        import threading
+        import main as _main
+        threading.Thread(target=_main._notify_pool_contribution,
+                         args=(goal, actor, pledged), daemon=True).start()
+    except Exception:
+        pass
+    pool = storage.get_pool_status(goal)
+    msg = f"{actor.get('name')} pledged {pledged} points toward '{goal['title']}' — {pool['pledged']}/{pool['cost']}."
+    if pledged < amount:
+        msg += f" (Only {pledged} was needed to fill it.)"
+    if pool['funded']:
+        msg += " It's fully funded — a parent can grant it now! 🎉"
+    return {"status": "success", "message": msg}
+
+
 def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
     """On-demand '📊 Family Week in Review' post to the family chat — same
     builder the weekly schedule uses (services/family_digest). Children and
@@ -882,6 +964,24 @@ def get_available_tools() -> List[Dict]:
             "name": "get_point_balances",
             "description": "Gets the current chore-point balance for every child. Use for questions like 'how many points does Bob have' or 'who is winning on points'.",
             "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "get_family_goals",
+            "description": "Lists the pooled 'family goal' rewards (like Family Movie Night) with how many points each child has pledged and how much is left to fund ('how close are we to movie night?', 'what family goals are there?').",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "contribute_to_family_goal",
+            "description": "Pledges some of a child's points toward a pooled family-goal reward ('put 30 of my points toward movie night', 'Ben chips in 50 for eating out'). Pledged points are held, not spent — a parent grants the goal once it's fully funded. In driver chat the logged-in child pledges; otherwise member_name is required (ask who is pledging if unknown).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reward_title": {"type": "string", "description": "The family goal's name (fuzzy matched)."},
+                    "amount": {"type": "integer", "description": "How many points to pledge."},
+                    "member_name": {"type": "string", "description": "Which child is pledging. Omit in driver chat."}
+                },
+                "required": ["reward_title", "amount"]
+            }
         },
         {
             "name": "send_family_message",

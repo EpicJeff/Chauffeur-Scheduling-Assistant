@@ -136,6 +136,7 @@ with db_lock:
     routine_checks_table = db.table('routine_checks')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
+    pool_contributions_table = db.table('pool_contributions')
     ics_feeds_table = db.table('ics_feeds')
     event_proposals_table = db.table('event_proposals')
     agent_action_proposals_table = db.table('agent_action_proposals')
@@ -1100,24 +1101,30 @@ def adjust_points(member_id: str, delta: int, note: str = '',
 
 def reset_points(member_id: str = None, by_member_id: str = None) -> dict:
     """Zero balances via compensating 'adjust' entries (history preserved).
-    member_id None = every child. Pending redemptions are auto-denied first:
-    a pending request against a zeroed balance could never be approved and
-    would wedge future redemptions (pending cost counts as spent)."""
+    member_id None = every child. Pending redemptions are auto-denied and
+    pool pledges released first: either kind of hold against a zeroed
+    balance could never be honored and would wedge future spending (holds
+    count as spent)."""
     targets = [m for m in get_all_members()
                if m.get('role') == 'child'
                and (member_id is None or m['id'] == member_id)]
     denied = 0
+    released_pledges = 0
     results = []
     for m in targets:
         for red in get_redemptions(m['id'], 'pending'):
             if decide_redemption(red['id'], by_member_id, approve=False):
                 denied += 1
+        with db_lock:
+            released_pledges += len(pool_contributions_table.search(Query().member_id == m['id']))
+            pool_contributions_table.remove(Query().member_id == m['id'])
         balance = get_points_balance(m['id'])
         if balance != 0:
             adjust_points(m['id'], -balance, 'Points reset', by_member_id)
         results.append({'member_id': m['id'], 'name': m.get('name'),
                         'cleared': balance})
-    return {'members': results, 'denied_redemptions': denied}
+    return {'members': results, 'denied_redemptions': denied,
+            'released_pledges': released_pledges}
 
 # --- Daily routines + streaks ---
 # Personal templates checked off per day. A day is "complete" when every item
@@ -1275,11 +1282,17 @@ def add_reward(data: dict) -> str:
 
 def update_reward(reward_id: str, data: dict) -> bool:
     with db_lock:
-        return bool(rewards_table.update(data, Query().id == reward_id))
+        ok = bool(rewards_table.update(data, Query().id == reward_id))
+        if ok and data.get('pooled') is False:
+            # No longer a family goal: outstanding pledges have nothing to
+            # fund, release the holds.
+            pool_contributions_table.remove(Query().reward_id == reward_id)
+        return ok
 
 def delete_reward(reward_id: str):
     with db_lock:
         rewards_table.remove(Query().id == reward_id)
+        pool_contributions_table.remove(Query().reward_id == reward_id)
 
 def get_redemptions(member_id: str = None, state: str = None) -> List[dict]:
     with db_lock:
@@ -1291,9 +1304,19 @@ def get_redemptions(member_id: str = None, state: str = None) -> List[dict]:
     rows.sort(key=lambda r: r.get('requested_at', 0), reverse=True)
     return rows
 
+def get_spendable_points(member_id: str) -> int:
+    """Balance minus every hold: pending redemption requests AND pool
+    pledges. Both are promises against the balance that haven't hit the
+    ledger yet, so both must count or a kid could spend points twice."""
+    balance = get_points_balance(member_id)
+    pending = sum(r['cost'] for r in get_redemptions(member_id, 'pending'))
+    pledged = sum(c['amount'] for c in get_pool_contributions(member_id=member_id))
+    return balance - pending - pledged
+
 def request_redemption(reward_id: str, member_id: str) -> str:
-    """Returns redemption id | 'missing' | 'insufficient'. Pending requests
-    count against the spendable balance so a kid can't double-spend."""
+    """Returns redemption id | 'missing' | 'pooled' | 'insufficient'.
+    Pending requests and pool pledges count against the spendable balance
+    so a kid can't double-spend."""
     import time
     import uuid as _uuid
     with db_lock:
@@ -1301,9 +1324,9 @@ def request_redemption(reward_id: str, member_id: str) -> str:
         if not reward:
             return 'missing'
         reward = dict(reward[0])
-    balance = get_points_balance(member_id)
-    pending = sum(r['cost'] for r in get_redemptions(member_id, 'pending'))
-    if balance - pending < reward.get('cost', 0):
+    if reward.get('pooled'):
+        return 'pooled'
+    if get_spendable_points(member_id) < reward.get('cost', 0):
         return 'insufficient'
     redemption = {
         'id': _uuid.uuid4().hex, 'reward_id': reward_id,
@@ -1336,6 +1359,146 @@ def decide_redemption(redemption_id: str, decider_member_id: str, approve: bool)
                 'by_member_id': decider_member_id, 'ts': time.time(),
             })
     return red
+
+# --- Pooled rewards (family goals) ---
+# A pooled reward is funded by pledges from several children ("Family Movie
+# Night, 200 pts"). A pledge is a HOLD, exactly like a pending redemption:
+# it reduces spendable points but writes nothing to the ledger until a
+# parent grants the pool — so withdrawing a pledge or canceling the whole
+# pool needs no refund machinery. The pool can never exceed the reward's
+# cost (contributions clamp to what's remaining), so a grant deducts each
+# child exactly what they pledged.
+
+def get_pool_contributions(reward_id: str = None, member_id: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(c) for c in pool_contributions_table.all()]
+    if reward_id:
+        rows = [c for c in rows if c.get('reward_id') == reward_id]
+    if member_id:
+        rows = [c for c in rows if c.get('member_id') == member_id]
+    rows.sort(key=lambda c: c.get('ts', 0))
+    return rows
+
+def get_pool_status(reward: dict) -> dict:
+    """Progress summary for one pooled reward: total pledged, the per-child
+    split (enriched with name/color for thermometer segments), and whether
+    it is funded / who is still short of min_share."""
+    contribs = get_pool_contributions(reward_id=reward['id'])
+    members = {m['id']: m for m in get_all_members()}
+    enriched = [{
+        'member_id': c['member_id'],
+        'member_name': (members.get(c['member_id']) or {}).get('name'),
+        'color_code': (members.get(c['member_id']) or {}).get('color_code'),
+        'amount': int(c.get('amount', 0)),
+    } for c in contribs]
+    pledged = sum(c['amount'] for c in enriched)
+    cost = int(reward.get('cost', 0))
+    min_share = int(reward.get('min_share', 0) or 0)
+    short = []
+    if min_share > 0:
+        by_member = {c['member_id']: c['amount'] for c in enriched}
+        short = [m.get('name') for m in members.values()
+                 if m.get('role') == 'child'
+                 and by_member.get(m['id'], 0) < min_share]
+    return {'pledged': pledged, 'cost': cost, 'remaining': max(0, cost - pledged),
+            'funded': pledged >= cost, 'contributions': enriched,
+            'min_share': min_share, 'short': short}
+
+def contribute_to_pool(reward_id: str, member_id: str, amount: int):
+    """Pledge points toward a pooled reward. Returns ('ok', pledged_amount)
+    with the possibly-clamped amount, or an error string: 'missing' |
+    'not_pooled' | 'invalid' | 'full' | 'insufficient'. Repeat pledges from
+    the same child add to their existing one."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        rows = rewards_table.search(Query().id == reward_id)
+        if not rows:
+            return 'missing', 0
+        reward = dict(rows[0])
+    if not reward.get('pooled'):
+        return 'not_pooled', 0
+    amount = int(amount)
+    if amount <= 0:
+        return 'invalid', 0
+    status = get_pool_status(reward)
+    if status['remaining'] <= 0:
+        return 'full', 0
+    amount = min(amount, status['remaining'])
+    if get_spendable_points(member_id) < amount:
+        return 'insufficient', 0
+    with db_lock:
+        q = (Query().reward_id == reward_id) & (Query().member_id == member_id)
+        existing = pool_contributions_table.search(q)
+        if existing:
+            pool_contributions_table.update(
+                {'amount': int(existing[0].get('amount', 0)) + amount,
+                 'ts': time.time()}, q)
+        else:
+            pool_contributions_table.insert({
+                'id': _uuid.uuid4().hex, 'reward_id': reward_id,
+                'member_id': member_id, 'amount': amount, 'ts': time.time(),
+            })
+    return 'ok', amount
+
+def withdraw_pool_pledge(reward_id: str, member_id: str) -> int:
+    """Releases a child's whole pledge on one pool. Returns the amount
+    released (0 = no pledge existed)."""
+    with db_lock:
+        q = (Query().reward_id == reward_id) & (Query().member_id == member_id)
+        rows = pool_contributions_table.search(q)
+        if not rows:
+            return 0
+        pool_contributions_table.remove(q)
+        return int(rows[0].get('amount', 0))
+
+def clear_pool(reward_id: str) -> int:
+    """Releases every pledge on a pool (parent cancel). Returns how many
+    pledges were released."""
+    with db_lock:
+        n = len(pool_contributions_table.search(Query().reward_id == reward_id))
+        pool_contributions_table.remove(Query().reward_id == reward_id)
+        return n
+
+def grant_pool(reward_id: str, decider_member_id: str, force: bool = False):
+    """Parent grants a funded pool: one negative 'redeem' ledger entry per
+    contributor for exactly their pledge, one approved redemption row
+    (pooled=True, member_id None) for history/digest, pledges cleared.
+    Returns (redemption_row, None) or (None, 'missing'|'unfunded'|'short')."""
+    import time
+    import uuid as _uuid
+    with db_lock:
+        rows = rewards_table.search(Query().id == reward_id)
+        if not rows or not dict(rows[0]).get('pooled'):
+            return None, 'missing'
+        reward = dict(rows[0])
+    status = get_pool_status(reward)
+    if not status['funded']:
+        return None, 'unfunded'
+    if status['short'] and not force:
+        return None, 'short'
+    now = time.time()
+    with db_lock:
+        for c in status['contributions']:
+            if c['amount'] <= 0:
+                continue
+            points_ledger_table.insert({
+                'id': _uuid.uuid4().hex, 'member_id': c['member_id'],
+                'delta': -int(c['amount']), 'reason': 'redeem',
+                'chore_id': None, 'chore_title': reward.get('title'),
+                'by_member_id': decider_member_id, 'ts': now,
+            })
+        redemption = {
+            'id': _uuid.uuid4().hex, 'reward_id': reward_id,
+            'reward_title': reward.get('title'), 'cost': status['pledged'],
+            'member_id': None, 'state': 'approved', 'pooled': True,
+            'contributions': [{'member_id': c['member_id'], 'amount': c['amount']}
+                              for c in status['contributions']],
+            'requested_at': now, 'decided_by': decider_member_id, 'decided_at': now,
+        }
+        redemptions_table.insert(redemption)
+        pool_contributions_table.remove(Query().reward_id == reward_id)
+    return redemption, None
 
 # --- Family messaging (chat_channels / chat_messages / channel_reads) ---
 

@@ -350,6 +350,20 @@ class GetPointBalancesTool(BaseModel):
     """
     pass
 
+class GetFamilyGoalsTool(BaseModel):
+    """
+    Lists the pooled 'family goal' rewards (like Family Movie Night) with how many points each child has pledged and how much is left to fund.
+    """
+    pass
+
+class ContributeToFamilyGoalTool(BaseModel):
+    """
+    Pledges some of a child's points toward a pooled family-goal reward. Pledged points are held, not spent — a parent grants the goal once it's fully funded. Ask which child is pledging if unknown.
+    """
+    reward_title: str = Field(..., description="The family goal's name (fuzzy matched).")
+    amount: int = Field(..., description="How many points to pledge.")
+    member_name: str = Field(..., description="Which child is pledging.")
+
 class AdjustPointsTool(BaseModel):
     """
     Adds, subtracts, or sets a child's chore points (a parent-level manual adjustment recorded in the points history). Use delta for relative changes ('give Bob 20 points' -> delta 20, 'take away 5' -> delta -5) or set_to for an absolute balance ('set Bob to 100'). Provide exactly one of delta / set_to.
@@ -437,6 +451,8 @@ TOOL_SCHEMAS = {
     "delete_trip_flight": DeleteTripFlightTool.model_json_schema(),
     "get_point_balances": GetPointBalancesTool.model_json_schema(),
     "adjust_points": AdjustPointsTool.model_json_schema(),
+    "get_family_goals": GetFamilyGoalsTool.model_json_schema(),
+    "contribute_to_family_goal": ContributeToFamilyGoalTool.model_json_schema(),
     "reopen_chore": ReopenChoreTool.model_json_schema(),
     "send_family_message": SendFamilyMessageTool.model_json_schema(),
     "send_direct_message": SendDirectMessageTool.model_json_schema(),
@@ -1435,6 +1451,16 @@ def handle_adjust_points(args: dict) -> dict:
                          delta=args.get("delta"), set_to=args.get("set_to"),
                          note=args.get("note", ""))
 
+def handle_get_family_goals(args: dict) -> dict:
+    from services.agent_tools_v2 import get_family_goals
+    return get_family_goals()
+
+def handle_contribute_to_family_goal(args: dict) -> dict:
+    from services.agent_tools_v2 import contribute_to_family_goal
+    return contribute_to_family_goal(args.get("reward_title", ""),
+                                     args.get("amount"),
+                                     member_name=args.get("member_name"))
+
 def handle_reopen_chore(args: dict) -> dict:
     from services.agent_tools_v2 import reopen_chore
     return reopen_chore(args.get("chore_title", ""))
@@ -1503,6 +1529,8 @@ TOOL_HANDLERS = {
     "delete_trip_flight": handle_delete_trip_flight,
     "get_point_balances": handle_get_point_balances,
     "adjust_points": handle_adjust_points,
+    "get_family_goals": handle_get_family_goals,
+    "contribute_to_family_goal": handle_contribute_to_family_goal,
     "reopen_chore": handle_reopen_chore,
     "send_family_message": handle_send_family_message,
     "send_direct_message": handle_send_direct_message,

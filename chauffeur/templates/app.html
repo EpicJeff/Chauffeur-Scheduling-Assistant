@@ -1461,7 +1461,8 @@
             const role = currentMemberRole();
             let n = 0;
             if (role === 'parent') {
-                n = choresData.filter(c => c.state === 'done').length + redemptionsData.length;
+                n = choresData.filter(c => c.state === 'done').length + redemptionsData.length
+                    + rewardsData.filter(rw => rw.pooled && rw.pool && rw.pool.funded).length;
             } else {
                 n = choresData.filter(c => c.state === 'open' && choreEligibleForMe(c)).length;
             }
@@ -1599,14 +1600,24 @@
                 }
             }
 
+            // Family goals (pooled rewards): kids pledge, parents grant.
+            const pooledGoals = rewardsData.filter(rw => rw.pooled && rw.pool);
+            const plainRewards = rewardsData.filter(rw => !rw.pooled);
+            if (pooledGoals.length) {
+                parts.push('<div class="text-xs font-black uppercase tracking-widest text-emerald-400 pt-2">Family Goals</div>');
+                pooledGoals.forEach(rw => parts.push(poolGoalCard(rw, role)));
+            }
+
             // Rewards store (children see redeem buttons; pending shown)
-            if (rewardsData.length && role === 'child') {
+            if (plainRewards.length && role === 'child') {
                 const myBalance = ((balances || []).find(b => b.member_id === selectedMemberId) || {}).balance || 0;
                 const myPendingCost = redemptionsData.filter(r => r.member_id === selectedMemberId)
                     .reduce((s, r) => s + r.cost, 0);
-                const spendable = myBalance - myPendingCost;
+                const myPledged = pooledGoals.reduce((s, rw) => s +
+                    (rw.pool.contributions.find(c => c.member_id === selectedMemberId) || {amount: 0}).amount, 0);
+                const spendable = myBalance - myPendingCost - myPledged;
                 parts.push('<div class="text-xs font-black uppercase tracking-widest text-indigo-400 pt-2">Rewards</div>');
-                parts.push(`<div class="grid grid-cols-2 gap-2">${rewardsData.map(rw => {
+                parts.push(`<div class="grid grid-cols-2 gap-2">${plainRewards.map(rw => {
                     const pending = redemptionsData.some(r => r.member_id === selectedMemberId && r.reward_id === rw.id);
                     const afford = spendable >= rw.cost;
                     const btnHtml = pending
@@ -1674,6 +1685,124 @@
         function rejectChore(id) {
             const reason = prompt('What needs fixing?') || '';
             _chorePost(`${id}/reject`, { reason: reason }, { 'X-Member-Token': memberToken() });
+        }
+
+        // --- Family goals (pooled rewards) ---
+        // The thermometer is segmented per contributor by their member color,
+        // so everyone can see who chipped in what — the visibility IS the
+        // fairness mechanism (plus the optional min_share gate server-side).
+        function poolBarHtml(pool) {
+            const segs = pool.contributions.filter(c => c.amount > 0).map(c => {
+                const pct = pool.cost ? Math.min(100, c.amount / pool.cost * 100) : 0;
+                return `<div class="h-full" style="width:${pct}%;background-color:${c.color_code || '#3b82f6'}"></div>`;
+            }).join('');
+            return `<div class="h-3 w-full bg-gray-800 rounded-full overflow-hidden flex">${segs}</div>`;
+        }
+
+        function poolGoalCard(rw, role) {
+            const pool = rw.pool;
+            const chips = pool.contributions.filter(c => c.amount > 0).map(c =>
+                `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-gray-300">
+                    <span class="w-2 h-2 rounded-full" style="background-color:${c.color_code || '#3b82f6'}"></span>
+                    ${mfEscape(c.member_name || '?')} ${c.amount}</span>`).join('');
+            const caption = pool.funded
+                ? '<span class="text-emerald-300 font-black">Fully funded! 🎉</span>'
+                : `<span class="text-gray-400">${pool.remaining} ⭐ to go</span>`;
+            let actions = '';
+            if (role === 'child') {
+                const mine = (pool.contributions.find(c => c.member_id === selectedMemberId) || {amount: 0}).amount;
+                const mineHtml = mine
+                    ? `<span class="text-[11px] font-bold text-emerald-300">My pledge: ${mine} ⭐</span>
+                       <button onclick="withdrawPledge('${rw.id}')" class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>`
+                    : '';
+                const chipIn = pool.funded ? '' :
+                    `<input id="pool-amt-${rw.id}" type="number" min="1" max="${pool.remaining}" placeholder="pts"
+                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white">
+                     <button onclick="contributeToPool('${rw.id}')"
+                        class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white active:bg-emerald-700">Chip in</button>`;
+                actions = `<div class="flex items-center gap-2 flex-wrap">${mineHtml}${chipIn}</div>`;
+            } else if (role === 'parent') {
+                const grantLabel = poolForceIds.has(rw.id) ? 'Grant anyway ⚠️' : '✓ Grant';
+                const grant = pool.funded || poolForceIds.has(rw.id)
+                    ? `<button onclick="decidePool('${rw.id}', true)" class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white active:bg-green-700">${grantLabel}</button>`
+                    : '';
+                const release = pool.pledged > 0
+                    ? `<button onclick="decidePool('${rw.id}', false)" class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-red-600/80 text-white active:bg-red-700">✗ Release</button>`
+                    : '';
+                actions = (grant || release) ? `<div class="flex items-center gap-2">${grant}${release}</div>` : '';
+            }
+            return `<div class="bg-gray-900 border ${pool.funded ? 'border-emerald-600/60' : 'border-gray-800'} rounded-xl p-4 flex flex-col gap-2">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="text-white font-bold text-[15px] leading-tight">🎯 ${mfEscape(rw.title)}</div>
+                    <span class="text-xs font-black text-emerald-300 shrink-0">${pool.pledged}/${pool.cost} ⭐</span>
+                </div>
+                ${rw.description ? `<div class="text-sm text-gray-400">${mfEscape(rw.description)}</div>` : ''}
+                ${poolBarHtml(pool)}
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="flex items-center gap-2 flex-wrap">${chips || '<span class="text-[11px] text-gray-600">No pledges yet</span>'}</div>
+                    ${caption}
+                </div>
+                ${pool.min_share ? `<div class="text-[11px] text-gray-500">Everyone chips in at least ${pool.min_share} ⭐</div>` : ''}
+                ${actions}
+            </div>`;
+        }
+
+        const poolForceIds = new Set();
+
+        async function contributeToPool(id) {
+            const inp = document.getElementById(`pool-amt-${id}`);
+            const amount = parseInt(inp && inp.value, 10);
+            if (!amount || amount <= 0) { showGlobalAlert('Enter how many points to chip in'); return; }
+            const res = await fetch(`${apiBase}api/rewards/${id}/contribute`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ member_id: selectedMemberId, amount: amount })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Could not chip in');
+            } else {
+                const data = await res.json().catch(() => ({}));
+                showGlobalAlert(data.pool && data.pool.funded
+                    ? 'Chipped in — goal fully funded! 🎉'
+                    : 'Chipped in! 💫');
+            }
+            fetchChores();
+        }
+
+        async function withdrawPledge(id) {
+            const res = await fetch(`${apiBase}api/rewards/${id}/withdraw`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ member_id: selectedMemberId })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showGlobalAlert(err.detail || 'Could not withdraw');
+            }
+            fetchChores();
+        }
+
+        async function decidePool(id, approve) {
+            const res = await fetch(`${apiBase}api/rewards/${id}/pool/decide`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Member-Token': memberToken() },
+                body: JSON.stringify({ approve: approve, force: poolForceIds.has(id) })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                if (res.status === 409 && approve && (err.detail || '').includes('minimum share')) {
+                    // Surface who's short, then re-render with a force option.
+                    poolForceIds.add(id);
+                    showGlobalAlert(`${err.detail}. Tap "Grant anyway" to override.`);
+                } else {
+                    showGlobalAlert(err.detail || 'Could not decide');
+                }
+            } else {
+                poolForceIds.delete(id);
+                if (approve) showGlobalAlert('Granted! 🎉');
+            }
+            fetchChores();
         }
 
         async function redeemReward(id) {

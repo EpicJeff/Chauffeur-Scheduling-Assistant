@@ -45,6 +45,7 @@ INDEX_SPEC = {
     "routine_checks": [["member_id", "date_str"], ["routine_id"]],
     "rewards": [["id"]],
     "redemptions": [["id"], ["member_id"], ["state"]],
+    "pool_contributions": [["reward_id"], ["member_id"]],
     "agent_action_proposals": [["id"], ["status"]],
     "prep_status": [["event_id"]],
 }

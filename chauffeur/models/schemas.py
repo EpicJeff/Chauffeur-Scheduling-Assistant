@@ -180,19 +180,40 @@ class Reward(BaseModel):
     title: str
     description: Optional[str] = ""
     cost: int = 50
+    # Family goal: children pool pledges toward one shared reward (movie
+    # night, eating out). Pledges are holds — see PoolContribution.
+    pooled: bool = False
+    # Pooled only: minimum pledge per child before a parent can grant
+    # without forcing (0 = no minimum). Keeps one kid from riding free.
+    min_share: int = 0
     created_at: float = Field(default_factory=time.time)
 
 class Redemption(BaseModel):
     # Kid requests, parent approves (ledger deduction) or denies.
+    # Pooled grants write one approved row with member_id=None, pooled=True
+    # and the per-child split in contributions.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     reward_id: str
     reward_title: str
     cost: int
-    member_id: str
+    member_id: Optional[str] = None
     state: str = 'pending'  # pending | approved | denied
+    pooled: bool = False
+    contributions: List[dict] = Field(default_factory=list)  # [{member_id, amount}]
     requested_at: float = Field(default_factory=time.time)
     decided_by: Optional[str] = None
     decided_at: Optional[float] = None
+
+class PoolContribution(BaseModel):
+    # A pledge toward a pooled reward. Holds points exactly like a pending
+    # redemption (spendable = balance - pending - pledges); nothing touches
+    # the ledger until a parent grants the pool, so withdrawing a pledge or
+    # canceling the pool needs no refund machinery.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    reward_id: str
+    member_id: str
+    amount: int
+    ts: float = Field(default_factory=time.time)
 
 class PointsEntry(BaseModel):
     # Append-only ledger: balances are sums, history is the table.

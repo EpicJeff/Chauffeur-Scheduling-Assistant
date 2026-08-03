@@ -174,7 +174,9 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
     granted = [r for r in storage.get_redemptions()
                if r.get('state') == 'approved' and (r.get('decided_at') or 0) >= start_ts]
     if granted:
-        lines = [f"• {name_of(r['member_id'])} — {r.get('reward_title')}" for r in granted[:4]]
+        # Pooled grants have no single member — the whole family earned it.
+        lines = [f"• {'Family goal' if r.get('pooled') else name_of(r['member_id'])}"
+                 f" — {r.get('reward_title')}" for r in granted[:4]]
         if len(granted) > 4:
             lines.append(f"• …and {len(granted) - 4} more")
         sections.append((f"🎁 Rewards — {len(granted)} granted", lines))
