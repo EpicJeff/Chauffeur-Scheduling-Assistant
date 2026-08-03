@@ -124,13 +124,18 @@ settings, not hardcoded.
   parents); kid-persona prompt (propose + reassure, one question max,
   never lecture). The tool was never admin-gated — approval was always
   the gate; visibility was the real gap. Details in system_capabilities.md.
-- **K4 — school model + homework/deadline domain. NEXT** (its own arc).
-  Per-kid school profile + kid tasks with due dates; intake via
-  per-student ICS feeds (rides existing ics_sync) → Google Classroom API;
-  My Day "Due soon" + digest lines; milestone-breakdown proposals.
-  Build generalized regardless of the local district (decision
-  2026-08-05). Unblocks the deferred school-day-end pickup push (K2) and
-  K5's morning launch.
+- **K4a — kid task domain. SHIPPED v2.34.0 (2026-08-05).** KidTask storage
+  + REST, My Day "📚 Due Soon" checkbox card, digest/kiosk task lines,
+  agent tools in both stacks with kid-owns-their-list scoping. Full K4
+  design: `docs/k4_school_design.md` (scope guards: due dates never
+  grades; no points/streaks; gentle overdue, never pushed).
+- **K4b — intake fills the domain. NEXT.** Task-mode ICS feeds
+  (`ics_feeds.target_kind: tasks` + member_id — assignment feeds must NOT
+  become calendar events / solver load), email-intake task proposals
+  approvable into a kid's list, Google Classroom API where no feed
+  exists (due dates only, explicitly no grades/submission state).
+- **K4c — school hours on FamilyMember + the deferred K2 school-day-end
+  pickup push + K5 morning launch line.**
 - **Deferred from K2** (needs K4's school-hours model): the scheduled
   end-of-school-day "you're getting picked up by X at 3:15" push.
 

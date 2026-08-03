@@ -633,6 +633,41 @@
             </div>`;
         }
 
+        function renderDueSoonSection(tasks) {
+            if (!tasks || !tasks.length) return '';
+            const rows = tasks.map(t => `
+                <label class="flex items-center gap-3 py-2.5 px-1 cursor-pointer active:opacity-70" id="task-row-${t.id}">
+                    <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)"
+                        class="w-6 h-6 rounded-lg accent-indigo-500 shrink-0">
+                    <span class="shrink-0">${t.emoji}</span>
+                    <span class="flex-1 text-[15px] font-bold text-white task-title">${mfEscape(t.title)}</span>
+                    <span class="text-xs font-bold ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
+                </label>`).join('');
+            return `
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-1">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-black uppercase tracking-widest text-gray-500">📚 Due Soon</span>
+                    <span class="text-xs text-gray-500 font-bold">${tasks.length}</span>
+                </div>
+                <div class="divide-y divide-gray-800">${rows}</div>
+            </div>`;
+        }
+
+        async function completeKidTask(taskId, done) {
+            try {
+                const res = await fetch(`${apiBase}api/kid-tasks/${taskId}/complete`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, done: done })
+                });
+                if (!res.ok) throw new Error();
+                // Strike through in place — the row disappears on the next
+                // render, which feels less abrupt than vanishing on tap.
+                const row = document.getElementById(`task-row-${taskId}`);
+                if (row) row.querySelector('.task-title').classList.toggle('line-through', done);
+                if (done) showGlobalAlert('Nice — checked off! ✅');
+            } catch (e) { showGlobalAlert('Could not update'); }
+        }
+
         async function toggleRoutine(routineId, checked) {
             try {
                 const res = await fetch(`${apiBase}api/routines/${routineId}/check`, {
@@ -669,10 +704,11 @@
                 const routineData = routineRes.ok ? await routineRes.json() : null;
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
                 const routineHtml = renderRoutineSection(routineData, requestedOffset);
-                wrap.innerHTML = routineHtml + (data.rides.length
+                const dueSoonHtml = renderDueSoonSection(data.due_soon);
+                wrap.innerHTML = routineHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
-                      (routineHtml ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
+                      ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
                 if (mydaySlideDir !== 0) {
                     // Slide the new day in from the direction of travel.
                     wrap.style.transition = 'none';

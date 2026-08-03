@@ -159,7 +159,13 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "question; if they don't know, propose with what you have and note the gap in the "
                     "summary. Be warm, brief, and reassuring. Never lecture, never guilt-trip about "
                     "chores, points, or streaks. You never change the schedule directly for a child — "
-                    "always the proposal card.\n")
+                    "always the proposal card.\n"
+                    "SCHOOL LIST: they manage their OWN school/deadline list directly with "
+                    "add_kid_task / complete_kid_task / get_kid_tasks (homework, tests, projects, "
+                    "things to bring) — no approval needed, it's their list. For a big project weeks "
+                    "away, OFFER to break it into a few smaller tasks with staggered due dates, and "
+                    "add them only if they say yes. Never nag about overdue tasks — mention them only "
+                    "when asked.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "
@@ -273,7 +279,8 @@ sending or claiming, and never pass from_member/member_name for them.
                              "send_family_message", "send_direct_message",
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
-                             "post_weekly_digest", "get_drive_digest"}
+                             "post_weekly_digest", "get_drive_digest",
+                             "get_kid_tasks", "add_kid_task", "complete_kid_task"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -514,6 +521,30 @@ sending or claiming, and never pass from_member/member_name for them.
                     else:
                         res = complete_route(driver_id, args.get("event_name", ""),
                                              args.get("action", "completed"), args.get("target_date", "today"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("get_kid_tasks", "add_kid_task", "complete_kid_task"):
+                    from services import agent_tools_v2 as _atv2
+                    # Actor: family chat supplies acting_member; PWA driver
+                    # chat resolves the logged-in driver's member (a parent
+                    # managing a kid's list from their phone); None
+                    # (dashboard/HA voice) is the trusted open-admin context.
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "get_kid_tasks":
+                        res = _atv2.get_kid_tasks(args.get("member_name", "") or "",
+                                                  acting_member=actor)
+                    elif func_name == "add_kid_task":
+                        res = _atv2.add_kid_task(args.get("title", "") or "",
+                                                 args.get("due_date", "") or "",
+                                                 member_name=args.get("member_name", "") or "",
+                                                 kind=args.get("kind", "") or "other",
+                                                 acting_member=actor)
+                    else:
+                        res = _atv2.complete_kid_task(args.get("task_title", "") or "",
+                                                      member_name=args.get("member_name", "") or "",
+                                                      acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "propose_family_action":
                     # Post a confirmation card instead of mutating directly. The

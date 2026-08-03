@@ -838,6 +838,137 @@ def get_drive_digest(target_date: str = "today", member_name: str = "",
     return {"status": "success", "message": "\n".join(parts)}
 
 
+# --- Kid tasks (school/deadline list, kid-support arc K4a) ---
+# Kids manage their OWN list directly (their list = their agency; no
+# approval friction); parents manage any kid's; helpers refused.
+
+_TASK_KINDS = ('homework', 'test', 'project', 'bring', 'other')
+
+
+def _resolve_task_child(member_name: str, acting_member: dict = None):
+    """(child_member, error_message). Kids act only on their own list."""
+    from services import storage
+    if acting_member and acting_member.get('role') == 'helper':
+        return None, "Helpers can't manage the kids' school lists."
+    if acting_member and acting_member.get('role') == 'child':
+        low = (member_name or '').strip().lower()
+        own = (acting_member.get('name') or '').lower()
+        if low and low != own and low not in own:
+            return None, (f"You can manage your own list — ask a parent to "
+                          f"change {member_name}'s.")
+        return acting_member, None
+    children = [m for m in storage.get_all_members()
+                if m.get('role') == 'child' and not m.get('system')]
+    if not children:
+        return None, "There are no child members set up yet."
+    low = (member_name or '').strip().lower()
+    if not low:
+        if len(children) == 1:
+            return children[0], None
+        return None, ("Whose list? The children are: "
+                      + ", ".join(c.get('name') or '?' for c in children))
+    hits = [c for c in children
+            if low == (c.get('name') or '').lower() or low in (c.get('name') or '').lower()]
+    if len(hits) == 1:
+        return hits[0], None
+    if not hits:
+        return None, f"I couldn't find a child named '{member_name}'."
+    return None, "Which one? " + ", ".join(c.get('name') or '?' for c in hits)
+
+
+def get_kid_tasks(member_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: a child's open school tasks (or every child's, for parents)."""
+    import datetime as _dt
+    from services import storage
+    if acting_member and acting_member.get('role') == 'helper':
+        return {"status": "error", "message": "Helpers can't view the kids' school lists."}
+    today = _dt.date.today()
+
+    def _lines(member):
+        import main as _m
+        return [_m._task_line(t, today) for t in storage.get_kid_tasks(member['id'])]
+
+    if acting_member and acting_member.get('role') == 'child':
+        lines = _lines(acting_member)
+        if not lines:
+            return {"status": "success", "message": "Your list is clear — nothing due! 🎉"}
+        return {"status": "success", "message": "Here's your list:\n" + "\n".join(lines)}
+
+    if member_name:
+        child, err = _resolve_task_child(member_name, acting_member)
+        if err:
+            return {"status": "error", "message": err}
+        lines = _lines(child)
+        name = child.get('name')
+        if not lines:
+            return {"status": "success", "message": f"{name}'s list is clear — nothing due! 🎉"}
+        return {"status": "success", "message": f"{name}'s list:\n" + "\n".join(lines)}
+
+    blocks = []
+    for c in storage.get_all_members():
+        if c.get('role') != 'child' or c.get('system'):
+            continue
+        lines = _lines(c)
+        if lines:
+            blocks.append(f"{c.get('name')}:\n" + "\n".join(lines))
+    if not blocks:
+        return {"status": "success", "message": "All the kids' lists are clear! 🎉"}
+    return {"status": "success", "message": "\n\n".join(blocks)}
+
+
+def add_kid_task(title: str, due_date: str, member_name: str = "",
+                 kind: str = "other", acting_member: dict = None) -> Dict[str, Any]:
+    """Add a task to a kid's school list. Direct action, never a proposal —
+    it's the kid's own list (or a parent managing it)."""
+    from services import storage
+    from models.schemas import KidTask
+    if not (title or '').strip():
+        return {"status": "error", "message": "What should the task say?"}
+    child, err = _resolve_task_child(member_name, acting_member)
+    if err:
+        return {"status": "error", "message": err}
+    day = _parse_fuzzy_date(due_date or 'tomorrow')
+    kind = kind if kind in _TASK_KINDS else 'other'
+    task = KidTask(member_id=child['id'], title=title.strip(), due_date=day.isoformat(),
+                   kind=kind, source='agent',
+                   created_by_member_id=(acting_member or {}).get('id')).model_dump()
+    storage.add_kid_task(task)
+    import main as _m
+    emoji = _m._TASK_EMOJI.get(kind, '📌')
+    whose = "your" if acting_member and acting_member.get('role') == 'child' \
+        else f"{child.get('name')}'s"
+    return {"status": "success",
+            "message": f"Added to {whose} list: {emoji} {title.strip()} — "
+                       f"due {day.strftime('%A, %b')} {day.day}."}
+
+
+def complete_kid_task(task_title: str, member_name: str = "",
+                      acting_member: dict = None) -> Dict[str, Any]:
+    """Check a task off a kid's list (fuzzy title match on open tasks)."""
+    from services import storage
+    child, err = _resolve_task_child(member_name, acting_member)
+    if err:
+        return {"status": "error", "message": err}
+    tasks = storage.get_kid_tasks(child['id'])
+    if not tasks:
+        return {"status": "success", "message": "The list is already clear! 🎉"}
+    low = (task_title or '').strip().lower()
+    hits = [t for t in tasks if low == (t.get('title') or '').lower()] \
+        or [t for t in tasks if low and low in (t.get('title') or '').lower()]
+    if not hits:
+        return {"status": "error",
+                "message": f"I couldn't find '{task_title}' on the list. Open: "
+                           + ", ".join(t.get('title') or '?' for t in tasks[:6])}
+    if len(hits) > 1:
+        return {"status": "error",
+                "message": "Which one? " + ", ".join(t.get('title') or '?' for t in hits)}
+    storage.complete_kid_task(hits[0]['id'])
+    import main as _m
+    emoji = _m._TASK_EMOJI.get(hits[0].get('kind'), '📌')
+    return {"status": "success",
+            "message": f"Checked off {emoji} '{hits[0].get('title')}' — nice work! ✅"}
+
+
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
     """Flight management for the v2 router. Thin wrapper over the validated v1
     handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
@@ -1134,6 +1265,43 @@ def get_available_tools() -> List[Dict]:
                     "note": {"type": "string", "description": "Short reason shown in the points history, e.g. 'Helped carry groceries'."}
                 },
                 "required": ["member_name"]
+            }
+        },
+        {
+            "name": "get_kid_tasks",
+            "description": "Reads a child's school/deadline list — homework, tests, projects, things to bring ('what's due?', 'what's on Ben's list?', 'do I have homework?'). Read-only; children see their own list, parents can name any child or omit member_name for all kids.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {"type": "string", "description": "Which child's list; omit for the speaker's own (children) or all kids (parents)."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "add_kid_task",
+            "description": "Adds a task to a child's school/deadline list ('I have a math worksheet due Friday', 'add a spelling test Thursday for Ben', 'remind me to bring my library book Tuesday'). A DIRECT action — a kid managing their own list needs no approval. NOT for calendar events or rides (use propose_family_action for those).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "What's due, e.g. 'Math worksheet'."},
+                    "due_date": {"type": "string", "description": "When it's due: 'tomorrow', a weekday name, or YYYY-MM-DD."},
+                    "member_name": {"type": "string", "description": "Which child (parents only; children always get their own list)."},
+                    "kind": {"type": "string", "enum": ["homework", "test", "project", "bring", "other"], "description": "Task type — drives the emoji."}
+                },
+                "required": ["title", "due_date"]
+            }
+        },
+        {
+            "name": "complete_kid_task",
+            "description": "Checks a task off a child's school list ('I finished my math worksheet', 'mark Ben's project done'). Fuzzy title match on open tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_title": {"type": "string", "description": "The task to check off."},
+                    "member_name": {"type": "string", "description": "Which child (parents only)."}
+                },
+                "required": ["task_title"]
             }
         },
         {

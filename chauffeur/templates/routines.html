@@ -150,6 +150,9 @@
                                         <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
                                     </template>
                                     <div x-show="!k.lines.length" class="text-sm text-gray-400">No rides — free day! 🎉</div>
+                                    <template x-for="(tline, ti) in (k.tasks || [])" :key="'kdt-' + k.id + '-' + ti">
+                                        <div class="text-sm text-indigo-200 mb-1.5" x-text="tline"></div>
+                                    </template>
                                     <div x-show="k.routine_count" class="text-xs text-gray-500 mt-2"
                                         x-text="'📋 ' + k.routine_count + ' routine thing' + (k.routine_count !== 1 ? 's' : '')"></div>
                                 </div>

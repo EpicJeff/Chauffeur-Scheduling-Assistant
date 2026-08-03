@@ -420,6 +420,28 @@ class PostWeeklyDigestTool(BaseModel):
     """
     pass
 
+class GetKidTasksTool(BaseModel):
+    """
+    Reads a child's school/deadline list — homework, tests, things to bring. Read-only; omit member_name for all kids.
+    """
+    member_name: Optional[str] = Field(None, description="Which child's list; omit for all kids.")
+
+class AddKidTaskTool(BaseModel):
+    """
+    Adds a task to a child's school/deadline list (homework, test, project, thing to bring). Direct action, not a calendar event.
+    """
+    title: str = Field(..., description="What's due, e.g. 'Math worksheet'.")
+    due_date: str = Field(..., description="When it's due: 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    member_name: Optional[str] = Field(None, description="Which child.")
+    kind: Optional[str] = Field(None, description="homework | test | project | bring | other")
+
+class CompleteKidTaskTool(BaseModel):
+    """
+    Checks a task off a child's school list by fuzzy title match.
+    """
+    task_title: str = Field(..., description="The task to check off.")
+    member_name: Optional[str] = Field(None, description="Which child.")
+
 class GetDriveDigestTool(BaseModel):
     """
     Shows the drive digest for one day as a read-only answer (drives per driver sorted by time, prep-kit items, weather) — 'today's digest', 'the tomorrow digest', 'Friday's drives'. Never posts to any channel.
@@ -469,6 +491,9 @@ TOOL_SCHEMAS = {
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
     "get_drive_digest": GetDriveDigestTool.model_json_schema(),
+    "get_kid_tasks": GetKidTasksTool.model_json_schema(),
+    "add_kid_task": AddKidTaskTool.model_json_schema(),
+    "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1497,6 +1522,21 @@ def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
                        member_name=args.get("member_name"))
 
+def handle_get_kid_tasks(args: dict) -> dict:
+    from services.agent_tools_v2 import get_kid_tasks
+    return get_kid_tasks(args.get("member_name") or "")
+
+def handle_add_kid_task(args: dict) -> dict:
+    from services.agent_tools_v2 import add_kid_task
+    return add_kid_task(args.get("title") or "", args.get("due_date") or "",
+                        member_name=args.get("member_name") or "",
+                        kind=args.get("kind") or "other")
+
+def handle_complete_kid_task(args: dict) -> dict:
+    from services.agent_tools_v2 import complete_kid_task
+    return complete_kid_task(args.get("task_title") or "",
+                             member_name=args.get("member_name") or "")
+
 def handle_get_drive_digest(args: dict) -> dict:
     from services.agent_tools_v2 import get_drive_digest
     return get_drive_digest(target_date=args.get("target_date") or "today",
@@ -1553,6 +1593,9 @@ TOOL_HANDLERS = {
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,
     "get_drive_digest": handle_get_drive_digest,
+    "get_kid_tasks": handle_get_kid_tasks,
+    "add_kid_task": handle_add_kid_task,
+    "complete_kid_task": handle_complete_kid_task,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

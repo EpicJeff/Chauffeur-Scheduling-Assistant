@@ -4105,12 +4105,119 @@ def member_day(member_id: str, date: Optional[str] = None):
             ride['status'] = 'completed'
         rides.append(ride)
     rides.sort(key=lambda r: r.get('start') or '')
+
+    # K4a: the kid's school/deadline list — open tasks due within 7 days of
+    # the viewed date, plus overdue (worded gently, shown in place, never
+    # pushed). Empty for members with no tasks (adults).
+    ref = _dt.date.fromisoformat(date_str)
+    due_soon = []
+    for t in storage.get_kid_tasks(member_id):
+        try:
+            due = _dt.date.fromisoformat(t.get('due_date') or '')
+        except ValueError:
+            continue
+        if due > ref + _dt.timedelta(days=7):
+            continue
+        due_soon.append({'id': t['id'], 'title': t.get('title'),
+                         'kind': t.get('kind') or 'other',
+                         'emoji': _TASK_EMOJI.get(t.get('kind'), '📌'),
+                         'due_date': t.get('due_date'), 'overdue': due < ref,
+                         'label': _task_due_label(due, ref)})
+
     return {
         'member_id': member_id,
         'name': member.get('name'),
         'date': date_str,
         'rides': rides,
+        'due_soon': due_soon,
     }
+
+# --- Kid tasks (school/deadline list, kid-support arc K4a) ---
+
+_TASK_EMOJI = {'homework': '📚', 'test': '📝', 'project': '📐', 'bring': '🎒', 'other': '📌'}
+
+def _task_due_label(due, ref):
+    """Gentle due wording relative to ref: 'due today/tomorrow', a weekday
+    for later, 'still open (was due Fri)' for overdue — never shaming."""
+    from services import family_digest
+    if due < ref:
+        return f"still open (was due {due.strftime('%a')})"
+    lbl = family_digest.day_label(due)
+    return "due " + (lbl.lower() if lbl in ("Today", "Tomorrow") else due.strftime('%A'))
+
+def _task_line(task, ref):
+    import datetime as _dt
+    emoji = _TASK_EMOJI.get(task.get('kind'), '📌')
+    title = task.get('title') or 'Task'
+    try:
+        due = _dt.date.fromisoformat(task.get('due_date') or '')
+    except ValueError:
+        return f"{emoji} {title}"
+    return f"{emoji} {title} — {_task_due_label(due, ref)}"
+
+class KidTaskRequest(BaseModel):
+    member_id: str
+    title: str
+    due_date: str            # YYYY-MM-DD
+    kind: str = 'other'      # homework | test | project | bring | other
+    notes: Optional[str] = ""
+
+class KidTaskCompleteRequest(BaseModel):
+    member_id: Optional[str] = None   # per-action identity (PWA pattern)
+    done: bool = True
+
+def _validate_kid_task(req: KidTaskRequest):
+    import datetime as _dt
+    if not (req.title or '').strip():
+        raise HTTPException(status_code=400, detail="Task needs a title")
+    try:
+        _dt.date.fromisoformat(req.due_date)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="due_date must be YYYY-MM-DD")
+    member = storage.get_member(req.member_id)
+    if not member or member.get('role') != 'child':
+        raise HTTPException(status_code=400, detail="Tasks belong to a child member")
+
+@app.get("/api/kid-tasks")
+def list_kid_tasks(member_id: Optional[str] = None, include_done: bool = False):
+    return storage.get_kid_tasks(member_id, include_done)
+
+@app.post("/api/kid-tasks")
+def create_kid_task(req: KidTaskRequest):
+    from models.schemas import KidTask
+    _validate_kid_task(req)
+    task = KidTask(member_id=req.member_id, title=req.title.strip(),
+                   due_date=req.due_date,
+                   kind=req.kind if req.kind in _TASK_EMOJI else 'other',
+                   notes=req.notes or "").model_dump()
+    storage.add_kid_task(task)
+    return task
+
+@app.put("/api/kid-tasks/{task_id}")
+def edit_kid_task(task_id: str, req: KidTaskRequest):
+    _validate_kid_task(req)
+    if not storage.update_kid_task(task_id, {
+            'title': req.title.strip(), 'due_date': req.due_date,
+            'kind': req.kind if req.kind in _TASK_EMOJI else 'other',
+            'notes': req.notes or ""}):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return storage.get_kid_task(task_id)
+
+@app.delete("/api/kid-tasks/{task_id}")
+def remove_kid_task(task_id: str):
+    storage.delete_kid_task(task_id)
+    return {"status": "ok"}
+
+@app.post("/api/kid-tasks/{task_id}/complete")
+def complete_kid_task_api(task_id: str, req: KidTaskCompleteRequest):
+    task = storage.get_kid_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if req.member_id:
+        actor = storage.get_member(req.member_id)
+        if actor and actor.get('role') == 'child' and actor['id'] != task['member_id']:
+            raise HTTPException(status_code=403, detail="You can only check off your own tasks")
+    return storage.complete_kid_task(task_id, req.done)
 
 # --- Kid pickup-clarity pushes (kid-support arc K2) ---
 
@@ -4262,13 +4369,25 @@ def _build_kid_digests(target_date=None):
                 line += f" (bring: {', '.join(prep[:4])})"
             lines.append(line)
 
+        # K4a: school tasks due within 3 days of the digest day, plus
+        # overdue (gentle wording — see _task_due_label).
+        task_lines = []
+        for t in storage.get_kid_tasks(m['id']):
+            try:
+                due = _dt.date.fromisoformat(t.get('due_date') or '')
+            except ValueError:
+                continue
+            if due <= target + _dt.timedelta(days=2):
+                task_lines.append(_task_line(t, target))
+
         routine_items = storage.routines_for_day(m['id'], date_str)
-        if not lines and not routine_items:
+        if not lines and not routine_items and not task_lines:
             continue
         streak = storage.compute_streak(m['id'])
         kids[m['id']] = {
             'name': m.get('name'), 'color_code': m.get('color_code'),
             'avatar': m.get('avatar'), 'lines': lines, 'count': len(lines),
+            'tasks': task_lines,
             'routine_count': len(routine_items),
             'streak': (streak or {}).get('current') or 0,
         }
@@ -4287,6 +4406,7 @@ def _send_kid_digests():
         if weather:
             parts.append(weather)
         parts.extend(k['lines'] or ["No rides — free day! 🎉"])
+        parts.extend(k.get('tasks') or [])
         if k['routine_count']:
             r_line = (f"📋 {k['routine_count']} routine thing"
                       f"{'s' if k['routine_count'] != 1 else ''} tomorrow")

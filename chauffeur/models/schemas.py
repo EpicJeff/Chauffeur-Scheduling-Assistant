@@ -143,6 +143,23 @@ class Chore(BaseModel):
     reopens_on: Optional[str] = None  # ISO date; recurring verified reopen
     created_at: float = Field(default_factory=time.time)
 
+class KidTask(BaseModel):
+    # School/deadline task on a kid's own list (kid-support arc K4a).
+    # Due dates and events only — never grades. No points (school is not
+    # paid work) and no streaks (school pressure is what we're reducing).
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    member_id: str                     # the child this belongs to
+    title: str
+    due_date: str                      # YYYY-MM-DD
+    kind: str = 'other'                # homework | test | project | bring | other
+    notes: Optional[str] = ""
+    source: str = 'manual'             # manual | agent | intake | ics | classroom
+    source_ref: Optional[str] = None   # feed uid / message id for dedupe (K4b)
+    status: str = 'open'               # open | done
+    done_at: Optional[float] = None
+    created_at: float = Field(default_factory=time.time)
+    created_by_member_id: Optional[str] = None
+
 class RoutineItem(BaseModel):
     # Personal daily-routine template ("brush teeth", "homework"): per member,
     # optional time of day, day-of-week mask. No points — streaks instead.

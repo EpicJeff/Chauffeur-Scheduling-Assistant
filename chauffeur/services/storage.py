@@ -134,6 +134,7 @@ with db_lock:
     points_ledger_table = db.table('points_ledger')
     routines_table = db.table('routines')
     routine_checks_table = db.table('routine_checks')
+    kid_tasks_table = db.table('kid_tasks')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1136,6 +1137,51 @@ def get_routines(member_id: str = None) -> List[dict]:
         rows = routines_table.search(Query().member_id == member_id) if member_id \
             else routines_table.all()
         return [dict(r) for r in rows]
+
+# --- Kid tasks (school/deadline list, kid-support arc K4a) ---
+# Due dates only, never grades; no points, no streaks — see
+# docs/k4_school_design.md scope guards.
+
+def get_kid_tasks(member_id: str = None, include_done: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(t) for t in kid_tasks_table.all()]
+    if member_id:
+        rows = [t for t in rows if t.get('member_id') == member_id]
+    if not include_done:
+        rows = [t for t in rows if t.get('status') != 'done']
+    rows.sort(key=lambda t: (t.get('due_date') or '9999', t.get('title') or ''))
+    return rows
+
+def get_kid_task(task_id: str) -> Optional[dict]:
+    with db_lock:
+        res = kid_tasks_table.search(Query().id == task_id)
+        return dict(res[0]) if res else None
+
+def add_kid_task(data: dict) -> str:
+    with db_lock:
+        kid_tasks_table.insert(data)
+        return data['id']
+
+def update_kid_task(task_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(kid_tasks_table.update(data, Query().id == task_id))
+
+def delete_kid_task(task_id: str):
+    with db_lock:
+        kid_tasks_table.remove(Query().id == task_id)
+
+def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
+    import time as _time
+    with db_lock:
+        res = kid_tasks_table.search(Query().id == task_id)
+        if not res:
+            return None
+        kid_tasks_table.update({'status': 'done' if done else 'open',
+                                'done_at': _time.time() if done else None},
+                               Query().id == task_id)
+        out = dict(res[0])
+        out['status'] = 'done' if done else 'open'
+        return out
 
 def add_routine(data: dict) -> str:
     with db_lock:
