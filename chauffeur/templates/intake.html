@@ -85,8 +85,27 @@
                                     <p class="text-xs text-gray-500 mt-2 italic" x-show="p.notes" x-text="p.notes"></p>
                                     <p class="text-xs text-gray-600 mt-1 truncate"
                                         x-text="'✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
+                                    <!-- Edit-before-approve: fix the extraction instead of
+                                         ignore + manual re-entry. Cleared start time = all-day. -->
+                                    <div class="grid grid-cols-2 gap-2 mt-3 bg-gray-900/60 border border-gray-700 rounded-lg p-3" x-show="p._editing">
+                                        <input type="text" x-model="p._title" placeholder="Title"
+                                            class="col-span-2 bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <input type="date" x-model="p._date"
+                                            class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm">
+                                        <div class="flex items-center gap-1.5">
+                                            <input type="time" x-model="p._startTime"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                            <span class="text-gray-500 text-xs">–</span>
+                                            <input type="time" x-model="p._endTime"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                        </div>
+                                        <p class="col-span-2 text-xs text-gray-500">Clear the start time for an all-day item / a dated to-do.</p>
+                                    </div>
                                 </div>
                                 <div class="flex flex-col gap-2 shrink-0 md:w-72">
+                                    <button @click="p._editing = !p._editing"
+                                        class="text-xs font-bold text-gray-400 hover:text-white text-left transition-colors"
+                                        x-text="p._editing ? '▾ Hide edits' : '✎ Edit details'"></button>
                                     <select x-model="p._target"
                                         class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm w-full">
                                         <option value="" x-text="p.kind === 'task' ? 'Onto a list or calendar?' : 'Onto whose calendar?'"></option>
@@ -94,8 +113,19 @@
                                             <option :value="opt.id" x-text="opt.label"></option>
                                         </template>
                                     </select>
+                                    <!-- Errand target: the two fields an errand needs beyond the proposal -->
+                                    <div class="flex flex-col gap-2" x-show="p._target === 'errand'">
+                                        <input type="text" x-model="p._errandLocation" placeholder="Errand location (required)"
+                                            class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-full">
+                                        <div class="flex items-center gap-2">
+                                            <input type="number" min="5" step="5" x-model.number="p._errandMins"
+                                                class="bg-gray-900 border border-gray-600 rounded-lg p-2 text-white text-sm w-24">
+                                            <span class="text-xs text-gray-400">minutes</span>
+                                        </div>
+                                    </div>
                                     <div class="flex gap-2">
-                                        <button @click="approve(p)" :disabled="!p._target || busyId === p.id"
+                                        <button @click="approve(p)"
+                                            :disabled="!p._target || busyId === p.id || (p._target === 'errand' && !(p._errandLocation || '').trim())"
                                             class="flex-1 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white font-bold py-2.5 rounded-lg transition-colors"
                                             x-text="busyId === p.id ? '...' : '✓ Approve'"></button>
                                         <button @click="ignore(p)" :disabled="busyId === p.id"
@@ -228,11 +258,60 @@
                     try {
                         const res = await fetch(`${this.apiBase}api/proposals?status=proposed`);
                         const data = await res.json();
-                        // Preserve in-progress target selections across quiet refreshes.
-                        const prev = Object.fromEntries(this.proposals.map(p => [p.id, p._target]));
-                        this.proposals = (Array.isArray(data) ? data : []).map(p =>
-                            ({ ...p, _target: prev[p.id] !== undefined ? prev[p.id] : (p.calendar_id || '') }));
+                        // Preserve in-progress selections AND edits across quiet refreshes.
+                        const prev = Object.fromEntries(this.proposals.map(p => [p.id, p]));
+                        this.proposals = (Array.isArray(data) ? data : []).map(p => {
+                            const old = prev[p.id];
+                            if (old) return { ...p, _target: old._target, _editing: old._editing,
+                                _title: old._title, _date: old._date, _startTime: old._startTime,
+                                _endTime: old._endTime, _errandLocation: old._errandLocation,
+                                _errandMins: old._errandMins };
+                            return { ...p, ...this.initEditFields(p), _target: p.calendar_id || '' };
+                        });
                     } catch (e) { this.proposals = []; }
+                },
+                initEditFields(p) {
+                    let date = (p.start || '').slice(0, 10), startTime = '', endTime = '';
+                    if (!p.all_day) {
+                        try {
+                            const s = new Date(p.start), e = new Date(p.end);
+                            const hm = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+                            date = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+                            startTime = hm(s); endTime = hm(e);
+                        } catch (e) { /* keep date-only */ }
+                    }
+                    return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
+                             _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30 };
+                },
+                // The approve body always carries the card's current values —
+                // untouched cards round-trip the extracted ones unchanged.
+                approveBody(p) {
+                    const fmtD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    const body = { calendar_id: p._target };
+                    const title = (p._title || '').trim();
+                    if (title) body.title = title;
+                    const date = p._date || (p.start || '').slice(0, 10);
+                    const st = (p._startTime || '').trim();
+                    if (st) {
+                        const s = new Date(`${date}T${st}:00`);
+                        let e = (p._endTime || '').trim() ? new Date(`${date}T${p._endTime}:00`) : new Date(s.getTime() + 3600000);
+                        if (e <= s) e = new Date(s.getTime() + 3600000);
+                        const fmtDT = d => `${fmtD(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
+                        body.all_day = false;
+                        body.start = fmtDT(s);
+                        body.end = fmtDT(e);
+                    } else {
+                        body.all_day = true;
+                        body.start = date;
+                        const d = new Date(date + 'T00:00:00');
+                        d.setDate(d.getDate() + 1);
+                        body.end = fmtD(d);
+                    }
+                    if (p._target === 'errand') {
+                        body.location = (p._errandLocation || '').trim();
+                        body.duration_mins = parseInt(p._errandMins) || 30;
+                    }
+                    return body;
                 },
                 async loadLog() {
                     try {
@@ -270,9 +349,10 @@
                     } catch (e) { this.calendarTargets = []; this.taskTargets = []; }
                 },
                 targetsFor(p) {
+                    const errand = { id: 'errand', label: '🚗 Drive errand (auto-scheduled)' };
                     return p.kind === 'task'
-                        ? [...this.taskTargets, ...this.calendarTargets]
-                        : this.calendarTargets;
+                        ? [...this.taskTargets, ...this.calendarTargets, errand]
+                        : [...this.calendarTargets, errand];
                 },
                 whenLabel(p) {
                     try {
@@ -297,7 +377,7 @@
                         const res = await fetch(`${this.apiBase}api/proposals/${p.id}/approve`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ calendar_id: p._target })
+                            body: JSON.stringify(this.approveBody(p))
                         });
                         const data = await res.json();
                         if (!res.ok) showGlobalAlert(data.detail || 'Approve failed.');

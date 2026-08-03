@@ -835,18 +835,67 @@
             return d.innerHTML;
         }
 
+        function initProposalEditFields(p) {
+            let date = (p.start || '').slice(0, 10), startTime = '', endTime = '';
+            if (!p.all_day) {
+                try {
+                    const s = new Date(p.start), e = new Date(p.end);
+                    const hm = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+                    date = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+                    startTime = hm(s); endTime = hm(e);
+                } catch (e) { /* keep date-only */ }
+            }
+            return { _editing: false, _title: p.title, _date: date, _startTime: startTime,
+                     _endTime: endTime, _errandLocation: p.location || '', _errandMins: 30 };
+        }
+
         async function fetchProposals() {
             if (currentMemberRole() !== 'parent') { proposalsData = []; return; }
             try {
                 const res = await fetch(`${apiBase}api/proposals?status=proposed`);
                 const data = await res.json();
-                const prev = Object.fromEntries(proposalsData.map(p => [p.id, p._target]));
-                proposalsData = (Array.isArray(data) ? data : []).map(p =>
-                    ({ ...p, _target: prev[p.id] !== undefined ? prev[p.id] : (p.calendar_id || '') }));
+                // Preserve in-progress selections AND edits across refreshes.
+                const prev = Object.fromEntries(proposalsData.map(p => [p.id, p]));
+                proposalsData = (Array.isArray(data) ? data : []).map(p => {
+                    const old = prev[p.id];
+                    if (old) return { ...p, _target: old._target, _editing: old._editing,
+                        _title: old._title, _date: old._date, _startTime: old._startTime,
+                        _endTime: old._endTime, _errandLocation: old._errandLocation,
+                        _errandMins: old._errandMins };
+                    return { ...p, ...initProposalEditFields(p), _target: p.calendar_id || '' };
+                });
             } catch (e) { proposalsData = []; }
             if (proposalsData.length && !proposalTargets) await fetchProposalTargets();
             renderProposals();
             applyViewVisibility();
+        }
+
+        // The approve body always carries the card's current values —
+        // untouched cards round-trip the extracted ones unchanged.
+        function proposalApproveBody(p) {
+            const fmtD = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const body = { calendar_id: p._target };
+            const title = (p._title || '').trim();
+            if (title) body.title = title;
+            const date = p._date || (p.start || '').slice(0, 10);
+            const st = (p._startTime || '').trim();
+            if (st) {
+                const s = new Date(`${date}T${st}:00`);
+                let e = (p._endTime || '').trim() ? new Date(`${date}T${p._endTime}:00`) : new Date(s.getTime() + 3600000);
+                if (e <= s) e = new Date(s.getTime() + 3600000);
+                const fmtDT = d => `${fmtD(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
+                body.all_day = false; body.start = fmtDT(s); body.end = fmtDT(e);
+            } else {
+                body.all_day = true; body.start = date;
+                const d = new Date(date + 'T00:00:00');
+                d.setDate(d.getDate() + 1);
+                body.end = fmtD(d);
+            }
+            if (p._target === 'errand') {
+                body.location = (p._errandLocation || '').trim();
+                body.duration_mins = parseInt(p._errandMins) || 30;
+            }
+            return body;
         }
 
         async function fetchProposalTargets() {
@@ -900,15 +949,31 @@
                 const targetList = p.kind === 'task'
                     ? [...proposalTaskTargets, ...(proposalTargets || [])]
                     : (proposalTargets || []);
+                targetList.push({ id: 'errand', label: '🚗 Drive errand' });
                 const opts = targetList.map(o =>
                     `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');
+                const inputCls = 'bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs';
                 card.innerHTML = `
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
-                        <span class="font-bold text-white text-sm">${escProp(p.title)}</span>
+                        <span class="font-bold text-white text-sm flex-1 min-w-0 truncate">${escProp(p.title)}</span>
+                        <button data-role="edit" class="text-[11px] font-bold text-gray-500 active:text-white shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
                     <div class="text-[10px] text-gray-600 truncate mt-0.5">✉️ ${escProp(p.source_subject || p.source_from || '')}</div>
+                    <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
+                        <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
+                        <input data-role="f-date" type="date" value="${escProp(p._date || '')}" class="${inputCls}">
+                        <div class="flex items-center gap-1">
+                            <input data-role="f-start" type="time" value="${escProp(p._startTime || '')}" class="${inputCls} w-full min-w-0">
+                            <input data-role="f-end" type="time" value="${escProp(p._endTime || '')}" class="${inputCls} w-full min-w-0">
+                        </div>
+                        <p class="col-span-2 text-[10px] text-gray-600">Clear the start time for all-day.</p>
+                    </div>
+                    <div data-role="errand-panel" class="flex gap-1.5 mt-2 ${p._target === 'errand' ? '' : 'hidden'}">
+                        <input data-role="f-eloc" type="text" placeholder="Errand location (required)" value="${escProp(p._errandLocation || '')}" class="flex-1 min-w-0 ${inputCls}">
+                        <input data-role="f-emins" type="number" min="5" step="5" value="${escProp(p._errandMins || 30)}" class="w-16 ${inputCls}">
+                    </div>
                     <div class="flex gap-2 mt-2">
                         <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-white text-xs" data-role="target">
                             <option value="">Whose calendar?</option>${extraOpt}${opts}
@@ -919,8 +984,24 @@
                 const sel = card.querySelector('[data-role="target"]');
                 sel.value = p._target || '';
                 const approveBtn = card.querySelector('[data-role="approve"]');
-                approveBtn.disabled = !sel.value;
-                sel.onchange = () => { p._target = sel.value; approveBtn.disabled = !sel.value; };
+                const canApprove = () => !!sel.value && !(sel.value === 'errand' && !(p._errandLocation || '').trim());
+                approveBtn.disabled = !canApprove();
+                sel.onchange = () => {
+                    p._target = sel.value;
+                    card.querySelector('[data-role="errand-panel"]').classList.toggle('hidden', sel.value !== 'errand');
+                    approveBtn.disabled = !canApprove();
+                };
+                card.querySelector('[data-role="edit"]').onclick = () => { p._editing = !p._editing; renderProposals(); };
+                const bind = (role, key, after) => {
+                    const el = card.querySelector(`[data-role="${role}"]`);
+                    el.oninput = () => { p[key] = el.value; if (after) after(); };
+                };
+                bind('f-title', '_title');
+                bind('f-date', '_date');
+                bind('f-start', '_startTime');
+                bind('f-end', '_endTime');
+                bind('f-eloc', '_errandLocation', () => { approveBtn.disabled = !canApprove(); });
+                bind('f-emins', '_errandMins');
                 approveBtn.onclick = () => approveProposal(p.id);
                 card.querySelector('[data-role="ignore"]').onclick = () => ignoreProposal(p.id);
                 wrap.appendChild(card);
@@ -934,7 +1015,7 @@
                 const res = await fetch(`${apiBase}api/proposals/${id}/approve`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ calendar_id: p._target })
+                    body: JSON.stringify(proposalApproveBody(p))
                 });
                 const data = await res.json();
                 if (!res.ok) { showGlobalAlert(data.detail || 'Approve failed.'); return; }

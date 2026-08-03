@@ -2646,9 +2646,15 @@ class IngestConfig(BaseModel):
 
 class ProposalApprove(BaseModel):
     calendar_id: str
+    # Edit-before-approve: any field the parent touched on the card overrides
+    # the extracted value; omitted fields keep the proposal's own.
     title: Optional[str] = None
     start: Optional[str] = None
     end: Optional[str] = None
+    all_day: Optional[bool] = None
+    # 'errand' target extras — an errand needs what a proposal doesn't have.
+    location: Optional[str] = None
+    duration_mins: Optional[int] = None
 
 @app.get("/api/ingest/config")
 def get_ingest_config():
@@ -2707,6 +2713,36 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
     title = (req.title or '').strip() or prop['title']
     start = req.start or prop['start']
     end = req.end or prop['end']
+    all_day = req.all_day if req.all_day is not None else bool(prop.get('all_day'))
+
+    # Intake phase-2 (c): the 'errand' target turns a proposal into a DRIVE
+    # ERRAND the solver schedules ("buy poster board by Thursday") instead of
+    # a calendar event. The parent supplies the two things a proposal lacks —
+    # location and duration — and the due date becomes the scheduling window.
+    if req.calendar_id == 'errand':
+        location = (req.location or '').strip() or (prop.get('location') or '').strip()
+        if not location:
+            raise HTTPException(status_code=400, detail="An errand needs a location")
+        due = (start or '')[:10]
+        try:
+            due_date = datetime.strptime(due, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Proposal has no usable date")
+        from services import maps
+        errand = Errand(
+            title=title.lstrip('📌').strip() or title,
+            duration_mins=max(5, int(req.duration_mins or 30)),
+            location=maps.resolve_routable_location(location),
+            window_days=max(1, (due_date - datetime.now().date()).days + 1),
+            tags=['intake'],
+        )
+        create_errand(errand, background_tasks)  # applies ErrandRules + refresh
+        storage.update_proposal(proposal_id, {
+            'status': 'approved', 'calendar_id': 'errand',
+            'created_errand_id': errand.id, 'title': title, 'start': start, 'end': end,
+        })
+        return {"status": "approved", "errand_id": errand.id,
+                "message": f'Added "{errand.title}" as a drive errand 🚗'}
 
     # K4b: a 'tasks:{member_id}' target lands the item on that kid's school
     # list instead of any calendar — never solver load, never an all-day 📌.
@@ -2739,7 +2775,7 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         description_parts.append(prop['notes'])
     description_parts.append(f"From family email: {prop.get('source_from', '')} — {prop.get('source_subject', '')}")
 
-    if prop.get('all_day'):
+    if all_day:
         body_start, body_end = {'date': start[:10]}, {'date': end[:10]}
     else:
         body_start, body_end = {'dateTime': start}, {'dateTime': end}
