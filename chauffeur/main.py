@@ -179,15 +179,15 @@ async def push_notification_loop():
 
 def _send_tomorrow_digests(subs):
     """One evening digest per driver listing tomorrow's assignments. Content
-    comes from family_digest.build_tomorrow_digests (ONE builder, shared with
-    the get_tomorrow_digest agent tool); this function only delivers. Drivers
+    comes from family_digest.build_drive_digests (ONE builder, shared with
+    the get_drive_digest agent tool); this function only delivers. Drivers
     with nothing tomorrow get nothing. Delivery: posted into the driver's
     Argyle DM (persistent, scrollable; the chat fan-out pushes it too) — the
     raw web-push is only the fallback for drivers with no linked member
     record."""
     from services import storage, family_digest
 
-    digest = family_digest.build_tomorrow_digests()
+    digest = family_digest.build_drive_digests()
     weather_line = digest.get("weather")
     tomorrow_iso = digest.get("date")
 

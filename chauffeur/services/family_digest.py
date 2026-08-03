@@ -219,16 +219,28 @@ _WEATHER_EMOJI = {
 }
 
 
-def tomorrow_weather_line(tomorrow: datetime.date):
+def day_label(target: datetime.date) -> str:
+    """'Today' / 'Tomorrow' / 'Fri 08/07' — shared by digest titles and the
+    get_drive_digest tool's headers."""
+    today = datetime.date.today()
+    if target == today:
+        return "Today"
+    if target == today + datetime.timedelta(days=1):
+        return "Tomorrow"
+    return target.strftime('%a %m/%d')
+
+
+def weather_line(target: datetime.date):
     """One-line forecast for the digest ("🌧️ 78°/61° · rain 60%"), or None.
-    Uses the configured weather_entity (auto-detect when unset); any HA
-    problem just drops the line — weather never blocks a digest."""
+    Works for any date inside the daily forecast window. Uses the configured
+    weather_entity (auto-detect when unset); any HA problem just drops the
+    line — weather never blocks a digest."""
     try:
         from services import ha_api
         settings = storage.get_settings() or {}
         forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
         for f in forecast:
-            if str(f.get('datetime') or '')[:10] != tomorrow.isoformat():
+            if str(f.get('datetime') or '')[:10] != target.isoformat():
                 continue
             cond = str(f.get('condition') or '')
             parts = []
@@ -250,15 +262,16 @@ def tomorrow_weather_line(tomorrow: datetime.date):
     return None
 
 
-def build_tomorrow_digests(tomorrow: datetime.date = None) -> dict:
-    """Per-driver 'tomorrow' digest content from the combined schedule cache
-    (assigned events + scheduled errands, prep-kit items appended, sorted by
-    time, capped at 6 lines). Returns {'date', 'weather', 'drivers':
-    {driver_id: {'title', 'lines', 'count'}}}. ONE implementation shared by
-    the evening push-loop delivery (main._send_tomorrow_digests) and the
-    read-only get_tomorrow_digest agent tool — the builder never delivers."""
+def build_drive_digests(target_date: datetime.date = None) -> dict:
+    """Per-driver drive-digest content for one day from the combined schedule
+    cache (assigned events + scheduled errands, prep-kit items appended,
+    sorted by time, capped at 6 lines). Defaults to TOMORROW (the evening DM's
+    day). Returns {'date', 'label', 'weather', 'drivers': {driver_id:
+    {'title', 'lines', 'count'}}}. ONE implementation shared by the evening
+    push-loop delivery (main._send_tomorrow_digests) and the read-only
+    get_drive_digest agent tool — the builder never delivers."""
     from services import prep_kits
-    tomorrow = tomorrow or (datetime.date.today() + datetime.timedelta(days=1))
+    tomorrow = target_date or (datetime.date.today() + datetime.timedelta(days=1))
     cache = storage.get_cached_schedule() or {}
     events = {e.get("id"): e for e in cache.get("events", [])}
     kits = storage.get_prep_kits()
@@ -295,6 +308,7 @@ def build_tomorrow_digests(tomorrow: datetime.date = None) -> dict:
             continue
         per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
 
+    label = day_label(tomorrow)
     drivers = {}
     for d_id, items in per_driver.items():
         items.sort(key=lambda x: x[0])
@@ -303,10 +317,10 @@ def build_tomorrow_digests(tomorrow: datetime.date = None) -> dict:
         if len(items) > 6:
             lines.append(f"...and {len(items) - 6} more")
         n = len(items)
-        drivers[d_id] = {"title": f"Tomorrow: {n} drive{'s' if n != 1 else ''}",
+        drivers[d_id] = {"title": f"{label}: {n} drive{'s' if n != 1 else ''}",
                          "lines": lines, "count": n}
-    return {"date": tomorrow.isoformat(),
-            "weather": tomorrow_weather_line(tomorrow),
+    return {"date": tomorrow.isoformat(), "label": label,
+            "weather": weather_line(tomorrow),
             "drivers": drivers}
 
 

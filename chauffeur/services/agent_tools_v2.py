@@ -781,18 +781,24 @@ def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
             "message": "There's nothing to report for this week yet, so I skipped the digest."}
 
 
-def get_tomorrow_digest(member_name: str = "", driver_id: str = None) -> Dict[str, Any]:
-    """READ-ONLY answer showing tomorrow's drive digest — the same content the
-    evening Argyle DM sends, via the shared family_digest.build_tomorrow_digests
-    builder. Never posts to any channel (the crossed-wire bug this fixes: with
-    only post_weekly_digest available, 'show me the tomorrow digest' broadcast
-    the weekly recap into the family chat). Driver context passes the logged-in
-    driver_id for their own digest; admin/family contexts may name a member,
-    else every driver's drives are summarized."""
+def get_drive_digest(target_date: str = "today", member_name: str = "",
+                     driver_id: str = None) -> Dict[str, Any]:
+    """READ-ONLY answer showing the drive digest for ANY day ('today' default,
+    'tomorrow', a weekday, YYYY-MM-DD) — the same content the evening Argyle
+    DM sends for tomorrow, via the shared family_digest.build_drive_digests
+    builder. Never posts to any channel. History: v2.32.1 shipped this as a
+    tomorrow-only tool (fixing 'tomorrow digest' broadcasting the weekly
+    recap); that immediately crossed the NEXT wire — 'today's digest' matched
+    the tomorrow tool — so v2.32.2 generalized it over _parse_fuzzy_date.
+    Driver context passes the logged-in driver_id for their own digest;
+    admin/family contexts may name a member, else all drivers summarize."""
     from services import family_digest, storage
-    digest = family_digest.build_tomorrow_digests()
+    day = _parse_fuzzy_date(target_date or "today")
+    digest = family_digest.build_drive_digests(day)
     drivers = digest.get("drivers") or {}
     weather = digest.get("weather")
+    label = digest.get("label") or day.isoformat()
+    when = label.lower() if label in ("Today", "Tomorrow") else f"on {label}"
 
     if member_name and not driver_id:
         low = member_name.strip().lower()
@@ -814,16 +820,16 @@ def get_tomorrow_digest(member_name: str = "", driver_id: str = None) -> Dict[st
         d = drivers.get(driver_id)
         if not d:
             return {"status": "success",
-                    "message": f"{name} has no drives scheduled tomorrow."}
-        parts = [f"🚗 Tomorrow for {name} ({d['count']}):"]
+                    "message": f"{name} has no drives scheduled {when}."}
+        parts = [f"🚗 {label} for {name} ({d['count']}):"]
         if weather:
             parts.append(weather)
         parts.extend(d["lines"])
         return {"status": "success", "message": "\n".join(parts)}
 
     if not drivers:
-        return {"status": "success", "message": "No drives are scheduled for tomorrow yet."}
-    parts = ["🚗 Tomorrow's drives:"]
+        return {"status": "success", "message": f"No drives are scheduled {when}."}
+    parts = [f"🚗 Drives {when}:"]
     if weather:
         parts.append(weather)
     for d_id, d in drivers.items():
@@ -1101,15 +1107,16 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "post_weekly_digest",
-            "description": "Posts the 📊 'Family Week in Review' WEEKLY stats digest (driving per driver, kid activities, chores, rewards, routine streaks) into the family chat RIGHT NOW ('send the weekly digest', 'post the week in review again'). It also goes out automatically on its weekly schedule — this is the on-demand resend. NOT for tomorrow's schedule: 'tomorrow digest' / 'what does tomorrow look like' is get_tomorrow_digest, which never posts anything.",
+            "description": "Posts the 📊 'Family Week in Review' WEEKLY stats digest (driving per driver, kid activities, chores, rewards, routine streaks) into the family chat RIGHT NOW ('send the weekly digest', 'post the week in review again'). It also goes out automatically on its weekly schedule — this is the on-demand resend. NOT for a single day's schedule: 'today's digest' / 'tomorrow digest' / 'what does tomorrow look like' is get_drive_digest, which never posts anything.",
             "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {
-            "name": "get_tomorrow_digest",
-            "description": "Shows TOMORROW's drive digest as a read-only answer — the same preview Argyle DMs each driver in the evening: drives sorted by time with prep-kit items, plus the weather line ('show me the tomorrow digest', 'what does tomorrow look like', 'what are Dad's drives tomorrow'). Posts nothing anywhere. Pass member_name for one person's drives; omit it for every driver.",
+            "name": "get_drive_digest",
+            "description": "Shows the drive digest for a day as a read-only answer — drives per driver sorted by time with prep-kit items, plus the weather line ('show me today's digest', 'show me the tomorrow digest', 'what does Friday look like', 'what are Dad's drives tomorrow'). Posts nothing anywhere. target_date comes from the user's words: 'today' (the default), 'tomorrow', a weekday, or YYYY-MM-DD. Pass member_name for one person's drives; omit it for every driver.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."},
                     "member_name": {"type": "string", "description": "Limit to one family member's drives; omit for all drivers."}
                 },
                 "required": []

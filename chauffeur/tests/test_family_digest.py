@@ -158,30 +158,38 @@ def scenario_tomorrow_digest_builder_and_tool():
              "driver": {"id": "d1"}},
         ],
     })
-    with mock.patch.object(family_digest, 'tomorrow_weather_line', return_value="🌧️ rain 60%"):
-        digest = family_digest.build_tomorrow_digests()
+    with mock.patch.object(family_digest, 'weather_line', return_value="🌧️ rain 60%"):
+        digest = family_digest.build_drive_digests()
         check(list(digest["drivers"].keys()) == ["d1"], "one real driver, ghosts skipped")
         d = digest["drivers"]["d1"]
         check(d["count"] == 3 and d["title"] == "Tomorrow: 3 drives",
-              f"2 events + 1 errand tomorrow (today's excluded), got {d}")
+              f"default day is tomorrow: 2 events + 1 errand (today's excluded), got {d}")
         check(d["lines"][0].endswith("Piano") and "Errand: Groceries" in d["lines"][1],
               f"lines sorted by time, got {d['lines']}")
         check(digest["weather"] == "🌧️ rain 60%", "weather line rides the builder result")
+        today_digest = family_digest.build_drive_digests(TODAY)
+        check(today_digest["label"] == "Today"
+              and today_digest["drivers"]["d1"]["title"] == "Today: 1 drive",
+              f"explicit date builds that day with its label, got {today_digest['drivers']}")
 
-        # the read-only agent tool: answers, never posts
+        # the read-only agent tool: answers for any day, never posts
         from services import agent_tools_v2
-        from services.agent_tools_v2 import get_tomorrow_digest
+        from services.agent_tools_v2 import get_drive_digest
         with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
-            res = get_tomorrow_digest(member_name="dad")
+            res = get_drive_digest(target_date="tomorrow", member_name="dad")
             check(res["status"] == "success" and "Tomorrow for Dad" in res["message"]
                   and "Piano" in res["message"], f"named member resolves to their digest: {res}")
-            res_all = get_tomorrow_digest()
-            check("Dad (3)" in res_all["message"], "no-arg form summarizes every driver")
-            res_own = get_tomorrow_digest(driver_id="d1")
+            res_today = get_drive_digest(member_name="dad")
+            check("Today for Dad (1)" in res_today["message"] and "Dentist" in res_today["message"],
+                  f"default day is TODAY: {res_today}")
+            res_all = get_drive_digest(target_date="tomorrow")
+            check("Dad (3)" in res_all["message"] and "Drives tomorrow" in res_all["message"],
+                  "no-member form summarizes every driver")
+            res_own = get_drive_digest(target_date="tomorrow", driver_id="d1")
             check("Tomorrow for Dad" in res_own["message"], "driver context gets their own digest")
-            res_idle = get_tomorrow_digest(driver_id="d2")
+            res_idle = get_drive_digest(target_date="tomorrow", driver_id="d2")
             check("no drives scheduled tomorrow" in res_idle["message"], "idle driver gets a calm no-op")
-            res_miss = get_tomorrow_digest(member_name="Nobody")
+            res_miss = get_drive_digest(member_name="Nobody")
             check(res_miss["status"] == "error", "unknown member is an error, not a guess")
             check(post.call_count == 0, "the tool NEVER posts to any channel")
 
