@@ -200,6 +200,41 @@
             border-color: var(--ha-primary-color) !important;
         }
         body.ha-theme .ambient-glow { display: none !important; }
+
+        /* Agenda view */
+        .agenda-btn {
+            background-color: rgba(51, 65, 85, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #cbd5e1;
+            font-weight: 600;
+            font-size: 0.875rem;
+            padding: 6px 12px;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .agenda-btn:hover { background-color: rgba(71, 85, 105, 0.9); color: white; }
+        .agenda-btn-active { background-color: #3b82f6; color: white; border-color: #2563eb; }
+        .agenda-day { background-color: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .agenda-today { border-color: rgba(59, 130, 246, 0.6); box-shadow: 0 0 12px rgba(59, 130, 246, 0.15); }
+        .agenda-event { background-color: rgba(51, 65, 85, 0.5); }
+        .agenda-event:hover { background-color: rgba(71, 85, 105, 0.7); }
+
+        body.ha-theme .agenda-btn {
+            background-color: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+            color: var(--ha-primary-text) !important;
+        }
+        body.ha-theme .agenda-btn-active {
+            background-color: var(--ha-primary-color) !important;
+            border-color: var(--ha-primary-color) !important;
+        }
+        body.ha-theme .agenda-day {
+            background-color: var(--ha-card-bg) !important;
+            border-color: var(--ha-divider) !important;
+        }
+        body.ha-theme .agenda-today { border-color: var(--ha-primary-color) !important; box-shadow: none !important; }
+        body.ha-theme .agenda-event { background-color: color-mix(in srgb, var(--ha-primary-text) 8%, transparent) !important; }
+        body.ha-theme .agenda-event:hover { background-color: color-mix(in srgb, var(--ha-primary-text) 14%, transparent) !important; }
     </style>
 </head>
 <body class="flex flex-col">
@@ -214,6 +249,35 @@
             <div id="filter-legend" class="flex flex-wrap gap-2 mb-4 z-20 relative empty:hidden"></div>
 
             <div id="calendar" class="flex-1 relative z-10 w-full"></div>
+
+            <!-- Agenda view (display toggled via JS; hidden until entered) -->
+            <div id="agenda-view" class="flex-1 flex-col z-10 w-full min-h-0" style="display:none">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <div class="flex items-center gap-2">
+                        <button onclick="agendaNav(-1)" class="agenda-btn px-3" aria-label="Previous">‹</button>
+                        <button onclick="agendaNav(1)" class="agenda-btn px-3" aria-label="Next">›</button>
+                        <button onclick="agendaToday()" class="agenda-btn">Today</button>
+                        <h2 id="agenda-title" class="text-lg sm:text-2xl font-extrabold text-white ml-2 tracking-tight"></h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select id="agenda-days" onchange="setAgendaDays(this.value)" class="agenda-btn cursor-pointer">
+                            <option value="3">3 days</option>
+                            <option value="5">5 days</option>
+                            <option value="7">7 days</option>
+                            <option value="10">10 days</option>
+                            <option value="14">14 days</option>
+                        </select>
+                        <div class="flex gap-0.5">
+                            <button onclick="exitAgenda('dayGridMonth')" class="agenda-btn rounded-r-none">Month</button>
+                            <button onclick="exitAgenda('timeGridWeek')" class="agenda-btn rounded-none">Week</button>
+                            <button onclick="exitAgenda('timeGridDay')" class="agenda-btn rounded-none">Day</button>
+                            <button class="agenda-btn agenda-btn-active rounded-l-none">Agenda</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="agenda-grid" class="flex-1 min-h-0 overflow-y-auto grid gap-3 pb-2"
+                     style="grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); align-items: start; align-content: start;"></div>
+            </div>
         </div>
     </main>
 
@@ -606,20 +670,41 @@
                     if (isHidden) window.hiddenMembers.delete(member.id);
                     else window.hiddenMembers.add(member.id);
                     renderLegend();
-                    if (window.calendar) window.calendar.refetchEvents();
+                    if (window._agendaActive) renderAgenda();
+                    else if (window.calendar) window.calendar.refetchEvents();
                 };
                 container.appendChild(btn);
             });
         }
 
+        // View forcing: the URL is each HA card's own config channel (params
+        // propagate across nav links), so ?view=month|week|day|agenda pins a
+        // card to a view. No param -> last-used view from localStorage.
+        const _VIEW_SLUGS = { month: 'dayGridMonth', week: 'timeGridWeek', day: 'timeGridDay', agenda: 'agenda' };
+        const _calUrlParams = new URLSearchParams(window.location.search);
+        const _calCarryParams = (() => {
+            const p = new URLSearchParams(window.location.search);
+            p.delete('event_id');
+            return p.toString() ? '&' + p.toString() : '';
+        })();
+        let _startView = _VIEW_SLUGS[(_calUrlParams.get('view') || '').toLowerCase()]
+            || localStorage.getItem('chauffeur_cal_view') || 'dayGridMonth';
+        if (!['dayGridMonth', 'timeGridWeek', 'timeGridDay', 'agenda'].includes(_startView)) _startView = 'dayGridMonth';
+
         document.addEventListener('DOMContentLoaded', async function() {
             var calendarEl = document.getElementById('calendar');
             window.calendar = new FullCalendar.Calendar(calendarEl, {
-                initialView: 'dayGridMonth',
+                initialView: _startView === 'agenda' ? 'dayGridMonth' : _startView,
+                customButtons: {
+                    agendaView: { text: 'Agenda', click: enterAgenda }
+                },
                 headerToolbar: {
                     left: 'prev,next today',
                     center: 'title',
-                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay,agendaView'
+                },
+                datesSet: function(arg) {
+                    if (!window._agendaActive) localStorage.setItem('chauffeur_cal_view', arg.view.type);
                 },
                 height: '100%',
                 slotMinTime: '06:00:00', // Start view slightly later for focus
@@ -723,8 +808,25 @@
 
                 events: async function(info, successCallback, failureCallback) {
                     try {
+                        successCallback(await fetchCalEvents(info.startStr, info.endStr));
+                    } catch (error) {
+                        console.error('Error fetching calendar data:', error);
+                        failureCallback(error);
+                    }
+                },
+
+                eventClick: function(info) {
+                    openEventModal(info.event);
+                }
+            });
+            _postCalendarInit();
+        });
+
+        // Shared event pipeline: builds the event objects from api/schedule
+        // for BOTH FullCalendar and the Agenda view (filtering + legend incl.)
+        async function fetchCalEvents(startStr, endStr) {
                         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-                        const res = await fetch(`${apiBase}api/schedule?start_date=${encodeURIComponent(info.startStr)}&end_date=${encodeURIComponent(info.endStr)}&force_refresh=false`);
+                        const res = await fetch(`${apiBase}api/schedule?start_date=${encodeURIComponent(startStr)}&end_date=${encodeURIComponent(endStr)}&force_refresh=false`);
 
                         if (!res.ok) throw new Error('Network response was not ok');
                         const data = await res.json();
@@ -764,7 +866,10 @@
                                             borderColor: '#3b82f6',
                                             extendedProps: {
                                                 isTrip: true,
-                                                tripUrl: 'trip?event_id=' + baseId,
+                                                // Carry the page params (kiosk/theme/tabs) —
+                                                // this link is built in JS after nav.html's
+                                                // one-shot link rewrite already ran.
+                                                tripUrl: 'trip?event_id=' + encodeURIComponent(baseId) + _calCarryParams,
                                                 rawColor: '#1e3a8a'
                                             }
                                         });
@@ -967,27 +1072,36 @@
                             });
                         }
 
-                        successCallback(fcEvents);
-                    } catch (error) {
-                        console.error('Error fetching calendar data:', error);
-                        failureCallback(error);
-                    }
-                },
-                
-                eventClick: function(info) {
-                    const props = info.event.extendedProps;
+                        return fcEvents;
+        }
+
+        // Shared details dialog: FullCalendar passes its EventApi, the Agenda
+        // view passes plain event objects (start/end as ISO strings) — both
+        // are normalized here.
+        function openEventModal(evObj) {
+                    const props = evObj.extendedProps;
+                    const ev = {
+                        id: evObj.id,
+                        title: evObj.title,
+                        allDay: !!evObj.allDay,
+                        start: evObj.start instanceof Date ? evObj.start : (evObj.start ? new Date(evObj.start) : null),
+                        end: evObj.end instanceof Date ? evObj.end : (evObj.end ? new Date(evObj.end) : null),
+                        backgroundColor: evObj.backgroundColor
+                    };
 
                     if (props.isTrip) {
                         window.location.href = props.tripUrl;
                         return;
                     }
 
-                    window._modalEventId = info.event.id;
-                    // Errands are auto-scheduled; they have no event configuration
+                    window._modalEventId = ev.id;
+                    // Errands are auto-scheduled (no configuration); kiosk is a
+                    // display surface (no edit affordances).
                     const cfgContainer = document.getElementById('modal-config-container');
-                    if (cfgContainer) cfgContainer.style.display = props.isErrand ? 'none' : '';
-                    document.getElementById('modal-title').textContent = info.event.title;
-                    document.getElementById('modal-header-bg').style.backgroundColor = props.rawColor || info.event.backgroundColor;
+                    if (cfgContainer) cfgContainer.style.display =
+                        (props.isErrand || _calUrlParams.get('kiosk') === 'true') ? 'none' : '';
+                    document.getElementById('modal-title').textContent = ev.title;
+                    document.getElementById('modal-header-bg').style.backgroundColor = props.rawColor || ev.backgroundColor;
                     
                     const formatTime = (date) => {
                         return date.toLocaleString([], { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -997,12 +1111,12 @@
                     };
                     
                     let timeText = '';
-                    if (info.event.allDay) {
+                    if (ev.allDay) {
                         // All-day events are typically parsed as midnight UTC. We format in UTC to avoid local timezone shifting it to the day before.
-                        timeText = info.event.start ? formatDateUTC(info.event.start) + ' (All Day)' : 'All Day';
+                        timeText = ev.start ? formatDateUTC(ev.start) + ' (All Day)' : 'All Day';
                     } else {
-                        const startStr = info.event.start ? formatTime(info.event.start) : '';
-                        const endStr = info.event.end ? ' - ' + info.event.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                        const startStr = ev.start ? formatTime(ev.start) : '';
+                        const endStr = ev.end ? ' - ' + ev.end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                         timeText = startStr + endStr;
                     }
                     
@@ -1079,9 +1193,9 @@
                         content.classList.remove('scale-95', 'opacity-0');
                         content.classList.add('scale-100', 'opacity-100');
                     }, 10);
-                }
-            });
+        }
 
+        function _postCalendarInit() {
             // Observer for FullCalendar Popover to show backdrop
             const popoverBackdrop = document.getElementById('fc-popover-backdrop');
             const observer = new MutationObserver(() => {
@@ -1104,7 +1218,182 @@
             });
 
             window.calendar.render();
-        });
+            document.getElementById('agenda-days').value = String(agendaDays);
+            if (_startView === 'agenda') enterAgenda();
+        }
+
+        // ===================== Agenda view =====================
+        // A compact multi-day grid: each day is a card listing its events by
+        // start time (all-day pinned first) — far denser than the timeline
+        // views for a quick week scan, and the natural kiosk calendar card.
+        window._agendaActive = false;
+        let _agendaSeq = 0;
+        let agendaAnchor = new Date();
+        agendaAnchor.setHours(0, 0, 0, 0);
+        let agendaDays = parseInt(_calUrlParams.get('agenda_days'))
+            || parseInt(localStorage.getItem('chauffeur_agenda_days')) || 7;
+        agendaDays = Math.min(Math.max(agendaDays, 1), 14);
+
+        function _agIso(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        function _agEsc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function enterAgenda() {
+            window._agendaActive = true;
+            localStorage.setItem('chauffeur_cal_view', 'agenda');
+            document.getElementById('calendar').style.display = 'none';
+            document.getElementById('agenda-view').style.display = 'flex';
+            renderAgenda();
+        }
+
+        function exitAgenda(viewType) {
+            window._agendaActive = false;
+            document.getElementById('agenda-view').style.display = 'none';
+            document.getElementById('calendar').style.display = '';
+            window.calendar.changeView(viewType);
+            window.calendar.updateSize();
+        }
+
+        function agendaNav(dir) {
+            agendaAnchor.setDate(agendaAnchor.getDate() + dir * agendaDays);
+            renderAgenda();
+        }
+
+        function agendaToday() {
+            agendaAnchor = new Date();
+            agendaAnchor.setHours(0, 0, 0, 0);
+            renderAgenda();
+        }
+
+        function setAgendaDays(n) {
+            agendaDays = Math.min(Math.max(parseInt(n) || 7, 1), 14);
+            localStorage.setItem('chauffeur_agenda_days', String(agendaDays));
+            renderAgenda();
+        }
+
+        async function renderAgenda() {
+            const seq = ++_agendaSeq;
+            const grid = document.getElementById('agenda-grid');
+            const startStr = _agIso(agendaAnchor);
+            const endD = new Date(agendaAnchor);
+            endD.setDate(endD.getDate() + agendaDays);
+            const endStr = _agIso(endD); // exclusive, same contract as FullCalendar
+
+            const lastShown = new Date(endD);
+            lastShown.setDate(lastShown.getDate() - 1);
+            const fmt = { month: 'short', day: 'numeric' };
+            document.getElementById('agenda-title').innerText = agendaDays === 1
+                ? agendaAnchor.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+                : `${agendaAnchor.toLocaleDateString('en-US', fmt)} – ${lastShown.toLocaleDateString('en-US', { ...fmt, year: 'numeric' })}`;
+
+            grid.innerHTML = '<p class="text-gray-400 col-span-full py-8 text-center font-medium">Loading…</p>';
+
+            let events;
+            try {
+                events = await fetchCalEvents(startStr, endStr);
+            } catch (e) {
+                console.error('Agenda fetch failed:', e);
+                if (seq === _agendaSeq) grid.innerHTML = '<p class="text-red-400 col-span-full py-8 text-center font-bold">Failed to load events.</p>';
+                return;
+            }
+
+            // Weather chips are garnish — any failure just omits them.
+            const weather = {};
+            try {
+                const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const wres = await fetch(`${apiBase}api/weather/daily?days=${agendaDays}&start=${startStr}`);
+                if (wres.ok) (await wres.json()).forEach(w => { weather[w.date] = w; });
+            } catch (e) { /* no chips */ }
+
+            if (seq !== _agendaSeq) return; // superseded by a newer render
+            grid.innerHTML = '';
+
+            const todayD = new Date(); todayD.setHours(0, 0, 0, 0);
+            const todayIso = _agIso(todayD);
+            todayD.setDate(todayD.getDate() + 1);
+            const tomorrowIso = _agIso(todayD);
+            const fmtTime = d => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+            for (let i = 0; i < agendaDays; i++) {
+                const day = new Date(agendaAnchor);
+                day.setDate(day.getDate() + i);
+                const dayIso = _agIso(day);
+                const dayStart = new Date(day);
+                const dayEnd = new Date(day);
+                dayEnd.setDate(dayEnd.getDate() + 1);
+
+                const dayEvents = events.filter(ev => {
+                    if (ev.allDay) {
+                        // Compare on the ISO date part: all-day events parse as
+                        // UTC midnight and would shift a day through local Date
+                        // math. Google all-day ends are exclusive.
+                        const s = String(ev.start).slice(0, 10);
+                        const e = ev.end ? String(ev.end).slice(0, 10) : s;
+                        return s === dayIso || (s <= dayIso && e > dayIso);
+                    }
+                    const s = new Date(ev.start);
+                    const e = ev.end ? new Date(ev.end) : new Date(s.getTime() + 1);
+                    return s < dayEnd && e > dayStart;
+                }).sort((a, b) => (b.allDay ? 1 : 0) - (a.allDay ? 1 : 0)
+                    || new Date(a.start) - new Date(b.start));
+
+                const isToday = dayIso === todayIso;
+                const label = isToday ? 'Today' : (dayIso === tomorrowIso ? 'Tomorrow'
+                    : day.toLocaleDateString('en-US', { weekday: 'long' }));
+                const w = weather[dayIso];
+                const wChip = w ? `<span class="text-xs text-gray-400 font-semibold shrink-0">${w.high != null ? Math.round(w.high) + '°' : ''}${w.low != null ? ' / ' + Math.round(w.low) + '°' : ''} ${_agEsc(w.emoji)}</span>` : '';
+
+                const card = document.createElement('div');
+                card.className = `agenda-day rounded-2xl p-3 flex flex-col gap-2${isToday ? ' agenda-today' : ''}`;
+                card.innerHTML = `
+                    <div class="flex items-baseline justify-between gap-2 px-1">
+                        <div class="flex items-baseline gap-2 min-w-0">
+                            <span class="text-2xl font-extrabold text-white">${day.getDate()}</span>
+                            <span class="text-sm font-bold text-gray-300 truncate">${label}</span>
+                        </div>
+                        ${wChip}
+                    </div>`;
+
+                if (dayEvents.length === 0) {
+                    card.innerHTML += '<p class="text-xs text-gray-500 italic px-1 py-2">Nothing scheduled</p>';
+                }
+
+                dayEvents.forEach(ev => {
+                    const props = ev.extendedProps || {};
+                    const barColor = props.isUnassigned ? '#ef4444'
+                        : (props.rawColor || ev.backgroundColor || '#3b82f6');
+                    const timeLabel = ev.allDay ? 'Entire day'
+                        : `${fmtTime(new Date(ev.start))}${ev.end ? ' – ' + fmtTime(new Date(ev.end)) : ''}`;
+
+                    let badge = '';
+                    if (props.isUnassigned) {
+                        badge = '<span class="text-[10px] font-bold text-red-400 shrink-0">⚠️ Needs driver</span>';
+                    } else if (props.driverName) {
+                        badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[80px] truncate">${_agEsc(props.driverName)}</span>`;
+                    } else if (props.isErrand) {
+                        badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
+                    }
+
+                    const row = document.createElement('div');
+                    row.className = 'agenda-event rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors flex flex-col gap-0.5';
+                    row.style.borderLeft = `4px solid ${barColor}`;
+                    row.innerHTML = `
+                        <span class="text-[11px] font-semibold text-gray-400">${_agEsc(timeLabel)}</span>
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-[13px] font-bold text-white truncate">${_agEsc(ev.title)}</span>
+                            ${badge}
+                        </div>`;
+                    row.onclick = () => openEventModal(ev);
+                    card.appendChild(row);
+                });
+
+                grid.appendChild(card);
+            }
+        }
     </script>
     {% include 'components/control_center.html' %}
 </body>

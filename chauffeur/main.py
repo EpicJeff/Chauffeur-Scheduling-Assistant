@@ -889,6 +889,46 @@ def trip_view(request: Request, event_id: str):
     return response
 
 
+@app.get("/api/weather/daily")
+def weather_daily(days: int = 7, start: str = None):
+    """Per-day forecast chips for the calendar Agenda view. Weather is
+    garnish: any HA/entity problem returns [] and the UI omits the chips."""
+    import datetime
+    from services import ha_api, family_digest
+    try:
+        start_date = datetime.date.fromisoformat(start) if start else datetime.date.today()
+    except (ValueError, TypeError):
+        start_date = datetime.date.today()
+    days = max(1, min(days, 14))
+    try:
+        settings = storage.get_settings() or {}
+        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
+        by_date = {}
+        for f in forecast:
+            d = str(f.get('datetime') or '')[:10]
+            if d and d not in by_date:
+                by_date[d] = f
+        out = []
+        for i in range(days):
+            d = (start_date + datetime.timedelta(days=i)).isoformat()
+            f = by_date.get(d)
+            if not f:
+                continue
+            cond = str(f.get('condition') or '')
+            out.append({
+                "date": d,
+                "emoji": family_digest._WEATHER_EMOJI.get(cond, '🌤️'),
+                "condition": cond,
+                "high": f.get('temperature'),
+                "low": f.get('templow'),
+                "precip": f.get('precipitation_probability'),
+            })
+        return out
+    except Exception as e:
+        print(f"weather_daily failed: {e}")
+        return []
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
