@@ -147,7 +147,10 @@ def _create_event(payload: dict) -> dict:
             body_start["timeZone"] = body_end["timeZone"] = tz
     body = {"summary": title, "start": body_start, "end": body_end}
     if payload.get("location"):
-        body["location"] = payload["location"]
+        # LLM locations are usually bare venue names; resolve to a routable
+        # address so the solver can actually route to the event.
+        from services import maps
+        body["location"] = maps.resolve_routable_location(payload["location"])
     if payload.get("description"):
         body["description"] = payload["description"]
     gid = gcal.insert_event(calendar_id, body)

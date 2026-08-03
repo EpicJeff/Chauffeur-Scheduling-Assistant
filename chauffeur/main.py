@@ -2656,7 +2656,10 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         'extendedProperties': {'private': {'intake_proposal_id': proposal_id}},
     }
     if prop.get('location'):
-        body['location'] = prop['location']
+        # Email-extracted locations are usually bare venue names; resolve to
+        # a routable address so the solver can route to the event.
+        from services import maps
+        body['location'] = maps.resolve_routable_location(prop['location'])
 
     gid = gcal.insert_event(req.calendar_id, body)
     if not gid:

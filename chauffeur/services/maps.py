@@ -740,6 +740,43 @@ def _geocode_address_api_lookup(address: str) -> Optional[tuple[float, float, st
             
     return None
 
+def resolve_routable_location(location: str) -> str:
+    """Venue-only event location ("Mills Park Middle School") -> a routable
+    "Name, street address" the solver can actually geocode and route to.
+
+    Agent-created events (intake approvals, chat create_event, errands) carry
+    whatever location string the LLM extracted, which is usually a bare venue
+    name. Resolve it once at creation time through the normal geocoder
+    (Mapbox with home-proximity bias, Nominatim fallback, geocode_cache-backed)
+    and store the geocoder's full display name.
+
+    Safety rails: anything already containing a digit (street number, zip,
+    "Field 3") passes through untouched, as does anything the geocoder can't
+    resolve — this must never block or distort event creation."""
+    loc = (location or '').strip()
+    if not loc:
+        return location  # preserve None/'' exactly as given
+    if any(ch.isdigit() for ch in loc):
+        return loc
+    try:
+        cached = storage.get_cached_geocode(loc)
+        display = (cached or {}).get('display_name')
+        if not display:
+            res = _geocode_address_api_lookup(loc)
+            if not res:
+                return loc
+            lat, lon, display = res
+            storage.set_cached_geocode(loc, lat, lon, display)
+        display = (display or '').strip()
+        if not display:
+            return loc
+        # Mapbox/Nominatim display names usually already lead with the venue
+        # name; only prepend it when they don't, so it stays human-readable.
+        return display if loc.lower() in display.lower() else f"{loc}, {display}"
+    except Exception as ex:
+        print(f"Location resolve failed for '{loc}': {ex}")
+        return loc
+
 def extract_street_address(address: str) -> str:
     if not address or not address.strip(' ,;'):
         return ""

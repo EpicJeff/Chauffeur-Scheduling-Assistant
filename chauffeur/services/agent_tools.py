@@ -580,14 +580,14 @@ def handle_update_memory(args: dict) -> dict:
     return {"status": "success", "message": "Memory updated successfully."}
 
 def handle_add_errand(args: dict) -> dict:
-    from services import storage
+    from services import maps, storage
     import time
     starts_on = args.get('starts_on', 0.0)
     if not starts_on: starts_on = time.time()
     errand = {
         'title': args.get('title'),
         'duration_mins': args.get('duration_mins', 30),
-        'location': args.get('location'),
+        'location': maps.resolve_routable_location(args.get('location')),
         'priority': args.get('priority', 2),
         'tags': args.get('tags', []),
         'recurrence_rule': args.get('recurrence_rule') or None,
@@ -624,7 +624,9 @@ def handle_update_errand(args: dict) -> dict:
     update_data = {}
     if args.get('title'): update_data['title'] = args.get('title')
     if args.get('duration_mins'): update_data['duration_mins'] = args.get('duration_mins')
-    if args.get('location'): update_data['location'] = args.get('location')
+    if args.get('location'):
+        from services import maps
+        update_data['location'] = maps.resolve_routable_location(args.get('location'))
     if args.get('starts_on'): update_data['starts_on'] = args.get('starts_on')
     
     for field in ['allowed_drivers', 'required_drivers', 'prohibited_drivers', 
