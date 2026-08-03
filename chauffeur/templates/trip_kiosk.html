@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trip - Chauffeur</title>
+    <script>
+        tailwind = { config: { darkMode: 'class' } };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+
+        /* Hero text sits on a photo behind a dark gradient — it must stay
+           white even when the HA theme maps text-white to a dark color. */
+        .hero-text, .hero-text * { color: #fff !important; }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+    {% include 'nav.html' %}
+
+    <main class="flex-1 w-full max-w-6xl mx-auto p-4 sm:p-6 flex flex-col gap-6">
+
+        <!-- Hero header -->
+        <div class="relative rounded-2xl overflow-hidden border border-gray-700 shadow-lg min-h-[160px] flex items-end">
+            <img id="hero-img" class="absolute inset-0 w-full h-full object-cover" src="" alt="">
+            <div class="absolute inset-0" style="background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.35) 60%, rgba(0,0,0,0.15) 100%);"></div>
+            <div class="relative z-10 p-5 sm:p-6 w-full hero-text">
+                <div class="flex flex-wrap items-end justify-between gap-3">
+                    <div class="min-w-0">
+                        <h1 id="trip-title" class="text-2xl sm:text-4xl font-extrabold tracking-tight drop-shadow-lg">Loading trip…</h1>
+                        <p id="trip-location" class="text-sm sm:text-base font-medium opacity-90 mt-1"></p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <span id="trip-dates" class="bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border border-white/20"></span>
+                        <span id="trip-countdown" class="bg-blue-600/70 backdrop-blur px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold border border-white/20 hidden"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Daily Itinerary -->
+        <section id="days-section" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-lg font-bold text-white">Daily Itinerary</h2>
+                <div id="days-arrows" class="flex gap-1"></div>
+            </div>
+            <div id="days-track" class="flex gap-3 overflow-x-auto snap-x scroll-smooth no-scrollbar pb-1"></div>
+        </section>
+
+        <!-- Flights -->
+        <section id="flights-section" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-lg font-bold text-white">Flights</h2>
+                <div id="flights-arrows" class="flex gap-1"></div>
+            </div>
+            <div id="flights-track" class="flex gap-3 overflow-x-auto snap-x scroll-smooth no-scrollbar pb-1"></div>
+        </section>
+
+        <!-- Accommodations -->
+        <section id="accs-section" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-lg font-bold text-white">Accommodations</h2>
+                <div id="accs-arrows" class="flex gap-1"></div>
+            </div>
+            <div id="accs-track" class="flex gap-3 overflow-x-auto snap-x scroll-smooth no-scrollbar pb-1"></div>
+        </section>
+
+        <!-- Attractions -->
+        <section id="pois-section" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-lg font-bold text-white">Attractions</h2>
+                <div id="pois-arrows" class="flex gap-1"></div>
+            </div>
+            <div id="pois-track" class="flex gap-3 overflow-x-auto snap-x scroll-smooth no-scrollbar pb-1"></div>
+        </section>
+
+        <p id="empty-msg" class="hidden text-center text-gray-400 py-10">Nothing planned for this trip yet.</p>
+    </main>
+
+    <script>
+        const EVENT_ID = '{{ event_id }}';
+        let tripData = null;
+
+        function esc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function isFlexibleDraft() {
+            return !!(tripData.metadata.is_draft && tripData.metadata.mock_start_date);
+        }
+
+        // Flexible-date drafts live on a mock calendar; those fake dates must
+        // never be shown — only trip-day numbers (same rule as trip.html).
+        function formatAccDate(dateStr) {
+            if (!dateStr) return '?';
+            if (isFlexibleDraft()) {
+                const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+                tripStart.setHours(0, 0, 0, 0);
+                const d = new Date(dateStr + 'T00:00:00');
+                const dayNum = Math.round((d - tripStart) / 86400000) + 1;
+                return (dayNum > 0 && dayNum <= 60) ? `Day ${dayNum}` : '?';
+            }
+            return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        function categoryEmoji(act) {
+            const relatedPoi = (tripData.metadata.pois || []).find(p =>
+                p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
+            if (relatedPoi && relatedPoi.category) {
+                const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️', 'other': '📍' };
+                const norm = relatedPoi.category.toLowerCase().trim();
+                if (catEmojis[norm]) return catEmojis[norm];
+                const match = relatedPoi.category.match(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u);
+                if (match) return match[0];
+            }
+            const t = (act.title || '').toLowerCase();
+            if (t.includes('flight') || t.includes('train') || t.includes('drive') || t.includes('travel')) return '✈️';
+            if (t.includes('hotel') || t.includes('resort') || t.includes('airbnb') || t.includes('stay')) return '🏨';
+            return '📍';
+        }
+
+        function setupCarousel(key) {
+            const track = document.getElementById(`${key}-track`);
+            const arrows = document.getElementById(`${key}-arrows`);
+            if (track.scrollWidth <= track.clientWidth + 4) { arrows.innerHTML = ''; return; }
+            const btnCls = 'bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg w-8 h-8 flex items-center justify-center font-bold';
+            arrows.innerHTML = `
+                <button class="${btnCls}" onclick="slideCarousel('${key}', -1)" aria-label="Previous">‹</button>
+                <button class="${btnCls}" onclick="slideCarousel('${key}', 1)" aria-label="Next">›</button>`;
+        }
+
+        function slideCarousel(key, dir) {
+            const track = document.getElementById(`${key}-track`);
+            track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: 'smooth' });
+        }
+
+        function renderHero() {
+            const ev = tripData.event;
+            document.getElementById('trip-title').innerText = ev.title || 'Trip';
+            document.getElementById('trip-location').innerText = ev.location || '';
+            document.title = `${ev.title || 'Trip'} - Chauffeur`;
+
+            const coreTitle = ev.title ? ev.title.split(/[:\-]/)[0].trim() : '';
+            const query = tripData.metadata.background_url || coreTitle || ev.location || 'travel';
+            document.getElementById('hero-img').src = query.startsWith('http')
+                ? query : `api/unsplash/background?query=${encodeURIComponent(query)}`;
+
+            const datesEl = document.getElementById('trip-dates');
+            const cdEl = document.getElementById('trip-countdown');
+            if (isFlexibleDraft()) {
+                datesEl.innerText = 'Flexible Dates (Draft)';
+                return;
+            }
+            const tzOpts = ev.timeZone && ev.timeZone !== 'UTC' ? { timeZone: ev.timeZone } : {};
+            const start = new Date(ev.start * 1000);
+            const end = new Date(ev.end * 1000);
+            datesEl.innerText = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...tzOpts })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', ...tzOpts })}`;
+
+            const now = new Date();
+            cdEl.classList.remove('hidden');
+            if (now > end) {
+                cdEl.innerText = 'Past trip';
+                cdEl.className = cdEl.className.replace('bg-blue-600/70', 'bg-gray-600/70');
+            } else if (now >= start) {
+                cdEl.innerText = 'Happening now';
+            } else {
+                const days = Math.ceil((start - now) / 86400000);
+                cdEl.innerText = `In ${days} day${days === 1 ? '' : 's'}`;
+            }
+        }
+
+        function renderDays() {
+            const acts = tripData.activities || [];
+            if (acts.length === 0) return false;
+            const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== 'UTC'
+                ? { timeZone: tripData.event.timeZone } : {};
+
+            // Group by day, mirroring trip.html's renderActivities().
+            const grouped = {};
+            acts.forEach(act => {
+                const start = act.start ? new Date(act.start * 1000) : null;
+                let dayKey = 'Unscheduled';
+                let sortKey = 9999999999999;
+                if (start) {
+                    if (isFlexibleDraft()) {
+                        const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
+                        tripStart.setHours(0, 0, 0, 0);
+                        const actStart = new Date(start);
+                        actStart.setHours(0, 0, 0, 0);
+                        const dayNum = Math.floor((actStart - tripStart) / 86400000) + 1;
+                        dayKey = `Day ${dayNum} – ${start.toLocaleDateString('en-US', { weekday: 'short', ...tzOpts })}`;
+                        sortKey = dayNum;
+                    } else {
+                        dayKey = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...tzOpts });
+                        const s = new Date(start);
+                        s.setHours(0, 0, 0, 0);
+                        sortKey = s.getTime();
+                    }
+                }
+                if (!grouped[dayKey]) grouped[dayKey] = { sortKey, items: [] };
+                grouped[dayKey].items.push(act);
+            });
+
+            const sortedKeys = Object.keys(grouped).sort((a, b) => grouped[a].sortKey - grouped[b].sortKey);
+            const track = document.getElementById('days-track');
+            const todayKey = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...tzOpts });
+            let todaySlide = null;
+
+            sortedKeys.forEach(dayKey => {
+                const slide = document.createElement('div');
+                const isToday = !isFlexibleDraft() && dayKey === todayKey;
+                slide.className = `snap-start shrink-0 w-[260px] bg-gray-800 border ${isToday ? 'border-blue-500' : 'border-gray-700'} rounded-2xl p-3 flex flex-col`;
+                let rows = `<div class="flex items-center justify-between border-b border-gray-700 pb-2 mb-2">
+                    <h3 class="text-white font-bold text-sm">${esc(dayKey)}</h3>
+                    ${isToday ? '<span class="text-[10px] font-bold text-blue-400 uppercase tracking-wide">Today</span>' : ''}
+                </div><div class="flex flex-col gap-2 max-h-[300px] overflow-y-auto no-scrollbar">`;
+                grouped[dayKey].items.forEach(act => {
+                    const start = act.start ? new Date(act.start * 1000) : null;
+                    const timeStr = start ? start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...tzOpts }) : '';
+                    rows += `<div class="bg-gray-700 rounded-lg p-2 border-l-4 border-indigo-500">
+                        <p class="text-xs font-bold text-white truncate">${categoryEmoji(act)} ${esc(act.title)}</p>
+                        ${timeStr ? `<p class="text-[11px] text-indigo-300 font-semibold">${timeStr}</p>` : ''}
+                        ${act.location ? `<p class="text-[10px] text-gray-400 truncate">${esc(act.location)}</p>` : ''}
+                    </div>`;
+                });
+                slide.innerHTML = rows + '</div>';
+                track.appendChild(slide);
+                if (isToday) todaySlide = slide;
+            });
+
+            if (todaySlide) setTimeout(() => track.scrollTo({ left: todaySlide.offsetLeft - track.offsetLeft }), 50);
+            return true;
+        }
+
+        function renderFlights() {
+            const flights = tripData.metadata.flights || [];
+            if (flights.length === 0) return false;
+            const track = document.getElementById('flights-track');
+            flights.forEach(f => {
+                const slide = document.createElement('div');
+                slide.className = 'snap-start shrink-0 w-[280px] bg-gray-800 border border-gray-700 rounded-2xl p-4 flex flex-col gap-2';
+                const dateStr = f.departure_time ? formatAccDate(f.departure_time.split('T')[0]) : '';
+                slide.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <h4 class="font-bold text-white text-sm truncate pr-2">✈️ ${esc(f.airline || 'Flight')}</h4>
+                        ${dateStr ? `<span class="text-[11px] text-gray-400 font-semibold shrink-0">${esc(dateStr)}</span>` : ''}
+                    </div>
+                    <div class="flex items-center justify-between bg-gray-700 rounded-lg p-2.5 text-white">
+                        <span class="font-bold">${esc(f.origin || '?')}</span>
+                        <span class="text-gray-400">→</span>
+                        <span class="font-bold">${esc(f.destination || '?')}</span>
+                    </div>
+                    ${f.estimated_price_usd ? `<p class="text-right text-emerald-400 font-black">$${Math.round(f.estimated_price_usd).toLocaleString()}</p>` : ''}`;
+                track.appendChild(slide);
+            });
+            return true;
+        }
+
+        function renderAccommodations() {
+            const accs = (tripData.metadata.accommodations || []).slice()
+                .sort((a, b) => (a.check_in_date || '9999').localeCompare(b.check_in_date || '9999'));
+            if (accs.length === 0) return false;
+            const track = document.getElementById('accs-track');
+            accs.forEach(acc => {
+                const slide = document.createElement('div');
+                slide.className = 'snap-start shrink-0 w-[280px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col';
+                const img = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`;
+                slide.innerHTML = `
+                    <div class="h-24 bg-cover bg-center bg-gray-700" style="background-image:url('${img}')"></div>
+                    <div class="p-3 flex flex-col gap-1.5">
+                        <h4 class="font-bold text-white text-sm truncate">🏨 ${esc(acc.name)}</h4>
+                        ${acc.location ? `<p class="text-[11px] text-gray-400 truncate">${esc(acc.location)}</p>` : ''}
+                        <div class="flex items-center justify-between text-xs bg-gray-700 rounded-lg p-2 text-gray-300">
+                            <span>${esc(formatAccDate(acc.check_in_date))}</span>
+                            <span class="text-gray-500">→</span>
+                            <span>${esc(formatAccDate(acc.check_out_date))}</span>
+                        </div>
+                        ${acc.estimated_price_usd ? `<p class="text-right text-emerald-400 font-black text-sm">$${Math.round(acc.estimated_price_usd).toLocaleString()}<span class="text-[10px] text-gray-400 font-normal"> / night</span></p>` : ''}
+                    </div>`;
+                track.appendChild(slide);
+            });
+            return true;
+        }
+
+        function renderPois() {
+            const pois = tripData.metadata.pois || [];
+            if (pois.length === 0) return false;
+            const track = document.getElementById('pois-track');
+            const prioLabel = { 'must': 'Must See', 'want': 'Want', 'stretch': 'Stretch' };
+            const prioCls = {
+                'must': 'bg-red-500/20 text-red-400 border-red-500/30',
+                'want': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+                'stretch': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+            };
+            pois.forEach(poi => {
+                const slide = document.createElement('div');
+                slide.className = 'snap-start shrink-0 w-[240px] bg-gray-800 border border-gray-700 rounded-2xl p-3 flex flex-col gap-2';
+                const prio = poi.priority || 'want';
+                slide.innerHTML = `
+                    <h4 class="font-bold text-white text-sm leading-tight">${esc(poi.name)}</h4>
+                    ${poi.location ? `<p class="text-[11px] text-gray-400 truncate">${esc(poi.location)}</p>` : ''}
+                    <div class="flex flex-wrap items-center gap-1.5 mt-auto">
+                        <span class="${prioCls[prio] || prioCls['want']} text-[10px] px-2 py-0.5 rounded-full border font-bold">${prioLabel[prio] || 'Want'}</span>
+                        ${poi.is_scheduled
+                            ? '<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">Scheduled</span>'
+                            : '<span class="bg-gray-700 text-gray-400 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Unscheduled</span>'}
+                    </div>`;
+                track.appendChild(slide);
+            });
+            return true;
+        }
+
+        async function loadTrip() {
+            const res = await fetch(`api/trip/${encodeURIComponent(EVENT_ID)}`);
+            if (!res.ok) {
+                document.getElementById('trip-title').innerText = 'Trip not found';
+                return;
+            }
+            tripData = await res.json();
+            if (!tripData.event) {
+                document.getElementById('trip-title').innerText = 'Trip not found';
+                return;
+            }
+            if (!tripData.metadata) tripData.metadata = {};
+
+            renderHero();
+            const sections = [
+                ['days', renderDays()],
+                ['flights', renderFlights()],
+                ['accs', renderAccommodations()],
+                ['pois', renderPois()]
+            ];
+            let any = false;
+            sections.forEach(([key, hasContent]) => {
+                if (hasContent) {
+                    any = true;
+                    document.getElementById(`${key}-section`).classList.remove('hidden');
+                    setupCarousel(key);
+                }
+            });
+            if (!any) document.getElementById('empty-msg').classList.remove('hidden');
+        }
+
+        document.addEventListener('DOMContentLoaded', loadTrip);
+        window.addEventListener('resize', () => ['days', 'flights', 'accs', 'pois'].forEach(k => {
+            if (!document.getElementById(`${k}-section`).classList.contains('hidden')) setupCarousel(k);
+        }));
+    </script>
+</body>
+
+</html>

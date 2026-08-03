@@ -5,6 +5,14 @@
     <div id="family-map-chips" class="flex gap-2 flex-wrap p-2 bg-gray-900 border-b border-gray-800 shrink-0 empty:hidden"></div>
     <div id="family-map" class="flex-1 min-h-[300px] z-0 bg-gray-800"></div>
 </div>
+<style>
+    /* Leaflet popups default to white chrome; follow the HA theme when active. */
+    .ha-theme .leaflet-popup-content-wrapper,
+    .ha-theme .leaflet-popup-tip {
+        background: var(--ha-card-bg, #ffffff);
+        color: var(--ha-primary-text, #333333);
+    }
+</style>
 <script>
     let _fmMap = null;
     let _fmMarkers = {};
@@ -86,9 +94,9 @@
                 && selectedMemberId !== loc.member_id;
             const popup = `<div style="min-width:140px">
                 <div style="font-weight:800">${_fmEscape(loc.name)}</div>
-                <div style="color:#666;text-transform:capitalize">${_fmEscape(loc.state || '')}</div>
+                <div style="color:var(--ha-secondary-text, #666);text-transform:capitalize">${_fmEscape(loc.state || '')}</div>
                 ${drivingLine ? `<div style="margin-top:4px">${drivingLine}</div>` : ''}
-                ${canMessage ? `<button onclick="messageMember('${loc.member_id}')" style="margin-top:6px;background:#2563eb;color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 10px;width:100%;cursor:pointer">Message</button>` : ''}
+                ${canMessage ? `<button onclick="messageMember('${loc.member_id}')" style="margin-top:6px;background:var(--ha-primary-color, #2563eb);color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 10px;width:100%;cursor:pointer">Message</button>` : ''}
             </div>`;
             if (_fmMarkers[loc.member_id]) {
                 _fmMarkers[loc.member_id].setLatLng([loc.latitude, loc.longitude]);

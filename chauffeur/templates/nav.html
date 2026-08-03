@@ -159,6 +159,19 @@
                 if (ccIcon) ccIcon.style.display = 'none';
                 const mobileCcBtn = document.getElementById('mobile-cc-nav-item');
                 if (mobileCcBtn) mobileCcBtn.style.display = 'none';
+
+                // Intake is an admin surface (mail approvals, IMAP settings) —
+                // hide it on kiosk displays unless a card explicitly opts back
+                // in via ?tabs=...,intake.
+                const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
+                    .split(',').map(s => s.trim());
+                if (!kioskTabs.includes('intake')) {
+                    document.querySelectorAll('nav a[href]').forEach(a => {
+                        const path = (a.getAttribute('href') || '').split('?')[0];
+                        const page = path.split('/').filter(Boolean).pop() || '';
+                        if (page === 'intake') a.style.display = 'none';
+                    });
+                }
             }
 
             // Per-embed tab filtering, aimed at HA iframe cards: the URL is

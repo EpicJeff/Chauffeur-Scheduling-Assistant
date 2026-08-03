@@ -864,6 +864,15 @@ def create_trip_api(req: CreateTripRequest):
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
     import datetime
+    # Kiosk displays get a read-only compact view: no editing surfaces and no
+    # Mapbox map loads (wall displays reload often and would burn the quota).
+    if request.query_params.get("kiosk") == "true":
+        response = templates.TemplateResponse(request=request, name="trip_kiosk.html", context={
+            "event_id": event_id
+        })
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return response
+
     current_month = datetime.datetime.now().strftime("%Y-%m")
     mapbox_key = maps.get_mapbox_api_key()
     enable_loads = maps.get_map_option('enable_mapbox_map_loads', True)
