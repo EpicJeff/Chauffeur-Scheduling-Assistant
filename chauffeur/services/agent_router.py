@@ -260,7 +260,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              "send_family_message", "send_direct_message",
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
-                             "post_weekly_digest"}
+                             "post_weekly_digest", "get_tomorrow_digest"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -471,6 +471,15 @@ sending or claiming, and never pass from_member/member_name for them.
                         from services import storage as _st
                         actor = _st.get_member_by_driver_id(driver_id)
                     res = post_weekly_digest_now(acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_tomorrow_digest":
+                    from services.agent_tools_v2 import get_tomorrow_digest
+                    # Driver context with no named member = their own digest;
+                    # a named member always wins (a driver may ask about
+                    # another driver's day).
+                    res = get_tomorrow_digest(
+                        member_name=args.get("member_name", "") or "",
+                        driver_id=driver_id if (driver and not args.get("member_name")) else None)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "adjust_points":
                     from services.agent_tools_v2 import adjust_points

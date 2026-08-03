@@ -416,9 +416,15 @@ class GetRoutineStatusTool(BaseModel):
 
 class PostWeeklyDigestTool(BaseModel):
     """
-    Posts the 'Family Week in Review' stats digest (driving, activities, chores, rewards, routines) into the family chat right now — the on-demand resend of the weekly automatic post.
+    Posts the 'Family Week in Review' WEEKLY stats digest (driving, activities, chores, rewards, routines) into the family chat right now — the on-demand resend of the weekly automatic post. NOT for tomorrow's schedule (that's get_tomorrow_digest, which posts nothing).
     """
     pass
+
+class GetTomorrowDigestTool(BaseModel):
+    """
+    Shows TOMORROW's drive digest as a read-only answer (drives per driver sorted by time, prep-kit items, weather) — the same preview the evening Argyle DM sends. Never posts to any channel.
+    """
+    member_name: Optional[str] = Field(None, description="Limit to one family member's drives; omit for all drivers.")
 
 # A unified schema registry
 TOOL_SCHEMAS = {
@@ -461,6 +467,7 @@ TOOL_SCHEMAS = {
     "claim_chore": ClaimChoreTool.model_json_schema(),
     "get_routine_status": GetRoutineStatusTool.model_json_schema(),
     "post_weekly_digest": PostWeeklyDigestTool.model_json_schema(),
+    "get_tomorrow_digest": GetTomorrowDigestTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1489,6 +1496,10 @@ def handle_claim_chore(args: dict) -> dict:
     return claim_chore(args.get("chore_title", ""),
                        member_name=args.get("member_name"))
 
+def handle_get_tomorrow_digest(args: dict) -> dict:
+    from services.agent_tools_v2 import get_tomorrow_digest
+    return get_tomorrow_digest(member_name=args.get("member_name") or "")
+
 def handle_post_weekly_digest(args: dict) -> dict:
     # v1 loop runs only in admin contexts, so no acting-member gate needed.
     from services.agent_tools_v2 import post_weekly_digest_now
@@ -1539,6 +1550,7 @@ TOOL_HANDLERS = {
     "claim_chore": handle_claim_chore,
     "get_routine_status": handle_get_routine_status,
     "post_weekly_digest": handle_post_weekly_digest,
+    "get_tomorrow_digest": handle_get_tomorrow_digest,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

@@ -189,8 +189,9 @@ def scenario_tomorrow_digest_argyle_dm():
         "assignments": {"ev1": "d1"},
         "scheduled_errands": [],
     }
+    from services import family_digest
     with mock.patch.object(storage, 'get_cached_schedule', return_value=cache), \
-         mock.patch.object(main, '_tomorrow_weather_line', return_value=None), \
+         mock.patch.object(family_digest, 'tomorrow_weather_line', return_value=None), \
          mock.patch.object(main, 'send_push') as push:
         main._send_tomorrow_digests([])
         check(push.call_count == 0,

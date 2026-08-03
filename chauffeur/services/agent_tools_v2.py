@@ -781,6 +781,57 @@ def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
             "message": "There's nothing to report for this week yet, so I skipped the digest."}
 
 
+def get_tomorrow_digest(member_name: str = "", driver_id: str = None) -> Dict[str, Any]:
+    """READ-ONLY answer showing tomorrow's drive digest — the same content the
+    evening Argyle DM sends, via the shared family_digest.build_tomorrow_digests
+    builder. Never posts to any channel (the crossed-wire bug this fixes: with
+    only post_weekly_digest available, 'show me the tomorrow digest' broadcast
+    the weekly recap into the family chat). Driver context passes the logged-in
+    driver_id for their own digest; admin/family contexts may name a member,
+    else every driver's drives are summarized."""
+    from services import family_digest, storage
+    digest = family_digest.build_tomorrow_digests()
+    drivers = digest.get("drivers") or {}
+    weather = digest.get("weather")
+
+    if member_name and not driver_id:
+        low = member_name.strip().lower()
+        target = next((m for m in storage.get_all_members()
+                       if not m.get("system")
+                       and (low == (m.get("name") or "").lower()
+                            or low in (m.get("name") or "").lower())), None)
+        if not target:
+            return {"status": "error",
+                    "message": f"I couldn't find a family member named '{member_name}'."}
+        if not target.get("driver_id"):
+            return {"status": "success",
+                    "message": f"{target.get('name')} isn't a driver, so there's no"
+                               f" drive digest for them. Try their My Day view instead."}
+        driver_id = target["driver_id"]
+
+    if driver_id:
+        name = family_digest._driver_name(driver_id)
+        d = drivers.get(driver_id)
+        if not d:
+            return {"status": "success",
+                    "message": f"{name} has no drives scheduled tomorrow."}
+        parts = [f"🚗 Tomorrow for {name} ({d['count']}):"]
+        if weather:
+            parts.append(weather)
+        parts.extend(d["lines"])
+        return {"status": "success", "message": "\n".join(parts)}
+
+    if not drivers:
+        return {"status": "success", "message": "No drives are scheduled for tomorrow yet."}
+    parts = ["🚗 Tomorrow's drives:"]
+    if weather:
+        parts.append(weather)
+    for d_id, d in drivers.items():
+        parts.append(f"\n{family_digest._driver_name(d_id)} ({d['count']}):")
+        parts.extend(d["lines"])
+    return {"status": "success", "message": "\n".join(parts)}
+
+
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
     """Flight management for the v2 router. Thin wrapper over the validated v1
     handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
@@ -1050,8 +1101,19 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "post_weekly_digest",
-            "description": "Posts the 📊 'Family Week in Review' stats digest (driving per driver, kid activities, chores, rewards, routine streaks) into the family chat RIGHT NOW ('send the weekly digest', 'post the week in review again'). It also goes out automatically on its weekly schedule — this is the on-demand resend.",
+            "description": "Posts the 📊 'Family Week in Review' WEEKLY stats digest (driving per driver, kid activities, chores, rewards, routine streaks) into the family chat RIGHT NOW ('send the weekly digest', 'post the week in review again'). It also goes out automatically on its weekly schedule — this is the on-demand resend. NOT for tomorrow's schedule: 'tomorrow digest' / 'what does tomorrow look like' is get_tomorrow_digest, which never posts anything.",
             "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "get_tomorrow_digest",
+            "description": "Shows TOMORROW's drive digest as a read-only answer — the same preview Argyle DMs each driver in the evening: drives sorted by time with prep-kit items, plus the weather line ('show me the tomorrow digest', 'what does tomorrow look like', 'what are Dad's drives tomorrow'). Posts nothing anywhere. Pass member_name for one person's drives; omit it for every driver.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_name": {"type": "string", "description": "Limit to one family member's drives; omit for all drivers."}
+                },
+                "required": []
+            }
         },
         {
             "name": "adjust_points",

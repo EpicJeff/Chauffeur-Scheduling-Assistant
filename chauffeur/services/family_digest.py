@@ -211,6 +211,105 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
     return f"📊 Family Week in Review ({period})\n\n" + "\n\n".join(blocks)
 
 
+_WEATHER_EMOJI = {
+    'sunny': '☀️', 'clear-night': '🌙', 'partlycloudy': '⛅', 'cloudy': '☁️',
+    'rainy': '🌧️', 'pouring': '🌧️', 'lightning': '⛈️', 'lightning-rainy': '⛈️',
+    'snowy': '❄️', 'snowy-rainy': '🌨️', 'hail': '🌨️', 'fog': '🌫️',
+    'windy': '💨', 'windy-variant': '💨', 'exceptional': '⚠️',
+}
+
+
+def tomorrow_weather_line(tomorrow: datetime.date):
+    """One-line forecast for the digest ("🌧️ 78°/61° · rain 60%"), or None.
+    Uses the configured weather_entity (auto-detect when unset); any HA
+    problem just drops the line — weather never blocks a digest."""
+    try:
+        from services import ha_api
+        settings = storage.get_settings() or {}
+        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
+        for f in forecast:
+            if str(f.get('datetime') or '')[:10] != tomorrow.isoformat():
+                continue
+            cond = str(f.get('condition') or '')
+            parts = []
+            hi, lo = f.get('temperature'), f.get('templow')
+            if hi is not None:
+                parts.append(f"{round(hi)}°" + (f"/{round(lo)}°" if lo is not None else ""))
+            precip = f.get('precipitation_probability')
+            if precip:
+                parts.append(f"rain {round(precip)}%")
+            if not parts and not cond:
+                return None
+            line = f"{_WEATHER_EMOJI.get(cond, '🌤️')} " + (" · ".join(parts) or cond)
+            # ≥50% rain: say the actionable thing, not just the number
+            if (precip or 0) >= 50:
+                line += " — pack rain gear ☔"
+            return line
+    except Exception as we:
+        print(f"Digest weather error: {we}")
+    return None
+
+
+def build_tomorrow_digests(tomorrow: datetime.date = None) -> dict:
+    """Per-driver 'tomorrow' digest content from the combined schedule cache
+    (assigned events + scheduled errands, prep-kit items appended, sorted by
+    time, capped at 6 lines). Returns {'date', 'weather', 'drivers':
+    {driver_id: {'title', 'lines', 'count'}}}. ONE implementation shared by
+    the evening push-loop delivery (main._send_tomorrow_digests) and the
+    read-only get_tomorrow_digest agent tool — the builder never delivers."""
+    from services import prep_kits
+    tomorrow = tomorrow or (datetime.date.today() + datetime.timedelta(days=1))
+    cache = storage.get_cached_schedule() or {}
+    events = {e.get("id"): e for e in cache.get("events", [])}
+    kits = storage.get_prep_kits()
+    pax = prep_kits.passenger_objs()
+
+    per_driver = {}
+    for ev_id, d_id in (cache.get("assignments") or {}).items():
+        if not d_id or str(d_id).startswith("ghost_"):
+            continue
+        ev = events.get(ev_id)
+        if not ev:
+            continue
+        try:
+            start = datetime.datetime.fromisoformat(ev["start"])
+        except Exception:
+            continue
+        if start.date() != tomorrow:
+            continue
+        title = ev.get("title") or "Event"
+        prep = prep_kits.items_for_event(ev, kits, pax)
+        if prep:
+            title += f" (bring: {', '.join(prep[:4])})"
+        per_driver.setdefault(d_id, []).append((start, title))
+
+    for er in cache.get("scheduled_errands", []):
+        d_id = (er.get("driver") or {}).get("id")
+        if not d_id:
+            continue
+        try:
+            start = datetime.datetime.fromisoformat(er["start_time"])
+        except Exception:
+            continue
+        if start.date() != tomorrow:
+            continue
+        per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
+
+    drivers = {}
+    for d_id, items in per_driver.items():
+        items.sort(key=lambda x: x[0])
+        lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}"
+                 for start, title in items[:6]]
+        if len(items) > 6:
+            lines.append(f"...and {len(items) - 6} more")
+        n = len(items)
+        drivers[d_id] = {"title": f"Tomorrow: {n} drive{'s' if n != 1 else ''}",
+                         "lines": lines, "count": n}
+    return {"date": tomorrow.isoformat(),
+            "weather": tomorrow_weather_line(tomorrow),
+            "drivers": drivers}
+
+
 def post_weekly_digest() -> bool:
     """Snapshot today (so the send-day counts), build, and post as Argyle to
     the family channel. False when there was nothing to report."""

@@ -177,102 +177,26 @@ async def push_notification_loop():
 
         await asyncio.sleep(30)
 
-_WEATHER_EMOJI = {
-    'sunny': '☀️', 'clear-night': '🌙', 'partlycloudy': '⛅', 'cloudy': '☁️',
-    'rainy': '🌧️', 'pouring': '🌧️', 'lightning': '⛈️', 'lightning-rainy': '⛈️',
-    'snowy': '❄️', 'snowy-rainy': '🌨️', 'hail': '🌨️', 'fog': '🌫️',
-    'windy': '💨', 'windy-variant': '💨', 'exceptional': '⚠️',
-}
-
-def _tomorrow_weather_line(tomorrow):
-    """One-line forecast for the digest ("🌧️ 78°/61° · rain 60%"), or None.
-    Uses the configured weather_entity (auto-detect when unset); any HA
-    problem just drops the line — weather never blocks a digest."""
-    try:
-        from services import storage, ha_api
-        settings = storage.get_settings() or {}
-        forecast = ha_api.get_weather_forecast(settings.get('weather_entity') or None)
-        for f in forecast:
-            if str(f.get('datetime') or '')[:10] != tomorrow.isoformat():
-                continue
-            cond = str(f.get('condition') or '')
-            parts = []
-            hi, lo = f.get('temperature'), f.get('templow')
-            if hi is not None:
-                parts.append(f"{round(hi)}°" + (f"/{round(lo)}°" if lo is not None else ""))
-            precip = f.get('precipitation_probability')
-            if precip:
-                parts.append(f"rain {round(precip)}%")
-            if not parts and not cond:
-                return None
-            line = f"{_WEATHER_EMOJI.get(cond, '🌤️')} " + (" · ".join(parts) or cond)
-            # ≥50% rain: say the actionable thing, not just the number
-            if (precip or 0) >= 50:
-                line += " — pack rain gear ☔"
-            return line
-    except Exception as we:
-        print(f"Digest weather error: {we}")
-    return None
-
 def _send_tomorrow_digests(subs):
-    """One evening digest per driver listing tomorrow's assignments (events
-    via the combined cache's assignments map, plus scheduled errands).
-    Drivers with nothing tomorrow get nothing. Delivery: posted into the
-    driver's Argyle DM (persistent, scrollable; the chat fan-out pushes it
-    too) — the raw web-push is only the fallback for drivers with no linked
-    member record."""
-    import datetime as _dt
-    from services import storage, prep_kits
+    """One evening digest per driver listing tomorrow's assignments. Content
+    comes from family_digest.build_tomorrow_digests (ONE builder, shared with
+    the get_tomorrow_digest agent tool); this function only delivers. Drivers
+    with nothing tomorrow get nothing. Delivery: posted into the driver's
+    Argyle DM (persistent, scrollable; the chat fan-out pushes it too) — the
+    raw web-push is only the fallback for drivers with no linked member
+    record."""
+    from services import storage, family_digest
 
-    cache = storage.get_cached_schedule() or {}
-    events = {e.get("id"): e for e in cache.get("events", [])}
-    assignments = cache.get("assignments") or {}
-    kits = storage.get_prep_kits()
-    pax = prep_kits.passenger_objs()
-    tomorrow = _dt.date.today() + _dt.timedelta(days=1)
-    weather_line = _tomorrow_weather_line(tomorrow)
-
-    per_driver = {}
-    for ev_id, d_id in assignments.items():
-        if not d_id or str(d_id).startswith("ghost_"):
-            continue
-        ev = events.get(ev_id)
-        if not ev:
-            continue
-        try:
-            start = _dt.datetime.fromisoformat(ev["start"])
-        except Exception:
-            continue
-        if start.date() != tomorrow:
-            continue
-        title = ev.get("title") or "Event"
-        prep = prep_kits.items_for_event(ev, kits, pax)
-        if prep:
-            title += f" (bring: {', '.join(prep[:4])})"
-        per_driver.setdefault(d_id, []).append((start, title))
-
-    for er in cache.get("scheduled_errands", []):
-        d_id = (er.get("driver") or {}).get("id")
-        if not d_id:
-            continue
-        try:
-            start = _dt.datetime.fromisoformat(er["start_time"])
-        except Exception:
-            continue
-        if start.date() != tomorrow:
-            continue
-        per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
+    digest = family_digest.build_tomorrow_digests()
+    weather_line = digest.get("weather")
+    tomorrow_iso = digest.get("date")
 
     subscribed = {s.get("driver_id") for s in subs}
-    for d_id, items in per_driver.items():
-        items.sort(key=lambda x: x[0])
-        lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}" for start, title in items[:6]]
-        if len(items) > 6:
-            lines.append(f"...and {len(items) - 6} more")
+    for d_id, d in (digest.get("drivers") or {}).items():
+        lines = list(d["lines"])
         if weather_line:
             lines.insert(0, weather_line)
-        n = len(items)
-        title = f"Tomorrow: {n} drive{'s' if n != 1 else ''}"
+        title = d["title"]
         member = storage.get_member_by_driver_id(d_id)
         if member:
             try:
@@ -285,7 +209,7 @@ def _send_tomorrow_digests(subs):
                 print(f"Tomorrow digest DM failed for {member.get('name')}: {dme}")
         if d_id in subscribed:
             send_push(d_id, subs, title, "\n".join(lines),
-                      f"digest_{tomorrow.isoformat()}", actions=[])
+                      f"digest_{tomorrow_iso}", actions=[])
 
 def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
     from pywebpush import webpush, WebPushException

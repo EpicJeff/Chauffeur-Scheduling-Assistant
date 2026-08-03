@@ -138,11 +138,60 @@ def scenario_post_goes_through_family_channel():
         check("Family Week in Review" in body, "body is the digest text")
 
 
+def scenario_tomorrow_digest_builder_and_tool():
+    _reset()
+    from unittest import mock
+    tomorrow = TODAY + datetime.timedelta(days=1)
+    storage.add_member({"id": "dadm", "name": "Dad", "role": "parent", "driver_id": "d1"})
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "ev1", "title": "Soccer", "start": f"{tomorrow.isoformat()}T16:00:00",
+             "end": f"{tomorrow.isoformat()}T17:00:00"},
+            {"id": "ev2", "title": "Piano", "start": f"{tomorrow.isoformat()}T09:00:00",
+             "end": f"{tomorrow.isoformat()}T10:00:00"},
+            {"id": "today_ev", "title": "Dentist", "start": f"{TODAY.isoformat()}T12:00:00",
+             "end": f"{TODAY.isoformat()}T13:00:00"},
+        ],
+        "assignments": {"ev1": "d1", "ev2": "d1", "today_ev": "d1", "ghosted": "ghost_1"},
+        "scheduled_errands": [
+            {"title": "Groceries", "start_time": f"{tomorrow.isoformat()}T12:00:00",
+             "driver": {"id": "d1"}},
+        ],
+    })
+    with mock.patch.object(family_digest, 'tomorrow_weather_line', return_value="🌧️ rain 60%"):
+        digest = family_digest.build_tomorrow_digests()
+        check(list(digest["drivers"].keys()) == ["d1"], "one real driver, ghosts skipped")
+        d = digest["drivers"]["d1"]
+        check(d["count"] == 3 and d["title"] == "Tomorrow: 3 drives",
+              f"2 events + 1 errand tomorrow (today's excluded), got {d}")
+        check(d["lines"][0].endswith("Piano") and "Errand: Groceries" in d["lines"][1],
+              f"lines sorted by time, got {d['lines']}")
+        check(digest["weather"] == "🌧️ rain 60%", "weather line rides the builder result")
+
+        # the read-only agent tool: answers, never posts
+        from services import agent_tools_v2
+        from services.agent_tools_v2 import get_tomorrow_digest
+        with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+            res = get_tomorrow_digest(member_name="dad")
+            check(res["status"] == "success" and "Tomorrow for Dad" in res["message"]
+                  and "Piano" in res["message"], f"named member resolves to their digest: {res}")
+            res_all = get_tomorrow_digest()
+            check("Dad (3)" in res_all["message"], "no-arg form summarizes every driver")
+            res_own = get_tomorrow_digest(driver_id="d1")
+            check("Tomorrow for Dad" in res_own["message"], "driver context gets their own digest")
+            res_idle = get_tomorrow_digest(driver_id="d2")
+            check("no drives scheduled tomorrow" in res_idle["message"], "idle driver gets a calm no-op")
+            res_miss = get_tomorrow_digest(member_name="Nobody")
+            check(res_miss["status"] == "error", "unknown member is an error, not a guess")
+            check(post.call_count == 0, "the tool NEVER posts to any channel")
+
+
 SCENARIOS = [
     scenario_record_daily_stats,
     scenario_build_weekly_digest,
     scenario_empty_digest_is_none,
     scenario_post_goes_through_family_channel,
+    scenario_tomorrow_digest_builder_and_tool,
 ]
 
 if __name__ == "__main__":
