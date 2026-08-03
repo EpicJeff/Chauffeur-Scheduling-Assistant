@@ -2338,6 +2338,16 @@
                 driverRow.style.display = 'none';
             }
 
+            const prepRow = document.getElementById('em-prep-row');
+            const prepItems = ev.isErrand ? [] : prepItemsFor(ev.id);
+            if (prepItems.length) {
+                prepRow.style.display = 'block';
+                document.getElementById('em-prep').innerHTML = prepItems.map(i =>
+                    `<span class="px-2 py-0.5 text-[11px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('');
+            } else {
+                prepRow.style.display = 'none';
+            }
+
             const claimWrap = document.getElementById('em-claim-container');
             if (claimWrap) {
                 claimWrap.innerHTML = '';
@@ -2691,6 +2701,7 @@
                             ${card.title}
                         </div>
                         ${(paxBadges || driverChips) ? `<div class="flex flex-wrap items-center gap-1 mb-2">${paxBadges}${driverChips}</div>` : ''}
+                        ${prepPillsHtml(prepItemsFor(card.id))}
                         ${card.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${card.location}</span></div>` : ''}
                     </div>
                 </div>`;
@@ -2710,6 +2721,63 @@
                 return new Date(a.start) - new Date(b.start);
             });
             return `<div class="flex flex-col pb-20">${sorted.map(renderFamilyCard).join('')}</div>`;
+        }
+
+        // --- Prep kits on event cards + the driver's "packed" checkoff ---
+        // Items come from scheduleData.prep_by_event (kit matching runs
+        // server-side per schedule request); confirmations are keyed by the
+        // PARENT event instance id so split dropoff/pickup legs share one
+        // checkoff (_unrolled_ recurrence instances stay distinct).
+        function prepEventKey(evId) {
+            let id = String(evId || '');
+            for (const suf of ['_dropoff', '_pickup']) {
+                if (id.endsWith(suf)) id = id.slice(0, -suf.length);
+            }
+            return id;
+        }
+
+        function prepItemsFor(evId) {
+            const map = (scheduleData && scheduleData.prep_by_event) || {};
+            const direct = map[evId] || map[prepEventKey(evId)];
+            if (direct) return direct;
+            // Family cards collapse _unrolled_ recurrence ids down to the base
+            // id; fall back to any instance of that base.
+            const pref = String(evId) + '_unrolled_';
+            const k = Object.keys(map).find(x => x.startsWith(pref));
+            return k ? map[k] : [];
+        }
+
+        function isPrepConfirmed(evId) {
+            return ((scheduleData && scheduleData.prep_confirmed) || []).includes(prepEventKey(evId));
+        }
+
+        function prepPillsHtml(items) {
+            if (!items || !items.length) return '';
+            return `<div class="flex flex-wrap items-center gap-1 mb-2">
+                <span class="text-xs">🎒</span>
+                ${items.map(i => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('')}
+            </div>`;
+        }
+
+        async function togglePrepConfirmed(evId, e) {
+            if (e) e.stopPropagation();
+            const key = prepEventKey(evId);
+            const confirmed = !isPrepConfirmed(evId);
+            if (!scheduleData.prep_confirmed) scheduleData.prep_confirmed = [];
+            if (confirmed) scheduleData.prep_confirmed.push(key);
+            else scheduleData.prep_confirmed = scheduleData.prep_confirmed.filter(k => k !== key);
+            buildTimeline();
+            try {
+                const res = await fetch(`${apiBase}api/prep_status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: key, confirmed: confirmed, member_id: selectedMemberId })
+                });
+                if (!res.ok) throw new Error('save failed');
+            } catch (err) {
+                showGlobalAlert('Failed to save prep check');
+                await fetchSchedule();
+            }
         }
 
         function buildTimeline() {
@@ -2917,6 +2985,9 @@
                                     ${ev.title}
                                 </div>
                                 ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
+                                ${prepPillsHtml(prepItemsFor(ev.id))}
+                                ${prepItemsFor(ev.id).length ? `<button onclick="togglePrepConfirmed('${ev.id}', event)"
+                                    class="mb-2 px-3 py-1.5 rounded-lg text-[12px] font-bold border ${isPrepConfirmed(ev.id) ? 'bg-green-600/20 text-green-300 border-green-500/40' : 'bg-gray-900 text-gray-300 border-gray-600 active:bg-gray-700'}">${isPrepConfirmed(ev.id) ? '✓ Packed' : 'Confirm packed'}</button>` : ''}
                                 ${lateMins > 0 ? `<div class="text-red-400 font-bold text-sm mb-2 flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Arriving ${lateMins}m Late</div>` : ''}
                                 ${ev.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${ev.location}</span></div>` : ''}
                             </div>
@@ -3283,6 +3354,10 @@
             <div class="mb-4" id="em-driver-row" style="display: none">
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Driver</p>
                 <div id="em-driver" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="mb-4" id="em-prep-row" style="display: none">
+                <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">🎒 Bring</p>
+                <div id="em-prep" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div class="mb-6">
                 <p class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Location</p>

@@ -141,6 +141,7 @@ with db_lock:
     agent_action_proposals_table = db.table('agent_action_proposals')
     ingest_log_table = db.table('ingest_log')
     prep_kits_table = db.table('prep_kits')
+    prep_status_table = db.table('prep_status')
     daily_stats_table = db.table('daily_stats')
 
     if BACKEND != 'sqlite':
@@ -2095,6 +2096,24 @@ def delete_event_config(google_id: str):
     with db_lock:
         q = Query()
         event_configs_table.remove(q.google_id == google_id)
+
+# Prep status: the driver's "stuff is in the car" checkoff, keyed by the
+# PARENT event instance id (split _dropoff/_pickup legs share one checkoff;
+# _unrolled_ recurrence instances stay distinct). Unconfirming removes the
+# row, so the table only ever holds confirmations.
+def set_prep_confirmed(event_id: str, confirmed: bool, member_id: str = None):
+    import time
+    with db_lock:
+        if confirmed:
+            prep_status_table.upsert(
+                {'event_id': event_id, 'confirmed_by': member_id, 'ts': time.time()},
+                Query().event_id == event_id)
+        else:
+            prep_status_table.remove(Query().event_id == event_id)
+
+def get_confirmed_preps() -> List[str]:
+    with db_lock:
+        return [doc['event_id'] for doc in prep_status_table.all()]
 
 def get_completed_drives():
     with db_lock:

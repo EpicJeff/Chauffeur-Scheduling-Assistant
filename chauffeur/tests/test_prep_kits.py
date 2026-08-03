@@ -133,6 +133,39 @@ def scenario_suggest_normalization():
         llm._call_llm_json, storage.get_settings = orig_llm, orig_settings
 
 
+def scenario_prep_status_checkoff():
+    storage.prep_status_table.truncate()
+    storage.set_prep_confirmed("ev1_unrolled_20260805", True, member_id="mom")
+    storage.set_prep_confirmed("ev2", True)
+    check(sorted(storage.get_confirmed_preps()) == ["ev1_unrolled_20260805", "ev2"],
+          "confirmations recorded per parent event instance")
+    storage.set_prep_confirmed("ev1_unrolled_20260805", True, member_id="dad")
+    check(len(storage.get_confirmed_preps()) == 2, "re-confirm upserts, no duplicate row")
+    storage.set_prep_confirmed("ev2", False)
+    check(storage.get_confirmed_preps() == ["ev1_unrolled_20260805"],
+          "unconfirming removes the row")
+    storage.prep_status_table.truncate()
+
+
+def scenario_schedule_payload_prep_map():
+    import main
+    storage.prep_kits_table.truncate()
+    storage.add_prep_kit(_kit())
+    events = [
+        _ev(id="ev1"),
+        _ev(id="ev1_dropoff", title="Dropoff: Addison Soccer Practice"),
+        _ev(id="er1", title="Soccer ball pickup", event_type="errand"),
+        _ev(id="t1", title="Soccer trip", event_type="background_trip"),
+        _ev(id="ev2", title="Piano Lesson"),
+    ]
+    m = main._prep_by_event(events)
+    check(sorted(m.keys()) == ["ev1", "ev1_dropoff"],
+          f"kit items keyed per matching event (legs too), errands/trips skipped, got {sorted(m.keys())}")
+    check(m["ev1"] == ["Cleats", "Shin Guards", "Water Bottle"], "items from the matching kit")
+    storage.prep_kits_table.truncate()
+    check(main._prep_by_event(events) == {}, "no enabled kits -> empty map")
+
+
 def scenario_suggest_requires_key():
     orig = storage.get_settings
     storage.get_settings = lambda: {"calendar_ids": ["p"]}
@@ -152,6 +185,8 @@ SCENARIOS = [
     scenario_passenger_filter,
     scenario_items_dedupe_across_kits,
     scenario_storage_crud,
+    scenario_prep_status_checkoff,
+    scenario_schedule_payload_prep_map,
     scenario_suggest_normalization,
     scenario_suggest_requires_key,
 ]

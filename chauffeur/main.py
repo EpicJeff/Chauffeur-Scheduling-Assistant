@@ -6944,6 +6944,40 @@ def update_drive_status(status: DriveStatus):
     storage.mark_drive_status(status.leg_id, status.status)
     return {"status": "ok"}
 
+class PrepStatusRequest(BaseModel):
+    event_id: str            # PARENT event instance id (leg suffixes stripped client-side)
+    confirmed: bool = True
+    member_id: Optional[str] = None
+
+@app.post("/api/prep_status")
+def update_prep_status(req: PrepStatusRequest):
+    storage.set_prep_confirmed(req.event_id, req.confirmed, req.member_id)
+    return {"status": "ok"}
+
+def _prep_by_event(events):
+    """{event_id: [items]} for schedule-payload events with matching enabled
+    prep kits. Computed per request like completed_drives — kit edits show up
+    without a schedule-cache rebuild. Pure-Python matching, no LLM."""
+    from services import prep_kits
+    try:
+        kits = [k for k in storage.get_prep_kits() if k.get('enabled') is not False]
+        if not kits:
+            return {}
+        pax = prep_kits.passenger_objs()
+        out = {}
+        for ev in events or []:
+            if not isinstance(ev, dict):
+                ev = ev.dict() if hasattr(ev, 'dict') else vars(ev)
+            if ev.get('event_type') in ('errand', 'background_trip'):
+                continue
+            items = prep_kits.items_for_event(ev, kits, pax)
+            if items:
+                out[str(ev.get('id'))] = items
+        return out
+    except Exception as pe:
+        logger.error(f"prep_by_event failed: {pe}")
+        return {}
+
 custom_schedule_cache = {}
 
 from fastapi import BackgroundTasks
@@ -7086,6 +7120,8 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
             if cached:
                 cached["completed_drives"] = completed
                 cached["in_progress_drives"] = in_progress
+                cached["prep_by_event"] = _prep_by_event(cached.get("events"))
+                cached["prep_confirmed"] = storage.get_confirmed_preps()
                 cached["solving_dates"] = schedule_coordinator.get_solving_dates()
                 # Rate limit background refreshes to every 5 minutes per date range
                 import time
@@ -7126,6 +7162,8 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
             if "error" not in res:
                 res["completed_drives"] = completed
                 res["in_progress_drives"] = in_progress
+                res["prep_by_event"] = _prep_by_event(res.get("events"))
+                res["prep_confirmed"] = storage.get_confirmed_preps()
                 res["solving_dates"] = schedule_coordinator.get_solving_dates()
             return res
         except Exception as e:
