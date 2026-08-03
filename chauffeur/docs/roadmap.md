@@ -129,13 +129,13 @@ settings, not hardcoded.
   agent tools in both stacks with kid-owns-their-list scoping. Full K4
   design: `docs/k4_school_design.md` (scope guards: due dates never
   grades; no points/streaks; gentle overdue, never pushed).
-- **K4b — intake fills the domain. NEXT.** Task-mode ICS feeds
-  (`ics_feeds.target_kind: tasks` + member_id — assignment feeds must NOT
-  become calendar events / solver load), email-intake task proposals
-  approvable into a kid's list, Google Classroom API where no feed
-  exists (due dates only, explicitly no grades/submission state).
+- **K4b — intake fills the domain. SHIPPED v2.34.1 (2026-08-05).**
+  Task-mode ICS feeds (never calendar/solver load; done tasks final),
+  intake To-do proposals approvable onto a kid's list ("tasks:{member}"
+  target). Google Classroom deliberately deferred: needs per-kid OAuth,
+  and feeds cover this family — revisit on a feed-less school.
 - **K4c — school hours on FamilyMember + the deferred K2 school-day-end
-  pickup push + K5 morning launch line.**
+  pickup push + K5 morning launch line. NEXT.**
 - **Deferred from K2** (needs K4's school-hours model): the scheduled
   end-of-school-day "you're getting picked up by X at 3:15" push.
 

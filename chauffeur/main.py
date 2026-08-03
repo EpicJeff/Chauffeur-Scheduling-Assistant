@@ -2441,8 +2441,12 @@ def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
 
 class IcsFeedCreate(BaseModel):
     url: str
-    calendar_id: str
+    calendar_id: str = ""            # required for calendar mode
     name: Optional[str] = None
+    # K4b task mode: 'tasks' + member_id lands assignments on the kid's
+    # school list instead of a calendar (never solver load).
+    target_kind: str = "calendar"    # calendar | tasks
+    member_id: Optional[str] = None
 
 class IcsFeedUpdate(BaseModel):
     name: Optional[str] = None
@@ -2468,6 +2472,15 @@ def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read that ICS feed: {e}")
 
+    target_kind = req.target_kind if req.target_kind in ('calendar', 'tasks') else 'calendar'
+    if target_kind == 'tasks':
+        member = storage.get_member(req.member_id or '')
+        if not member or member.get('role') != 'child':
+            raise HTTPException(status_code=400,
+                                detail="Task feeds need a child member to own the list")
+    elif not req.calendar_id:
+        raise HTTPException(status_code=400, detail="Calendar feeds need a target calendar")
+
     name = (req.name or '').strip() or parsed.get('name')
     if not name:
         name = url.split('/')[2] if '://' in url else url
@@ -2475,6 +2488,8 @@ def create_ics_feed(req: IcsFeedCreate, background_tasks: BackgroundTasks):
         'url': url,
         'name': name,
         'calendar_id': req.calendar_id,
+        'target_kind': target_kind,
+        'member_id': req.member_id,
         'created_at': datetime.now().astimezone().isoformat(),
     })
 
@@ -2606,6 +2621,33 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
     title = (req.title or '').strip() or prop['title']
     start = req.start or prop['start']
     end = req.end or prop['end']
+
+    # K4b: a 'tasks:{member_id}' target lands the item on that kid's school
+    # list instead of any calendar — never solver load, never an all-day 📌.
+    if (req.calendar_id or '').startswith('tasks:'):
+        member_id = req.calendar_id.split(':', 1)[1]
+        member = storage.get_member(member_id)
+        if not member or member.get('role') != 'child':
+            raise HTTPException(status_code=400, detail="Task target must be a child member")
+        due = (start or '')[:10]
+        try:
+            datetime.strptime(due, '%Y-%m-%d')
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Proposal has no usable due date")
+        from models.schemas import KidTask
+        from services.ics_sync import _task_kind_for
+        task = KidTask(member_id=member_id, title=title, due_date=due,
+                       kind=_task_kind_for(title), source='intake',
+                       source_ref=proposal_id,
+                       notes=prop.get('notes') or '').model_dump()
+        storage.add_kid_task(task)
+        storage.update_proposal(proposal_id, {
+            'status': 'approved', 'calendar_id': req.calendar_id,
+            'created_task_id': task['id'], 'title': title, 'start': start, 'end': end,
+        })
+        return {"status": "approved", "task_id": task['id'],
+                "message": f"Added to {member.get('name')}'s school list 📚"}
+
     description_parts = []
     if prop.get('notes'):
         description_parts.append(prop['notes'])

@@ -821,6 +821,7 @@
         // --- Intake proposals (parents approve/ignore from the Family tab) ---
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once
+        let proposalTaskTargets = [];  // K4b: kid school-list targets for To-do proposals
 
         function escProp(s) {
             const d = document.createElement('div');
@@ -855,7 +856,11 @@
                         if (!opts.find(o => o.id === c)) opts.push({ id: c, label: d.name });
                     }));
                 proposalTargets = opts;
-            } catch (e) { proposalTargets = []; }
+                // K4b: To-do proposals can land on a kid's school task list.
+                proposalTaskTargets = (membersData || [])
+                    .filter(m => m.role === 'child')
+                    .map(m => ({ id: 'tasks:' + m.id, label: `📚 ${m.name}'s list` }));
+            } catch (e) { proposalTargets = []; proposalTaskTargets = []; }
         }
 
         function proposalWhen(p) {
@@ -886,7 +891,10 @@
                 const inList = (proposalTargets || []).some(o => o.id === p.calendar_id);
                 const extraOpt = (p.calendar_id && !inList)
                     ? `<option value="${escProp(p.calendar_id)}">Family calendar</option>` : '';
-                const opts = (proposalTargets || []).map(o =>
+                const targetList = p.kind === 'task'
+                    ? [...proposalTaskTargets, ...(proposalTargets || [])]
+                    : (proposalTargets || []);
+                const opts = targetList.map(o =>
                     `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');
                 card.innerHTML = `
                     <div class="flex items-center gap-2 flex-wrap">
@@ -924,7 +932,7 @@
                 });
                 const data = await res.json();
                 if (!res.ok) { showGlobalAlert(data.detail || 'Approve failed.'); return; }
-                showGlobalAlert(`Added "${p.title}" to the calendar.`);
+                showGlobalAlert(data.message || `Added "${p.title}" to the calendar.`);
                 proposalsData = proposalsData.filter(x => x.id !== id);
                 renderProposals();
                 applyViewVisibility();

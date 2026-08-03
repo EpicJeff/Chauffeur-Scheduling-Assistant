@@ -89,8 +89,8 @@
                                 <div class="flex flex-col gap-2 shrink-0 md:w-72">
                                     <select x-model="p._target"
                                         class="bg-gray-900 border border-gray-600 rounded-lg p-2.5 text-white text-sm w-full">
-                                        <option value="">Onto whose calendar?</option>
-                                        <template x-for="opt in calendarTargets" :key="opt.id + opt.label">
+                                        <option value="" x-text="p.kind === 'task' ? 'Onto a list or calendar?' : 'Onto whose calendar?'"></option>
+                                        <template x-for="opt in targetsFor(p)" :key="opt.id + opt.label">
                                             <option :value="opt.id" x-text="opt.label"></option>
                                         </template>
                                     </select>
@@ -208,6 +208,7 @@
                 config: { ingest_email_enabled: false, ingest_email_host: 'imap.gmail.com', ingest_email_user: '', has_password: false, ingest_sender_defaults: [] },
                 passwordInput: '',
                 calendarTargets: [],
+                taskTargets: [],
                 checking: false,
                 savingConfig: false,
                 busyId: null,
@@ -250,16 +251,28 @@
                 },
                 async loadTargets() {
                     try {
-                        const [pres, dres] = await Promise.all([
-                            fetch(`${this.apiBase}api/passengers`), fetch(`${this.apiBase}api/drivers`)]);
+                        const [pres, dres, mres] = await Promise.all([
+                            fetch(`${this.apiBase}api/passengers`), fetch(`${this.apiBase}api/drivers`),
+                            fetch(`${this.apiBase}api/members`)]);
                         const passengers = await pres.json(), drivers = await dres.json();
+                        const members = await mres.json();
                         const opts = [];
                         (Array.isArray(passengers) ? passengers : []).forEach(p =>
                             (p.calendar_ids || []).forEach(c => opts.push({ id: c, label: `${p.name} — ${c}` })));
                         (Array.isArray(drivers) ? drivers : []).forEach(d =>
                             ((d.calendar_ids || d.calendarIds) || []).forEach(c => opts.push({ id: c, label: `${d.name} — ${c}` })));
                         this.calendarTargets = opts;
-                    } catch (e) { this.calendarTargets = []; }
+                        // K4b: To-do proposals can land on a kid's school task
+                        // list instead of any calendar (never solver load).
+                        this.taskTargets = (Array.isArray(members) ? members : [])
+                            .filter(m => m.role === 'child')
+                            .map(m => ({ id: 'tasks:' + m.id, label: `📚 ${m.name}'s school list` }));
+                    } catch (e) { this.calendarTargets = []; this.taskTargets = []; }
+                },
+                targetsFor(p) {
+                    return p.kind === 'task'
+                        ? [...this.taskTargets, ...this.calendarTargets]
+                        : this.calendarTargets;
                 },
                 whenLabel(p) {
                     try {
@@ -288,6 +301,7 @@
                         });
                         const data = await res.json();
                         if (!res.ok) showGlobalAlert(data.detail || 'Approve failed.');
+                        else if (data.message) showGlobalAlert(data.message);
                         await this.loadProposals();
                     } finally { this.busyId = null; }
                 },

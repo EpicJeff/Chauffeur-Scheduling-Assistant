@@ -168,6 +168,87 @@ def _entry_start_dt(entry: dict):
     return dt
 
 
+def _task_kind_for(title: str) -> str:
+    """Kind heuristic for assignment feeds — drives the emoji, nothing else."""
+    low = (title or '').lower()
+    if any(w in low for w in ('test', 'quiz', 'exam', 'midterm', 'final')):
+        return 'test'
+    if 'project' in low:
+        return 'project'
+    if any(w in low for w in ('bring', 'wear', 'return')):
+        return 'bring'
+    return 'homework'
+
+
+def _sync_feed_tasks(feed: dict, items: dict, summary: dict, now) -> dict:
+    """Task-mode sync (K4b): a per-student assignment feed lands on the kid's
+    school list (kid_tasks), NEVER on a calendar — assignment 'events' would
+    pollute the driving solver. Diff semantics mirror calendar mode: new item
+    -> open task; title/due change on an OPEN task -> patch; vanished future
+    item -> delete the open task. A DONE task is never patched, resurrected,
+    or deleted — the kid finished it, that's final. Past-due open tasks stay
+    (gentle 'still open' history, pruned only when the kid checks them off)."""
+    member_id = feed.get('member_id')
+    feed_id = feed['id']
+    ref_prefix = f"{feed_id}:"
+    today = now.date()
+
+    existing = {t['source_ref']: t
+                for t in storage.get_kid_tasks(member_id, include_done=True)
+                if (t.get('source_ref') or '').startswith(ref_prefix)}
+
+    wanted = {}
+    for key, item in items.items():
+        due = (item['start'] or '')[:10]
+        try:
+            due_d = datetime.date.fromisoformat(due)
+        except ValueError:
+            continue
+        if due_d < today - PAST_GRACE:
+            continue  # don't import ancient assignments
+        wanted[ref_prefix + key] = {'title': item['title'], 'due_date': due}
+
+    for ref, w in wanted.items():
+        t = existing.pop(ref, None)
+        if t is None:
+            from models.schemas import KidTask
+            task = KidTask(member_id=member_id, title=w['title'],
+                           due_date=w['due_date'], kind=_task_kind_for(w['title']),
+                           source='ics', source_ref=ref).model_dump()
+            storage.add_kid_task(task)
+            summary['added'] += 1
+        elif t.get('status') == 'done':
+            continue
+        elif t.get('title') != w['title'] or t.get('due_date') != w['due_date']:
+            storage.update_kid_task(t['id'], {
+                'title': w['title'], 'due_date': w['due_date'],
+                'kind': _task_kind_for(w['title'])})
+            summary['updated'] += 1
+
+    # Leftovers vanished from the feed: cancel only OPEN future tasks.
+    for ref, t in existing.items():
+        if t.get('status') == 'done':
+            continue
+        try:
+            due_d = datetime.date.fromisoformat(t.get('due_date') or '')
+        except ValueError:
+            continue
+        if due_d >= today:
+            storage.delete_kid_task(t['id'])
+            summary['removed'] += 1
+
+    status = f"ok: {summary['total']} items -> tasks"
+    changes = [f"{summary[k]} {k}" for k in ('added', 'updated', 'removed') if summary[k]]
+    if changes:
+        status += ' (' + ', '.join(changes) + ')'
+    storage.update_ics_feed(feed_id, {
+        'event_count': summary['total'],
+        'last_synced': now.isoformat(),
+        'last_status': status,
+    })
+    return summary
+
+
 def sync_feed(feed: dict) -> dict:
     """Sync one feed dict (as stored). Persists the updated feed doc and
     returns {'added','updated','removed','total','error'}."""
@@ -187,6 +268,9 @@ def sync_feed(feed: dict) -> dict:
 
     items = parsed['items']
     summary['total'] = len(items)
+
+    if feed.get('target_kind') == 'tasks':
+        return _sync_feed_tasks(feed, items, summary, now)
     cal_id = feed['calendar_id']
     event_map = dict(feed.get('event_map') or {})
     new_map = {}
@@ -265,9 +349,18 @@ def sync_all_feeds() -> dict:
 
 def remove_feed_events(feed: dict) -> int:
     """Delete all FUTURE events this feed created (used on feed deletion when
-    the user opts to clean up). Past events stay as history."""
+    the user opts to clean up). Past events stay as history. Task-mode feeds
+    delete their OPEN tasks instead (done tasks are the kid's history)."""
     now = datetime.datetime.now(_local_tz())
     removed = 0
+    if feed.get('target_kind') == 'tasks':
+        ref_prefix = f"{feed['id']}:"
+        for t in storage.get_kid_tasks(feed.get('member_id'), include_done=True):
+            if (t.get('source_ref') or '').startswith(ref_prefix) \
+                    and t.get('status') != 'done':
+                storage.delete_kid_task(t['id'])
+                removed += 1
+        return removed
     for entry in (feed.get('event_map') or {}).values():
         start_dt = _entry_start_dt(entry)
         if start_dt is not None and start_dt >= now:

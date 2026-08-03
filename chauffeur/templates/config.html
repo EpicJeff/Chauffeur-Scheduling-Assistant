@@ -1222,17 +1222,20 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="w-full mt-4" x-show="editPassengerId && newPassenger.calendar_ids.length">
+                        <div class="w-full mt-4" x-show="editPassengerId && (newPassenger.calendar_ids.length || (passengerFormMember && passengerFormMember.role === 'child'))">
                             <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
                             <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events are
                                 created on this passenger's calendar and re-synced hourly, so reschedules and
-                                cancellations propagate on their own. Past events are never touched.</p>
-                            <template x-for="feed in icsFeedsFor(newPassenger.calendar_ids)" :key="feed.id">
+                                cancellations propagate on their own. Past events are never touched. For a child, an
+                                assignment feed (Canvas/Schoology) can target their <b>📚 school task list</b> instead —
+                                homework lands as due-dated tasks, never as calendar events the driving solver would see.</p>
+                            <template x-for="feed in icsFeedsFor(newPassenger.calendar_ids, passengerFormMember)" :key="feed.id">
                                 <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
                                     :class="feed.enabled === false ? 'opacity-60' : ''">
                                     <div class="flex-1 min-w-0">
                                         <span class="text-sm font-bold text-white" x-text="feed.name"></span>
-                                        <span class="text-xs text-teal-300 ml-2" x-text="(feed.event_count || 0) + ' events'"></span>
+                                        <span class="text-xs text-teal-300 ml-2"
+                                            x-text="(feed.event_count || 0) + (feed.target_kind === 'tasks' ? ' 📚 tasks' : ' events')"></span>
                                         <span x-show="feed.enabled === false"
                                             class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
                                         <p class="text-xs truncate"
@@ -1254,13 +1257,16 @@
                                 <input type="text" x-model="newIcsFeed.url"
                                     placeholder="https://... .ics or webcal://..."
                                     class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
-                                <select x-show="newPassenger.calendar_ids.length > 1" x-model="newIcsFeed.calendar_id"
+                                <select x-show="newPassenger.calendar_ids.length > 1 || (passengerFormMember && passengerFormMember.role === 'child')"
+                                    x-model="newIcsFeed.calendar_id"
                                     class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
                                     <option value="">Onto calendar...</option>
                                     <template x-for="c in newPassenger.calendar_ids" :key="c">
                                         <option :value="c"
                                             x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
                                     </template>
+                                    <option x-show="passengerFormMember && passengerFormMember.role === 'child'"
+                                        value="__tasks__" x-text="'📚 School task list' + (passengerFormMember ? ' (' + passengerFormMember.name + ')' : '')"></option>
                                 </select>
                                 <button @click="addInlineIcsFeed(newPassenger.calendar_ids)" :disabled="icsFeedBusy"
                                     class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
@@ -2769,6 +2775,7 @@
                 newPerson: { name: '', role: 'adult', color_code: '#3B82F6', avatar: '' },
                 icsFeeds: [],
                 newIcsFeed: { url: '', calendar_id: '' },
+                passengerFormMember: null,   // the member whose passenger profile is open (K4b task feeds)
                 icsFeedBusy: false,
                 icsSyncingId: null,
                 newPassengerHashtagInput: '',
@@ -3411,6 +3418,7 @@
                     this._scrollToPanel('driverFormPanel');
                 },
                 openPassengerProfile(member) {
+                    this.passengerFormMember = member;
                     const p = this.passengerForMember(member);
                     if (p) {
                         this.editPassenger(p);
@@ -3429,6 +3437,7 @@
                     this._scrollToPanel('driverFormPanel');
                 },
                 openNewPassenger() {
+                    this.passengerFormMember = null;
                     this.cancelEditPassenger();
                     this.showPassengerForm = true;
                     this.showDriverForm = false;
@@ -3472,9 +3481,12 @@
                         this.icsFeeds = [];
                     }
                 },
-                icsFeedsFor(calIds) {
+                icsFeedsFor(calIds, member) {
                     const ids = calIds || [];
-                    return this.icsFeeds.filter(f => ids.includes(f.calendar_id));
+                    return this.icsFeeds.filter(f =>
+                        (f.target_kind === 'tasks'
+                            ? (member && f.member_id === member.id)
+                            : ids.includes(f.calendar_id)));
                 },
                 icsTargetLabel(calId) {
                     const m = this.calendarMetadata[calId];
@@ -3484,20 +3496,25 @@
                     const url = (this.newIcsFeed.url || '').trim();
                     if (!url) return showGlobalAlert('Paste an ICS feed URL first.');
                     const ids = calIds || [];
-                    const target = ids.length === 1 ? ids[0] : this.newIcsFeed.calendar_id;
+                    const target = (ids.length === 1 && !this.newIcsFeed.calendar_id)
+                        ? ids[0] : this.newIcsFeed.calendar_id;
                     if (!target) return showGlobalAlert('Pick which calendar the events go on.');
+                    // K4b: '__tasks__' targets the child's school task list, not a calendar.
+                    const body = target === '__tasks__'
+                        ? { url: url, target_kind: 'tasks', member_id: this.passengerFormMember.id }
+                        : { url: url, calendar_id: target };
                     this.icsFeedBusy = true;
                     try {
                         const res = await fetch(`${this.apiBase}api/ics_feeds`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url: url, calendar_id: target })
+                            body: JSON.stringify(body)
                         });
                         const data = await res.json();
                         if (!res.ok) {
                             showGlobalAlert(data.detail || 'Could not add that feed.');
                         } else {
-                            showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} events. They're being created in the background.`);
+                            showGlobalAlert(`Subscribed to "${data.name}" — found ${data.event_count} ${target === '__tasks__' ? 'items for the task list' : 'events'}. They're being created in the background.`);
                             this.newIcsFeed = { url: '', calendar_id: '' };
                             await this.loadIcsFeeds();
                             setTimeout(() => this.loadIcsFeeds(), 8000); // pick up the initial sync result
