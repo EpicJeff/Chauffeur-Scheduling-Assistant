@@ -82,13 +82,16 @@ milestones, library book Thursday, $12 by Friday).
 - Scope guard: due dates and events only. No grades, no missing-assignment
   shaming.
 
-## Phase K5 — School-rhythm prep + morning launch
+## Phase K5 — Morning launch — SHIPPED v2.35.0 (2026-08-05)
 
-- Spirit-week / picture-day / PE-day intake emails → one-day prep-kit
-  proposals (extend the watcher's weekly suggest to ingested email content).
-- My Day + kiosk lanes get a "leave by 7:40 with Dad" line computed from the
-  solved schedule's departure times — the number exists, the person who needs
-  shoes on never sees it.
+"🚀 Leave by 7:35 AM with Dad" — computed honestly from the solver's
+initial edges (start − travel − driver buffer), shown atop My Day and
+leading the kid digest/kiosk cards; no edge or ghost-only → no line (never
+fabricate precision). K4c shipped alongside: school hours on the member +
+the dismissal push ("🚗 Dad has you after school"), silent whenever
+anything is unknown. THE ARC AS DESIGNED IS COMPLETE. Not built from the
+original K5 sketch: spirit-week email → one-day prep-kit proposals (the
+weekly watcher suggest covers kits; revisit if the family misses it).
 
 ## Sequencing & effort
 

@@ -88,6 +88,10 @@ class FamilyMember(BaseModel):
     ha_person_entity: Optional[str] = None    # e.g. person.jeff
     notify_service: Optional[str] = None      # e.g. notify.mobile_app_jeffs_iphone
     media_player_entity: Optional[str] = None
+    # School hours (K4c, children only): drive the school-day-end pickup
+    # push and the morning launch line. Empty = no school-hour features.
+    school_hours_start: Optional[str] = None  # HH:MM
+    school_hours_end: Optional[str] = None    # HH:MM
     pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
     pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)

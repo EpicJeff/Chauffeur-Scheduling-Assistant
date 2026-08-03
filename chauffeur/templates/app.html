@@ -705,7 +705,13 @@
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
                 const routineHtml = renderRoutineSection(routineData, requestedOffset);
                 const dueSoonHtml = renderDueSoonSection(data.due_soon);
-                wrap.innerHTML = routineHtml + dueSoonHtml + (data.rides.length
+                const launchHtml = !data.launch ? '' : `
+                    <div class="bg-indigo-950/60 border border-indigo-800/60 rounded-xl p-3 mb-1 flex items-center gap-2">
+                        <span class="text-lg">🚀</span>
+                        <span class="text-sm text-indigo-100 font-bold">Leave by ${formatTime(data.launch.leave_at)}${data.launch.driver ? ' with ' + mfEscape(data.launch.driver.name) : ''}</span>
+                        <span class="text-xs text-indigo-300/70 ml-auto truncate">${mfEscape(data.launch.title || '')}</span>
+                    </div>`;
+                wrap.innerHTML = launchHtml + routineHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
                       ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');

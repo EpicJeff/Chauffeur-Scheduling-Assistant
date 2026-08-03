@@ -134,8 +134,18 @@ settings, not hardcoded.
   intake To-do proposals approvable onto a kid's list ("tasks:{member}"
   target). Google Classroom deliberately deferred: needs per-kid OAuth,
   and feeds cover this family — revisit on a feed-less school.
-- **K4c — school hours on FamilyMember + the deferred K2 school-day-end
-  pickup push + K5 morning launch line. NEXT.**
+- **K4c + K5 — school hours, dismissal push, morning launch. SHIPPED
+  v2.35.0 (2026-08-05). THE ARC AS DESIGNED (K1–K5) IS COMPLETE.**
+  School-hours fields on members (Config → People, child roles); dismissal
+  push names the next ride's driver, silent when nothing is known; morning
+  "🚀 Leave by" line (start − travel − buffer from the solver's initial
+  edges) on My Day, the kid digest, and kiosk cards.
+
+Post-arc backlog (nice-to-haves surfaced during the build, none urgent):
+Google Classroom OAuth sync (only if a feed-less school appears) ·
+parent-visible school-task admin list on a dashboard page (agent covers
+it today) · milestone templates ("science fair" → standard breakdown) ·
+per-kid digest time overrides.
 - **Deferred from K2** (needs K4's school-hours model): the scheduled
   end-of-school-day "you're getting picked up by X at 3:15" push.
 

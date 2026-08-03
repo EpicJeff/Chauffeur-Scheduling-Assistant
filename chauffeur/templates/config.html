@@ -1093,6 +1093,17 @@
                                                 </template>
                                             </select>
                                         </div>
+                                        <div x-show="memberEdit.role === 'child'">
+                                            <label class="block text-gray-400 mb-1 text-sm">🏫 School hours
+                                                <span class="text-gray-600">(enables the after-school pickup push + morning leave-by line)</span></label>
+                                            <div class="flex items-center gap-2">
+                                                <input type="time" x-model="memberEdit.school_hours_start"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                <span class="text-gray-500">to</span>
+                                                <input type="time" x-model="memberEdit.school_hours_end"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                            </div>
+                                        </div>
                                         <button @click="testNotify(member)" x-show="member.notify_service"
                                             class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
                                             Notify</button>
@@ -3584,6 +3595,8 @@
                         ha_person_entity: member.ha_person_entity || '',
                         notify_service: member.notify_service || '',
                         media_player_entity: member.media_player_entity || '',
+                        school_hours_start: member.school_hours_start || '',
+                        school_hours_end: member.school_hours_end || '',
                     };
                 },
                 async resetMemberPin(member) {
@@ -3610,6 +3623,8 @@
                     updates.ha_person_entity = updates.ha_person_entity || null;
                     updates.notify_service = updates.notify_service || null;
                     updates.media_player_entity = updates.media_player_entity || null;
+                    updates.school_hours_start = updates.school_hours_start || null;
+                    updates.school_hours_end = updates.school_hours_end || null;
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },

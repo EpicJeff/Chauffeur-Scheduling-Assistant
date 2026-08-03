@@ -147,6 +147,43 @@ async def push_notification_loop():
             except Exception as kde:
                 print(f"Kid digest error: {kde}")
 
+            # --- School-day-end pickup push (K4c): per child with school
+            # hours set, weekdays only, once per day, at dismissal. A missed
+            # window (>45 min late, e.g. server was down) stays silent — a
+            # stale pickup push is worse than none. ---
+            try:
+                from services import family_digest
+                now_dt = datetime.now()
+                settings = storage.get_settings() or {}
+                if now_dt.weekday() < 5 \
+                        and not family_digest.in_kid_quiet_hours(now_dt, settings):
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    sent = dict(storage.get_app_state("school_end_push_sent") or {})
+                    dirty = False
+                    for m in storage.get_all_members():
+                        if m.get('role') != 'child' or not m.get('school_hours_end'):
+                            continue
+                        key = f"{m['id']}:{today_str}"
+                        if key in sent:
+                            continue
+                        try:
+                            hh, mm = [int(x) for x in str(m['school_hours_end']).split(':')[:2]]
+                        except ValueError:
+                            continue
+                        mins_past = (now_dt.hour * 60 + now_dt.minute) - (hh * 60 + mm)
+                        if mins_past < 0:
+                            continue
+                        sent[key] = time.time()
+                        dirty = True
+                        if mins_past <= 45:
+                            _send_school_end_push(m, now=now_dt)
+                    if dirty:
+                        cutoff = time.time() - 2 * 86400
+                        storage.set_app_state("school_end_push_sent",
+                                              {k: v for k, v in sent.items() if v >= cutoff})
+            except Exception as se:
+                print(f"School-end push error: {se}")
+
             # --- Daily stats snapshot (late evening, before the day rolls out
             # of the forward-looking schedule cache) ---
             try:
@@ -4148,6 +4185,38 @@ def member_day(member_id: str, date: Optional[str] = None):
         rides.append(ride)
     rides.sort(key=lambda r: r.get('start') or '')
 
+    # K5: morning launch — when the day's FIRST ride's driver starts from
+    # home (the solver's initial edge covers exactly that case), surface the
+    # honest leave-by time: start − travel − driver buffer. No edge (driver
+    # mid-chain, ghost suggestion, unknown route) -> no line; the ride card
+    # already shows its start time.
+    launch = None
+    if rides:
+        first = rides[0]
+        candidates = [str(first.get('id'))]
+        if first.get('legs'):
+            candidates.append(f"{first.get('id')}_dropoff")
+        init_edges = sched.get('initial_edges') or {}
+        for ev_key in candidates:
+            d_id = assignments.get(ev_key)
+            if not d_id or str(d_id).startswith('ghost_'):
+                continue
+            edge = (init_edges.get(d_id) or {}).get(ev_key)
+            if not edge or not edge.get('travel_mins'):
+                continue
+            try:
+                start_dt = _dt.datetime.fromisoformat(first['start'])
+            except (ValueError, TypeError):
+                break
+            lead = int(edge['travel_mins']) + int(edge.get('buffer_before_mins') or 0)
+            leave = start_dt - _dt.timedelta(minutes=lead)
+            launch = {'leave_at': leave.isoformat(),
+                      'leave_label': leave.strftime('%I:%M %p').lstrip('0'),
+                      'travel_mins': int(edge['travel_mins']),
+                      'title': first.get('title'),
+                      'driver': _driver_member(d_id)}
+            break
+
     # K4a: the kid's school/deadline list — open tasks due within 7 days of
     # the viewed date, plus overdue (worded gently, shown in place, never
     # pushed). Empty for members with no tasks (adults).
@@ -4172,6 +4241,7 @@ def member_day(member_id: str, date: Optional[str] = None):
         'date': date_str,
         'rides': rides,
         'due_soon': due_soon,
+        'launch': launch,
     }
 
 # --- Kid tasks (school/deadline list, kid-support arc K4a) ---
@@ -4359,6 +4429,45 @@ def _notify_kids_driver_changes(buffered, now=None):
         for kid in _kid_members_for_event(ev, ev_id, sched):
             _notify_member_lanes(kid, "Ride update", body, '/app')
 
+# --- School-day-end pickup push (kid-support arc K4c) ---
+
+def _send_school_end_push(member, now=None):
+    """At dismissal, tell the kid what happens next: their first ride within
+    3h after school end, with the driver named. NO ride or NO known driver ->
+    send NOTHING (a 'nobody scheduled' push would alarm, and silence is what
+    a no-activity afternoon looks like). Returns True when a push was sent."""
+    import datetime as _dt
+    now = now or _dt.datetime.now()
+    try:
+        day = member_day(member['id'], now.date().isoformat())
+    except Exception:
+        return False
+    end_s = member.get('school_hours_end') or ''
+    try:
+        hh, mm = [int(x) for x in end_s.split(':')[:2]]
+    except (ValueError, TypeError):
+        return False
+    end_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    horizon = end_dt + _dt.timedelta(hours=3)
+    for r in day.get('rides', []):
+        try:
+            start = _dt.datetime.fromisoformat(r['start']).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            continue
+        if not (end_dt <= start <= horizon):
+            continue
+        legs = r.get('legs') or []
+        drv = next((l['driver'] for l in legs
+                    if l.get('type') == 'dropoff' and l.get('driver')), None) \
+            or r.get('driver')
+        if not drv:
+            continue  # unknown driver: never alarm — skip to the next ride
+        t = start.strftime('%I:%M %p').lstrip('0')
+        _notify_member_lanes(member, f"🚗 {drv['name']} has you after school",
+                             f"{r.get('title') or 'Your ride'} at {t}", '/app')
+        return True
+    return False
+
 # --- Kid evening digest (kid-support arc K1) ---
 
 def _build_kid_digests(target_date=None):
@@ -4410,6 +4519,13 @@ def _build_kid_digests(target_date=None):
             if prep:
                 line += f" (bring: {', '.join(prep[:4])})"
             lines.append(line)
+
+        # K5: leave-by line first — the single most actionable fact of the day
+        launch = day.get('launch')
+        if launch and lines:
+            who = (launch.get('driver') or {}).get('name')
+            lines.insert(0, f"🚀 Leave by {launch['leave_label']}"
+                            + (f" with {who}" if who else ""))
 
         # K4a: school tasks due within 3 days of the digest day, plus
         # overdue (gentle wording — see _task_due_label).
