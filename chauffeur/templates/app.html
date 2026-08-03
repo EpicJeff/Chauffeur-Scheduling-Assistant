@@ -1137,6 +1137,7 @@
                 return { name: c.title || others.join(', ') || 'Group', color: '#10b981', avatar: '👥' };
             }
             const otherId = (c.member_ids || []).find(id => id !== selectedMemberId);
+            if (otherId === 'argyle') return { name: 'Argyle', color: '#8b5cf6', avatar: '✨' };
             const other = membersData.find(m => m.id === otherId) || {};
             return {
                 name: other.name || 'Chat',
@@ -1320,12 +1321,24 @@
         // --- New chat picker (pills; 1 person -> DM, 2+ -> group) ---
         let newChatSelected = [];
 
+        // Argyle is filtered out of membersData (system member) but is a valid
+        // chat target: a DM with Argyle is a private agent thread (no @mention
+        // needed), and in groups @argyle works as anywhere.
+        const ARGYLE_PICKER_ENTRY = { id: 'argyle', name: 'Argyle', color_code: '#8b5cf6', avatar: '✨', role: 'assistant' };
+
+        function pickerMember(id) {
+            if (id === 'argyle') return ARGYLE_PICKER_ENTRY;
+            return membersData.find(x => x.id === id) || { name: '?' };
+        }
+
         function newChatCandidates() {
             // Helpers are DM-only and only for parents; groups exclude them
             // server-side, so hide them once a second person is picked.
-            return membersData.filter(m => m.id !== selectedMemberId)
+            const people = membersData.filter(m => m.id !== selectedMemberId)
                 .filter(m => m.role !== 'helper'
                     || (currentMemberRole() === 'parent' && newChatSelected.length === 0));
+            if (currentMemberRole() !== 'helper') people.push(ARGYLE_PICKER_ENTRY);
+            return people;
         }
 
         function openNewChat() {
@@ -1348,7 +1361,7 @@
         function renderNewChatPills() {
             const wrap = document.getElementById('new-chat-pills');
             wrap.innerHTML = newChatSelected.map(id => {
-                const m = membersData.find(x => x.id === id) || { name: '?' };
+                const m = pickerMember(id);
                 return `<span class="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/50 text-blue-200 text-sm font-semibold">
                     ${mfEscape(m.name)}
                     <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-white text-[10px] leading-none font-bold">✕</button>

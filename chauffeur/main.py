@@ -195,9 +195,12 @@ def _tomorrow_weather_line(tomorrow):
     return None
 
 def _send_tomorrow_digests(subs):
-    """One evening push per subscribed driver listing tomorrow's assignments
-    (events via the combined cache's assignments map, plus scheduled errands).
-    Drivers with nothing tomorrow get no push."""
+    """One evening digest per driver listing tomorrow's assignments (events
+    via the combined cache's assignments map, plus scheduled errands).
+    Drivers with nothing tomorrow get nothing. Delivery: posted into the
+    driver's Argyle DM (persistent, scrollable; the chat fan-out pushes it
+    too) — the raw web-push is only the fallback for drivers with no linked
+    member record."""
     import datetime as _dt
     from services import storage, prep_kits
 
@@ -242,8 +245,6 @@ def _send_tomorrow_digests(subs):
 
     subscribed = {s.get("driver_id") for s in subs}
     for d_id, items in per_driver.items():
-        if d_id not in subscribed:
-            continue
         items.sort(key=lambda x: x[0])
         lines = [f"{start.strftime('%I:%M %p').lstrip('0')} - {title}" for start, title in items[:6]]
         if len(items) > 6:
@@ -251,8 +252,20 @@ def _send_tomorrow_digests(subs):
         if weather_line:
             lines.insert(0, weather_line)
         n = len(items)
-        send_push(d_id, subs, f"Tomorrow: {n} drive{'s' if n != 1 else ''}",
-                  "\n".join(lines), f"digest_{tomorrow.isoformat()}", actions=[])
+        title = f"Tomorrow: {n} drive{'s' if n != 1 else ''}"
+        member = storage.get_member_by_driver_id(d_id)
+        if member:
+            try:
+                from services.agent_tools_v2 import _post_chat_message
+                argyle = storage.ensure_argyle_member()
+                dm = storage.get_or_create_dm(argyle['id'], member['id'])
+                _post_chat_message(dm, argyle, title + "\n" + "\n".join(lines))
+                continue
+            except Exception as dme:
+                print(f"Tomorrow digest DM failed for {member.get('name')}: {dme}")
+        if d_id in subscribed:
+            send_push(d_id, subs, title, "\n".join(lines),
+                      f"digest_{tomorrow.isoformat()}", actions=[])
 
 def send_push(d_id, subs, title, body, leg_id, location=None, actions=None):
     from pywebpush import webpush, WebPushException
@@ -4105,6 +4118,11 @@ class DmChannelRequest(BaseModel):
 def create_dm_channel(req: DmChannelRequest):
     if req.member_id == req.other_member_id:
         raise HTTPException(status_code=400, detail="Cannot DM yourself")
+    # The assistant is a valid DM peer (created lazily; every message in an
+    # Argyle DM routes to the agent — no @mention needed). Helpers still
+    # can't: their DMs are parent-only and Argyle isn't a parent.
+    if storage.ARGYLE_MEMBER_ID in (req.member_id, req.other_member_id):
+        storage.ensure_argyle_member()
     pair = []
     for mid in (req.member_id, req.other_member_id):
         member = storage.get_member(mid)
@@ -4171,7 +4189,8 @@ def _mentions_argyle(body: str) -> bool:
 
 
 def _run_argyle_mention(channel: dict, sender: dict, body: str):
-    """Background worker: a family-chat message @mentioned Argyle. Route the
+    """Background worker: a chat message @mentioned Argyle (or landed in an
+    Argyle DM, where every message is implicitly for the assistant). Route the
     question to the agent as the sending member (known identity + role scope)
     and post the reply back into the same channel as the Argyle system member.
     Runs off-request because an agent turn can take tens of seconds."""
@@ -4232,9 +4251,13 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     _push_message_event(channel_id, recipients)
     background_tasks.add_task(_fanout_message_notifications, channel, message)
     # @argyle turns the family chat into a vector of action: hand the message to
-    # the agent as the sender and let it reply in-channel. Never re-trigger on
-    # Argyle's own posts.
-    if req.sender_member_id != storage.ARGYLE_MEMBER_ID and _mentions_argyle(body):
+    # the agent as the sender and let it reply in-channel. In an Argyle DM the
+    # whole thread IS the conversation with the agent, so every message routes
+    # without a mention. Never re-trigger on Argyle's own posts.
+    is_argyle_dm = channel.get('kind') == 'dm' \
+        and storage.ARGYLE_MEMBER_ID in (channel.get('member_ids') or [])
+    if req.sender_member_id != storage.ARGYLE_MEMBER_ID \
+            and (is_argyle_dm or _mentions_argyle(body)):
         background_tasks.add_task(_run_argyle_mention, channel, sender, body)
     elif req.sender_member_id != storage.ARGYLE_MEMBER_ID:
         # Implicit detection (opt-in): Tier 1 keyword pre-filter gates the

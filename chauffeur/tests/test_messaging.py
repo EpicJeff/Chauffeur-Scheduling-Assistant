@@ -138,6 +138,71 @@ def scenario_group_endpoint_validations():
               "group push title includes the group name")
 
 
+def scenario_argyle_dm():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("mom", "Mom", role="parent")
+    _member("kid", "Kid", role="child")
+    _member("uber", "Hired Driver", role="helper")
+
+    dm = main.create_dm_channel(main.DmChannelRequest(
+        member_id="kid", other_member_id="argyle"))
+    check(dm["kind"] == "dm" and sorted(dm["member_ids"]) == ["argyle", "kid"],
+          "any family member can DM Argyle")
+    check(storage.get_member("argyle"), "argyle system member auto-created")
+
+    # every message in an Argyle DM routes to the agent — no @mention needed
+    bt = BackgroundTasks()
+    main.send_message(dm["id"], main.SendMessageRequest(
+        sender_member_id="kid", body="when is soccer?"), bt)
+    check(any(t.func is main._run_argyle_mention for t in bt.tasks),
+          "argyle DM message routed to the agent without a mention")
+
+    # a human DM without a mention does not route
+    human = storage.get_or_create_dm("kid", "mom")
+    bt2 = BackgroundTasks()
+    main.send_message(human["id"], main.SendMessageRequest(
+        sender_member_id="kid", body="hi mom"), bt2)
+    check(not any(t.func is main._run_argyle_mention for t in bt2.tasks),
+          "plain human DM not routed to the agent")
+
+    # helpers stay parent-only — no assistant DM
+    try:
+        main.create_dm_channel(main.DmChannelRequest(
+            member_id="uber", other_member_id="argyle"))
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "helper cannot DM argyle")
+
+
+def scenario_tomorrow_digest_argyle_dm():
+    import datetime as _dt
+    import main
+
+    _member("mom", "Mom", role="parent", driver_id="d1")
+    tomorrow = _dt.date.today() + _dt.timedelta(days=1)
+    cache = {
+        "events": [{"id": "ev1", "title": "Soccer",
+                    "start": f"{tomorrow.isoformat()}T09:00:00",
+                    "end": f"{tomorrow.isoformat()}T10:00:00"}],
+        "assignments": {"ev1": "d1"},
+        "scheduled_errands": [],
+    }
+    with mock.patch.object(storage, 'get_cached_schedule', return_value=cache), \
+         mock.patch.object(main, '_tomorrow_weather_line', return_value=None), \
+         mock.patch.object(main, 'send_push') as push:
+        main._send_tomorrow_digests([])
+        check(push.call_count == 0,
+              "driver with a linked member gets the DM, not the raw push")
+    dm = storage.get_or_create_dm("argyle", "mom")
+    msgs = storage.get_channel_messages(dm["id"])
+    check(msgs and msgs[-1]["sender_member_id"] == "argyle",
+          "digest posted as Argyle into the driver's DM")
+    check("Tomorrow: 1 drive" in msgs[-1]["body"] and "Soccer" in msgs[-1]["body"],
+          "digest body lists tomorrow's drives")
+
+
 def scenario_event_channel_lifecycle():
     ch = storage.get_or_create_event_channel("evt1", "Soccer", "2126-01-01T18:00:00")
     same = storage.get_or_create_event_channel("evt1", "Soccer (moved)", None)
@@ -367,6 +432,8 @@ SCENARIOS = [
     scenario_group_get_or_create,
     scenario_group_visibility,
     scenario_group_endpoint_validations,
+    scenario_argyle_dm,
+    scenario_tomorrow_digest_argyle_dm,
     scenario_event_channel_lifecycle,
     scenario_dm_visibility,
     scenario_messages_order_limit_after,
