@@ -649,6 +649,39 @@
                                 mentioned exactly once, never between 9pm and 8am.
                             </p>
                         </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex items-center space-x-3 shrink-0">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="kidDigestEnabled" @change="saveSettings()"
+                                        class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="font-bold text-gray-300">🌙 Kid Digest</span>
+                            </div>
+                            <div x-show="kidDigestEnabled" class="flex items-center gap-2 shrink-0">
+                                <label class="text-sm text-gray-400 font-semibold" for="kidDigestTime">Send after</label>
+                                <input type="time" id="kidDigestTime" x-model="kidDigestTime" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <label class="text-sm text-gray-400 font-semibold">Kid quiet hours</label>
+                                <input type="time" x-model="kidQuietStart" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                <span class="text-gray-500 text-sm">to</span>
+                                <input type="time" x-model="kidQuietEnd" @change="saveSettings()"
+                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                Each child gets a "🌙 Tomorrow" Argyle DM — their rides with who's driving,
+                                what to bring, weather, and their streak — and the same cards show on the
+                                routines kiosk board, so kids without phones see it on the wall panel. Kids
+                                with nothing tomorrow get nothing. Nothing kid-facing ever sends during kid
+                                quiet hours; a send time inside the quiet window means the digest is skipped
+                                that day.
+                            </p>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
@@ -2712,6 +2745,10 @@
                 weeklyDigestDay: 6,
                 weeklyDigestTime: '19:00',
                 proactiveWatchersEnabled: true,
+                kidDigestEnabled: true,
+                kidDigestTime: '19:30',
+                kidQuietStart: '20:30',
+                kidQuietEnd: '07:00',
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -3074,6 +3111,10 @@
                     this.weeklyDigestDay = data.weekly_digest_day ?? 6;
                     this.weeklyDigestTime = data.weekly_digest_time || '19:00';
                     this.proactiveWatchersEnabled = data.proactive_watchers_enabled !== false;
+                    this.kidDigestEnabled = data.kid_digest_enabled !== false;
+                    this.kidDigestTime = data.kid_digest_time || '19:30';
+                    this.kidQuietStart = data.kid_quiet_start || '20:30';
+                    this.kidQuietEnd = data.kid_quiet_end || '07:00';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -3165,7 +3206,11 @@
                             weekly_digest_enabled: this.weeklyDigestEnabled,
                             weekly_digest_day: parseInt(this.weeklyDigestDay),
                             weekly_digest_time: this.weeklyDigestTime || '19:00',
-                            proactive_watchers_enabled: this.proactiveWatchersEnabled
+                            proactive_watchers_enabled: this.proactiveWatchersEnabled,
+                            kid_digest_enabled: this.kidDigestEnabled,
+                            kid_digest_time: this.kidDigestTime || '19:30',
+                            kid_quiet_start: this.kidQuietStart || '20:30',
+                            kid_quiet_end: this.kidQuietEnd || '07:00'
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

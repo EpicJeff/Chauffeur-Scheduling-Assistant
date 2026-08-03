@@ -126,6 +126,36 @@
                             </div>
                         </template>
                     </div>
+
+                    <!-- 🌙 Kid digest strip (K1 kiosk delivery): tomorrow's rides per child,
+                         independent of routine lanes so kids without routines still appear -->
+                    <div x-show="digestCards().length" class="mt-8">
+                        <h3 class="text-lg font-black text-indigo-300 mb-1"
+                            x-text="'🌙 ' + (kidDigests.label || 'Tomorrow')"></h3>
+                        <div x-show="kidDigests.weather" class="text-sm text-gray-400 mb-3"
+                            x-text="kidDigests.weather"></div>
+                        <div class="grid gap-5" :style="'grid-template-columns: repeat(' + digestColumns() + ', minmax(0, 1fr))'">
+                            <template x-for="k in digestCards()" :key="'kd-' + k.id">
+                                <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
+                                    <div class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
+                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0"
+                                            :style="'background-color:' + (k.color_code || '#3b82f6')"
+                                            x-text="k.avatar || (k.name || '?').charAt(0)"></div>
+                                        <div class="font-bold text-white flex-1 truncate" x-text="k.name"></div>
+                                        <div x-show="k.streak" class="text-orange-400 font-black text-sm shrink-0">
+                                            <span x-text="k.streak"></span>🔥
+                                        </div>
+                                    </div>
+                                    <template x-for="(line, i) in k.lines" :key="'kdl-' + k.id + '-' + i">
+                                        <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
+                                    </template>
+                                    <div x-show="!k.lines.length" class="text-sm text-gray-400">No rides — free day! 🎉</div>
+                                    <div x-show="k.routine_count" class="text-xs text-gray-500 mt-2"
+                                        x-text="'📋 ' + k.routine_count + ' routine thing' + (k.routine_count !== 1 ? 's' : '')"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                 </div>
             </template>
 
@@ -487,6 +517,7 @@
                 routines: [],
                 streaks: [],
                 dayItems: {},   // memberId -> today's checklist items (kiosk lanes)
+                kidDigests: { kids: {}, label: '', weather: '' },   // 🌙 strip (K1)
                 newRoutineMemberId: '',
                 // Members with an empty just-started block (no items saved yet):
                 // purely client-side; the block materializes once the first
@@ -509,7 +540,9 @@
                         await this.loadStreaks();
                         this._celebrateSweep();   // first call seeds localStorage silently
                         await this.loadAllDayItems();
+                        this.loadKidDigests();    // digest content moves slowly: own 5-min cadence
                         setInterval(() => this.reloadKiosk(), 30000);
+                        setInterval(() => this.loadKidDigests(), 300000);
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
@@ -543,6 +576,27 @@
                     await this.loadAllDayItems();
                 },
                 dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+                async loadKidDigests() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/kids/digests`);
+                        this.kidDigests = res.ok ? await res.json() : { kids: {} };
+                    } catch (e) { this.kidDigests = { kids: {} }; }
+                },
+                digestCards() {
+                    return Object.entries(this.kidDigests.kids || {})
+                        .map(([id, k]) => ({ id, ...k }))
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+                digestColumns() {
+                    const n = this.digestCards().length;
+                    if (n <= 1) return 1;
+                    const minLane = 320, pad = 96;
+                    const avail = Math.max(minLane, this.winW - pad);
+                    const maxFit = Math.max(1, Math.floor(avail / minLane));
+                    if (maxFit >= n) return n;
+                    const rows = Math.ceil(n / maxFit);
+                    return Math.ceil(n / rows);
+                },
                 laneColumns() {
                     const n = this.streaks.length;
                     if (n <= 1) return 1;

@@ -24,14 +24,19 @@ around them.
 5. **Calm voice.** Argyle's kid-facing copy is warm, short, and concrete.
    Celebrate effort (streak/tier rails exist); never shame a miss.
 
-## Phase K1 — Kid evening digest (cheapest, do first)
+## Phase K1 — Kid evening digest — SHIPPED v2.33.0 (2026-08-05)
 
-Per child-role member with anything tomorrow, one Argyle DM at
-`tomorrow_digest_time` (reuse the marker/loop): tomorrow's rides from
-`/api/members/{id}/day` data (driver names resolved), prep-kit items
-("bring goggles + towel"), weather line, and a routine/streak line when a
-streak is live. Rails: `_send_tomorrow_digests` pattern, Argyle DMs, day API,
-prep kits. New: kid-tone formatting, `kid_digest_enabled` setting.
+As designed, with the delivery decision from the family (2026-08-05): **dual
+delivery always, no per-kid phone config** — every child gets the Argyle DM
+(push rides free for device kids; the thread waits for shared devices) AND
+the same content renders as a 🌙 per-kid card strip on `/routines?kiosk=true`
+(independent of routine lanes). Builder `main._build_kid_digests` reuses
+member_day's ride resolution; unassigned rides omit the driver phrase
+(reassurance principle — the parent watcher chases missing drivers). Kid
+quiet hours are settings (`kid_quiet_start`/`kid_quiet_end`, default
+20:30–07:00) via `family_digest.in_kid_quiet_hours` — the shared gate every
+later kid-facing push (K2+) must use. Settings UI in Config → General.
+Tests: `tests/test_kid_digest.py`.
 
 ## Phase K2 — Pickup clarity ("who's getting me?")
 
@@ -91,7 +96,8 @@ K1 (small: one builder + setting) → K2a driver-change pushes (small) → K3
 (new domain, its own multi-release arc like intake was) → K5 (small, after
 K4's school profile exists).
 
-Open questions for the family: does the district expose assignment ICS/
-Classroom? Which kids get phones vs kiosk-only (kiosk-only kids need the
-digest on the wall board instead of a DM)? Quiet-hours for kid pushes should
-probably be stricter than parents' (nothing after ~20:30?).
+Open questions — ANSWERED 2026-08-05: (1) K4 school-feed intake is worth
+building regardless of this district's support (generalize; others have it);
+(2) no per-kid phone tracking — dual delivery always (DM everyone + kiosk
+strip), device kids simply get both; (3) kid quiet hours are config-page
+settings (`kid_quiet_start`/`kid_quiet_end`), not hardcoded policy.

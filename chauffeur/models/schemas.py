@@ -317,6 +317,20 @@ class Settings(BaseModel):
     weekly_digest_enabled: bool = True
     weekly_digest_day: int = 6        # 0=Mon .. 6=Sun
     weekly_digest_time: str = "19:00"  # HH:MM, server-local time
+    # Kid evening digest (kid-support arc K1): every child gets a "🌙
+    # Tomorrow" Argyle DM (rides with resolved drivers, prep items, weather,
+    # streak) after kid_digest_time — and the SAME content renders as a
+    # per-kid strip on the routines kiosk (GET /api/kids/digests), so
+    # phone-less kids see it on the wall panel. Kids with nothing tomorrow
+    # get nothing.
+    kid_digest_enabled: bool = True
+    kid_digest_time: str = "19:30"    # HH:MM, server-local time
+    # Kid quiet hours: NO kid-facing sends inside this window (wraps
+    # midnight; honored by the K1 digest and all future kid pushes). A
+    # digest time inside the window never fires that day. Equal start/end
+    # disables the window.
+    kid_quiet_start: str = "20:30"
+    kid_quiet_end: str = "07:00"
     calendar_ids: List[str]
     # One of calendar_ids, starred in Config → General. The family's shared
     # calendar: intake proposals with no clear owner (and whole-family /

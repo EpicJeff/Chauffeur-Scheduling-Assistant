@@ -101,11 +101,24 @@ successful.** Chauffeur models a kid's life as rides + chores; the school
 day is invisible. Full design brief: `docs/kid_support_design.md` (phases,
 principles — reassurance over reminders, agency not surveillance, kids as
 sensors). Phase order: K1 kid evening digest → K2 pickup-clarity pushes →
-K3 kid-as-sensor proposals → K4 school model + homework/deadline domain
-(check district ICS/Classroom first) → K5 school-rhythm prep + morning
-launch. Prerequisite shipped 2026-08-03 (v2.32.0): proactive parent
-watchers (`services/watchers.py`) — the parent-side proactive gaps are
-closed, so kid-facing proactivity builds on proven rails.
+K3 kid-as-sensor proposals → K4 school model + homework/deadline domain →
+K5 school-rhythm prep + morning launch. Prerequisite shipped 2026-08-03
+(v2.32.0): proactive parent watchers (`services/watchers.py`).
+
+Open questions ANSWERED 2026-08-05: (1) build K4's school-feed intake
+regardless of this district's support — others will have it; (2) no
+per-kid phone config — dual delivery ALWAYS (Argyle DM to every child +
+kiosk strip), phone kids get both; (3) kid quiet hours are config-page
+settings, not hardcoded.
+
+- **K1 — kid evening digest. SHIPPED v2.33.0 (2026-08-05).** Argyle DM per
+  child + 🌙 kiosk strip on `/routines?kiosk=true`, kid quiet-hours
+  settings (`kid_quiet_start/end`, shared gate for all future kid pushes).
+  Details in system_capabilities.md.
+- **K2 — pickup-clarity pushes. NEXT.** Driver-change pushes to affected
+  kid passengers (extend the assignment-change buffer, kid wording), and
+  an "on the way" push when a driver taps Start Drive on a leg carrying
+  the kid. Both gated by kid quiet hours.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 

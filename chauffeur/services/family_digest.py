@@ -219,6 +219,27 @@ _WEATHER_EMOJI = {
 }
 
 
+def in_kid_quiet_hours(now: datetime.datetime, settings: dict) -> bool:
+    """True when kid-facing sends must stay silent. The window (defaults
+    20:30–07:00, wraps midnight; Settings kid_quiet_start/kid_quiet_end)
+    gates the K1 evening digest and every future kid push (K2+). Equal
+    start/end = window disabled."""
+    def _mins(val, dflt):
+        try:
+            h, m = [int(x) for x in str(val or dflt).split(':')[:2]]
+        except Exception:
+            h, m = [int(x) for x in dflt.split(':')]
+        return h * 60 + m
+    start = _mins(settings.get('kid_quiet_start'), '20:30')
+    end = _mins(settings.get('kid_quiet_end'), '07:00')
+    cur = now.hour * 60 + now.minute
+    if start == end:
+        return False
+    if start < end:
+        return start <= cur < end
+    return cur >= start or cur < end
+
+
 def day_label(target: datetime.date) -> str:
     """'Today' / 'Tomorrow' / 'Fri 08/07' — shared by digest titles and the
     get_drive_digest tool's headers."""

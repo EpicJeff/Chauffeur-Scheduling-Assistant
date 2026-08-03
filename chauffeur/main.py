@@ -126,6 +126,27 @@ async def push_notification_loop():
             except Exception as de:
                 print(f"Tomorrow digest error: {de}")
 
+            # --- Kid evening digest (K1): once per day after kid_digest_time,
+            # never inside kid quiet hours. A digest time set inside the quiet
+            # window simply never fires (deliberate: a "Tomorrow" digest sent
+            # the NEXT morning would preview the wrong day). ---
+            try:
+                settings = storage.get_settings() or {}
+                if settings.get("kid_digest_enabled", True):
+                    from services import family_digest
+                    now_dt = datetime.now()
+                    hh, mm = [int(x) for x in str(settings.get("kid_digest_time", "19:30")).split(":")[:2]]
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    if (now_dt.hour, now_dt.minute) >= (hh, mm) \
+                            and not family_digest.in_kid_quiet_hours(now_dt, settings) \
+                            and storage.get_app_state("kid_digest_last_sent") != today_str:
+                        # Marker FIRST (weekly-digest precedent): a half-
+                        # failing send must not retry every 30s.
+                        storage.set_app_state("kid_digest_last_sent", today_str)
+                        _send_kid_digests()
+            except Exception as kde:
+                print(f"Kid digest error: {kde}")
+
             # --- Daily stats snapshot (late evening, before the day rolls out
             # of the forward-looking schedule cache) ---
             try:
@@ -4083,6 +4104,118 @@ def member_day(member_id: str, date: Optional[str] = None):
         'date': date_str,
         'rides': rides,
     }
+
+# --- Kid evening digest (kid-support arc K1) ---
+
+def _build_kid_digests(target_date=None):
+    """Per-child digest content for one day (default TOMORROW), built on
+    member_day's ride resolution so the digest always matches what the kid's
+    My Day shows (three-way passenger binding, split-leg collapse, per-leg
+    drivers, prep items). Kids with no rides AND no routine items that day
+    are omitted — nothing means nothing, never an empty ping. Returns
+    {'date', 'label', 'weather', 'kids': {member_id: {name, color_code,
+    avatar, lines, count, routine_count, streak}}} — shared verbatim by the
+    evening Argyle DMs and the kiosk strip (GET /api/kids/digests)."""
+    import datetime as _dt
+    from services import family_digest
+    target = target_date or (_dt.date.today() + _dt.timedelta(days=1))
+    date_str = target.isoformat()
+
+    kids = {}
+    for m in storage.get_all_members():
+        if m.get('role') != 'child' or m.get('system'):
+            continue
+        try:
+            day = member_day(m['id'], date_str)
+        except Exception as e:
+            print(f"Kid digest: day build failed for {m.get('name')}: {e}")
+            continue
+        lines = []
+        for r in day.get('rides', []):
+            try:
+                t = _dt.datetime.fromisoformat(r['start']).strftime('%I:%M %p').lstrip('0')
+                line = f"{t} – {r.get('title') or 'Event'}"
+            except Exception:
+                line = r.get('title') or 'Event'
+            # Driver phrase: reassurance is the point. Split legs may have
+            # different drivers ("Dad takes you, Mom brings you home");
+            # an unassigned ride just omits the phrase — the parent watcher
+            # already chases missing drivers, a kid digest must not alarm.
+            legs = r.get('legs') or []
+            there = next((l['driver']['name'] for l in legs
+                          if l.get('type') == 'dropoff' and l.get('driver')), None)
+            back = next((l['driver']['name'] for l in legs
+                         if l.get('type') == 'pickup' and l.get('driver')), None)
+            if there and back and there != back:
+                line += f" — 🚗 {there} takes you, {back} brings you home"
+            elif there or back:
+                line += f" — 🚗 {there or back} is driving you"
+            elif r.get('driver'):
+                line += f" — 🚗 {r['driver']['name']} is driving you"
+            prep = r.get('prep') or []
+            if prep:
+                line += f" (bring: {', '.join(prep[:4])})"
+            lines.append(line)
+
+        routine_items = storage.routines_for_day(m['id'], date_str)
+        if not lines and not routine_items:
+            continue
+        streak = storage.compute_streak(m['id'])
+        kids[m['id']] = {
+            'name': m.get('name'), 'color_code': m.get('color_code'),
+            'avatar': m.get('avatar'), 'lines': lines, 'count': len(lines),
+            'routine_count': len(routine_items),
+            'streak': (streak or {}).get('current') or 0,
+        }
+    return {'date': date_str, 'label': family_digest.day_label(target),
+            'weather': family_digest.weather_line(target), 'kids': kids}
+
+def _send_kid_digests():
+    """K1 delivery: one evening Argyle DM per child previewing tomorrow.
+    The DM rails push to kids with phones for free; phone-less kids see the
+    SAME content on the kiosk strip (and the DM waits in their thread for
+    whatever shared device they next pick up)."""
+    digest = _build_kid_digests()
+    weather = digest.get('weather')
+    for m_id, k in (digest.get('kids') or {}).items():
+        parts = [f"🌙 Tomorrow, {k['name']}!"]
+        if weather:
+            parts.append(weather)
+        parts.extend(k['lines'] or ["No rides — free day! 🎉"])
+        if k['routine_count']:
+            r_line = (f"📋 {k['routine_count']} routine thing"
+                      f"{'s' if k['routine_count'] != 1 else ''} tomorrow")
+            if k['streak']:
+                r_line += f" — 🔥 {k['streak']}-day streak, keep it going!"
+            parts.append(r_line)
+        elif k['streak']:
+            parts.append(f"🔥 {k['streak']}-day streak — keep it going!")
+        try:
+            from services.agent_tools_v2 import _post_chat_message
+            argyle = storage.ensure_argyle_member()
+            dm = storage.get_or_create_dm(argyle['id'], m_id)
+            _post_chat_message(dm, argyle, "\n".join(parts))
+        except Exception as e:
+            print(f"Kid digest DM failed for {k.get('name')}: {e}")
+
+@app.get("/api/kids/digests")
+def kids_digests(date: Optional[str] = None):
+    """Per-child day digest for the kiosk boards — same builder as the
+    evening DMs. Default tomorrow; ?date=today|tomorrow|YYYY-MM-DD."""
+    import datetime as _dt
+    target = None
+    if date:
+        if date == 'today':
+            target = _dt.date.today()
+        elif date == 'tomorrow':
+            target = _dt.date.today() + _dt.timedelta(days=1)
+        else:
+            try:
+                target = _dt.date.fromisoformat(date)
+            except ValueError:
+                raise HTTPException(status_code=400,
+                                    detail="date must be today, tomorrow, or YYYY-MM-DD")
+    return _build_kid_digests(target)
 
 # --- Family map API ---
 
