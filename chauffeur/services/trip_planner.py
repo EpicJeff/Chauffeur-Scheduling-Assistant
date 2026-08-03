@@ -94,6 +94,7 @@ def generate_trip_pois(trip: TripMetadata, user_prompt: str, duration_nights: in
     and grounds them to real-world locations via Mapbox.
     """
     from services.llm import _call_llm_json
+    from services import model_pools
     
     settings = storage.get_settings()
     provider = settings.get('llm_provider', 'gemini')
@@ -198,7 +199,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     )
     
     try:
-        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        response_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating POIs: {e}")
         return None, []
@@ -1083,6 +1084,7 @@ def generate_trip_accommodations(trip: TripMetadata, user_prompt: str) -> Tuple[
     Generates suggested accommodations based on the user's prompt and currently scheduled POIs.
     """
     from services.llm import _call_llm_json
+    from services import model_pools
     from models.schemas import TripAccommodation
     
     settings = storage.get_settings()
@@ -1176,7 +1178,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     )
     
     try:
-        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        response_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating accommodations: {e}")
         return None, []
@@ -1235,6 +1237,7 @@ def generate_trip_flights(trip: 'TripMetadata', user_prompt: str) -> Tuple[Optio
     comes from the global home_location setting unless the user states one.
     """
     from services.llm import _call_llm_json
+    from services import model_pools
     from models.schemas import TripFlight
     import datetime
 
@@ -1325,7 +1328,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     )
 
     try:
-        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        response_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating trip flights: {e}")
         return None, []
@@ -1355,6 +1358,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
 def generate_trip_plan(trip: 'TripMetadata', user_prompt: str, duration_nights: int = 1, proposed_itinerary: str = ""):
     from services.llm import _call_llm_json
+    from services import model_pools
     import urllib.parse
     import datetime
     import uuid
@@ -1507,7 +1511,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
     )
     
     try:
-        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        response_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, user_req, temperature=0.7)
     except Exception as e:
         print(f"Error generating trip plan: {e}")
         return None, [], [], []
@@ -1550,7 +1554,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
                   f"already been met, return an empty pois array."
             )
             try:
-                topup_json = _call_llm_json(provider, url, api_key, model, system_prompt,
+                topup_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt,
                                             topup_req, temperature=0.7)
             except Exception as e:
                 print(f"generate_trip_plan: top-up call failed, keeping {len(sugg_pois)} POIs: {e}")
@@ -1719,6 +1723,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
     Returns (error_message, suggestion_dict)
     """
     from services.llm import _call_llm_json
+    from services import model_pools
     import datetime
     
     settings = storage.get_settings()
@@ -1783,7 +1788,7 @@ def suggest_trip_dates(trip: TripMetadata) -> Tuple[Optional[str], Optional[dict
     """
     
     try:
-        response_json = _call_llm_json(provider, url, api_key, model, system_prompt, user_req, temperature=0.7)
+        response_json = model_pools.pooled_or_direct(provider, url, api_key, model, 'heavy', system_prompt, user_req, temperature=0.7)
         if "suggested_start_date" in response_json and "suggested_end_date" in response_json:
             return None, response_json
         else:

@@ -20,7 +20,7 @@ from unittest import mock
 os.environ.setdefault("CHAUFFEUR_DATA_DIR", tempfile.mkdtemp(prefix="chauffeur_llmerr_"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services import agent_router  # noqa: E402
+from services import agent_router, model_pools  # noqa: E402
 from services.llm import _call_llm_json  # noqa: E402
 
 
@@ -104,6 +104,7 @@ def scenario_429_no_retry():
 
 
 def scenario_router_falls_back_on_503():
+    model_pools.reset_cooldowns()
     calls = []
 
     def fake_call(provider, url, api_key, model, system_prompt, prompt, **kw):
@@ -115,8 +116,31 @@ def scenario_router_falls_back_on_503():
     with mock.patch.object(agent_router, "_call_llm_json", fake_call):
         res = agent_router.call_gemma_with_fallback("do it", [], "sys")
     check(res.get("message") == "done via fallback", f"fallback result returned, got {res}")
-    check(calls == ["gemma-4-31b-it", "gemma-4-26b-it"],
-          f"primary then fallback model, got {calls}")
+    check(calls == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+          f"first two interactive pool models, got {calls}")
+
+
+def scenario_router_skips_quota_exhausted_model():
+    """A daily-quota 429 cools the model until the Pacific midnight reset, so
+    the NEXT call must go straight to the next pool model."""
+    model_pools.reset_cooldowns()
+    calls = []
+
+    def fake_call(provider, url, api_key, model, system_prompt, prompt, **kw):
+        calls.append(model)
+        if model == "gemini-3.5-flash-lite":
+            return {"error": "429 Too Many Requests: quota metric "
+                             "GenerateRequestsPerDayPerProjectPerModel exceeded"}
+        return {"message": "ok", "tool_calls": []}
+
+    with mock.patch.object(agent_router, "_call_llm_json", fake_call):
+        first = agent_router.call_gemma_with_fallback("one", [], "sys")
+        second = agent_router.call_gemma_with_fallback("two", [], "sys")
+    check(first.get("_model") == "gemini-3.1-flash-lite", f"429 rotates within call, got {first}")
+    check(calls == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite"],
+          f"second call must skip the exhausted model entirely, got {calls}")
+    check(second.get("_model") == "gemini-3.1-flash-lite", f"got {second}")
+    model_pools.reset_cooldowns()
 
 
 def scenario_router_reports_transient_failure_honestly():
@@ -149,6 +173,7 @@ SCENARIOS = [
     scenario_retries_exhausted_raises,
     scenario_429_no_retry,
     scenario_router_falls_back_on_503,
+    scenario_router_skips_quota_exhausted_model,
     scenario_router_reports_transient_failure_honestly,
     scenario_router_reports_hard_failure_honestly,
 ]

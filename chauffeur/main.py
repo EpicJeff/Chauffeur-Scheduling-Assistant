@@ -4569,7 +4569,9 @@ def _run_analysis_task(task_id: str):
         llm_provider = settings.get('llm_provider', 'gemini')
         llm_url = settings.get('llm_ollama_url', 'http://localhost:11434')
         llm_api_key = settings.get('llm_gemini_api_key', '')
-        llm_model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
+        # Heavy tier: override-pattern analysis is rare and quality-critical.
+        from services import model_pools
+        llm_model = model_pools.resolve_model('heavy', settings) if llm_provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
         
         # 1. Fetch Overrides
         log_task(task_id, "Fetching overrides from database...")
@@ -5139,7 +5141,9 @@ def generate_ai_rules(background_tasks: BackgroundTasks):
     url = settings.get('llm_ollama_url', 'http://localhost:11434')
     api_key = settings.get('llm_gemini_api_key', '')
     if provider == 'gemini':
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        # Heavy tier: philosophy -> rules is a rare, quality-critical generation.
+        from services import model_pools
+        model = model_pools.resolve_model('heavy', settings)
     else:
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
     philosophy = settings.get('family_philosophy', '')
@@ -5219,10 +5223,12 @@ def refine_text(payload: LLMRefinePayload):
     url = settings.get('llm_ollama_url', 'http://localhost:11434')
     api_key = settings.get('llm_gemini_api_key', '')
     if provider == 'gemini':
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        # Interactive tier: the user is waiting on the refine button.
+        from services import model_pools
+        model = model_pools.resolve_model('interactive', settings)
     else:
         model = settings.get('llm_ollama_model', 'qwen2.5:7b')
-    
+
     try:
         refined = refine_scheduling_text(
             provider=provider,

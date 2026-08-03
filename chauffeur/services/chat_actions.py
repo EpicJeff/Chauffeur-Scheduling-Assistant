@@ -47,7 +47,6 @@ def classify_actionable(body: str) -> Dict[str, Any]:
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         return {"actionable": False, "confidence": 0.0}
-    model = settings.get('agent_fallback_model') or 'gemma-4-31b-it'
     system = (
         "You are a strict classifier for a family logistics app. Decide whether the message "
         "implies an action the assistant should offer to handle: reassigning a driver, marking "
@@ -56,8 +55,14 @@ def classify_actionable(body: str) -> Dict[str, Any]:
         '{\"actionable\": true|false, \"confidence\": 0.0-1.0}.'
     )
     try:
-        from services.llm import _call_llm_json
-        res = _call_llm_json('gemini', '', api_key, model, system, body, tools=None, timeout_s=20)
+        from services import model_pools
+        # Background tier (gemma first): this runs after the chat line is
+        # already posted, so a slow answer only delays an optional suggestion.
+        res = model_pools.call_pool_json('background', api_key, system, body,
+                                         timeout_s=20, gemma_timeout_s=120,
+                                         settings=settings)
+        if res.get("error"):
+            raise RuntimeError(str(res["error"]))
         return {"actionable": bool(res.get("actionable")),
                 "confidence": float(res.get("confidence") or 0.0)}
     except Exception as e:

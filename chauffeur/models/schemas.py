@@ -328,7 +328,7 @@ class Settings(BaseModel):
     mapbox_map_loads_limit: int = 45000
     llm_provider: str = ""
     llm_gemini_api_key: Optional[str] = None
-    llm_gemini_model: str = "gemini-3.5-flash"
+    llm_gemini_model: str = "gemini-3.5-flash-lite"
     llm_ollama_url: str = "http://localhost:11434"
     llm_ollama_model: str = "qwen2.5:7b"
     # Family-hub / HA bridge. public_base_url is the family-facing HTTPS

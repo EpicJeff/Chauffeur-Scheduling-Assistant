@@ -22,21 +22,21 @@ class RateLimitException(Exception):
 
 def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Dict[str, Any]:
     """
-    Agent LLM call with a fallback model.
-    Primary defaults to gemini-3.5-flash: gemma-4-31b-it measured 44-180s per
-    call on the free API (2026-07-30), which cannot live under HA Assist's
-    120s conversation budget; Flash answers the same JSON-tool prompt in
-    seconds. Both models are overridable via the agent_primary_model /
-    agent_fallback_model settings keys (no UI — set via /api/settings).
+    Interactive agent LLM call over the free-tier model pools (see
+    services/model_pools.py): flash-lite pool first (answers in seconds,
+    ~1,000 requests/day pooled), overflowing into the gemma pool (slow but
+    ~28,800/day). The scarce 20/day gemini-*-flash models are reserved for the
+    heavy tier and never burned on chat turns. 429s put a model on cooldown so
+    the next turn skips straight to one with quota left. Pools are
+    overridable via the model_pool_lite / model_pool_gemma settings keys.
     """
     from services.storage import get_settings
+    from services import model_pools
     settings = get_settings()
-    primary_model = settings.get('agent_primary_model') or "gemini-3.5-flash"
-    fallback_model = settings.get('agent_fallback_model') or "gemma-4-31b-it"
     api_key = settings.get('llm_gemini_api_key', '')
     provider = 'gemini'
     url = ''
-    
+
     import json
     # Inject tools into system prompt because Gemma on Gemini API doesn't support native tool calling payload
     system_prompt += "\n\nYou MUST respond ONLY in valid JSON. Your JSON must match this exact structure:\n"
@@ -56,31 +56,38 @@ def call_gemma_with_fallback(prompt: str, tools: list, system_prompt: str) -> Di
     def _is_transient(err_str: str) -> bool:
         return any(code in err_str for code in ("429", "500", "502", "503", "504"))
 
-    try:
-        # 60s cap: an agent call slower than that is already useless to the
-        # 120s HA pipeline — fail fast to the fallback instead of hanging 180s.
-        res = _call_llm_json(provider, url, api_key, primary_model, system_prompt, prompt, tools=None, timeout_s=60)
+    last_err = "no models available"
+    transient = False
+    # Cap at 4 candidates: lite models fail a 429 in ~1s, so a fully-exhausted
+    # lite pool still reaches gemma well inside HA Assist's 120s budget.
+    for model in model_pools.models_for('interactive', settings)[:4]:
+        # 60s cap on the fast models: slower than that is already useless to
+        # the 120s HA pipeline. Gemma gets 90s — it measured 44-180s and is
+        # the last resort, so give it what remains of the budget.
+        timeout_s = 90 if model_pools.is_gemma(model) else 60
+        try:
+            res = _call_llm_json(provider, url, api_key, model, system_prompt, prompt, tools=None, timeout_s=timeout_s)
+        except Exception as e:
+            last_err = str(e)
+            model_pools.note_failure(model, last_err)
+            # 5xx = overloaded right now (the call layer already retried with
+            # backoff) — the next pool model may still work.
+            if not _is_transient(last_err):
+                logger.error(f"Error calling agent LLM ({model}): {e}")
+                return {"error": last_err}
+            transient = True
+            logger.warning(f"{model} unavailable ({e}), trying next pool model...")
+            continue
         if res.get("error") and "429" in str(res.get("error")):
-            raise RateLimitException("429 Too Many Requests")
-        res["_model"] = primary_model
+            last_err = str(res["error"])
+            model_pools.note_failure(model, last_err)
+            transient = True
+            logger.warning(f"{model} rate limited, trying next pool model...")
+            continue
+        res["_model"] = model
         return res
-    except RateLimitException:
-        logger.warning(f"{primary_model} rate limited, falling back to {fallback_model}...")
-    except Exception as e:
-        # 5xx = that model is overloaded/unavailable right now (the call layer
-        # already retried with backoff) — the fallback model may still work.
-        if not _is_transient(str(e)):
-            logger.error(f"Error calling Gemma: {e}")
-            return {"error": str(e)}
-        logger.warning(f"{primary_model} unavailable ({e}), falling back to {fallback_model}...")
-
-    try:
-        res = _call_llm_json(provider, url, api_key, fallback_model, system_prompt, prompt, tools=None, timeout_s=60)
-        res["_model"] = fallback_model
-        return res
-    except Exception as e:
-        logger.error(f"Error calling Gemma fallback model: {e}")
-        return {"error": str(e), "transient": _is_transient(str(e))}
+    logger.error(f"All agent pool models failed; last error: {last_err}")
+    return {"error": last_err, "transient": transient}
 
 def _is_admin_member(member) -> bool:
     """Parents/adults may drive the scheduling-core (bridge) tools; children and
@@ -307,9 +314,9 @@ sending or claiming, and never pass from_member/member_name for them.
                 "schedule_dirty": schedule_dirty
             }
 
-        # Check for Delegation to Gemini
+        # Check for Delegation to the heavy lifter (flash pool)
         if llm_response.get("delegate_to_gemini"):
-            logger.info("Delegating massive task to Gemini 3.1 Flash Lite")
+            logger.info("Delegating massive trip generation to the heavy-tier flash pool")
             return {
                 "status": "delegated", 
                 "message": "I'm delegating this massive trip to my heavy lifter module. I'll get to work generating accommodations and points of interest. One moment!",

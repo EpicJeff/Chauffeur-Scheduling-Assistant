@@ -203,19 +203,22 @@ Rules:
 
 def extract_items(subject: str, from_addr: str, body: str, member_names: list) -> list:
     """LLM relevance gate + extraction. Returns raw item dicts ([] on error)."""
-    from services.llm import _call_llm_json
+    from services import model_pools
     settings = storage.get_settings() or {}
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         raise RuntimeError('no LLM API key configured')
-    model = settings.get('agent_primary_model') or 'gemini-3.5-flash'
 
     now = datetime.datetime.now().astimezone()
     prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
               f"Family members: {', '.join(member_names) or '(unknown)'}\n\n"
               f"Email from: {from_addr}\nSubject: {subject}\n\n{body}")
-    res = _call_llm_json('gemini', '', api_key, model, EXTRACTION_SYSTEM, prompt,
-                         temperature=0.1, timeout_s=60)
+    # Background tier: nobody is waiting on ingest, so burn the huge gemma
+    # quota first (180s cap for its 44-180s latency) and keep the fast lite
+    # pool free for interactive chat.
+    res = model_pools.call_pool_json('background', api_key, EXTRACTION_SYSTEM, prompt,
+                                     temperature=0.1, timeout_s=60, gemma_timeout_s=180,
+                                     settings=settings)
     if not isinstance(res, dict):
         return []
     if res.get('error'):

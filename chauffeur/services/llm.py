@@ -33,7 +33,7 @@ def test_llm_connection(provider: str, url: str = None, api_key: str = None, mod
             return False, "Gemini API Key is required."
         try:
             # Simple test call
-            gemini_model = model or 'gemini-3.5-flash'
+            gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
@@ -238,7 +238,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
             
     elif provider == 'gemini':
         try:
-            gemini_model = model or 'gemini-3.5-flash'
+            gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
@@ -374,7 +374,7 @@ def refine_scheduling_text(
 
     elif provider == 'gemini':
         try:
-            gemini_model = model or 'gemini-3.5-flash'
+            gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
@@ -495,7 +495,7 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
 
     elif provider == 'gemini':
         try:
-            gemini_model = model or 'gemini-3.5-flash'
+            gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
@@ -582,7 +582,7 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             
     elif provider == 'gemini':
         try:
-            gemini_model = model or 'gemini-3.5-flash'
+            gemini_model = model or 'gemini-3.5-flash-lite'
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
@@ -915,10 +915,12 @@ def agentic_chat_loop(user_msg: str, source: str = "admin", driver_id: str = Non
         
         url = settings.get('llm_ollama_url', 'http://localhost:11434')
         api_key = settings.get('llm_gemini_api_key', '')
-        model = settings.get('llm_gemini_model', 'gemini-3.5-flash') if provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
-        
+        from services import model_pools
+        model = model_pools.resolve_model('interactive', settings) if provider == 'gemini' else settings.get('llm_ollama_model', 'qwen2.5:7b')
+
         try:
-            res = _call_llm_json(provider, url, api_key, model, system_prompt, user_msg)
+            res = model_pools.pooled_or_direct(provider, url, api_key, model, 'interactive',
+                                               system_prompt, user_msg, timeout_s=60)
             intent = res.get('intent', 'pois').lower()
         except Exception as e:
             print(f"Failed to classify intent: {e}")
@@ -1098,9 +1100,10 @@ You can use update_memory to save persistent rules, preferences, or global instr
             storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
             return err
             
-        gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+        from services import model_pools
+        gemini_model = model_pools.resolve_model('interactive', settings)
         if gemini_model.startswith('models/'): gemini_model = gemini_model[7:]
-        
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
         
         gemini_tools = [{"functionDeclarations": []}]
@@ -1135,6 +1138,9 @@ You can use update_memory to save persistent rules, preferences, or global instr
                     if hasattr(e, 'read'):
                         err += f" {e.read().decode('utf-8')}"
                 except: pass
+                # Feed quota errors back into the pool so the next turn picks
+                # a model that still has requests left.
+                model_pools.note_failure(gemini_model, err)
                 storage.add_message_to_conversation(conversation_id, {'role': 'assistant', 'content': err, 'timestamp': time.time()})
                 return err
                 
@@ -1203,7 +1209,9 @@ def auto_name_conversation(conversation_id: str, first_message: str):
                 title = data.get('message', {}).get('content', '')
         elif provider == 'gemini':
             api_key = settings.get('llm_gemini_api_key', '')
-            gemini_model = settings.get('llm_gemini_model', 'gemini-3.5-flash')
+            # One tiny call per new conversation — lite pool, never 20/day flash.
+            from services import model_pools
+            gemini_model = model_pools.resolve_model('interactive', settings)
             if api_key:
                 req_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
                 payload = {

@@ -42,7 +42,7 @@ class FakeLLM:
         self.prompts = []
 
     def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
-                 temperature=0.1, tools=None):
+                 temperature=0.1, tools=None, **kw):
         self.prompts.append(user_prompt)
         i = len(self.prompts) - 1
         batch = self.batches[min(i, len(self.batches) - 1)]
@@ -107,7 +107,7 @@ def scenario_topup_failure_keeps_partial():
     original_call = fake.__call__
 
     def flaky(provider, url, api_key, model, system_prompt, user_prompt,
-              temperature=0.1, tools=None):
+              temperature=0.1, tools=None, **kw):
         if len(fake.prompts) >= 1:
             fake.prompts.append(user_prompt)
             raise RuntimeError("Gemini API request failed: HTTP Error 503")
@@ -245,7 +245,7 @@ def scenario_stay_chain_translated_to_arrival_day():
         class Fake:
             def __init__(self): self.prompts = []
             def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
-                         temperature=0.1, tools=None):
+                         temperature=0.1, tools=None, **kw):
                 self.prompts.append(user_prompt)
                 return {"pois": poi_batch(0, 30), "accommodations": [dict(s) for s in accs_in], "flights": []}
         fake = Fake()
@@ -420,7 +420,7 @@ def scenario_generate_trip_flights():
             self.prompts = []
 
         def __call__(self, provider, url, api_key, model, system_prompt, user_prompt,
-                     temperature=0.1, tools=None):
+                     temperature=0.1, tools=None, **kw):
             self.prompts.append(user_prompt)
             return {"flights": list(self.flights)}
 

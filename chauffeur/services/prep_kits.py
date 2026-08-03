@@ -115,12 +115,11 @@ Rules:
 def suggest_kits(event_titles: list, existing_kits: list = None) -> list:
     """One LLM request -> proposed kit dicts (NOT saved). Raises RuntimeError
     when no key is configured or the call fails."""
-    from services.llm import _call_llm_json
+    from services import model_pools
     settings = storage.get_settings() or {}
     api_key = settings.get('llm_gemini_api_key', '')
     if not api_key:
         raise RuntimeError('no LLM API key configured')
-    model = settings.get('agent_primary_model') or 'gemini-3.5-flash'
 
     existing = existing_kits if existing_kits is not None else storage.get_prep_kits()
     existing_desc = '\n'.join(
@@ -130,8 +129,9 @@ def suggest_kits(event_titles: list, existing_kits: list = None) -> list:
     prompt = (f"Existing kits (do not duplicate):\n{existing_desc}\n\n"
               f"Upcoming event titles:\n" + '\n'.join(f"- {t}" for t in titles[:60]))
 
-    res = _call_llm_json('gemini', '', api_key, model, SUGGEST_SYSTEM, prompt,
-                         temperature=0.2, timeout_s=60)
+    # Interactive tier: the user clicked "suggest" and is waiting — lite pool.
+    res = model_pools.call_pool_json('interactive', api_key, SUGGEST_SYSTEM, prompt,
+                                     temperature=0.2, timeout_s=60, settings=settings)
     if not isinstance(res, dict):
         return []
     if res.get('error'):
