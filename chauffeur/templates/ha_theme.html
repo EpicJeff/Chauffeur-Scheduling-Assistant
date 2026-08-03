@@ -135,4 +135,62 @@
     body.ha-theme .bg-blue-900\/50 {
         background-color: rgba(59, 130, 246, 0.15) !important;
     }
+
+    /* Opacity-suffixed gray utilities (kid boards: chores/routines kiosk,
+       digest strip). Without these the cards stayed hard-dark on light HA
+       themes while the mapped classes went light — the mismatched look. */
+    body.ha-theme .bg-gray-900\/30,
+    body.ha-theme .bg-gray-900\/40,
+    body.ha-theme .bg-gray-900\/50,
+    body.ha-theme .bg-gray-900\/60 {
+        background-color: var(--ha-bg, #111111) !important;
+    }
+
+    body.ha-theme .bg-gray-800\/40,
+    body.ha-theme .bg-gray-800\/60 {
+        background-color: var(--ha-card-bg, #1c1c1c) !important;
+    }
+
+    body.ha-theme .bg-gray-700\/40,
+    body.ha-theme .bg-gray-700\/60 {
+        background-color: var(--ha-header-bg, #333333) !important;
+    }
+
+    body.ha-theme .border-indigo-900\/60,
+    body.ha-theme .border-indigo-800\/60,
+    body.ha-theme .border-blue-800\/60,
+    body.ha-theme .border-emerald-800\/60,
+    body.ha-theme .border-amber-500\/40 {
+        border-color: var(--ha-divider, #333333) !important;
+    }
+
+    /* Accent text used by the kid boards: blend toward the theme's text
+       color so light themes keep contrast without losing the color coding. */
+    body.ha-theme .text-indigo-200,
+    body.ha-theme .text-indigo-300,
+    body.ha-theme .text-indigo-400 {
+        color: color-mix(in srgb, var(--ha-primary-text) 55%, #6366f1) !important;
+    }
+
+    body.ha-theme .text-emerald-300,
+    body.ha-theme .text-emerald-400,
+    body.ha-theme .text-green-300,
+    body.ha-theme .text-green-400 {
+        color: color-mix(in srgb, var(--ha-primary-text) 55%, #10b981) !important;
+    }
+
+    body.ha-theme .text-orange-300,
+    body.ha-theme .text-orange-400,
+    body.ha-theme .text-amber-300\/80 {
+        color: color-mix(in srgb, var(--ha-primary-text) 55%, #f59e0b) !important;
+    }
+
+    body.ha-theme .text-red-300,
+    body.ha-theme .text-red-400 {
+        color: color-mix(in srgb, var(--ha-primary-text) 45%, #ef4444) !important;
+    }
+
+    body.ha-theme .text-blue-400 {
+        color: color-mix(in srgb, var(--ha-primary-text) 55%, #3b82f6) !important;
+    }
 </style>

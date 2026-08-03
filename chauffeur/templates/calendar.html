@@ -582,8 +582,17 @@
             Array.from(allLegendMembers.values()).forEach(member => {
                 const btn = document.createElement('button');
                 const isHidden = window.hiddenMembers.has(member.id);
-                btn.className = `px-3 py-1.5 rounded-full text-xs font-bold text-white shadow-sm transition-all border ${isHidden ? 'opacity-40 grayscale border-transparent' : 'border-white/20 hover:scale-[1.03]'}`;
-                btn.style.backgroundColor = member.color;
+                // Hidden = tinted outline in the member's own color instead of
+                // the old 40%-opacity grayscale, which was unreadable on light
+                // HA themes (dark blob, ghost-white text) and ambiguous on dark.
+                btn.className = `px-3 py-1.5 rounded-full text-xs font-bold shadow-sm transition-all border ${isHidden ? 'opacity-80' : 'text-white border-white/20 hover:scale-[1.03]'}`;
+                if (isHidden) {
+                    btn.style.background = `color-mix(in srgb, ${member.color} 12%, transparent)`;
+                    btn.style.borderColor = member.color;
+                    btn.style.color = member.color;
+                } else {
+                    btn.style.backgroundColor = member.color;
+                }
                 
                 let icon = '';
                 if (member.type === 'driver') {
@@ -897,7 +906,11 @@
                         }
                         if (data.drivers) {
                             data.drivers.forEach(d => {
-                                allLegendMembers.set(d.name, { id: d.name, name: d.name, color: '#1F2937', type: 'driver' });
+                                // Use the driver's real color — the old hardcoded
+                                // #1F2937 (dark slate) was an unreadable blob on
+                                // light HA themes.
+                                allLegendMembers.set(d.name, { id: d.name, name: d.name,
+                                    color: d.color_code || d.color || '#475569', type: 'driver' });
                             });
                         }
                         renderLegend();
