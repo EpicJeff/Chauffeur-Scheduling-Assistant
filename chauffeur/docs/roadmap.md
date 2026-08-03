@@ -115,10 +115,18 @@ settings, not hardcoded.
   child + 🌙 kiosk strip on `/routines?kiosk=true`, kid quiet-hours
   settings (`kid_quiet_start/end`, shared gate for all future kid pushes).
   Details in system_capabilities.md.
-- **K2 — pickup-clarity pushes. NEXT.** Driver-change pushes to affected
-  kid passengers (extend the assignment-change buffer, kid wording), and
-  an "on the way" push when a driver taps Start Drive on a leg carrying
-  the kid. Both gated by kid quiet hours.
+- **K2 — pickup-clarity pushes. SHIPPED v2.33.1 (2026-08-05).** On-the-way
+  push on first leg start (both PWA + agent paths, once per event/day) and
+  near-term gains-only driver-change pushes riding the netted flush buffer;
+  kid quiet hours skip. Details in system_capabilities.md.
+- **K3 — kid-as-sensor. NEXT.** Kid tells Argyle "practice moved to 5" in
+  their DM → the agent creates an action-proposal card for parents (the
+  propose_family_action rail; children's approval taps already refused
+  server-side). Needs: the proposal tool offered in kid/child agent
+  context (today it rides the admin bridge gate), kid-persona prompt
+  guidance (always propose, never execute, never interrogate).
+- **Deferred from K2** (needs K4's school-hours model): the scheduled
+  end-of-school-day "you're getting picked up by X at 3:15" push.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 

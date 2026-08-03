@@ -1325,6 +1325,14 @@ def start_route(driver_id: str, event_name: str, target_date: str = "today") -> 
         return {"status": "error", "message": f"Couldn't find a drive matching '{event_name}' on your schedule for {day.isoformat()}."}
     for leg_id in _leg_id_variants(ev["id"]):
         mark_drive_status(leg_id, "in_progress")
+    try:
+        # K2 on-the-way push to child passengers — same hook as the PWA's
+        # Start Drive button (lazy main import, same pattern as the chat
+        # fan-out; absent/failing in tests -> skipped silently).
+        import main as _main
+        _main._notify_kids_ride_started(ev["id"])
+    except Exception:
+        pass
     return {"status": "success",
             "message": f"On your way to '{ev['title']}'" + (f" at {ev['location']}" if ev.get("location") else "") + ". Drive safe!",
             "event_id": ev["id"]}

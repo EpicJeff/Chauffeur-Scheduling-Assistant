@@ -38,18 +38,17 @@ quiet hours are settings (`kid_quiet_start`/`kid_quiet_end`, default
 later kid-facing push (K2+) must use. Settings UI in Config → General.
 Tests: `tests/test_kid_digest.py`.
 
-## Phase K2 — Pickup clarity ("who's getting me?")
+## Phase K2 — Pickup clarity — SHIPPED v2.33.1 (2026-08-05)
 
-The single most common kid worry, and the moat answers it.
-- Push to the kid when their ride's driver changes (extend the existing
-  assignment-change buffer — today it notifies drivers only; map affected
-  passengers → child members, kid wording: "Change: Dad is taking you to
-  swim tomorrow").
-- "On the way" push when the driver taps Start Drive on a leg carrying the
-  kid (drive_status already flows; kid already sees a chip IF they open the
-  app — push closes the gap).
-- Optional later: school-day-end "You're getting picked up by Mom at 3:15"
-  scheduled push per school-day (needs school-hours config from K4).
+Both push moments landed, with "rules of calm" refined during build:
+driver-change pushes are GAINS-ONLY (a ride losing its driver never alarms
+the kid — parent watchers chase unassigned) and next-48h only; the
+on-the-way push fires once per event per day on the FIRST leg start (both
+the PWA button and the agent start_route path); kid quiet hours SKIP rather
+than defer on both (stale reassurance is worse than none — the digests
+restate). Deferred to after K4 (needs school hours): the scheduled
+end-of-school-day "you're getting picked up by Mom at 3:15" push.
+Tests: `tests/test_kid_pushes.py`.
 
 ## Phase K3 — Kid-as-sensor (capture from the kid's Argyle DM)
 

@@ -377,6 +377,13 @@ def flush_assignment_notifications():
     if not buffered:
         return
 
+    # K2: kid-worded pushes for near-term driver changes ride the same
+    # netted buffer (churn within a run already collapsed to nothing).
+    try:
+        _notify_kids_driver_changes(buffered)
+    except Exception as ke:
+        print(f"Kid driver-change push failed: {ke}")
+
     today = _dt.date.today()
     changes = {}
     def _bucket(d_id):
@@ -4105,6 +4112,104 @@ def member_day(member_id: str, date: Optional[str] = None):
         'rides': rides,
     }
 
+# --- Kid pickup-clarity pushes (kid-support arc K2) ---
+
+def _kid_members_for_event(ev, ev_id, sched=None):
+    """Child members bound to an event as passengers — the same three-way
+    binding My Day uses (calendar ids, hashtag, matched-rule passenger)."""
+    from services import family_digest
+    sched = sched or storage.get_cached_schedule() or {}
+    matched_rules = sched.get('matched_rules', {}) or {}
+    passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    out = []
+    for m in storage.get_all_members():
+        if m.get('role') != 'child' or m.get('system') or not m.get('passenger_id'):
+            continue
+        p = passengers.get(m['passenger_id']) or {}
+        p_cals = set(p.get('calendar_ids') or [])
+        p_tags = {t.lower() for t in (p.get('hashtags') or [])}
+        if family_digest._kid_event_match(ev, str(ev_id), m['passenger_id'],
+                                          p_cals, p_tags, matched_rules):
+            out.append(m)
+    return out
+
+def _notify_kids_ride_started(event_id, now=None):
+    """K2: '🚗 Dad is on the way!' push to child passengers the moment their
+    ride's first drive leg starts (PWA Start Drive button or the agent's
+    start_route tool). Once per event per day (app_state marker, so later
+    legs of the same drive stay quiet); kid quiet hours SKIP rather than
+    defer — a stale on-the-way push is worse than none."""
+    import datetime as _dt
+    from services import family_digest
+    try:
+        now = now or _dt.datetime.now()
+        if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
+            return
+        sched = storage.get_cached_schedule() or {}
+        ev = next((e for e in sched.get('events', [])
+                   if str(e.get('id')) == str(event_id)), None)
+        if not ev:
+            return
+        kids = _kid_members_for_event(ev, event_id, sched)
+        if not kids:
+            return
+        key = f"{event_id}:{now.date().isoformat()}"
+        seen = dict(storage.get_app_state('ride_started_notified') or {})
+        if key in seen:
+            return
+        cutoff = (now - _dt.timedelta(days=2)).timestamp()
+        seen = {k: v for k, v in seen.items() if v >= cutoff}
+        seen[key] = now.timestamp()
+        storage.set_app_state('ride_started_notified', seen)
+        assignments = dict(sched.get('assignments', {}))
+        assignments.update(sched.get('ghost_assignments', {}))
+        d_id = assignments.get(str(event_id))
+        drv = storage.get_member_by_driver_id(d_id) if d_id \
+            and not str(d_id).startswith('ghost_') else None
+        who = (drv or {}).get('name') or 'Your driver'
+        for kid in kids:
+            _notify_member_lanes(kid, f"🚗 {who} is on the way!",
+                                 ev.get('title') or 'Your ride', '/app')
+    except Exception as e:
+        print(f"Kid on-the-way push failed: {e}")
+
+def _notify_kids_driver_changes(buffered, now=None):
+    """K2: kid-worded pushes when a NEAR-TERM ride's driver changes ("Mom is
+    taking you to Swim Practice today at 4:00 PM 🚗"). Rules of calm:
+    GAINS only — a ride losing its driver never alarms the kid (the parent
+    watchers chase unassigned events); only the next 48h — far-future churn
+    is noise a kid can't act on, the evening digest covers it; kid quiet
+    hours skip entirely (the digest restates tomorrow anyway)."""
+    import datetime as _dt
+    from services import family_digest
+    now = now or _dt.datetime.now()
+    if family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
+        return
+    horizon = now + _dt.timedelta(hours=48)
+    sched = storage.get_cached_schedule() or {}
+    for ev_id, entry in buffered.items():
+        old_d, new_d = entry.get("first_old"), entry.get("last_new")
+        ev = entry.get("ev") or {}
+        if old_d == new_d or not new_d or str(new_d).startswith("ghost_"):
+            continue
+        try:
+            start = _dt.datetime.fromisoformat(ev["start"]).replace(tzinfo=None)
+        except Exception:
+            continue
+        if not (now <= start <= horizon):
+            continue
+        drv = storage.get_member_by_driver_id(new_d)
+        if not drv:
+            continue
+        when = "today" if start.date() == now.date() else (
+            "tomorrow" if start.date() == now.date() + _dt.timedelta(days=1)
+            else start.strftime('%A'))
+        time_str = start.strftime('%I:%M %p').lstrip('0')
+        body = (f"{drv.get('name')} is taking you to "
+                f"{ev.get('title') or 'your event'} {when} at {time_str} 🚗")
+        for kid in _kid_members_for_event(ev, ev_id, sched):
+            _notify_member_lanes(kid, "Ride update", body, '/app')
+
 # --- Kid evening digest (kid-support arc K1) ---
 
 def _build_kid_digests(target_date=None):
@@ -7139,8 +7244,13 @@ def debug_db():
     }
 
 @app.post("/api/drive_status")
-def update_drive_status(status: DriveStatus):
+def update_drive_status(status: DriveStatus, background_tasks: BackgroundTasks):
     storage.mark_drive_status(status.leg_id, status.status)
+    if status.status == 'in_progress':
+        # K2: tell child passengers their ride is on the way (deduped to the
+        # first leg per event per day inside the helper).
+        background_tasks.add_task(_notify_kids_ride_started,
+                                  _leg_event_id(status.leg_id))
     return {"status": "ok"}
 
 class PrepStatusRequest(BaseModel):
