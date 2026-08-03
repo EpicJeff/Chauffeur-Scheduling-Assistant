@@ -164,6 +164,16 @@
 
         <!-- Messages (family chat) -->
         <div id="messages-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
+            <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0">
+                <div class="text-lg font-bold text-white">Messages</div>
+                <button onclick="openNewChat()" title="New chat"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 active:bg-blue-700 text-white text-sm font-bold">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    New chat
+                </button>
+            </div>
             <div id="channel-list" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
             <div id="thread-view" class="absolute inset-0 bg-gray-950 flex-col z-20" style="display: none">
                 <div class="flex items-center gap-3 p-3 border-b border-gray-800 bg-gray-900 shrink-0">
@@ -286,6 +296,25 @@
                     class="flex-1 py-3 rounded-xl bg-gray-800 text-amber-300 font-bold active:bg-gray-700">Skip</button>
                 <button id="pin-modal-ok"
                     class="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Chat picker: type-ahead over family members, selections become
+         pills. 1 person -> DM, 2+ -> group channel. -->
+    <div id="new-chat-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 w-full max-w-sm flex flex-col max-h-[80vh]">
+            <h3 class="text-xl font-bold text-white mb-3">New chat</h3>
+            <div id="new-chat-pills" class="flex flex-wrap gap-1.5 mb-2 empty:hidden"></div>
+            <input id="new-chat-input" type="text" autocomplete="off" placeholder="Type a name..."
+                oninput="renderNewChatSuggestions()"
+                class="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2">
+            <div id="new-chat-suggestions" class="flex-1 overflow-y-auto space-y-1 min-h-[80px]"></div>
+            <div class="flex gap-2 mt-4 shrink-0">
+                <button onclick="closeNewChat()"
+                    class="flex-1 py-3 rounded-xl bg-gray-800 text-gray-300 font-bold active:bg-gray-700">Cancel</button>
+                <button id="new-chat-start" onclick="startNewChat()" disabled
+                    class="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold active:bg-blue-700 disabled:opacity-40">Start</button>
             </div>
         </div>
     </div>
@@ -1101,6 +1130,12 @@
         function channelDisplay(c) {
             if (c.kind === 'family') return { name: 'Family', color: '#3b82f6', avatar: '👨‍👩‍👧‍👦' };
             if (c.kind === 'event') return { name: c.title || 'Event chat', color: '#8b5cf6', avatar: '📅' };
+            if (c.kind === 'group') {
+                const others = (c.member_ids || []).filter(id => id !== selectedMemberId)
+                    .map(id => id === 'argyle' ? 'Argyle'
+                        : ((membersData.find(m => m.id === id) || {}).name || '?'));
+                return { name: c.title || others.join(', ') || 'Group', color: '#10b981', avatar: '👥' };
+            }
             const otherId = (c.member_ids || []).find(id => id !== selectedMemberId);
             const other = membersData.find(m => m.id === otherId) || {};
             return {
@@ -1280,6 +1315,105 @@
             document.getElementById('thread-view').style.display = 'none';
             applyViewVisibility();  // FAB returns on the channel list
             fetchChannels();
+        }
+
+        // --- New chat picker (pills; 1 person -> DM, 2+ -> group) ---
+        let newChatSelected = [];
+
+        function newChatCandidates() {
+            // Helpers are DM-only and only for parents; groups exclude them
+            // server-side, so hide them once a second person is picked.
+            return membersData.filter(m => m.id !== selectedMemberId)
+                .filter(m => m.role !== 'helper'
+                    || (currentMemberRole() === 'parent' && newChatSelected.length === 0));
+        }
+
+        function openNewChat() {
+            newChatSelected = [];
+            const modal = document.getElementById('new-chat-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            document.getElementById('new-chat-input').value = '';
+            renderNewChatPills();
+            renderNewChatSuggestions();
+            document.getElementById('new-chat-input').focus();
+        }
+
+        function closeNewChat() {
+            const modal = document.getElementById('new-chat-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function renderNewChatPills() {
+            const wrap = document.getElementById('new-chat-pills');
+            wrap.innerHTML = newChatSelected.map(id => {
+                const m = membersData.find(x => x.id === id) || { name: '?' };
+                return `<span class="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/50 text-blue-200 text-sm font-semibold">
+                    ${mfEscape(m.name)}
+                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-white text-[10px] leading-none font-bold">✕</button>
+                </span>`;
+            }).join('');
+            document.getElementById('new-chat-start').disabled = !newChatSelected.length;
+        }
+
+        function renderNewChatSuggestions() {
+            const q = document.getElementById('new-chat-input').value.trim().toLowerCase();
+            const list = document.getElementById('new-chat-suggestions');
+            const items = newChatCandidates()
+                .filter(m => !newChatSelected.includes(m.id))
+                .filter(m => !q || (m.name || '').toLowerCase().includes(q));
+            list.innerHTML = items.map(m => `
+                <button onclick="toggleNewChatMember('${m.id}')"
+                    class="w-full flex items-center gap-2.5 p-2 rounded-xl bg-gray-800 active:bg-gray-700 text-left">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-white shrink-0"
+                        style="border-color: ${m.color_code || '#6b7280'}">${mfEscape(m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>
+                    <span class="font-semibold text-white">${mfEscape(m.name)}</span>
+                    ${m.role === 'helper' ? '<span class="text-[10px] uppercase tracking-wide text-amber-400 font-bold ml-auto">Helper</span>' : ''}
+                </button>`).join('')
+                || '<p class="text-center text-gray-500 text-sm mt-3">No one else to add.</p>';
+        }
+
+        function toggleNewChatMember(id) {
+            const i = newChatSelected.indexOf(id);
+            if (i >= 0) newChatSelected.splice(i, 1);
+            else newChatSelected.push(id);
+            document.getElementById('new-chat-input').value = '';
+            renderNewChatPills();
+            renderNewChatSuggestions();
+        }
+
+        async function startNewChat() {
+            if (!newChatSelected.length || !selectedMemberId) return;
+            const btn = document.getElementById('new-chat-start');
+            btn.disabled = true;
+            try {
+                let res;
+                if (newChatSelected.length === 1) {
+                    res = await fetch(`${apiBase}api/channels/dm`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: selectedMemberId, other_member_id: newChatSelected[0] })
+                    });
+                } else {
+                    res = await fetch(`${apiBase}api/channels/group`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ member_id: selectedMemberId, member_ids: newChatSelected })
+                    });
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Could not start chat');
+                }
+                const ch = await res.json();
+                closeNewChat();
+                openChannel(ch.id, ch);
+            } catch (e) {
+                showGlobalAlert(e.message || 'Could not start chat');
+            } finally {
+                btn.disabled = !newChatSelected.length;
+            }
         }
 
         // --- Chores ---

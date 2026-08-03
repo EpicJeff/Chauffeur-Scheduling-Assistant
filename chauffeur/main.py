@@ -2962,7 +2962,7 @@ def send_push_to_member(member_id, title, body, url=None):
 
 def _channel_recipient_members(channel):
     members = storage.get_all_members()
-    if channel.get('kind') == 'dm':
+    if channel.get('kind') in ('dm', 'group'):
         ids = set(channel.get('member_ids') or [])
         return [m for m in members if m['id'] in ids]
     # family + event channels are household-wide; helpers are outside it
@@ -2978,6 +2978,8 @@ def _fanout_message_notifications(channel, message):
         kind = channel.get('kind')
         if kind == 'dm':
             title = sender_name
+        elif kind == 'group':
+            title = f"{sender_name} · {channel.get('title') or 'Group'}"
         elif kind == 'event':
             title = f"{sender_name} · {channel.get('title') or 'Event chat'}"
         else:
@@ -4116,6 +4118,30 @@ def create_dm_channel(req: DmChannelRequest):
                                 detail="Helpers can only exchange messages with parents")
     return storage.get_or_create_dm(req.member_id, req.other_member_id)
 
+class GroupChannelRequest(BaseModel):
+    member_id: str                       # creator (always included in the group)
+    member_ids: List[str]                # the other participants
+    title: str = ""
+
+@app.post("/api/channels/group")
+def create_group_channel(req: GroupChannelRequest):
+    ids = sorted(set(req.member_ids) | {req.member_id})
+    if len(ids) < 3:
+        raise HTTPException(status_code=400,
+                            detail="Groups need at least 3 people — use a DM instead")
+    if storage.ARGYLE_MEMBER_ID in ids:
+        storage.ensure_argyle_member()
+    for mid in ids:
+        member = storage.get_member(mid)
+        if not member:
+            raise HTTPException(status_code=404, detail=f"Member {mid} not found")
+        # Helpers stay outside group chats entirely (same reasoning as the
+        # family channel): their channel is a DM with a parent.
+        if member.get('role') == 'helper':
+            raise HTTPException(status_code=403,
+                                detail="Helpers can't join group chats — message them directly")
+    return storage.get_or_create_group(ids, req.title.strip())
+
 class EventChannelRequest(BaseModel):
     event_id: str
     title: str = ""
@@ -4189,8 +4215,9 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     sender = storage.get_member(req.sender_member_id)
     if not sender:
         raise HTTPException(status_code=404, detail="Sender member not found")
-    if channel.get('kind') == 'dm' and req.sender_member_id not in (channel.get('member_ids') or []):
-        raise HTTPException(status_code=403, detail="Not a member of this DM")
+    if channel.get('kind') in ('dm', 'group') \
+            and req.sender_member_id not in (channel.get('member_ids') or []):
+        raise HTTPException(status_code=403, detail="Not a member of this chat")
     if sender.get('role') == 'helper' and channel.get('kind') != 'dm':
         raise HTTPException(status_code=403, detail="Helpers can only post in their DMs")
 
@@ -4201,7 +4228,7 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     storage.add_chat_message(message)
     # Sender has obviously read their own message.
     storage.set_last_read(channel_id, req.sender_member_id, message['ts'])
-    recipients = channel.get('member_ids') if channel.get('kind') == 'dm' else None
+    recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
     _push_message_event(channel_id, recipients)
     background_tasks.add_task(_fanout_message_notifications, channel, message)
     # @argyle turns the family chat into a vector of action: hand the message to

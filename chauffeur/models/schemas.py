@@ -96,12 +96,15 @@ class ChatChannel(BaseModel):
     # Family messaging. Table names are chat_* to stay clear of the agent's
     # 'conversations' store.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    kind: str = 'dm'  # 'family' | 'dm' | 'event'
+    kind: str = 'dm'  # 'family' | 'dm' | 'group' | 'event'
     member_ids: List[str] = Field(default_factory=list)  # empty for 'family' = everyone
-    dm_key: Optional[str] = None       # sorted "a:b" pair for kind='dm' (indexed lookup)
+    dm_key: Optional[str] = None       # sorted "a:b[:c...]" member key for dm/group
+                                       # get-or-create (indexed; dm=2 ids, group>=3
+                                       # so the keys never collide across kinds)
     event_id: Optional[str] = None     # kind='event': calendar event instance id
     event_end: Optional[str] = None    # ISO end of the event; drives auto-archive
-    title: str = ""                    # event-title snapshot; dm/family titles render client-side
+    title: str = ""                    # event-title snapshot / optional group name;
+                                       # dm/family titles render client-side
     created_at: float = Field(default_factory=time.time)
     archived: bool = False
 

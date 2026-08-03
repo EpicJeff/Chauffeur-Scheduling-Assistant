@@ -520,7 +520,7 @@ def _post_chat_message(channel: dict, sender: dict, body: str, card: dict = None
     storage.set_last_read(channel['id'], sender['id'], message['ts'])
     try:
         import main as _main
-        recipients = channel.get('member_ids') if channel.get('kind') == 'dm' else None
+        recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
         _main._push_message_event(channel['id'], recipients)
         import threading
         threading.Thread(target=_main._fanout_message_notifications,

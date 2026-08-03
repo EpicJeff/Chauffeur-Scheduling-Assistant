@@ -63,6 +63,81 @@ def scenario_dm_get_or_create():
     check(c["id"] != a["id"], "different pair -> different channel")
 
 
+def scenario_group_get_or_create():
+    a = storage.get_or_create_group(["m3", "m1", "m2"])
+    b = storage.get_or_create_group(["m2", "m3", "m1", "m1"])
+    check(a["id"] == b["id"], "group is order/dupe-insensitive get-or-create")
+    check(a["kind"] == "group" and a["member_ids"] == ["m1", "m2", "m3"]
+          and a["dm_key"] == "m1:m2:m3", "canonical sorted member set")
+    c = storage.get_or_create_group(["m1", "m2", "m4"])
+    check(c["id"] != a["id"], "different member set -> different group")
+    named = storage.get_or_create_group(["m1", "m2", "m3"], title="Parents")
+    check(named["id"] == a["id"] and named["title"] == "Parents",
+          "provided title refreshes the existing group's name")
+    dm = storage.get_or_create_dm("m1", "m2")
+    check(dm["id"] != a["id"] and dm["kind"] == "dm",
+          "dm and group keys never collide (2 vs 3+ ids)")
+
+
+def scenario_group_visibility():
+    g = storage.get_or_create_group(["m1", "m2", "m3"])
+    check(any(c["id"] == g["id"] for c in storage.get_channels_for_member("m2")),
+          "group member sees the group")
+    check(all(c["id"] != g["id"] for c in storage.get_channels_for_member("m4")),
+          "non-member does not see the group")
+
+
+def scenario_group_endpoint_validations():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+
+    _member("mom", "Mom", role="parent")
+    _member("dad", "Dad", role="parent")
+    _member("kid", "Kid", role="child")
+    _member("uber", "Hired Driver", role="helper")
+    bt = BackgroundTasks()
+
+    g = main.create_group_channel(main.GroupChannelRequest(
+        member_id="mom", member_ids=["dad", "kid"], title="  Weekend plans "))
+    check(sorted(g["member_ids"]) == ["dad", "kid", "mom"],
+          "creator always included in the group")
+    check(g["title"] == "Weekend plans", "title trimmed")
+
+    for req, expect in [
+        (main.GroupChannelRequest(member_id="mom", member_ids=["dad"]), 400),
+        (main.GroupChannelRequest(member_id="mom", member_ids=["dad", "ghost"]), 404),
+        (main.GroupChannelRequest(member_id="mom", member_ids=["dad", "uber"]), 403),
+        (main.GroupChannelRequest(member_id="uber", member_ids=["mom", "dad"]), 403),
+    ]:
+        try:
+            main.create_group_channel(req)
+            check(False, f"expected HTTPException {expect}")
+        except HTTPException as e:
+            check(e.status_code == expect, f"expected {expect}, got {e.status_code}")
+
+    # posting: members only; SSE event addressed to the member set
+    main.send_message(g["id"], main.SendMessageRequest(
+        sender_member_id="kid", body="pool day?"), bt)
+    check(main.MESSAGE_EVENTS[-1]["recipients"] == ["dad", "kid", "mom"],
+          "group SSE event addressed to the member set")
+    try:
+        main.send_message(g["id"], main.SendMessageRequest(
+            sender_member_id="uber", body="intrude"), bt)
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "non-member cannot post in a group")
+
+    # fan-out: only group members (minus sender), title includes group name
+    from services import ha_api
+    with mock.patch.object(main, 'send_push_to_member') as push, \
+         mock.patch.object(ha_api, 'call_service'):
+        main._fanout_message_notifications(g, {"sender_member_id": "mom", "body": "pool!"})
+        pushed = sorted(c.args[0] for c in push.call_args_list)
+        check(pushed == ["dad", "kid"], f"group fan-out to members minus sender, got {pushed}")
+        check(push.call_args_list[0].args[1] == "Mom · Weekend plans",
+              "group push title includes the group name")
+
+
 def scenario_event_channel_lifecycle():
     ch = storage.get_or_create_event_channel("evt1", "Soccer", "2126-01-01T18:00:00")
     same = storage.get_or_create_event_channel("evt1", "Soccer (moved)", None)
@@ -289,6 +364,9 @@ SCENARIOS = [
     scenario_family_channel_singleton,
     scenario_helper_restrictions,
     scenario_dm_get_or_create,
+    scenario_group_get_or_create,
+    scenario_group_visibility,
+    scenario_group_endpoint_validations,
     scenario_event_channel_lifecycle,
     scenario_dm_visibility,
     scenario_messages_order_limit_after,

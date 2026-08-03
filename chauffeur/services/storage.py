@@ -1373,6 +1373,38 @@ def get_or_create_dm(member_a: str, member_b: str) -> dict:
         chat_channels_table.insert(channel)
         return channel
 
+def get_or_create_group(member_ids: List[str], title: str = '') -> dict:
+    """Group chat with an explicit member set (>=3 members incl. the creator).
+    Get-or-create keyed on the sorted member set, same idea as DMs — the
+    family channel stays the special implicit-everyone channel; groups are for
+    arbitrary subsets ("parents only"). A provided title refreshes an
+    existing group's name."""
+    import uuid as _uuid
+    import time
+    ids = sorted(set(member_ids))
+    group_key = ':'.join(ids)
+    with db_lock:
+        res = chat_channels_table.search(Query().dm_key == group_key)
+        if res:
+            existing = dict(res[0])
+            if title and title != existing.get('title'):
+                chat_channels_table.update({'title': title}, Query().id == existing['id'])
+                existing['title'] = title
+            return existing
+        channel = {
+            'id': _uuid.uuid4().hex,
+            'kind': 'group',
+            'member_ids': ids,
+            'dm_key': group_key,
+            'event_id': None,
+            'event_end': None,
+            'title': title or '',
+            'created_at': time.time(),
+            'archived': False,
+        }
+        chat_channels_table.insert(channel)
+        return channel
+
 def get_or_create_event_channel(event_id: str, title: str = '',
                                 event_end: str = None) -> dict:
     import uuid as _uuid
@@ -1406,9 +1438,9 @@ def get_or_create_event_channel(event_id: str, title: str = '',
         return channel
 
 def get_channels_for_member(member_id: str) -> List[dict]:
-    """Family channel + this member's DMs + non-archived event threads.
-    Helpers (external drivers/nannies) see only their DMs — no family channel
-    or event threads. Event threads whose event ended >7 days ago are
+    """Family channel + this member's DMs/groups + non-archived event threads.
+    Helpers (external drivers/nannies) see only their DMs — no family channel,
+    groups, or event threads. Event threads whose event ended >7 days ago are
     archived on the way out."""
     from datetime import datetime, timedelta, timezone
     member = get_member(member_id)
@@ -1419,7 +1451,7 @@ def get_channels_for_member(member_id: str) -> List[dict]:
             c = dict(c)
             if is_helper and c.get('kind') != 'dm':
                 continue
-            if c.get('kind') == 'dm' and member_id not in (c.get('member_ids') or []):
+            if c.get('kind') in ('dm', 'group') and member_id not in (c.get('member_ids') or []):
                 continue
             if c.get('kind') == 'event' and not c.get('archived') and c.get('event_end'):
                 try:
