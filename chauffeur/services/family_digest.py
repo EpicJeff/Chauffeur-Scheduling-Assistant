@@ -203,6 +203,23 @@ def build_weekly_digest(end_date: datetime.date = None, days: int = 7):
     if routine_lines:
         sections.append(("📋 Routines", routine_lines))
 
+    # Intake accountability (phase-2 (d), folded into the weekly digest
+    # instead of a new push channel — the watchers already nudge stale
+    # pending items; this is the week's summary of what intake did).
+    all_props = storage.get_proposals()
+    new_props = [p for p in all_props if (p.get('created_at') or 0) >= start_ts]
+    pending = [p for p in all_props if p.get('status') == 'proposed']
+    if new_props or pending:
+        lines = []
+        if new_props:
+            approved = sum(1 for p in new_props if p.get('status') == 'approved')
+            ignored = sum(1 for p in new_props if p.get('status') == 'ignored')
+            lines.append(f"• {len(new_props)} new proposal{'s' if len(new_props) != 1 else ''}"
+                         f" — {approved} approved, {ignored} ignored")
+        if pending:
+            lines.append(f"• {len(pending)} still waiting for a decision")
+        sections.append(("📬 Intake", lines))
+
     if not sections:
         return None
     period = (f"{start_date.strftime('%b')} {start_date.day} – "

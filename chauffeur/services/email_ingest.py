@@ -297,6 +297,23 @@ def _is_duplicate(prop: dict, existing: list, sched_events: list) -> bool:
     return False
 
 
+def learned_route(from_addr: str, kind: str):
+    """Deterministic learned prior (intake phase-2 (a)): the target a parent
+    last APPROVED for this sender, recorded by main._record_intake_feedback.
+    Explicit sender defaults still win. 'errand' targets are never prefilled
+    (they need per-proposal location/duration), and a kid's task list only
+    prefills for kind='task'."""
+    if not from_addr:
+        return None
+    routes = storage.get_app_state('intake_learned_routes') or {}
+    target = (routes.get(from_addr.lower()) or {}).get('target')
+    if not target or target == 'errand':
+        return None
+    if target.startswith('tasks:') and kind != 'task':
+        return None
+    return target
+
+
 def _calendar_for_member_name(name: str):
     """Resolve the LLM's member-name guess to that person's calendar (their
     passenger calendar first — kid events land there — else their driver
@@ -371,10 +388,12 @@ def _run_ingest_locked() -> dict:
                 'source': 'email',
                 'source_from': msg['from'],
                 'source_subject': msg['subject'][:200],
-                # Routing tiers: explicit sender default > LLM member guess >
+                # Routing tiers: explicit sender default > learned prior
+                # (last approved target for this sender) > LLM member guess >
                 # the family's starred default calendar (whole-family events
                 # land there; attendees get tagged after approval).
                 'calendar_id': (entry or {}).get('calendar_id')
+                    or learned_route(msg['from'], prop['kind'])
                     or _calendar_for_member_name(prop.get('member_name'))
                     or (settings.get('default_calendar_id') or None),
             })

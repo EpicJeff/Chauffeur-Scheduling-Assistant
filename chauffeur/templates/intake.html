@@ -85,6 +85,8 @@
                                     <p class="text-xs text-gray-500 mt-2 italic" x-show="p.notes" x-text="p.notes"></p>
                                     <p class="text-xs text-gray-600 mt-1 truncate"
                                         x-text="'✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
+                                    <p class="text-xs text-amber-400/80 mt-1" x-show="p.sender_ignores"
+                                        x-text="'🤔 You\'ve ignored the last ' + p.sender_ignores + ' from this sender — consider a Gmail filter'"></p>
                                     <!-- Edit-before-approve: fix the extraction instead of
                                          ignore + manual re-entry. Cleared start time = all-day. -->
                                     <div class="grid grid-cols-2 gap-2 mt-3 bg-gray-900/60 border border-gray-700 rounded-lg p-3" x-show="p._editing">

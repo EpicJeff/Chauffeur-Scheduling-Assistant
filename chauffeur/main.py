@@ -2699,7 +2699,41 @@ def ingest_log(limit: int = 50):
 @app.get("/api/proposals")
 def list_proposals(status: str = 'proposed'):
     props = storage.get_proposals(status if status != 'all' else None)
+    # 3+ consecutive ignores from a sender → the approval surfaces show a hint.
+    streaks = storage.get_app_state('intake_ignore_streaks') or {}
+    for p in props:
+        n = streaks.get((p.get('source_from') or '').strip().lower())
+        if n and int(n) >= 3:
+            p['sender_ignores'] = int(n)
     return sorted(props, key=lambda p: p.get('start') or '')
+
+
+def _record_intake_feedback(prop: dict, approved_target: str = None):
+    """Intake phase-2 (a): deterministic learned priors, no LLM. An approval
+    remembers sender → target (prefills the next proposal from that sender,
+    behind explicit sender defaults) and resets the sender's ignore streak;
+    an ignore increments the streak (the UI hints at 3+). Last approval wins."""
+    sender = (prop.get('source_from') or '').strip().lower()
+    if not sender:
+        return
+    try:
+        if approved_target:
+            routes = storage.get_app_state('intake_learned_routes') or {}
+            prev = routes.get(sender) or {}
+            routes[sender] = {'target': approved_target,
+                              'count': int(prev.get('count') or 0) + 1,
+                              'ts': time.time()}
+            storage.set_app_state('intake_learned_routes', routes)
+            streaks = storage.get_app_state('intake_ignore_streaks') or {}
+            if streaks.get(sender):
+                streaks[sender] = 0
+                storage.set_app_state('intake_ignore_streaks', streaks)
+        else:
+            streaks = storage.get_app_state('intake_ignore_streaks') or {}
+            streaks[sender] = int(streaks.get(sender) or 0) + 1
+            storage.set_app_state('intake_ignore_streaks', streaks)
+    except Exception as e:
+        print(f"Intake feedback recording failed: {e}")
 
 @app.post("/api/proposals/{proposal_id}/approve")
 def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: BackgroundTasks):
@@ -2741,6 +2775,7 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
             'status': 'approved', 'calendar_id': 'errand',
             'created_errand_id': errand.id, 'title': title, 'start': start, 'end': end,
         })
+        _record_intake_feedback(prop, 'errand')
         return {"status": "approved", "errand_id": errand.id,
                 "message": f'Added "{errand.title}" as a drive errand 🚗'}
 
@@ -2767,6 +2802,7 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
             'status': 'approved', 'calendar_id': req.calendar_id,
             'created_task_id': task['id'], 'title': title, 'start': start, 'end': end,
         })
+        _record_intake_feedback(prop, req.calendar_id)
         return {"status": "approved", "task_id": task['id'],
                 "message": f"Added to {member.get('name')}'s school list 📚"}
 
@@ -2804,6 +2840,7 @@ def approve_proposal(proposal_id: str, req: ProposalApprove, background_tasks: B
         'status': 'approved', 'calendar_id': req.calendar_id,
         'created_event_id': gid, 'title': title, 'start': start, 'end': end,
     })
+    _record_intake_feedback(prop, req.calendar_id)
     background_tasks.add_task(trigger_background_refresh)
     return {"status": "approved", "event_id": gid}
 
@@ -2813,6 +2850,7 @@ def ignore_proposal(proposal_id: str):
     if not prop:
         raise HTTPException(status_code=404, detail="Proposal not found")
     storage.update_proposal(proposal_id, {'status': 'ignored'})
+    _record_intake_feedback(prop)
     return {"status": "ignored"}
 
 

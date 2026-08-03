@@ -961,6 +961,7 @@
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
                     <div class="text-[10px] text-gray-600 truncate mt-0.5">✉️ ${escProp(p.source_subject || p.source_from || '')}</div>
+                    ${p.sender_ignores ? `<div class="text-[10px] text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
                     <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
                         <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
                         <input data-role="f-date" type="date" value="${escProp(p._date || '')}" class="${inputCls}">
