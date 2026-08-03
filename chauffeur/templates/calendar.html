@@ -680,8 +680,14 @@
         // View forcing: the URL is each HA card's own config channel (params
         // propagate across nav links), so ?view=month|week|day|agenda pins a
         // card to a view. No param -> last-used view from localStorage.
+        // localStorage is shared across the whole origin (under HA ingress that
+        // means EVERY card iframe and tab), so a URL-forced load must never
+        // write to it — only manual view changes on an unconfigured page are
+        // remembered. That makes ?view= cards effectively per-instance.
         const _VIEW_SLUGS = { month: 'dayGridMonth', week: 'timeGridWeek', day: 'timeGridDay', agenda: 'agenda' };
         const _calUrlParams = new URLSearchParams(window.location.search);
+        const _viewForced = !!_VIEW_SLUGS[(_calUrlParams.get('view') || '').toLowerCase()];
+        const _daysForced = !!parseInt(_calUrlParams.get('agenda_days'));
         const _calCarryParams = (() => {
             const p = new URLSearchParams(window.location.search);
             p.delete('event_id');
@@ -704,7 +710,7 @@
                     right: 'dayGridMonth,timeGridWeek,timeGridDay,agendaView'
                 },
                 datesSet: function(arg) {
-                    if (!window._agendaActive) localStorage.setItem('chauffeur_cal_view', arg.view.type);
+                    if (!window._agendaActive && !_viewForced) localStorage.setItem('chauffeur_cal_view', arg.view.type);
                 },
                 height: '100%',
                 slotMinTime: '06:00:00', // Start view slightly later for focus
@@ -1244,7 +1250,7 @@
 
         function enterAgenda() {
             window._agendaActive = true;
-            localStorage.setItem('chauffeur_cal_view', 'agenda');
+            if (!_viewForced) localStorage.setItem('chauffeur_cal_view', 'agenda');
             document.getElementById('calendar').style.display = 'none';
             document.getElementById('agenda-view').style.display = 'flex';
             renderAgenda();
@@ -1271,7 +1277,7 @@
 
         function setAgendaDays(n) {
             agendaDays = Math.min(Math.max(parseInt(n) || 7, 1), 14);
-            localStorage.setItem('chauffeur_agenda_days', String(agendaDays));
+            if (!_daysForced) localStorage.setItem('chauffeur_agenda_days', String(agendaDays));
             renderAgenda();
         }
 
