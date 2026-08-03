@@ -198,51 +198,9 @@
                                     <div class="font-black text-blue-400 text-xl shrink-0" x-text="b.balance + ' ⭐'"></div>
                                 </div>
 
-                                <!-- This child's claimed / in-progress chores -->
-                                <template x-if="myChoresFor(b.member_id).length">
-                                    <div class="space-y-2">
-                                        <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
-                                        <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
-                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
-                                                <div class="min-w-0">
-                                                    <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
-                                                    <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
-                                                </div>
-                                                <div class="flex gap-2 shrink-0">
-                                                    <template x-if="c.state === 'claimed'">
-                                                        <div class="flex gap-2">
-                                                            <button @click="kioskDone(c.id, b.member_id)"
-                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700">Done!</button>
-                                                            <button @click="kioskUnclaim(c.id, b.member_id)"
-                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>
-                                                        </div>
-                                                    </template>
-                                                    <template x-if="c.state === 'done'">
-                                                        <span class="text-[10px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full">Waiting for OK</span>
-                                                    </template>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </template>
-
-                                <!-- Available to claim -->
-                                <div class="space-y-2">
-                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
-                                    <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
-                                        <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
-                                            <div class="min-w-0">
-                                                <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
-                                                <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
-                                            </div>
-                                            <button @click="kioskClaim(c.id, b.member_id)"
-                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Claim</button>
-                                        </div>
-                                    </template>
-                                    <div x-show="availableChoresFor(b.member_id).length === 0"
-                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing to claim 🎉</div>
-                                </div>
-
+                                <!-- Rewards & goals FIRST (family request 2026-08-06): the
+                                     incentive must stay visible — a long chore list was
+                                     pushing rewards off the bottom of the wall panel. -->
                                 <!-- Family goals this child can chip in on -->
                                 <template x-if="pooledGoals().length">
                                     <div class="space-y-2">
@@ -299,6 +257,51 @@
                                         </div>
                                     </div>
                                 </template>
+
+                                <!-- This child's claimed / in-progress chores -->
+                                <template x-if="myChoresFor(b.member_id).length">
+                                    <div class="space-y-2">
+                                        <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">My chores</div>
+                                        <template x-for="c in myChoresFor(b.member_id)" :key="'mine-' + b.member_id + '-' + c.id">
+                                            <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                                <div class="min-w-0">
+                                                    <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
+                                                    <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                                </div>
+                                                <div class="flex gap-2 shrink-0">
+                                                    <template x-if="c.state === 'claimed'">
+                                                        <div class="flex gap-2">
+                                                            <button @click="kioskDone(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700">Done!</button>
+                                                            <button @click="kioskUnclaim(c.id, b.member_id)"
+                                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="c.state === 'done'">
+                                                        <span class="text-[10px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full">Waiting for OK</span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+
+                                <!-- Available to claim -->
+                                <div class="space-y-2">
+                                    <div class="text-[10px] font-black uppercase tracking-widest text-gray-500">Available</div>
+                                    <template x-for="c in availableChoresFor(b.member_id)" :key="'avail-' + b.member_id + '-' + c.id">
+                                        <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <div class="text-white font-bold text-sm truncate" x-text="c.title"></div>
+                                                <div class="text-[11px] text-gray-500" x-text="'+' + c.points + ' pts'"></div>
+                                            </div>
+                                            <button @click="kioskClaim(c.id, b.member_id)"
+                                                class="text-[12px] font-bold px-3 py-2 rounded-lg bg-blue-600 text-white active:bg-blue-700 shrink-0">Claim</button>
+                                        </div>
+                                    </template>
+                                    <div x-show="availableChoresFor(b.member_id).length === 0"
+                                        class="text-gray-600 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">Nothing to claim 🎉</div>
+                                </div>
                             </div>
                         </template>
                     </div>

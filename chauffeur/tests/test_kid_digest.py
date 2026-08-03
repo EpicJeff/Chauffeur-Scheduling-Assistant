@@ -138,8 +138,14 @@ def scenario_kiosk_endpoint_dates():
     _seed_cache()
     import main
     with mock.patch.object(family_digest, 'weather_line', return_value=None):
-        res = main.kids_digests()
-        check(res["date"] == TOMORROW.isoformat(), "endpoint defaults to tomorrow")
+        storage.get_settings = lambda: {"calendar_ids": ["primary"],
+                                        "kid_digest_cutover_time": "00:00"}
+        check(main.kids_digests()["date"] == TOMORROW.isoformat(),
+              "past the cutover the endpoint defaults to tomorrow")
+        storage.get_settings = lambda: {"calendar_ids": ["primary"],
+                                        "kid_digest_cutover_time": "23:59"}
+        check(main.kids_digests()["date"] == TODAY.isoformat(),
+              "before the cutover the endpoint defaults to today")
         res_today = main.kids_digests(date="today")
         check(res_today["date"] == TODAY.isoformat() and res_today["label"] == "Today",
               "?date=today builds today's board")
@@ -150,12 +156,28 @@ def scenario_kiosk_endpoint_dates():
         check(getattr(e, 'status_code', None) == 400, "bad date -> HTTP 400")
 
 
+def scenario_kiosk_cutover_today_vs_tomorrow():
+    import main
+    s = {"kid_digest_cutover_time": "19:00"}
+    noon = datetime.datetime.combine(TODAY, datetime.time(12, 0))
+    evening = datetime.datetime.combine(TODAY, datetime.time(19, 0))
+    check(main._kid_digest_default_date(now=noon, settings=s) == TODAY,
+          "board shows TODAY during the day")
+    check(main._kid_digest_default_date(now=evening, settings=s) == TOMORROW,
+          "board flips to TOMORROW at the cutover")
+    check(main._kid_digest_default_date(now=noon, settings={"kid_digest_cutover_time": "11:00"}) == TOMORROW,
+          "cutover is configurable")
+    check(main._kid_digest_default_date(now=noon, settings={"kid_digest_cutover_time": "junk"}) == TODAY,
+          "bad setting falls back to 19:00")
+
+
 SCENARIOS = [
     scenario_builder_rides_and_reassurance,
     scenario_routine_only_kid_included,
     scenario_kid_quiet_hours,
     scenario_dm_delivery_per_child,
     scenario_kiosk_endpoint_dates,
+    scenario_kiosk_cutover_today_vs_tomorrow,
 ]
 
 if __name__ == "__main__":

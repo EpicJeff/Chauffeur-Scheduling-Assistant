@@ -346,6 +346,10 @@ class Settings(BaseModel):
     # get nothing.
     kid_digest_enabled: bool = True
     kid_digest_time: str = "19:30"    # HH:MM, server-local time
+    # When the kiosk digest strip flips from TODAY to TOMORROW (family
+    # request 2026-08-06: a "Tomorrow" board at 3pm answers the wrong
+    # question). The evening DM is always tomorrow — it IS the look-ahead.
+    kid_digest_cutover_time: str = "19:00"
     # Kid quiet hours: NO kid-facing sends inside this window (wraps
     # midnight; honored by the K1 digest and all future kid pushes). A
     # digest time inside the window never fires that day. Equal start/end

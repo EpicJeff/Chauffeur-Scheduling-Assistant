@@ -4581,12 +4581,30 @@ def _send_kid_digests():
         except Exception as e:
             print(f"Kid digest DM failed for {k.get('name')}: {e}")
 
+def _kid_digest_default_date(now=None, settings=None):
+    """The kiosk strip's day when no ?date= is given: TODAY until the
+    configurable cutover (kid_digest_cutover_time, default 19:00), then
+    TOMORROW — during the day the board answers today's questions; the
+    evening is when a family starts planning ahead."""
+    import datetime as _dt
+    now = now or _dt.datetime.now()
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        hh, mm = [int(x) for x in
+                  str(settings.get('kid_digest_cutover_time', '19:00')).split(':')[:2]]
+    except (ValueError, TypeError):
+        hh, mm = 19, 0
+    if (now.hour, now.minute) < (hh, mm):
+        return now.date()
+    return now.date() + _dt.timedelta(days=1)
+
 @app.get("/api/kids/digests")
 def kids_digests(date: Optional[str] = None):
     """Per-child day digest for the kiosk boards — same builder as the
-    evening DMs. Default tomorrow; ?date=today|tomorrow|YYYY-MM-DD."""
+    evening DMs. No ?date= -> today until the cutover time, then tomorrow;
+    explicit ?date=today|tomorrow|YYYY-MM-DD always wins."""
     import datetime as _dt
-    target = None
+    target = _kid_digest_default_date()
     if date:
         if date == 'today':
             target = _dt.date.today()
