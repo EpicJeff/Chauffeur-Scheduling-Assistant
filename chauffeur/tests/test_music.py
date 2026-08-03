@@ -242,7 +242,41 @@ def scenario_fetch_binary_url():
     os.environ.pop("SUPERVISOR_TOKEN", None)
 
 
+def scenario_sendspin_relay_setup():
+    import main
+    from services import storage
+
+    def set_settings(doc):
+        with storage.db_lock:
+            storage.settings_table.truncate()
+            if doc:
+                storage.settings_table.insert(doc)
+
+    try:
+        set_settings({"ma_server_url": "http://192.168.1.50"})
+        cands = main._ma_ws_candidates()
+        check(cands[0] == 'ws://192.168.1.50:8927/sendspin',
+              f"configured URL normalized (scheme/port/path), got {cands[0]}")
+        check('ws://d5369777-music-assistant:8927/sendspin' in cands,
+              "official MA add-on hostname candidate present")
+
+        set_settings({"ma_server_url": "ws://ma.example:9999/sendspin"})
+        check(main._ma_ws_candidates()[0] == 'ws://ma.example:9999/sendspin',
+              "explicit port + path preserved")
+
+        set_settings({"ha_base_url": "http://192.168.1.7:8123"})
+        check('ws://192.168.1.7:8927/sendspin' in main._ma_ws_candidates(),
+              "HA host derives a candidate")
+
+        check(any(getattr(r, 'path', '') == '/api/sendspin/ws' for r in main.app.routes),
+              "websocket relay route registered")
+    finally:
+        set_settings(None)
+        main._MA_WS_CACHE['url'] = None
+
+
 SCENARIOS = [
+    scenario_sendspin_relay_setup,
     scenario_media_players_listing,
     scenario_image_proxy,
     scenario_image64_roundtrip,
