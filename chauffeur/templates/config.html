@@ -1547,6 +1547,150 @@
                     </div>
                 </div>
 
+                <!-- Status Days (People tab sub-panel, Presence & Status arc P1) -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-sky-300">Status Days</h2>
+                    <p class="text-gray-400 text-sm mb-4">Family day types — "Chemo Day", "Night Shift",
+                        "Trip Day" — so the kids never come home guessing. Write what a day means <b>in your
+                        own words</b>: what the kids should hear (the plan, plus something they can do) and
+                        what the other adults need to know. Setting a day announces it, leads the kids'
+                        evening digest and My Day, and rides the after-school push. Clearing one announces
+                        the change of plans too — never leave them guessing in either direction.</p>
+                    <div class="space-y-3">
+                        <template x-for="p in statusProtocols" :key="p.id">
+                            <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                                :class="p.enabled === false ? 'opacity-50' : ''">
+                                <div>
+                                    <h3 class="text-lg font-bold text-white">
+                                        <span x-text="p.emoji || '💙'"></span> <span x-text="p.name"></span>
+                                        <span class="text-xs text-gray-500 font-normal ml-1"
+                                            x-text="statusMemberName(p.member_id)"></span>
+                                    </h3>
+                                    <div class="text-xs text-gray-400 mt-1 flex gap-2 flex-wrap items-center">
+                                        <span class="px-2 py-0.5 bg-sky-900/40 text-sky-300 rounded-full font-bold"
+                                            x-text="statusNeedLabel(p.need)"></span>
+                                        <span class="italic" x-show="p.kid_message"
+                                            x-text="'“' + p.kid_message + '”'"></span>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button @click="editStatusProtocol(p)"
+                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                                    <button @click="deleteStatusProtocolUi(p)"
+                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="mt-4">
+                        <button x-show="!showStatusForm" @click="openStatusForm()"
+                            class="w-full border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                            Add a Day Type</button>
+                        <div x-show="showStatusForm" x-cloak
+                            class="bg-gray-700/30 p-5 rounded-xl border border-gray-600 border-dashed">
+                            <h3 class="text-lg font-bold text-white mb-4"
+                                x-text="editStatusId ? ('Day Type — ' + newStatusProtocol.name) : 'New Day Type'"></h3>
+                            <div class="flex gap-4 items-end flex-wrap">
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Emoji</label>
+                                    <input type="text" x-model="newStatusProtocol.emoji" maxlength="4" placeholder="💙"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                </div>
+                                <div class="flex-1 min-w-[160px]">
+                                    <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                                    <input type="text" x-model="newStatusProtocol.name" placeholder="e.g. Chemo Day"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Who it's about</label>
+                                    <select x-model="newStatusProtocol.member_id"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        <option value="">— the family —</option>
+                                        <template x-for="m in members.filter(m => ['parent','adult'].includes(m.role))"
+                                            :key="m.id">
+                                            <option :value="m.id" x-text="m.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">What the house needs</label>
+                                    <select x-model="newStatusProtocol.need"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                        <option value="give_space">Give space — home but resting</option>
+                                        <option value="cover">Cover for them — out of the rotation</option>
+                                        <option value="help">Bring in help — other parent is caregiving</option>
+                                        <option value="clear_deck">Clear the deck — family time</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">What the kids hear
+                                    <span class="text-gray-600">(your words, delivered as written — the plan, plus
+                                        something they can do)</span></label>
+                                <textarea x-model="newStatusProtocol.kid_message" rows="2"
+                                    placeholder="e.g. Mom's resting today after her treatment. Grandma's picking you up and it's pizza night — Mom would love a drawing for when she wakes up."
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm"></textarea>
+                            </div>
+                            <div class="mt-3">
+                                <label class="block text-gray-400 mb-1 text-sm">What the other adults hear
+                                    <span class="text-gray-600">(the logistics)</span></label>
+                                <textarea x-model="newStatusProtocol.adult_message" rows="2"
+                                    placeholder="e.g. I'll be down by 2pm — pickups and dinner need covering."
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm"></textarea>
+                            </div>
+                            <div class="mt-3">
+                                <label class="block text-gray-400 mb-1 text-sm">Calendar words
+                                    <span class="text-gray-600">(comma-separated — coming next: auto-suggest this day
+                                        type when a matching calendar event lands)</span></label>
+                                <input type="text" x-model="newStatusProtocol.keywords_text" placeholder="chemo, infusion"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
+                            </div>
+                            <div class="flex gap-4 mt-5 items-center">
+                                <button @click="submitStatusProtocol()" :disabled="saving"
+                                    class="bg-sky-600 hover:bg-sky-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
+                                    x-text="saving ? 'Saving...' : (editStatusId ? 'Save Day Type' : 'Add Day Type')"></button>
+                                <button @click="cancelStatusForm()"
+                                    class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-700" x-show="statusProtocols.length">
+                        <h3 class="text-sm font-bold text-gray-300 mb-2">Upcoming status days</h3>
+                        <template x-for="d in statusDays" :key="d.id">
+                            <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
+                                <span
+                                    x-text="d.date + ' · ' + (d.emoji || '💙') + ' ' + d.name + (d.note ? ' · ' + d.note : '')"></span>
+                                <span class="text-xs text-gray-500" x-show="d.set_by_name"
+                                    x-text="'set by ' + d.set_by_name"></span>
+                                <button @click="clearStatusDayUi(d)"
+                                    class="text-gray-400 hover:text-red-400 font-bold">✕</button>
+                            </div>
+                        </template>
+                        <p x-show="!statusDays.length" class="text-xs text-gray-500">None set for the next two
+                            weeks.</p>
+                        <div class="flex gap-2 flex-wrap items-center mt-2">
+                            <input type="date" x-model="newStatusDay.date"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <select x-model="newStatusDay.protocol_id"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                <option value="">— day type —</option>
+                                <template x-for="p in statusProtocols.filter(p => p.enabled !== false)" :key="p.id">
+                                    <option :value="p.id" x-text="(p.emoji || '💙') + ' ' + p.name"></option>
+                                </template>
+                            </select>
+                            <input type="text" x-model="newStatusDay.note"
+                                placeholder="note (optional — 'today's different')"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm flex-1 min-w-[160px]">
+                            <button @click="addStatusDayUi()"
+                                class="bg-sky-700 hover:bg-sky-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Set</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Setting or clearing a day sends the messages right
+                            away — kids only for today/tomorrow (further-out days wait for the night-before
+                            digest), the other adults always.</p>
+                    </div>
+                </div>
+
                 <!-- Passenger profile form (People tab sub-panel) -->
                 <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
                     id="passengerFormPanel" style="order: 2"
@@ -3203,6 +3347,13 @@
                 members: [],
                 editMemberId: null,
                 memberEdit: {},
+                // Status Days (Presence & Status arc P1)
+                statusProtocols: [],
+                statusDays: [],
+                showStatusForm: false,
+                editStatusId: null,
+                newStatusProtocol: { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '' },
+                newStatusDay: { date: '', protocol_id: '', note: '' },
                 memberMergeTarget: '',
                 publicBaseUrl: '',
                 haBaseUrl: '',
@@ -3229,6 +3380,7 @@
                     await this.loadCars();
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
+                    this.loadStatusData();  // not awaited: a side panel on the People tab
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
                     await this.loadRules();
                     await this.loadPriorityRules();
@@ -4214,6 +4366,92 @@
                         console.error("Failed to load members", e);
                         this.members = [];
                     }
+                },
+
+                // --- Status Days (Presence & Status arc P1) ---
+                async loadStatusData() {
+                    try {
+                        const [pRes, dRes] = await Promise.all([
+                            fetch(`${this.apiBase}api/status/protocols`),
+                            fetch(`${this.apiBase}api/status/days`),
+                        ]);
+                        this.statusProtocols = pRes.ok ? await pRes.json() : [];
+                        this.statusDays = dRes.ok ? await dRes.json() : [];
+                    } catch (e) {
+                        console.error("Failed to load status data", e);
+                    }
+                },
+                statusMemberName(memberId) {
+                    const m = this.members.find(x => x.id === memberId);
+                    return m ? m.name : '';
+                },
+                statusNeedLabel(need) {
+                    return { cover: 'Cover for them', help: 'Bring in help',
+                             clear_deck: 'Clear the deck', give_space: 'Give space' }[need] || need;
+                },
+                openStatusForm() {
+                    this.editStatusId = null;
+                    this.newStatusProtocol = { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '' };
+                    this.showStatusForm = true;
+                },
+                editStatusProtocol(p) {
+                    this.editStatusId = p.id;
+                    this.newStatusProtocol = {
+                        emoji: p.emoji || '💙', name: p.name || '', member_id: p.member_id || '',
+                        need: p.need || 'give_space', kid_message: p.kid_message || '',
+                        adult_message: p.adult_message || '',
+                        keywords_text: (p.keywords || []).join(', '),
+                    };
+                    this.showStatusForm = true;
+                },
+                cancelStatusForm() { this.showStatusForm = false; this.editStatusId = null; },
+                async submitStatusProtocol() {
+                    const f = this.newStatusProtocol;
+                    if (!f.name.trim()) { showGlobalAlert('Give the day type a name.'); return; }
+                    this.saving = true;
+                    const payload = {
+                        emoji: f.emoji || '💙', name: f.name.trim(),
+                        member_id: f.member_id || null, need: f.need,
+                        kid_message: f.kid_message.trim(), adult_message: f.adult_message.trim(),
+                        keywords: f.keywords_text.split(',').map(k => k.trim()).filter(Boolean),
+                    };
+                    try {
+                        if (this.editStatusId) {
+                            await fetch(`${this.apiBase}api/status/protocols/${this.editStatusId}`, {
+                                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        } else {
+                            await fetch(`${this.apiBase}api/status/protocols`, {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload) });
+                        }
+                        this.showStatusForm = false;
+                        this.editStatusId = null;
+                        await this.loadStatusData();
+                    } catch (e) { showGlobalAlert('Could not save the day type.'); }
+                    this.saving = false;
+                },
+                async deleteStatusProtocolUi(p) {
+                    if (!await promptConfirm('Delete Day Type',
+                        `Delete "${p.name}"? Any upcoming days set with it are removed too.`, 'Delete')) return;
+                    await fetch(`${this.apiBase}api/status/protocols/${p.id}`, { method: 'DELETE' });
+                    await this.loadStatusData();
+                },
+                async addStatusDayUi() {
+                    const d = this.newStatusDay;
+                    if (!d.date || !d.protocol_id) { showGlobalAlert('Pick a date and a day type.'); return; }
+                    await fetch(`${this.apiBase}api/status/days`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ date: d.date, protocol_id: d.protocol_id, note: d.note.trim() }),
+                    });
+                    this.newStatusDay = { date: '', protocol_id: '', note: '' };
+                    await this.loadStatusData();
+                },
+                async clearStatusDayUi(d) {
+                    if (!await promptConfirm('Clear Status Day',
+                        `Clear ${d.name} on ${d.date}? Everyone is told the plans changed.`, 'Clear')) return;
+                    await fetch(`${this.apiBase}api/status/days/${d.id}`, { method: 'DELETE' });
+                    await this.loadStatusData();
                 },
                 startEditMember(member) {
                     this.editMemberId = member.id;

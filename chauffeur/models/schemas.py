@@ -215,6 +215,42 @@ class RoutineItem(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
     created_at: float = Field(default_factory=time.time)
 
+class StatusProtocol(BaseModel):
+    # Presence & Status arc P1 (docs/presence_status_design.md): a reusable
+    # family day-type ("Chemo Day", "Night Shift", "Trip Day") — what it
+    # means, what the household needs, and how we tell everyone. Authored
+    # once, in the family's OWN words (the system schedules and delivers the
+    # messages; it never composes them). The emoji/name is just the skin.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str                            # "Chemo Day" — the family's label
+    emoji: str = '💙'
+    member_id: Optional[str] = None      # the affected member (usually a parent)
+    # What the household needs on these days. Slice 1 stores + displays it;
+    # the solver hooks (cover -> drop from rotation, clear_deck -> protect
+    # the evening) are the next slice.
+    # cover: parent out of the rotation | help: other parent is caregiving,
+    # bring in outside help | clear_deck: family-time day, decline optional
+    # things | give_space: home but resting, keep it low-key.
+    need: str = 'give_space'
+    kid_message: str = ""                # the words the kids get: plan + something they can do
+    adult_message: str = ""              # co-parent logistics message
+    # Calendar trigger words for auto-suggest ("chemo", "night shift") —
+    # stored now, matched in the next slice.
+    keywords: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    created_at: float = Field(default_factory=time.time)
+
+class StatusDay(BaseModel):
+    # One dated instance of a StatusProtocol. Date-bound BY DESIGN: a status
+    # never lingers past its day, so stale-dial lies (worse than silence) are
+    # structurally impossible. note is the one-tap "today's different" nudge.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    date: str                            # YYYY-MM-DD
+    protocol_id: str
+    note: str = ""
+    set_by: Optional[str] = None         # member id; None = agent/system
+    set_at: float = Field(default_factory=time.time)
+
 class PrepKit(BaseModel):
     # Packing list matched to events with the SAME filter criteria routing
     # rules use (evaluated by the solver's does_event_match_rule, so semantics

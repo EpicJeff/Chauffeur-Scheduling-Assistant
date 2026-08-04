@@ -146,6 +146,8 @@ with db_lock:
     prep_status_table = db.table('prep_status')
     daily_stats_table = db.table('daily_stats')
     cars_table = db.table('cars')
+    status_protocols_table = db.table('status_protocols')
+    status_days_table = db.table('status_days')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -2593,3 +2595,83 @@ def get_ingest_log(limit: int = 50) -> List[dict]:
     with db_lock:
         rows = sorted(ingest_log_table.all(), key=lambda r: r.get('ts', 0), reverse=True)
         return rows[:limit]
+
+
+# --- Status protocols & status days (Presence & Status arc P1) ---------------
+# Reusable family day-types + their dated instances. No schedule-cache
+# truncation here: slice 1 never touches the solver (that's the next slice —
+# when it lands, 'cover'/'clear_deck' mutations must invalidate like rules do).
+
+def get_all_status_protocols() -> List[dict]:
+    with db_lock:
+        return [dict(r) for r in status_protocols_table.all()]
+
+def get_status_protocol(protocol_id: str) -> Optional[dict]:
+    with db_lock:
+        res = status_protocols_table.search(Query().id == protocol_id)
+        return dict(res[0]) if res else None
+
+def add_status_protocol(data: dict) -> str:
+    import uuid, time
+    data = dict(data)
+    data.setdefault('id', uuid.uuid4().hex)
+    data.setdefault('created_at', time.time())
+    with db_lock:
+        status_protocols_table.insert(data)
+    return data['id']
+
+def update_status_protocol(protocol_id: str, updates: dict) -> None:
+    with db_lock:
+        status_protocols_table.update(updates, Query().id == protocol_id)
+
+def delete_status_protocol(protocol_id: str) -> None:
+    """Deleting a protocol also drops its dated instances — an orphaned
+    status day would render as an unexplained blank on kid surfaces."""
+    with db_lock:
+        status_protocols_table.remove(Query().id == protocol_id)
+        status_days_table.remove(Query().protocol_id == protocol_id)
+
+def get_status_days(start: str = None, end: str = None) -> List[dict]:
+    """Dated instances, date-ascending, optionally windowed [start, end]
+    (ISO dates, inclusive — string compare is safe on YYYY-MM-DD)."""
+    with db_lock:
+        rows = [dict(r) for r in status_days_table.all()
+                if (start is None or r.get('date', '') >= start)
+                and (end is None or r.get('date', '') <= end)]
+        rows.sort(key=lambda r: (r.get('date', ''), r.get('set_at', 0)))
+        return rows
+
+def get_status_day(day_id: str) -> Optional[dict]:
+    with db_lock:
+        res = status_days_table.search(Query().id == day_id)
+        return dict(res[0]) if res else None
+
+def add_status_day(data: dict) -> str:
+    """One instance of a given protocol per date: setting the same protocol
+    on the same day again just refreshes the note/setter instead of stacking
+    duplicate banners (and duplicate announcements read as nagging)."""
+    import uuid, time
+    data = dict(data)
+    data.setdefault('id', uuid.uuid4().hex)
+    data.setdefault('set_at', time.time())
+    with db_lock:
+        q = (Query().date == data.get('date')) & (Query().protocol_id == data.get('protocol_id'))
+        existing = status_days_table.search(q)
+        if existing:
+            status_days_table.update(
+                {'note': data.get('note', ''), 'set_by': data.get('set_by'),
+                 'set_at': data['set_at']}, q)
+            return dict(existing[0])['id']
+        status_days_table.insert(data)
+    return data['id']
+
+def delete_status_day(day_id: str) -> Optional[dict]:
+    """Remove and return the instance (the caller announces the correction —
+    'never guessing' means changes of plan get said out loud too)."""
+    with db_lock:
+        res = status_days_table.search(Query().id == day_id)
+        if not res:
+            return None
+        row = dict(res[0])
+        status_days_table.remove(Query().id == day_id)
+        return row

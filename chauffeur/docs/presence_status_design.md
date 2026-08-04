@@ -1,8 +1,8 @@
 # Presence & Status Arc — design map (drafted 2026-08-04)
 
-> Status: **exploration.** Not yet scoped for build. This is the map we drew
-> talking it through; it captures the framing and the traps so the eventual
-> spec starts from the right place. It is **personal** — this is an affected
+> Status: **P1 SHIPPED v2.53.0 (2026-08-04)** — the "never guess" loop (see
+> build order §1). Slices 2–4 (calendar triggers + solver needs, trip
+> timeline, Presence) remain design. It is **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
 > it's us. Build to lived detail, not to guesses.
 
@@ -246,6 +246,26 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    dismissal refresh.** The "never guess" loop — the thing that matters most to
    this family, buildable almost entirely on existing messaging. Ship value
    before touching the solver.
+
+   **SHIPPED v2.53.0 (2026-08-04).** As designed, with decisions made during
+   build: a StatusDay is DATE-BOUND (structural staleness — no dial to go
+   stale, principle 6's decay achieved by construction); same protocol + same
+   date refreshes note/setter instead of stacking; kid announcements on set
+   go out for today/tomorrow only (a further-out day would move the dread up
+   — the D-1 evening digest is the heads-up beat) while adults always hear
+   immediately (minus the setter); on a status day the K4c dismissal push
+   carries the status ON the ride push (one push, not two) and fires even
+   with no ride ("💙 About today" — that day, silence IS the alarm); the
+   digest includes EVERY kid on a status day, overriding K1's
+   nothing-means-nothing omission; clearing a today/tomorrow day announces
+   the relief to kids (neutral factual copy — the family authored the day's
+   meaning, not its cancellation). Pieces: `StatusProtocol`/`StatusDay`
+   models, `services/status_protocols.py`, `/api/status/*` endpoints, My Day
+   banner + adult quick-set (armed two-tap clear), Config → People → Status
+   Days authoring panel, `set_household_status`/`get_household_status` agent
+   tools in both stacks. `keywords` and `need` are stored + displayed now;
+   their triggers/solver hooks are slices 2–3. Tests:
+   `tests/test_status_protocols.py` (8 scenarios).
 2. **Calendar-trigger + solver needs** (cover / help / clear-the-deck).
 3. **Trip timeline** — multi-beat, before/during/after, plan-assist, soft call
    windows (deeplinked).

@@ -721,7 +721,8 @@
                         <span class="text-sm text-indigo-100 font-bold">Leave by ${formatTime(data.launch.leave_at)}${data.launch.driver ? ' with ' + mfEscape(data.launch.driver.name) : ''}</span>
                         <span class="text-xs text-indigo-300/70 ml-auto truncate">${mfEscape(data.launch.title || '')}</span>
                     </div>`;
-                wrap.innerHTML = launchHtml + routineHtml + dueSoonHtml + (data.rides.length
+                const statusHtml = renderStatusBanner(data.status_days, dateStr);
+                wrap.innerHTML = statusHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
                       ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
@@ -740,6 +741,95 @@
             } catch (e) {
                 wrap.innerHTML = '<p class="text-center text-gray-500 mt-6">Could not load your day.</p>';
             }
+        }
+
+        // --- Family status banner (Presence & Status arc P1) ---
+        // The "what is today" answer at the top of every My Day. Kids see the
+        // family's own authored words; parents/adults see the logistics
+        // message + need, plus set/clear controls. Clearing is two-tap armed
+        // (it announces the change of plans family-wide — never one stray touch).
+        let statusProtocolsCache = null;
+
+        function renderStatusBanner(statusDays, dateStr) {
+            const role = currentMemberRole();
+            const isAdult = role === 'parent' || role === 'adult';
+            const cards = (statusDays || []).map(s => {
+                const msg = isAdult ? (s.adult_message || s.kid_message) : s.kid_message;
+                const meta = [];
+                if (isAdult && s.need_label) meta.push(s.need_label);
+                if (s.set_by_name) meta.push('set by ' + s.set_by_name);
+                return `
+                <div class="bg-sky-950/60 border border-sky-800/60 rounded-xl p-3 mb-1">
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg">${s.emoji || '💙'}</span>
+                        <span class="text-sm font-bold text-sky-100">${mfEscape(s.name || '')}${s.member_name ? ' · ' + mfEscape(s.member_name) : ''}</span>
+                        ${isAdult ? `<button onclick="armClearStatus(this, '${s.id}')"
+                            class="ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">✕</button>` : ''}
+                    </div>
+                    ${msg ? `<p class="text-sm text-sky-200/90 mt-1.5">${mfEscape(msg)}</p>` : ''}
+                    ${s.note ? `<p class="text-xs text-sky-300/80 mt-1 italic">${mfEscape(s.note)}</p>` : ''}
+                    ${meta.length ? `<p class="text-[10px] text-sky-400/60 mt-1">${mfEscape(meta.join(' · '))}</p>` : ''}
+                </div>`;
+            }).join('');
+            const setRow = isAdult ? `
+                <div class="mb-2">
+                    <button onclick="toggleStatusSetRow('${dateStr}')"
+                        class="text-[11px] font-bold text-gray-500 active:text-gray-300">＋ Family status</button>
+                    <div id="status-set-row"></div>
+                </div>` : '';
+            return cards + setRow;
+        }
+
+        function armClearStatus(btn, dayId) {
+            if (btn.dataset.armed) { clearStatusDay(dayId); return; }
+            btn.dataset.armed = '1';
+            btn.textContent = 'Clear? (tells everyone)';
+            btn.className = 'ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-red-600 text-white';
+            setTimeout(() => {
+                if (btn.isConnected && btn.dataset.armed) {
+                    btn.dataset.armed = '';
+                    btn.textContent = '✕';
+                    btn.className = 'ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700';
+                }
+            }, 4000);
+        }
+
+        async function clearStatusDay(dayId) {
+            try {
+                await fetch(`${apiBase}api/status/days/${dayId}`, { method: 'DELETE' });
+                renderMyDay();
+            } catch (e) { showGlobalAlert('Could not clear the status'); }
+        }
+
+        async function toggleStatusSetRow(dateStr) {
+            const row = document.getElementById('status-set-row');
+            if (!row) return;
+            if (row.innerHTML) { row.innerHTML = ''; return; }
+            row.innerHTML = '<p class="text-xs text-gray-500 mt-1">Loading…</p>';
+            try {
+                if (!statusProtocolsCache) {
+                    const res = await fetch(`${apiBase}api/status/protocols`);
+                    statusProtocolsCache = (await res.json()).filter(p => p.enabled !== false);
+                }
+                if (!statusProtocolsCache.length) {
+                    row.innerHTML = '<p class="text-xs text-gray-500 mt-1">No day types yet — create them in Config → People → Status Days.</p>';
+                    return;
+                }
+                row.innerHTML = '<div class="flex flex-wrap gap-1.5 mt-1.5">' + statusProtocolsCache.map(p =>
+                    `<button onclick="setStatusDay('${p.id}', '${dateStr}')"
+                        class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-sky-300 border border-gray-700 active:bg-gray-700">${p.emoji || '💙'} ${mfEscape(p.name || '')}</button>`
+                ).join('') + '</div>';
+            } catch (e) { row.innerHTML = '<p class="text-xs text-gray-500 mt-1">Could not load day types.</p>'; }
+        }
+
+        async function setStatusDay(protocolId, dateStr) {
+            try {
+                await fetch(`${apiBase}api/status/days`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date: dateStr, protocol_id: protocolId, set_by: selectedMemberId })
+                });
+                renderMyDay();
+            } catch (e) { showGlobalAlert('Could not set the status'); }
         }
 
         function renderMyDayCard(r) {

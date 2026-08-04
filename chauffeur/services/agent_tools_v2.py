@@ -781,6 +781,82 @@ def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
             "message": "There's nothing to report for this week yet, so I skipped the digest."}
 
 
+# --- Household status (Presence & Status arc P1) ---
+# docs/presence_status_design.md — "today is a chemo day" / "clear tomorrow's
+# rest day" as one utterance. Setting announces (kids get the family's own
+# authored words; adults get logistics); protocols themselves are authored in
+# Config -> People, never by the agent (principle: the family's words, not
+# generated copy).
+
+def set_household_status(protocol_name: str, target_date: str = "today",
+                         note: str = "", clear: bool = False,
+                         acting_member: dict = None) -> Dict[str, Any]:
+    from services import storage, status_protocols
+    if acting_member and acting_member.get('role') in ('child', 'helper'):
+        return {"status": "error",
+                "message": "Only parents and adults can set the family status."}
+    protocols = [p for p in storage.get_all_status_protocols()
+                 if p.get('enabled', True)]
+    if not protocols:
+        return {"status": "error",
+                "message": "No status day types are set up yet — a parent can "
+                           "create them in Config → People → Status Days."}
+    low = (protocol_name or '').strip().lower()
+    hits = [p for p in protocols if low == (p.get('name') or '').lower()] \
+        or [p for p in protocols if low and low in (p.get('name') or '').lower()]
+    if len(hits) != 1:
+        names = ", ".join(p.get('name') or '?' for p in protocols)
+        return {"status": "error",
+                "message": f"Which status day? The family's day types are: {names}."}
+    proto = hits[0]
+    day = _parse_fuzzy_date(target_date or "today")
+    when = day.strftime('%A, %b') + f" {day.day}"
+
+    if clear:
+        existing = next((d for d in storage.get_status_days(
+            start=day.isoformat(), end=day.isoformat())
+            if d.get('protocol_id') == proto['id']), None)
+        if not existing:
+            return {"status": "success",
+                    "message": f"{proto.get('name')} wasn't set for {when} — nothing to clear."}
+        row = storage.delete_status_day(existing['id'])
+        if row:
+            status_protocols.announce_cleared(row)
+        return {"status": "success",
+                "message": f"Cleared {proto.get('emoji')} {proto.get('name')} for {when} "
+                           f"and let everyone know the plans changed."}
+
+    day_id = storage.add_status_day({
+        'date': day.isoformat(), 'protocol_id': proto['id'],
+        'note': (note or '').strip(),
+        'set_by': (acting_member or {}).get('id')})
+    status_protocols.announce_set(day_id)
+    return {"status": "success",
+            "message": f"Set {proto.get('emoji')} {proto.get('name')} for {when}. "
+                       f"The kids will hear it in your words, and it leads their "
+                       f"digest and My Day."}
+
+
+def get_household_status(target_date: str = "today",
+                         acting_member: dict = None) -> Dict[str, Any]:
+    from services import status_protocols
+    day = _parse_fuzzy_date(target_date or "today")
+    when = day.strftime('%A, %b') + f" {day.day}"
+    statuses = status_protocols.active_statuses(day.isoformat())
+    if not statuses:
+        return {"status": "success", "message": f"No family status is set for {when} — a normal day."}
+    parts = [f"Family status for {when}:"]
+    for s in statuses:
+        line = f"{s['emoji']} {s['name']}"
+        if s.get('member_name'):
+            line += f" ({s['member_name']})"
+        line += f" — {s['need_label'].lower()}"
+        if s.get('note'):
+            line += f". {s['note']}"
+        parts.append(line)
+    return {"status": "success", "message": "\n".join(parts)}
+
+
 def get_drive_digest(target_date: str = "today", member_name: str = "",
                      driver_id: str = None) -> Dict[str, Any]:
     """READ-ONLY answer showing the drive digest for ANY day ('today' default,
@@ -1340,6 +1416,9 @@ BRIDGED_V1_TOOLS = [
     "generate_trip_plan",
     "add_trip_accommodation", "edit_trip_accommodation", "edit_trip_poi",
     "manage_car",
+    # Presence & Status P1: set/read family status days from the admin chat.
+    # Not schedule-mutating (slice 1 never touches the solver).
+    "set_household_status", "get_household_status",
 ]
 
 # Subset whose success means the driver schedule changed and the client must

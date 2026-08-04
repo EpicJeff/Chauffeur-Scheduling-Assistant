@@ -460,6 +460,21 @@ class CompleteKidTaskTool(BaseModel):
     task_title: str = Field(..., description="The task to check off.")
     member_name: Optional[str] = Field(None, description="Which child.")
 
+class SetHouseholdStatusTool(BaseModel):
+    """
+    Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created in Config, not here.
+    """
+    protocol_name: str = Field(..., description="Which day type, e.g. 'Chemo Day' — fuzzy matched against the family's configured status day types.")
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    note: Optional[str] = Field(None, description="Optional one-line 'today's different' nudge, e.g. 'rougher than usual'.")
+    clear: Optional[bool] = Field(None, description="True to clear this status from that day instead of setting it (announces the change of plans).")
+
+class GetHouseholdStatusTool(BaseModel):
+    """
+    Reads the family status for a day ("is tomorrow a chemo day?", "what's today's status?"). Read-only.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
 class GetDriveDigestTool(BaseModel):
     """
     Shows the drive digest for one day as a read-only answer (drives per driver sorted by time, prep-kit items, weather) — 'today's digest', 'the tomorrow digest', 'Friday's drives'. Never posts to any channel.
@@ -513,6 +528,8 @@ TOOL_SCHEMAS = {
     "get_kid_tasks": GetKidTasksTool.model_json_schema(),
     "add_kid_task": AddKidTaskTool.model_json_schema(),
     "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
+    "set_household_status": SetHouseholdStatusTool.model_json_schema(),
+    "get_household_status": GetHouseholdStatusTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1623,6 +1640,17 @@ def handle_post_weekly_digest(args: dict) -> dict:
     from services.agent_tools_v2 import post_weekly_digest_now
     return post_weekly_digest_now()
 
+def handle_set_household_status(args: dict) -> dict:
+    from services.agent_tools_v2 import set_household_status
+    return set_household_status(args.get("protocol_name") or "",
+                                target_date=args.get("target_date") or "today",
+                                note=args.get("note") or "",
+                                clear=bool(args.get("clear")))
+
+def handle_get_household_status(args: dict) -> dict:
+    from services.agent_tools_v2 import get_household_status
+    return get_household_status(target_date=args.get("target_date") or "today")
+
 def handle_get_routine_status(args: dict) -> dict:
     from services.agent_tools_v2 import get_routine_status
     return get_routine_status(args.get("member_name", ""),
@@ -1673,6 +1701,8 @@ TOOL_HANDLERS = {
     "get_kid_tasks": handle_get_kid_tasks,
     "add_kid_task": handle_add_kid_task,
     "complete_kid_task": handle_complete_kid_task,
+    "set_household_status": handle_set_household_status,
+    "get_household_status": handle_get_household_status,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

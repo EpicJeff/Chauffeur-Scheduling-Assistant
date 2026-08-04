@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier, StatusProtocol, StatusDay
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -4487,6 +4487,16 @@ def member_day(member_id: str, date: Optional[str] = None):
                          'due_date': t.get('due_date'), 'overdue': due < ref,
                          'label': _task_due_label(due, ref)})
 
+    # Presence & Status P1: active family statuses for the viewed date ride
+    # every member's day payload — the My Day banner is how a kid (or the
+    # co-parent) sees "what today is" without asking.
+    from services import status_protocols
+    try:
+        status_days = status_protocols.active_statuses(date_str)
+    except Exception as se:
+        print(f"Status resolve failed for {date_str}: {se}")
+        status_days = []
+
     return {
         'member_id': member_id,
         'name': member.get('name'),
@@ -4494,6 +4504,7 @@ def member_day(member_id: str, date: Optional[str] = None):
         'rides': rides,
         'due_soon': due_soon,
         'launch': launch,
+        'status_days': status_days,
     }
 
 # --- Kid tasks (school/deadline list, kid-support arc K4a) ---
@@ -4687,13 +4698,23 @@ def _send_school_end_push(member, now=None):
     """At dismissal, tell the kid what happens next: their first ride within
     3h after school end, with the driver named. NO ride or NO known driver ->
     send NOTHING (a 'nobody scheduled' push would alarm, and silence is what
-    a no-activity afternoon looks like). Returns True when a push was sent."""
+    a no-activity afternoon looks like). Presence & Status P1 dismissal
+    refresh: an active family status rides the SAME push (one push, not two)
+    so the reassurance is fresh at the door, not half-forgotten from
+    breakfast — and on a status day the push always goes out, ride or not
+    (that day, silence is the alarm). Returns True when a push was sent."""
     import datetime as _dt
+    from services import status_protocols
     now = now or _dt.datetime.now()
     try:
         day = member_day(member['id'], now.date().isoformat())
     except Exception:
         return False
+    try:
+        s_lines = status_protocols.kid_lines(now.date().isoformat())
+    except Exception:
+        s_lines = []
+    s_suffix = ("\n" + "\n".join(s_lines)) if s_lines else ""
     end_s = member.get('school_hours_end') or ''
     try:
         hh, mm = [int(x) for x in end_s.split(':')[:2]]
@@ -4716,7 +4737,8 @@ def _send_school_end_push(member, now=None):
             continue  # unknown driver: never alarm — skip to the next ride
         t = start.strftime('%I:%M %p').lstrip('0')
         _notify_member_lanes(member, f"🚗 {drv['name']} has you after school",
-                             f"{r.get('title') or 'Your ride'} at {t}", '/app')
+                             f"{r.get('title') or 'Your ride'} at {t}{s_suffix}",
+                             '/app')
         return True
     # Bus arc B1: no car ride after school — if this kid rides the bus, that
     # IS the answer (live PM stop estimate when the bus is out, else the
@@ -4724,7 +4746,11 @@ def _send_school_end_push(member, now=None):
     from services import bus
     line = bus.dismissal_line(member)
     if line:
-        _notify_member_lanes(member, "🚌 Bus home today", line, '/app')
+        _notify_member_lanes(member, "🚌 Bus home today", line + s_suffix, '/app')
+        return True
+    if s_lines:
+        _notify_member_lanes(member, "💙 About today",
+                             "\n".join(s_lines), '/app')
         return True
     return False
 
@@ -4740,9 +4766,19 @@ def _build_kid_digests(target_date=None):
     avatar, lines, count, routine_count, streak}}} — shared verbatim by the
     evening Argyle DMs and the kiosk strip (GET /api/kids/digests)."""
     import datetime as _dt
-    from services import family_digest
+    from services import family_digest, status_protocols
     target = target_date or (_dt.date.today() + _dt.timedelta(days=1))
     date_str = target.isoformat()
+
+    # Presence & Status P1 heads-up beat: family status lines lead every
+    # kid's digest, and a status day includes EVERY kid — the one day the
+    # "nothing means nothing" omission must not apply is the day the kid
+    # most needs to hear the message before walking through the door.
+    try:
+        status_lines = status_protocols.kid_lines(date_str)
+    except Exception as se:
+        print(f"Kid digest: status resolve failed: {se}")
+        status_lines = []
 
     kids = {}
     for m in storage.get_all_members():
@@ -4823,6 +4859,9 @@ def _build_kid_digests(target_date=None):
                 continue
             if due <= target + _dt.timedelta(days=2):
                 task_lines.append(_task_line(t, target))
+
+        if status_lines:
+            lines[:0] = status_lines  # status leads, before even the launch line
 
         routine_items = storage.routines_for_day(m['id'], date_str)
         if not lines and not routine_items and not task_lines:
@@ -4946,6 +4985,78 @@ def kids_digests(date: Optional[str] = None):
                 raise HTTPException(status_code=400,
                                     detail="date must be today, tomorrow, or YYYY-MM-DD")
     return _build_kid_digests(target)
+
+# --- Status protocols & status days (Presence & Status arc P1) ---
+# docs/presence_status_design.md — the "never guess" loop. Protocols are
+# authored in Config -> People; days are set from My Day, the authoring UI,
+# or the set_household_status agent tool. Setting/clearing announces (the
+# service owns the beats); surfaces (My Day banner, kid digest/kiosk strip,
+# dismissal push) read active_statuses/kid_lines.
+
+@app.get("/api/status/protocols")
+def list_status_protocols():
+    return storage.get_all_status_protocols()
+
+@app.post("/api/status/protocols")
+def create_status_protocol(protocol: StatusProtocol):
+    data = protocol.model_dump()
+    return {"id": storage.add_status_protocol(data), "status": "success"}
+
+@app.put("/api/status/protocols/{protocol_id}")
+def update_status_protocol_endpoint(protocol_id: str, updates: dict = Body(...)):
+    if not storage.get_status_protocol(protocol_id):
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    updates.pop('id', None)
+    storage.update_status_protocol(protocol_id, updates)
+    return {"status": "success"}
+
+@app.delete("/api/status/protocols/{protocol_id}")
+def delete_status_protocol_endpoint(protocol_id: str):
+    storage.delete_status_protocol(protocol_id)
+    return {"status": "success"}
+
+@app.get("/api/status/days")
+def list_status_days(start: Optional[str] = None, end: Optional[str] = None):
+    """Resolved upcoming status days (protocol joined in). Default window:
+    today through +14 days — surfaces care about the near future, history
+    stays queryable with explicit bounds."""
+    import datetime as _dt
+    from services import status_protocols
+    if start is None:
+        start = _dt.date.today().isoformat()
+    if end is None:
+        end = (_dt.date.today() + _dt.timedelta(days=14)).isoformat()
+    out = []
+    d = _dt.date.fromisoformat(start)
+    end_d = _dt.date.fromisoformat(end)
+    while d <= end_d:
+        out.extend(status_protocols.active_statuses(d.isoformat()))
+        d += _dt.timedelta(days=1)
+    return out
+
+@app.post("/api/status/days")
+def create_status_day(day: StatusDay, background_tasks: BackgroundTasks):
+    import datetime as _dt
+    from services import status_protocols
+    if not storage.get_status_protocol(day.protocol_id):
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    try:
+        _dt.date.fromisoformat(day.date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    day_id = storage.add_status_day(day.model_dump())
+    # Announce off-request: DM fan-out can touch push endpoints and HA.
+    background_tasks.add_task(status_protocols.announce_set, day_id)
+    return {"id": day_id, "status": "success"}
+
+@app.delete("/api/status/days/{day_id}")
+def delete_status_day_endpoint(day_id: str, background_tasks: BackgroundTasks):
+    from services import status_protocols
+    row = storage.delete_status_day(day_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Status day not found")
+    background_tasks.add_task(status_protocols.announce_cleared, row)
+    return {"status": "success"}
 
 # --- Family map API ---
 
