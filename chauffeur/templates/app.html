@@ -158,7 +158,7 @@
 
         <!-- Schedule Container (Swipeable) -->
         <div id="days-container"
-            class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar scroll-smooth relative">
+            class="flex-1 flex overflow-x-auto snap-x-mandatory no-scrollbar relative">
             <!-- Day panes injected here -->
         </div>
 
@@ -3153,7 +3153,14 @@
                 currentDates.push(d.toLocaleDateString('en-CA'));
             }
 
+            // WebKit re-snaps a mandatory snap container to an arbitrary pane
+            // while children are being inserted (no user input involved) —
+            // that is how the strip kept opening on a random future day.
+            // Disable snapping during the rebuild, insert all panes in one
+            // batch, position by index, then restore snapping.
+            container.style.scrollSnapType = 'none';
             container.innerHTML = '';
+            const frag = document.createDocumentFragment();
 
             const familyByDate = currentView === 'family' ? buildFamilyByDate() : null;
 
@@ -3167,7 +3174,7 @@
 
                 if (familyByDate) {
                     pane.innerHTML = renderFamilyDay(familyByDate[dateStr]);
-                    container.appendChild(pane);
+                    frag.appendChild(pane);
                     return;
                 }
 
@@ -3179,7 +3186,7 @@
                             <p class="text-gray-400">Enjoy your free time!</p>
                         </div>
                     `;
-                    container.appendChild(pane);
+                    frag.appendChild(pane);
                     return;
                 }
 
@@ -3391,8 +3398,9 @@
 
                 html += '</div>';
                 pane.innerHTML = html;
-                container.appendChild(pane);
+                frag.appendChild(pane);
             });
+            container.appendChild(frag);
 
             // The horizontal position is tracked by INDEX (activeDateIndex),
             // never by raw pixels: an iOS PWA relaunch restores stale element
@@ -3409,6 +3417,13 @@
             Object.keys(savedPaneScrolls).forEach(id => {
                 const p = document.getElementById(id);
                 if (p) p.scrollTop = savedPaneScrolls[id];
+            });
+            // Restore snapping only after layout has settled on the intended
+            // pane; re-assert the position in the same frame in case the
+            // browser moved it in between (e.g. iOS snapshot replay).
+            requestAnimationFrame(() => {
+                container.scrollLeft = activeDateIndex * container.clientWidth;
+                container.style.scrollSnapType = '';
             });
 
             updateHeaderDate();
