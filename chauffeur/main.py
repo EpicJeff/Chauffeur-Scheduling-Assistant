@@ -7116,6 +7116,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
     events = events_filtered
 
+    # A kid double-booked between their solo event and a co-attended event
+    # knocks the co-attended event fully off the schedule (constraint 2b makes
+    # the pair mutually exclusive). Drop the kid from the co-attended event so
+    # it can still schedule for the remaining kids.
+    conflict_drops = matcher.resolve_passenger_double_bookings(events, passengers)
+    for _ev_id, _pids in conflict_drops.items():
+        logger.info(f"Double-booking resolved: dropped passenger(s) {_pids} from {_ev_id}")
+
     for e in events:
         if not e.location or not e.location.strip():
             no_location_events.append(e.id)

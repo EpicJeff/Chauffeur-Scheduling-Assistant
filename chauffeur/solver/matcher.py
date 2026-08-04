@@ -55,6 +55,63 @@ def get_event_passenger_ids(event, passengers):
             result.add(p.id)
     return result
 
+def resolve_passenger_double_bookings(events, passengers):
+    """Auto-resolve a passenger double-booked between a SOLO event (they are
+    the only attendee) and a co-attended event: drop them from the co-attended
+    one so BOTH events can schedule. Without this, the overlapping-passenger
+    hard constraint (2b) makes the two events mutually exclusive as wholes,
+    and the shared kid's solo event knocks the sibling's event fully off the
+    schedule every week.
+
+    Deliberately conservative — mirrors exactly when constraint 2b would bite:
+    - both events timed (all-day presence is not physical occupation);
+    - true time overlap at two DIFFERENT known locations (no-location events
+      never reach the solver, so they never conflicted);
+    - the solo/multi split is the only case with a deterministic answer:
+      dropping the kid from the solo event leaves nobody to drive. Two
+      multi-passenger events stay a manual decision (the unassigned event's
+      diagnostics already offer 'prompt_drop_passenger').
+
+    Mutates each multi event's calendar_ids in place (the UI naturally shows
+    the kid absent from that instance) and returns {event_id: [passenger_ids
+    dropped]} for logging."""
+    dropped = {}
+    candidates = [e for e in events
+                  if getattr(e, 'event_type', '') != 'background_trip'
+                  and not getattr(e, 'needs_triage', False)
+                  and not getattr(e, 'all_day', False)
+                  and not getattr(e, 'trip_suppressed', False)
+                  and getattr(e, 'calendar_ids', None)
+                  and getattr(e, 'location', None) and str(e.location).strip()]
+    candidates.sort(key=lambda e: e.start)
+    for i in range(len(candidates)):
+        for j in range(i + 1, len(candidates)):
+            e1, e2 = candidates[i], candidates[j]
+            if not (e1.start < e2.end and e2.start < e1.end):
+                continue
+            if e1.location.strip().lower() == e2.location.strip().lower():
+                continue
+            pax1 = get_event_passenger_ids(e1, passengers)
+            pax2 = get_event_passenger_ids(e2, passengers)
+            shared = pax1 & pax2
+            if len(shared) != 1:
+                continue
+            pid = next(iter(shared))
+            if len(pax1) == 1 and len(pax2) > 1:
+                solo, multi = e1, e2
+            elif len(pax2) == 1 and len(pax1) > 1:
+                solo, multi = e2, e1
+            else:
+                continue
+            owner = next((p for p in passengers if p.id == pid), None)
+            owned = {str(pid)} | {c for c in (owner.calendar_ids if owner else [])}
+            kept = [c for c in multi.calendar_ids if str(c) not in owned]
+            if kept:
+                multi.calendar_ids = kept
+                dropped.setdefault(multi.id, []).append(pid)
+    return dropped
+
+
 def get_effective_overridden_event_ids(events, overrides) -> list:
     overridden_ids = set()
     sorted_overrides = sorted(overrides, key=lambda x: getattr(x, 'created_at', x.get('created_at', 0) if isinstance(x, dict) else 0) or 0, reverse=True)
