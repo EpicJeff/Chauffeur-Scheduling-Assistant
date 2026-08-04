@@ -199,9 +199,41 @@ def scenario_heal_migration_purges_poison_and_resets_caches():
               "travel-time cache reset — durations re-derive from healed coords")
 
 
+def scenario_debug_travel_forensics():
+    _reset()
+    import main
+    storage.get_settings = lambda: {"calendar_ids": ["primary"], "home_location": HOME}
+    storage.set_cached_geocode(HOME, EXACT[0], EXACT[1], EXACT[2])
+    dest = "Music Studio, 9 Elm St, Claybourne, NC"
+    storage.set_cached_geocode(maps.extract_street_address(dest), 35.95, -79.10,
+                               "9 Elm St, Claybourne, NC")
+    storage.set_cached_schedule({
+        "events": [{"id": "g", "title": "Guitar Lesson", "location": dest,
+                    "start": "2026-08-04T15:00:00", "end": "2026-08-04T15:30:00"}],
+        "assignments": {}, "matched_rules": {}, "scheduled_errands": []})
+    with mock.patch.object(storage, 'get_cached_travel_time', return_value=9):
+        out = main.debug_travel(event="guitar")
+    check(out["event"] == "Guitar Lesson" and out["destination"]["raw"] == dest,
+          f"?event= resolves the destination from the schedule, got {out['event']}")
+    check(out["origin"]["resolved_to"] == EXACT[2]
+          and out["destination"]["resolved_to"] == "9 Elm St, Claybourne, NC",
+          "both sides show what they RESOLVED to")
+    check(out["cached_matrix_mins"] == 9 and out["straight_line_km"] is not None,
+          f"cached duration + straight-line sanity number, got {out}")
+    # an event with no location says so instead of pretending
+    storage.set_cached_schedule({
+        "events": [{"id": "g", "title": "Guitar Lesson", "location": "",
+                    "start": "2026-08-04T15:00:00", "end": "2026-08-04T15:30:00"}],
+        "assignments": {}, "matched_rules": {}, "scheduled_errands": []})
+    out = main.debug_travel(event="guitar")
+    check("NO location" in out.get("problem", ""),
+          "location-less events are named as the problem, not routed anyway")
+
+
 SCENARIOS = [
     scenario_extract_street_address_keeps_leading_house_number,
     scenario_heal_migration_purges_poison_and_resets_caches,
+    scenario_debug_travel_forensics,
     scenario_exact_hit_is_final,
     scenario_city_fallback_is_marked_and_healed,
     scenario_legacy_poisoned_row_sniffed_and_healed,

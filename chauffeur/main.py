@@ -6505,6 +6505,70 @@ def get_maps_stats():
     
     return {"status": "success", "month": current_month, "stats": stats}
 
+# --- Travel-time forensics ---
+@app.get("/api/debug/travel")
+def debug_travel(destination: Optional[str] = None, event: Optional[str] = None,
+                 origin: Optional[str] = None, fresh: bool = False):
+    """Answers "why does the app think X is N minutes away?" end to end:
+    what each address CLEANED to, what it GEOCODED to (display name +
+    precision — a wrong venue match is visible here), the straight-line km,
+    the cached Matrix duration the solver uses, and (?fresh=true, costs two
+    Directions calls) fresh free-flow vs TRAFFIC-AWARE durations — which
+    separates 'geocoded the wrong place' from 'free-flow profile vs rush
+    hour'. ?event=<title substring> resolves the destination from the
+    cached schedule so nobody has to copy addresses around."""
+    from services import maps as _maps
+    from services.cars import _haversine_m
+    settings = storage.get_settings() or {}
+    origin = (origin or settings.get('home_location') or '').strip()
+    matched_title = None
+    if event and not destination:
+        low = event.lower()
+        ev = next((e for e in (storage.get_cached_schedule() or {}).get('events', [])
+                   if low in (e.get('title') or '').lower()), None)
+        if not ev:
+            raise HTTPException(status_code=404,
+                                detail=f"No cached event title contains '{event}'")
+        destination = (ev.get('location') or '').strip()
+        matched_title = ev.get('title')
+        if not destination:
+            return {"event": matched_title,
+                    "problem": "This event has NO location — travel times for it "
+                               "are guesses, not routes."}
+    if not destination:
+        raise HTTPException(status_code=400, detail="Pass ?destination= or ?event=")
+
+    def side(addr):
+        cleaned = _maps.extract_street_address(addr)
+        coords = _maps.geocode_address(addr)
+        row = storage.get_cached_geocode(cleaned) or storage.get_cached_geocode(addr) or {}
+        return {"raw": addr, "cleaned": cleaned, "coords": coords,
+                "resolved_to": row.get('display_name'),
+                "precision": row.get('precision') or ('legacy' if row else None)}
+
+    o, d = side(origin), side(destination)
+    out = {"event": matched_title, "origin": o, "destination": d}
+    if o["coords"] and d["coords"]:
+        out["straight_line_km"] = round(_haversine_m(
+            o["coords"][0], o["coords"][1], d["coords"][0], d["coords"][1]) / 1000, 1)
+    out["cached_matrix_mins"] = storage.get_cached_travel_time(
+        origin.lower(), destination.lower(), ignore_age=True)
+    if fresh:
+        for label, profile in (("fresh_freeflow_mins", "driving"),
+                               ("fresh_traffic_mins", "driving-traffic")):
+            try:
+                geo = _maps.get_route_geometry(origin, destination, profile=profile)
+                out[label] = round(float(geo.get('duration_mins')), 1) if geo else None
+            except Exception as e:
+                out[label] = f"error: {e}"
+    out["how_to_read"] = (
+        "resolved_to wrong place -> geocode problem (re-save the address or fix the "
+        "event location). resolved_to right + big gap between cached_matrix_mins and "
+        "fresh_traffic_mins -> the free-flow profile vs real traffic: the app "
+        "deliberately buys static no-traffic durations (see system_capabilities.md "
+        "Travel Time), so rush-hour drives read optimistic.")
+    return out
+
 # --- Telemetry API ---
 @app.post("/api/telemetry/mapbox_map_load")
 def track_mapbox_map_load():
