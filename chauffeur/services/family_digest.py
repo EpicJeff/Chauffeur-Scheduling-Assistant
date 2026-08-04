@@ -26,9 +26,14 @@ def _minutes(ev):
 
 
 def _kid_event_match(ev, ev_id, p_id, p_cals, p_tags, matched_rules):
-    # Same three-way binding My Day uses: passenger calendar ownership,
-    # hashtag in the title, or a matched rule naming the passenger.
-    if set(ev.get('calendar_ids') or []) & p_cals:
+    # Same FOUR-way binding My Day uses: passenger calendar ownership,
+    # resolved passenger id (the solver replaces a matched event's cached
+    # calendar_ids with the resolved passenger ids — the only place
+    # event-CONFIG attendance shows up, since configs aren't rules and
+    # never reach matched_rules), hashtag in the title, or a matched rule
+    # naming the passenger.
+    cals = {str(c) for c in (ev.get('calendar_ids') or [])}
+    if (cals & p_cals) or (p_id and str(p_id) in cals):
         return True
     title_l = (ev.get('title') or '').lower()
     if any(t in title_l for t in p_tags):

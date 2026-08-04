@@ -118,11 +118,31 @@ def scenario_split_ride_launch_and_digest_line():
           f"digest leads with the launch line, got {lines}")
 
 
+def scenario_config_bound_event_binds_kid():
+    """Event-config attendance: the solver replaces a matched event's cached
+    calendar_ids with the RESOLVED passenger ids (no rule involved, not the
+    kid's own calendar). My Day and the kid digest must still bind the kid —
+    regression: config-attached kids showed 'No rides — free day' on the
+    kiosk (user screenshot 2026-08-03)."""
+    _reset()
+    import main
+    ev = _ev("camp", "Camp Kesem", 9)
+    ev["calendar_ids"] = ["p1"]  # resolved passenger id, not a calendar id
+    _cache([ev], {"camp": "d1"})
+    day = main.member_day("kid1", TODAY.isoformat())
+    check(len(day["rides"]) == 1 and day["rides"][0]["title"] == "Camp Kesem",
+          "config-bound event appears on My Day")
+    digests = main._build_kid_digests(TODAY)
+    lines = digests["kids"].get("kid1", {}).get("lines") or []
+    check(any("Camp Kesem" in ln for ln in lines), "and in the kid digest")
+
+
 SCENARIOS = [
     scenario_school_end_push_names_the_driver,
     scenario_school_end_silence_rules,
     scenario_morning_launch_math,
     scenario_split_ride_launch_and_digest_line,
+    scenario_config_bound_event_binds_kid,
 ]
 
 if __name__ == "__main__":

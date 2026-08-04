@@ -4305,10 +4305,19 @@ def member_day(member_id: str, date: Optional[str] = None):
             if parent_id.endswith(suffix):
                 parent_id = parent_id[:-len(suffix)]
         rule_base = parent_id.split('_unrolled_')[0]
-        cals = set(ev.get('calendar_ids') or [])
+        cals = set(str(c) for c in (ev.get('calendar_ids') or []))
         title_l = (ev.get('title') or '').lower()
-        if not (cals & p_cals) and not any(t in title_l for t in p_tags) \
-                and not _rule_bound({ev_id, parent_id, rule_base}):
+        # Four-way binding. The solver REPLACES a matched event's cached
+        # calendar_ids with the RESOLVED passenger ids (event-config
+        # attendance included — configs aren't rules, so they never appear
+        # in matched_rules), making passenger-id membership the
+        # authoritative post-solve check; calendar/hashtag/rule checks
+        # cover events the solver didn't rewrite.
+        bound = bool(cals & p_cals) \
+            or (p_id and str(p_id) in cals) \
+            or any(t in title_l for t in p_tags) \
+            or _rule_bound({ev_id, parent_id, rule_base})
+        if not bound:
             continue
         matched.append((ev, ev_id, parent_id))
 
