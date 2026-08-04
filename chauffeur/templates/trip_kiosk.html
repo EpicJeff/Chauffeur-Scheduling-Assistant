@@ -498,12 +498,16 @@
             return (poi && poi.lat != null && poi.lng != null) ? [poi.lng, poi.lat] : null;
         }
 
-        function selectedDateStr() {
-            if (!selectedDayKey || !groupedActivities[selectedDayKey]) return null;
-            const first = groupedActivities[selectedDayKey].items.find(a => a.start);
+        function dateStrForDay(dayKey) {
+            if (!dayKey || !groupedActivities[dayKey]) return null;
+            const first = groupedActivities[dayKey].items.find(a => a.start);
             if (!first) return null;
             // en-CA formats as YYYY-MM-DD in the trip's timezone.
             return new Date(first.start * 1000).toLocaleDateString('en-CA', tzOptions());
+        }
+
+        function selectedDateStr() {
+            return dateStrForDay(selectedDayKey);
         }
 
         function initMap() {
@@ -594,17 +598,61 @@
         async function drawDayRoutes(dayKey) {
             const items = (groupedActivities[dayKey] || {}).items || [];
             const legs = [];
+            const addLeg = (key, oLabel, dLabel, ca, cb, commute) => {
+                if (ca && cb) legs.push({ key, oLabel, dLabel, ca, cb, commute });
+            };
+
+            // Commute legs mirror trip.html's stay logic: the day's routing
+            // base is the stay you SLEEP at that night; the checked-out stay
+            // only covers a final/gap day (you woke up there, no stay tonight).
+            const dateStr = dateStrForDay(dayKey);
+            const stays = (tripData.metadata.accommodations || []).filter(a =>
+                a.check_in_date && a.check_out_date && a.lat != null && a.lng != null);
+            const checkinAcc = dateStr ? stays.find(a => dateStr >= a.check_in_date && dateStr < a.check_out_date) : null;
+            const checkoutAcc = dateStr ? stays.find(a => dateStr === a.check_out_date) : null;
+            const acc = checkinAcc || checkoutAcc;
+            if (acc && items.length > 0) {
+                const accCoords = [acc.lng, acc.lat];
+                const accLabel = acc.location || acc.name || '';
+                if (checkinAcc && checkoutAcc && checkoutAcc.id !== checkinAcc.id) {
+                    // Switch day: transfer old stay -> new stay (drop the bags).
+                    addLeg(`acc-${checkoutAcc.id}-${checkinAcc.id}`,
+                        checkoutAcc.location || checkoutAcc.name || '', accLabel,
+                        [checkoutAcc.lng, checkoutAcc.lat], accCoords, true);
+                }
+                // Morning stay->activity only if you woke up at a stay — on
+                // arrival day (check-in today, no prior stay) the day doesn't
+                // start at the hotel.
+                const wokeUpAtStay = !!checkoutAcc || (checkinAcc && dateStr > checkinAcc.check_in_date);
+                const first = items[0], last = items[items.length - 1];
+                if (wokeUpAtStay) {
+                    addLeg(`acc-${acc.id}-${first.id}`, accLabel,
+                        first.location || first.title || '', accCoords, activityCoords(first), true);
+                }
+            }
+
             for (let i = 0; i < items.length - 1; i++) {
                 const a = items[i], b = items[i + 1];
-                const ca = activityCoords(a), cb = activityCoords(b);
-                if (ca && cb) legs.push({ key: `${a.id}-${b.id}`, a, b, ca, cb });
+                addLeg(`${a.id}-${b.id}`, a.location || a.title || '',
+                    b.location || b.title || '', activityCoords(a), activityCoords(b), false);
             }
+
+            // Evening return only when you actually sleep there tonight — on a
+            // checkout-only (departure/gap) day you leave and don't return.
+            if (checkinAcc && items.length > 0) {
+                const last = items[items.length - 1];
+                addLeg(`${last.id}-acc-${checkinAcc.id}`, last.location || last.title || '',
+                    checkinAcc.location || checkinAcc.name || '',
+                    activityCoords(last), [checkinAcc.lng, checkinAcc.lat], true);
+            }
+
             for (const leg of legs) {
                 if (!cachedRoutes[leg.key]) {
                     const walkable = haversineKm(leg.ca, leg.cb) < 1.2;
                     const route = await fetchRoute(leg, walkable ? 'walking' : 'driving')
                         || (walkable ? await fetchRoute(leg, 'driving') : null);
                     if (!route) continue;
+                    route.commute = leg.commute;
                     cachedRoutes[leg.key] = route;
                 }
                 // Day may have changed while the route was in flight.
@@ -615,8 +663,8 @@
 
         async function fetchRoute(leg, profile) {
             try {
-                const params = `origin=${encodeURIComponent(leg.a.location || leg.a.title || '')}`
-                    + `&destination=${encodeURIComponent(leg.b.location || leg.b.title || '')}`
+                const params = `origin=${encodeURIComponent(leg.oLabel)}`
+                    + `&destination=${encodeURIComponent(leg.dLabel)}`
                     + `&profile=${profile}`
                     + `&origin_lat=${leg.ca[1]}&origin_lng=${leg.ca[0]}&dest_lat=${leg.cb[1]}&dest_lng=${leg.cb[0]}`;
                 const res = await fetch(`api/maps/route_geometry?${params}`);
@@ -639,9 +687,13 @@
                 type: 'line',
                 source: `route-source-${key}`,
                 layout: { 'line-join': 'round', 'line-cap': 'round' },
-                paint: route.type === 'walking'
-                    ? { 'line-color': '#10b981', 'line-width': 3.5, 'line-dasharray': [1, 1.5] }
-                    : { 'line-color': '#3b82f6', 'line-width': 3.5 }
+                // Same palette as trip.html: commutes to/from the stay purple
+                // dashed, walking green dashed, driving solid blue.
+                paint: route.commute
+                    ? { 'line-color': '#a855f7', 'line-width': 3, 'line-dasharray': [2, 2], 'line-opacity': 0.7 }
+                    : route.type === 'walking'
+                        ? { 'line-color': '#10b981', 'line-width': 4, 'line-dasharray': [2, 2] }
+                        : { 'line-color': '#3b82f6', 'line-width': 4 }
             });
             routeLayerKeys.push(key);
         }
