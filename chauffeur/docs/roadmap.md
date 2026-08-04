@@ -158,6 +158,33 @@ per-kid digest time overrides.
 - ~~Deferred from K2: the scheduled end-of-school-day pickup push~~ —
   stale item: this SHIPPED in v2.35.0 as K4c's dismissal push.
 
+## The bus arc (school-bus mornings, decided 2026-08-03)
+
+Bus kids are the majority case the kid arc skipped — the launch/dismissal
+machinery was car-centric. The family's district uses Here Comes The Bus,
+already flowing into HA via the pcartwright81 HCTB integration (per-student
+sensors named by first name). Principle: Chauffeur is the TRANSLATION layer
+(deadline where the kids look, calm framing), never a bus tracker; the bus
+never enters the solver.
+
+- **B1 — bus model + surfaces. SHIPPED v2.40.0 (2026-08-03).** Per-kid bus
+  fields (AM stop = opt-in, PM drop, walk mins, entity-prefix override with
+  first-name auto-discovery), bus launch line on My Day/digest/kiosk (live
+  HCTB stop estimate when the bus is out today, else static; yields to any
+  morning car ride), "🚌 Bus home today" dismissal-push branch. Lateness ≥4
+  min only, worded as "no rush". Tests: tests/test_bus.py.
+- **B2 — the live morning layer (next).** (1) Kiosk live chip during the AM
+  run window: the routines-kiosk digest strip polls a light bus-status
+  endpoint (~60s while 6-9am) showing "🚌 on the way · stop ~7:24 ·
+  {address}". (2) Opt-in "get ready" push at leave-by − N (setting, default
+  ~10 min lead, once per kid per day, quiet-hours gated). (3) "Running
+  late — no rush" push when the live estimate exceeds the baseline
+  (threshold shared with B1), once per day. All pushes ride
+  `_notify_member_lanes` + the `school_end_push_sent`-style marker pattern.
+- Explicitly out: a direct reverse-engineered HCTB client in Chauffeur
+  (fragile, credentialed — the HA integration boundary keeps that risk
+  outside the app); bus in the solver; countdown spam.
+
 ## The native app track (Capacitor wrapper — the big unlock)
 
 Wrap the existing PWA (NOT a rewrite; days not months) and distribute via

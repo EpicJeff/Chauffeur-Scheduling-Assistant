@@ -4379,6 +4379,14 @@ def member_day(member_id: str, date: Optional[str] = None):
                       'driver': _driver_member(d_id)}
             break
 
+    # Bus arc B1: bus kids get a launch line too — on school mornings the
+    # bus IS the first ride. Static member stop time is the baseline, the
+    # live HCTB estimate (via the HA bridge) wins when the bus is running.
+    # Skipped whenever a morning car ride covers the school run.
+    if launch is None and member.get('role') == 'child':
+        from services import bus
+        launch = bus.morning_launch(member, date_str, rides)
+
     # K4a: the kid's school/deadline list — open tasks due within 7 days of
     # the viewed date, plus overdue (worded gently, shown in place, never
     # pushed). Empty for members with no tasks (adults).
@@ -4628,6 +4636,14 @@ def _send_school_end_push(member, now=None):
         _notify_member_lanes(member, f"🚗 {drv['name']} has you after school",
                              f"{r.get('title') or 'Your ride'} at {t}", '/app')
         return True
+    # Bus arc B1: no car ride after school — if this kid rides the bus, that
+    # IS the answer (live PM stop estimate when the bus is out, else the
+    # static drop time). No bus config → the original silence rule stands.
+    from services import bus
+    line = bus.dismissal_line(member)
+    if line:
+        _notify_member_lanes(member, "🚌 Bus home today", line, '/app')
+        return True
     return False
 
 # --- Kid evening digest (kid-support arc K1) ---
@@ -4682,9 +4698,14 @@ def _build_kid_digests(target_date=None):
                 line += f" (bring: {', '.join(prep[:4])})"
             lines.append(line)
 
-        # K5: leave-by line first — the single most actionable fact of the day
+        # K5: leave-by line first — the single most actionable fact of the
+        # day. A bus launch stands on its own even with no ride lines (the
+        # bus IS the ride); the car version still needs a ride to refer to.
         launch = day.get('launch')
-        if launch and lines:
+        if launch and launch.get('bus'):
+            from services import bus
+            lines.insert(0, bus.digest_line(launch))
+        elif launch and lines:
             who = (launch.get('driver') or {}).get('name')
             lines.insert(0, f"🚀 Leave by {launch['leave_label']}"
                             + (f" with {who}" if who else ""))

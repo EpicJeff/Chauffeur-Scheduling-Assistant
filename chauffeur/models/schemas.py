@@ -92,6 +92,12 @@ class FamilyMember(BaseModel):
     # push and the morning launch line. Empty = no school-hour features.
     school_hours_start: Optional[str] = None  # HH:MM
     school_hours_end: Optional[str] = None    # HH:MM
+    # School bus (bus arc, children only — services/bus.py). bus_am_stop_time
+    # is the opt-in switch; HCTB live data auto-discovers via first name.
+    bus_am_stop_time: Optional[str] = None    # HH:MM — morning pickup at stop
+    bus_pm_stop_time: Optional[str] = None    # HH:MM — usual afternoon drop
+    bus_walk_mins: Optional[int] = None       # walk to the stop (default 5)
+    bus_entity_prefix: Optional[str] = None   # HCTB entity prefix override
     pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
     pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)

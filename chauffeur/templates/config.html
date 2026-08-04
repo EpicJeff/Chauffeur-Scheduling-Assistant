@@ -1109,6 +1109,32 @@
                                                     class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
                                             </div>
                                         </div>
+                                        <div x-show="memberEdit.role === 'child'">
+                                            <label class="block text-gray-400 mb-1 text-sm">🚌 School bus
+                                                <span class="text-gray-600">(AM stop time enables bus leave-by lines + the bus-home dismissal push; live times come from Here Comes The Bus in HA automatically)</span></label>
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">AM stop</span>
+                                                    <input type="time" x-model="memberEdit.bus_am_stop_time"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                </div>
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">PM drop</span>
+                                                    <input type="time" x-model="memberEdit.bus_pm_stop_time"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                                </div>
+                                                <div>
+                                                    <span class="block text-xs text-gray-500 mb-0.5">Walk (min)</span>
+                                                    <input type="number" min="0" max="60" x-model.number="memberEdit.bus_walk_mins" placeholder="5"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                                </div>
+                                                <div class="flex-1 min-w-[140px]">
+                                                    <span class="block text-xs text-gray-500 mb-0.5">HA entity prefix (blank = first name)</span>
+                                                    <input type="text" x-model="memberEdit.bus_entity_prefix" placeholder="addison"
+                                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                </div>
+                                            </div>
+                                        </div>
                                         <button @click="testNotify(member)" x-show="member.notify_service"
                                             class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
                                             Notify</button>
@@ -3605,6 +3631,10 @@
                         media_player_entity: member.media_player_entity || '',
                         school_hours_start: member.school_hours_start || '',
                         school_hours_end: member.school_hours_end || '',
+                        bus_am_stop_time: member.bus_am_stop_time || '',
+                        bus_pm_stop_time: member.bus_pm_stop_time || '',
+                        bus_walk_mins: member.bus_walk_mins || null,
+                        bus_entity_prefix: member.bus_entity_prefix || '',
                     };
                 },
                 async resetMemberPin(member) {
@@ -3633,6 +3663,10 @@
                     updates.media_player_entity = updates.media_player_entity || null;
                     updates.school_hours_start = updates.school_hours_start || null;
                     updates.school_hours_end = updates.school_hours_end || null;
+                    updates.bus_am_stop_time = updates.bus_am_stop_time || null;
+                    updates.bus_pm_stop_time = updates.bus_pm_stop_time || null;
+                    updates.bus_walk_mins = parseInt(updates.bus_walk_mins) || null;
+                    updates.bus_entity_prefix = (updates.bus_entity_prefix || '').trim() || null;
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
