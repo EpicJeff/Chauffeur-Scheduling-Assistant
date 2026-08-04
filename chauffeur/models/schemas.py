@@ -532,6 +532,16 @@ class Settings(BaseModel):
     enable_standard_priority_rules: bool = True
     enable_ai_priority_rules: bool = True
     enable_ai_themes: bool = True
+    # Car alerts (C2/C3, docs/car_telemetry_design.md): warn thresholds, the
+    # family's home gas station (fuel-stop errand placement fallback), and
+    # auto-approve for fuel-stop proposals. services/cars.py reads these off
+    # the raw settings dict — the model fields exist so POST /api/settings
+    # KEEPS them: Pydantic silently drops unknown fields, which ate every
+    # "Save Alerts" click from v2.47 until v2.56.2.
+    car_battery_warn_pct: float = 30
+    car_fuel_warn_pct: float = 25
+    car_auto_errand: bool = False
+    car_fuel_station: str = ""
     # When True, the solver adds a quadratic penalty on each driver's total
     # load so work spreads across the roster instead of stacking onto the
     # highest-priority drivers ("bucket filling").

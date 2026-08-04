@@ -2601,6 +2601,44 @@ def delete_car(doc_id: int, background_tasks: BackgroundTasks):
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
+@app.get("/api/cars/stations/nearby")
+def nearby_gas_stations(limit: int = 6):
+    """Closest gas stations to the family's home location — feeds the Config
+    'home gas station' picker so the setting is a choice, not a typing test.
+    One Mapbox category search (same 'category' cap C3 meters); geocode of
+    home is cached. Distance is haversine from home, display only."""
+    from services import maps
+    from services.cars import _haversine_m
+    settings = storage.get_settings() or {}
+    home = (settings.get('home_location') or '').strip()
+    if not home:
+        return {"stations": [], "error": "Set your Home Location (General tab) first."}
+    try:
+        o = maps.geocode_address(home)
+    except Exception:
+        o = None
+    if not o:
+        return {"stations": [], "error": "Couldn't locate your home address."}
+    try:
+        results = maps.search_category('gas_station', o[0], o[1],
+                                       limit=max(1, min(int(limit), 10)))
+    except Exception as e:
+        print(f"Nearby station search failed: {e}")
+        results = []
+    if not results:
+        return {"stations": [], "error": "No stations found (Mapbox may be disabled)."}
+    stations = []
+    for r in results:
+        entry = {"name": r.get("name"), "address": r.get("address")}
+        try:
+            entry["distance_km"] = round(
+                _haversine_m(o[0], o[1], float(r["lat"]), float(r["lon"])) / 1000, 1)
+        except (KeyError, TypeError, ValueError):
+            entry["distance_km"] = None
+        stations.append(entry)
+    stations.sort(key=lambda s: s["distance_km"] if s["distance_km"] is not None else 999)
+    return {"stations": stations}
+
 # --- ICS Feed Subscriptions API (intake arc phase 1) ---
 
 class IcsFeedCreate(BaseModel):

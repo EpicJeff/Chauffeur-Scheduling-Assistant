@@ -1527,10 +1527,15 @@
                                 <input type="number" min="5" max="90" x-model.number="carFuelWarnPct"
                                     class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white w-24">
                             </div>
-                            <div class="flex-1 min-w-[180px]">
-                                <label class="block text-gray-400 mb-1 text-xs">Gas station (for auto errands)</label>
-                                <input type="text" x-model="carFuelStation" placeholder="e.g. Costco Gas, Main St"
-                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <div class="flex-1 min-w-[220px]">
+                                <label class="block text-gray-400 mb-1 text-xs">Home gas station (for auto errands)</label>
+                                <div class="flex gap-2">
+                                    <input type="text" x-model="carFuelStation" placeholder="e.g. Costco Gas, Main St"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                    <button @click="findNearbyStations()" :disabled="stationSearchBusy"
+                                        class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-2 rounded text-sm transition-colors whitespace-nowrap"
+                                        x-text="stationSearchBusy ? 'Searching…' : '📍 Find nearby'"></button>
+                                </div>
                             </div>
                             <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
                                 <input type="checkbox" x-model="carAutoErrand" class="accent-teal-500 w-4 h-4">
@@ -1540,6 +1545,21 @@
                                 class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
                                 Alerts</button>
                         </div>
+                        <div x-show="nearbyStations.length" x-cloak class="mt-2">
+                            <p class="text-xs text-gray-400 mb-1.5">Closest to home — tap to choose (saves right away):</p>
+                            <div class="flex flex-wrap gap-1.5">
+                                <template x-for="(st, si) in nearbyStations" :key="si">
+                                    <button @click="pickStation(st)"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-teal-300 border border-gray-700 hover:border-teal-500 transition-colors text-left">
+                                        <span x-text="st.name"></span>
+                                        <span class="text-gray-500 font-normal"
+                                            x-text="' · ' + (st.distance_km != null ? st.distance_km + ' km' : '') + (st.address ? ' · ' + st.address : '')"></span>
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                        <p x-show="stationSearchError" x-cloak class="text-xs text-amber-400 mt-2"
+                            x-text="stationSearchError"></p>
                         <p class="text-xs text-gray-500 mt-2">Reminders push to the car's usual driver (else parents)
                             when it's low with drives coming in the next 24h, or when it isn't home shortly before a
                             drive. Each car needs its HA sensors mapped in its form above; the fleet shows on the
@@ -3352,6 +3372,9 @@
                 carFuelWarnPct: 25,
                 carAutoErrand: false,
                 carFuelStation: '',
+                nearbyStations: [],
+                stationSearchBusy: false,
+                stationSearchError: '',
                 suggestedRoutesEnabled: true,
                 chatSuggestionsEnabled: false,
                 tomorrowDigestEnabled: true,
@@ -4433,6 +4456,28 @@
                         console.error("Failed to load members", e);
                         this.members = [];
                     }
+                },
+
+                // --- Car alerts: home gas-station picker ---
+                async findNearbyStations() {
+                    this.stationSearchBusy = true;
+                    this.stationSearchError = '';
+                    this.nearbyStations = [];
+                    try {
+                        const res = await fetch(`${this.apiBase}api/cars/stations/nearby`);
+                        const data = await res.json();
+                        this.nearbyStations = data.stations || [];
+                        if (data.error) this.stationSearchError = data.error;
+                    } catch (e) {
+                        this.stationSearchError = 'Search failed — try again.';
+                    }
+                    this.stationSearchBusy = false;
+                },
+                async pickStation(st) {
+                    this.carFuelStation = st.address ? `${st.name}, ${st.address}` : st.name;
+                    this.nearbyStations = [];
+                    await this.saveSettings();
+                    showGlobalAlert(`Home gas station set: ${st.name}`);
                 },
 
                 // --- Status Days (Presence & Status arc P1) ---
