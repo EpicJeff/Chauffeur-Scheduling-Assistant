@@ -744,6 +744,52 @@
                         outerWrap.style.borderColor = 'rgba(255, 255, 255, 0.15)';
                     }
 
+                    // Compact single-row layout for short events (≤40 min): the
+                    // stacked time/title/meta rows don't fit in the slot height
+                    // and left the title clipped to nothing. Time is omitted —
+                    // the grid position already shows it; the modal has details.
+                    const _durMins = (arg.event.end && arg.event.start) ? (arg.event.end - arg.event.start) / 60000 : 60;
+                    if (!isMonth && _durMins <= 40) {
+                        outerWrap.className = 'flex flex-row items-center w-full h-full overflow-hidden rounded border backdrop-blur-md cursor-pointer px-1.5 gap-1';
+                        let compactTitle = document.createElement('div');
+                        compactTitle.className = 'font-bold text-white drop-shadow-md truncate text-[11px] flex-1 min-w-0';
+                        compactTitle.innerText = arg.event.title;
+                        outerWrap.appendChild(compactTitle);
+                        if (props.passengers && props.passengers.length > 0) {
+                            let pc = document.createElement('div');
+                            pc.className = 'flex -space-x-1 overflow-hidden shrink-0';
+                            props.passengers.slice(0, 3).forEach(p => {
+                                let dot = document.createElement('div');
+                                dot.className = 'w-2 h-2 rounded-full border border-white/20';
+                                dot.style.backgroundColor = p.color;
+                                dot.title = p.name;
+                                pc.appendChild(dot);
+                            });
+                            outerWrap.appendChild(pc);
+                        }
+                        if (props.carName && !isUnassigned) {
+                            let cb = document.createElement('div');
+                            cb.className = `font-bold rounded shrink-0 text-[8.5px] px-1 ${props.carSwap ? 'bg-amber-500/80 text-white' : 'bg-black/30 text-white/90'}`;
+                            cb.innerText = props.carName + (props.carSwap ? ' ⇄' : '');
+                            cb.title = props.carSwap ? "Car swap: not this driver's usual car" : 'Assigned car';
+                            outerWrap.appendChild(cb);
+                        }
+                        let compactBadge = document.createElement('div');
+                        if (isUnassigned) {
+                            compactBadge.className = 'font-bold bg-red-500 text-white rounded shrink-0 text-[8.5px] px-1';
+                            compactBadge.innerText = '⚠️';
+                            compactBadge.title = 'Unassigned';
+                        } else if (props.driverName) {
+                            compactBadge.className = 'font-bold bg-black/40 text-white rounded shrink-0 text-[9px] px-1 truncate max-w-[52px]';
+                            compactBadge.innerText = props.driverName;
+                        } else if (isErrand) {
+                            compactBadge.className = 'font-bold bg-amber-500/80 text-white rounded shrink-0 text-[8.5px] px-1';
+                            compactBadge.innerText = 'Errand';
+                        }
+                        outerWrap.appendChild(compactBadge);
+                        return { domNodes: [outerWrap] };
+                    }
+
                     // Header Row (Title & Time)
                     let headerRow = document.createElement('div');
                     headerRow.className = 'flex items-start justify-between w-full leading-tight';
@@ -1432,6 +1478,9 @@
                         badge = '<span class="text-[10px] font-bold text-red-400 shrink-0">⚠️ Needs driver</span>';
                     } else if (props.driverName) {
                         badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[80px] truncate">${_agEsc(props.driverName)}</span>`;
+                        if (props.carName) {
+                            badge += `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 max-w-[90px] truncate ${props.carSwap ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700 text-gray-400'}" title="${props.carSwap ? 'Car swap: not this driver&#39;s usual car' : 'Assigned car'}">${_agEsc(props.carName)}${props.carSwap ? ' ⇄' : ''}</span>`;
+                        }
                     } else if (props.isErrand) {
                         badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">Errand</span>';
                     }
