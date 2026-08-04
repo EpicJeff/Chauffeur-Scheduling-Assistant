@@ -3609,19 +3609,48 @@
         }
         connectStream();
 
+        // A resumed PWA keeps the timeline anchor (window.globalStartDate),
+        // the pane strip's scrollLeft, and the My Day offset alive in memory
+        // across days — the app then wakes on whatever stale pane was last
+        // visible, which reads as opening on a random day. Whenever the app
+        // is used on a later calendar day than it was anchored for, snap
+        // everything back to today.
+        let anchorDay = new Date().toLocaleDateString('en-CA');
+        function reanchorIfDayChanged() {
+            const todayStr = new Date().toLocaleDateString('en-CA');
+            if (todayStr === anchorDay) return;
+            anchorDay = todayStr;
+            window.globalStartDate = new Date();
+            window.globalStartDate.setHours(0, 0, 0, 0);
+            window.globalDaysToShow = 7;
+            activeDateIndex = 0;
+            mydayOffset = 0;
+            const container = document.getElementById('days-container');
+            if (container) container.scrollLeft = 0; // buildTimeline restores this as the saved position
+            if (scheduleData && selectedDriverId) buildTimeline();
+            if (currentView === 'myday') renderMyDay();
+        }
+
         // Phones sleep constantly: refresh silently when the app comes back
         // to the foreground, and every 5 minutes as a safety net so the
         // timeline's past/upcoming state stays current without the stream.
         setInterval(() => {
-            if (!document.hidden && selectedDriverId) fetchSchedule(false, true);
+            if (document.hidden) return;
+            reanchorIfDayChanged();
+            if (selectedDriverId) fetchSchedule(false, true);
         }, 300000);
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && selectedDriverId) {
+            if (document.hidden) return;
+            reanchorIfDayChanged();
+            if (selectedDriverId) {
                 fetchSchedule(false, true);
                 fetchNotifications();
                 if (!evtSource || evtSource.readyState === EventSource.CLOSED) connectStream();
             }
         });
+        // bfcache restores (iOS back/forward, some PWA relaunches) resurrect
+        // the old DOM wholesale without firing visibilitychange.
+        window.addEventListener('pageshow', (e) => { if (e.persisted) reanchorIfDayChanged(); });
     </script>
 
     <!-- Event Details Modal -->
