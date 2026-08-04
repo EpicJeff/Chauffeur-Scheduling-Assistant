@@ -3278,6 +3278,19 @@
                         }
                     }
 
+                    // Which car to take (absent for zero-car families / unpooled
+                    // drivers). Amber ⇄ = not this driver's usual car.
+                    let carChipHtml = '';
+                    const evCarId = (scheduleData.car_assignments || {})[ev.id];
+                    if (evCarId && !isDriverOnly) {
+                        const evCar = (scheduleData.cars || []).find(x => x.id === evCarId);
+                        if (evCar) {
+                            const carSwap = !!(evCar.default_driver_id && evCar.default_driver_id !== dId);
+                            const carCls = carSwap ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-gray-700/40 text-gray-300 border-gray-600';
+                            carChipHtml = `<div class="mb-2"><span class="px-2.5 py-1 text-[11px] font-bold rounded-full border ${carCls}" title="${carSwap ? 'Not your usual car — coordinate the keys' : 'Assigned car'}">${evCar.icon || '🚗'} Take the ${evCar.name}${carSwap ? ' ⇄' : ''}</span></div>`;
+                        }
+                    }
+
                     const eventData = {
                         id: ev.id,
                         title: ev.event_type === 'dropoff' ? 'Dropoff: ' + ev.title : (ev.event_type === 'pickup' ? 'Pickup: ' + ev.title : ev.title),
@@ -3304,6 +3317,7 @@
                                     ${ev.title}
                                 </div>
                                 ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
+                                ${carChipHtml}
                                 ${prepPillsHtml(prepItemsFor(ev.id))}
                                 ${prepItemsFor(ev.id).length ? `<button onclick="togglePrepConfirmed('${ev.id}', event)"
                                     class="mb-2 px-3 py-1.5 rounded-lg text-[12px] font-bold border ${isPrepConfirmed(ev.id) ? 'bg-green-600/20 text-green-300 border-green-500/40' : 'bg-gray-900 text-gray-300 border-gray-600 active:bg-gray-700'}">${isPrepConfirmed(ev.id) ? '✓ Packed' : 'Confirm packed'}</button>` : ''}
