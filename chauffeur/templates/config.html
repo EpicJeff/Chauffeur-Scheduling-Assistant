@@ -8,6 +8,10 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://unpkg.com/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <!-- Mapbox GL: station-picker map (Car alerts). No map load is billed
+         until the picker actually instantiates a map. -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
     <style>
         [x-cloak] {
             display: none !important;
@@ -1545,9 +1549,14 @@
                                 class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
                                 Alerts</button>
                         </div>
-                        <div x-show="nearbyStations.length" x-cloak class="mt-2">
-                            <p class="text-xs text-gray-400 mb-1.5">Closest to home — tap to choose (saves right away):</p>
-                            <div class="flex flex-wrap gap-1.5">
+                        <div x-show="nearbyStations.length" x-cloak class="mt-3">
+                            <p class="text-xs text-gray-400 mb-1.5"
+                                x-text="stationMapOk ? 'Closest to home — tap a pin, then Select (saves right away):'
+                                                     : 'Closest to home — tap to choose (saves right away):'"></p>
+                            <div id="station-map" x-show="stationMapOk"
+                                class="w-full h-80 rounded-xl border border-gray-700 overflow-hidden"></div>
+                            <!-- fallback when the map can't load (no key / map-load quota) -->
+                            <div x-show="!stationMapOk" class="flex flex-wrap gap-1.5">
                                 <template x-for="(st, si) in nearbyStations" :key="si">
                                     <button @click="pickStation(st)"
                                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-900 text-teal-300 border border-gray-700 hover:border-teal-500 transition-colors text-left">
@@ -3300,6 +3309,14 @@
         </div>
     </div>
     <script>
+        // Station-picker map (Car alerts). The GL map and markers live OUTSIDE
+        // Alpine's reactive data — wrapping a mapboxgl.Map in a reactivity
+        // Proxy breaks its internals and taxes every render.
+        const CONFIG_MAPBOX_KEY = '{{ mapbox_key }}';
+        const CONFIG_ALLOW_MAP_LOADS = {{ allow_map_loads | lower }};
+        let stationMap = null;
+        let stationMarkers = [];
+
         function configApp() {
             return {
                 activeTab: 'general',
@@ -3375,6 +3392,8 @@
                 nearbyStations: [],
                 stationSearchBusy: false,
                 stationSearchError: '',
+                stationHome: null,
+                stationMapOk: false,
                 suggestedRoutesEnabled: true,
                 chatSuggestionsEnabled: false,
                 tomorrowDigestEnabled: true,
@@ -4458,7 +4477,7 @@
                     }
                 },
 
-                // --- Car alerts: home gas-station picker ---
+                // --- Car alerts: home gas-station picker (map-first) ---
                 async findNearbyStations() {
                     this.stationSearchBusy = true;
                     this.stationSearchError = '';
@@ -4467,11 +4486,69 @@
                         const res = await fetch(`${this.apiBase}api/cars/stations/nearby`);
                         const data = await res.json();
                         this.nearbyStations = data.stations || [];
+                        this.stationHome = data.home || null;
                         if (data.error) this.stationSearchError = data.error;
+                        if (this.nearbyStations.length) await this.renderStationMap();
                     } catch (e) {
                         this.stationSearchError = 'Search failed — try again.';
                     }
                     this.stationSearchBusy = false;
+                },
+                async renderStationMap() {
+                    // Map when we can, chips when we can't — same quota gate
+                    // as the trip map; one map load billed per picker open.
+                    this.stationMapOk = !!(window.mapboxgl && CONFIG_MAPBOX_KEY && CONFIG_ALLOW_MAP_LOADS);
+                    if (!this.stationMapOk) return;
+                    await this.$nextTick();
+                    const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                    if (!stationMap) {
+                        mapboxgl.accessToken = CONFIG_MAPBOX_KEY;
+                        stationMap = new mapboxgl.Map({
+                            container: 'station-map',
+                            style: 'mapbox://styles/mapbox/dark-v11',
+                            center: this.stationHome ? [this.stationHome.lon, this.stationHome.lat] : [-98.5795, 39.8283],
+                            zoom: 12,
+                        });
+                        stationMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
+                        stationMap.once('load', () => {
+                            fetch(`${this.apiBase}api/telemetry/mapbox_map_load`, { method: 'POST' });
+                        });
+                    } else {
+                        stationMap.resize();
+                    }
+                    stationMarkers.forEach(m => m.remove());
+                    stationMarkers = [];
+                    const bounds = new mapboxgl.LngLatBounds();
+                    if (this.stationHome) {
+                        const el = document.createElement('div');
+                        el.textContent = '🏠';
+                        el.style.fontSize = '24px';
+                        el.title = 'Home';
+                        stationMarkers.push(new mapboxgl.Marker(el)
+                            .setLngLat([this.stationHome.lon, this.stationHome.lat]).addTo(stationMap));
+                        bounds.extend([this.stationHome.lon, this.stationHome.lat]);
+                    }
+                    window.__pickStationFromMap = (i) => this.pickStation(this.nearbyStations[i]);
+                    this.nearbyStations.forEach((st, i) => {
+                        if (st.lat == null || st.lon == null) return;
+                        const el = document.createElement('div');
+                        el.textContent = '⛽';
+                        el.style.fontSize = '22px';
+                        el.style.cursor = 'pointer';
+                        el.style.filter = 'drop-shadow(0 1px 2px rgba(0,0,0,.6))';
+                        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(`
+                            <div style="font-family:Inter,sans-serif;min-width:160px">
+                                <div style="font-weight:700;color:#111">${esc(st.name)}</div>
+                                <div style="font-size:12px;color:#555;margin-top:2px">${esc(st.address || '')}${st.distance_km != null ? ' · ' + st.distance_km + ' km from home' : ''}</div>
+                                <button onclick="window.__pickStationFromMap(${i})"
+                                    style="margin-top:8px;background:#0d9488;color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px">Select</button>
+                            </div>`);
+                        stationMarkers.push(new mapboxgl.Marker(el)
+                            .setLngLat([st.lon, st.lat]).setPopup(popup).addTo(stationMap));
+                        bounds.extend([st.lon, st.lat]);
+                    });
+                    if (!bounds.isEmpty()) stationMap.fitBounds(bounds, { padding: 56, maxZoom: 14 });
                 },
                 async pickStation(st) {
                     this.carFuelStation = st.address ? `${st.name}, ${st.address}` : st.name;

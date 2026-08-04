@@ -661,7 +661,17 @@ def driver_app(request: Request):
 
 @app.get("/config")
 def config(request: Request):
-    return templates.TemplateResponse(request=request, name="config.html")
+    # Mapbox context for the gas-station picker map (same quota gate the trip
+    # map uses — the map only instantiates when the user opens the picker).
+    import datetime as _dt
+    current_month = _dt.datetime.now().strftime("%Y-%m")
+    allow_map_loads = maps.get_map_option('enable_mapbox_map_loads', True) \
+        and storage.get_mapbox_usage(current_month, 'map_loads') \
+        < maps.get_map_option('mapbox_map_loads_limit', 45000)
+    return templates.TemplateResponse(request=request, name="config.html", context={
+        "mapbox_key": maps.get_mapbox_api_key() or "",
+        "allow_map_loads": allow_map_loads,
+    })
 
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request):
@@ -2629,7 +2639,8 @@ def nearby_gas_stations(limit: int = 6):
         return {"stations": [], "error": "No stations found (Mapbox may be disabled)."}
     stations = []
     for r in results:
-        entry = {"name": r.get("name"), "address": r.get("address")}
+        entry = {"name": r.get("name"), "address": r.get("address"),
+                 "lat": r.get("lat"), "lon": r.get("lon")}
         try:
             entry["distance_km"] = round(
                 _haversine_m(o[0], o[1], float(r["lat"]), float(r["lon"])) / 1000, 1)
@@ -2637,7 +2648,7 @@ def nearby_gas_stations(limit: int = 6):
             entry["distance_km"] = None
         stations.append(entry)
     stations.sort(key=lambda s: s["distance_km"] if s["distance_km"] is not None else 999)
-    return {"stations": stations}
+    return {"stations": stations, "home": {"lat": o[0], "lon": o[1]}}
 
 # --- ICS Feed Subscriptions API (intake arc phase 1) ---
 
