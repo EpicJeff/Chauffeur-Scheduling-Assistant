@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-03 (v2.32.0).
+up cold. Last updated: 2026-08-03 (v2.39.0 — intake arc complete).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -80,19 +80,28 @@ genuinely one-tap or it's data entry with extra steps.
   as optional calendar-routing defaults, with the LLM's member guess as
   fallback router) → LLM extraction (events + 📌 tasks) → proposal queue
   on `/intake` with parent approval, per-message accountability log,
-  parent push nudges. Still open from the original design: (a) learned
-  per-sender/topic priors from approve/ignore signals;
-  (b) editing a proposal's time/title before approving (today: ignore +
-  manual entry); (c) drive-errand creation from proposals (tasks become
-  all-day 📌 events instead — errands need location+duration); (d) a
-  scheduled weekly digest push (the log page exists, nothing pushes it).
-- **Phase 3 — vision capture (paper + screenshots).** PWA share-target:
-  snap the backpack flyer / screenshot the group text (iOS will never
-  expose SMS — share is the permanent ceiling there). Needs a competent
-  multimodal cloud model — Gemma won't cut it for flyers; family-scale
-  volume is dozens of calls/week, pennies. Recurrence with exceptions
-  (spring break, early dismissal) is where extraction embarrasses — v1
-  handles single + simple-weekly events only.
+  parent push nudges. **The four open items all SHIPPED 2026-08-03
+  (v2.38.0/v2.38.1), two deliberately reshaped**: (b) edit-before-approve
+  (title/date/times inline on both approval surfaces, `all_day` override);
+  (c) '🚗 Drive errand' approval target (location+duration fields,
+  `window_days` from the due date, ErrandRules apply); (a) learned priors
+  built DETERMINISTIC — approval remembers sender→target as a prefill tier
+  behind explicit sender defaults, 3+ consecutive ignores shows a hint
+  (no LLM, no auto-suppression); (d) the weekly push was CUT as a
+  redundant channel (watchers already nudge stale items) — the weekly
+  family digest gained a 📬 Intake section instead.
+- **Phase 3 — vision capture. V1 SHIPPED v2.39.0 (2026-08-03) — THE
+  INTAKE ARC AS DESIGNED IS COMPLETE.** Photos/screenshots → the same
+  proposal pipeline via a new 'vision' model tier (flash→lite; gemma is
+  text-only). Surfaces: 📸 buttons on /intake + the PWA parent strip
+  (always visible on Family view now), and an Android share-target
+  (`/share`; iOS never supported PWA share targets — in-app buttons are
+  the iOS path; SMS stays unreachable there, share/screenshot is the
+  permanent ceiling). Still true from the original design: recurrence
+  with exceptions (spring break, early dismissal) is where extraction
+  embarrasses — v1 handles single + simple-weekly items only. Open
+  nice-to-haves: multi-image share, an optional caption field on the
+  in-app buttons, HEIC support if a phone ever uploads one.
 
 ## The kid support arc (decided 2026-08-03 — the next big thing)
 
@@ -146,8 +155,8 @@ Google Classroom OAuth sync (only if a feed-less school appears) ·
 parent-visible school-task admin list on a dashboard page (agent covers
 it today) · milestone templates ("science fair" → standard breakdown) ·
 per-kid digest time overrides.
-- **Deferred from K2** (needs K4's school-hours model): the scheduled
-  end-of-school-day "you're getting picked up by X at 3:15" push.
+- ~~Deferred from K2: the scheduled end-of-school-day pickup push~~ —
+  stale item: this SHIPPED in v2.35.0 as K4c's dismissal push.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 

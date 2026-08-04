@@ -460,8 +460,9 @@
             const threadOpen = (document.getElementById('thread-view') || {}).style?.display === 'flex';
             const agentFab = document.getElementById('kiosk-chat-fab');
             if (agentFab) agentFab.style.display = (isMessages && threadOpen) ? 'none' : '';
-            const showProposals = currentView === 'family' && currentMemberRole() === 'parent'
-                && typeof proposalsData !== 'undefined' && proposalsData.length > 0;
+            // Always shown for parents on Family view — with no pending
+            // proposals it collapses to the one-row 📸 capture strip.
+            const showProposals = currentView === 'family' && currentMemberRole() === 'parent';
             document.getElementById('proposals-container').style.display = showProposals ? 'block' : 'none';
             document.getElementById('messages-container').style.display = isMessages ? 'flex' : 'none';
             document.getElementById('map-container').style.display = isMap ? 'flex' : 'none';
@@ -935,11 +936,22 @@
             const wrap = document.getElementById('proposals-content');
             if (!wrap) return;
             wrap.innerHTML = '';
-            if (!proposalsData.length) return;
+            // Header row doubles as the vision-capture entry (intake phase 3):
+            // snap the backpack flyer / share the screenshot.
             const header = document.createElement('div');
-            header.className = 'text-xs font-black uppercase tracking-widest text-gray-500 px-1';
-            header.textContent = `📥 Proposed events (${proposalsData.length})`;
+            header.className = 'flex items-center justify-between gap-2 px-1';
+            header.innerHTML = `
+                <div class="text-xs font-black uppercase tracking-widest text-gray-500">${proposalsData.length ? `📥 Proposed events (${proposalsData.length})` : '📥 Intake'}</div>
+                <button data-role="photo-btn" class="text-[11px] font-bold bg-indigo-600 active:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shrink-0">📸 Snap a flyer</button>`;
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = 'image/*';
+            fileInput.className = 'hidden';
+            fileInput.onchange = () => uploadProposalPhoto(fileInput);
+            header.querySelector('[data-role="photo-btn"]').onclick = () => fileInput.click();
+            header.appendChild(fileInput);
             wrap.appendChild(header);
+            if (!proposalsData.length) return;
             proposalsData.forEach(p => {
                 const card = document.createElement('div');
                 card.className = 'bg-gray-900 border border-gray-800 rounded-2xl p-3';
@@ -960,7 +972,7 @@
                         <button data-role="edit" class="text-[11px] font-bold text-gray-500 active:text-white shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
-                    <div class="text-[10px] text-gray-600 truncate mt-0.5">✉️ ${escProp(p.source_subject || p.source_from || '')}</div>
+                    <div class="text-[10px] text-gray-600 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
                     ${p.sender_ignores ? `<div class="text-[10px] text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
                     <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
                         <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
@@ -1025,6 +1037,25 @@
                 renderProposals();
                 applyViewVisibility();
             } catch (e) { showGlobalAlert('Approve failed: ' + e.message); }
+        }
+
+        async function uploadProposalPhoto(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            showGlobalAlert('Reading photo…');
+            try {
+                const fd = new FormData();
+                fd.append('photo', file);
+                const res = await fetch(`${apiBase}api/ingest/photo`, { method: 'POST', body: fd });
+                const s = await res.json();
+                if (!res.ok) { showGlobalAlert(s.detail || 'Photo upload failed.'); return; }
+                if (s.error) { showGlobalAlert('Photo processing failed: ' + s.error); return; }
+                showGlobalAlert(s.proposed
+                    ? `Found ${s.proposed} item${s.proposed !== 1 ? 's' : ''} in the photo 📥`
+                    : 'No date-bound items found in that photo.');
+                await fetchProposals();
+            } catch (e) { showGlobalAlert('Photo upload failed: ' + e.message); }
         }
 
         async function ignoreProposal(id) {

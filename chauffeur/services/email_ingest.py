@@ -337,6 +337,81 @@ def _calendar_for_member_name(name: str):
     return None
 
 
+# --- vision capture (intake phase 3) ----------------------------------------
+
+def run_photo_ingest(image_b64: str, mime: str, caption: str = '') -> dict:
+    """One photo/screenshot → the same normalize/dedupe/propose pipeline as
+    email. The extraction runs on the VISION tier (flash first — flyers and
+    message screenshots are the hard case and volume is family-scale; gemma
+    is text-only and never sees images). Returns {'checked', 'proposed',
+    'error'} like run_ingest."""
+    import datetime as _dt
+    from services import model_pools
+    summary = {'checked': 1, 'proposed': 0, 'error': None}
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    log = {'from': '📸 photo', 'subject': (caption or '(photo)')[:120]}
+    if not api_key:
+        summary['error'] = 'no LLM API key configured'
+        return summary
+
+    member_names = [m.get('name') for m in storage.get_all_members() if m.get('name')]
+    now = _dt.datetime.now().astimezone()
+    prompt = (f"Current date: {now.strftime('%A %Y-%m-%d')}\n"
+              f"Family members: {', '.join(member_names) or '(unknown)'}\n\n"
+              "The attached image is a photo of a school/team flyer, schedule,"
+              " permission slip, or a screenshot of a message thread."
+              + (f"\nParent's note: {caption}" if caption else "")
+              + "\n\nExtract the items from the image.")
+    try:
+        res = model_pools.call_pool_json(
+            'vision', api_key, EXTRACTION_SYSTEM, prompt, temperature=0.1,
+            timeout_s=90, settings=settings,
+            images=[{'mime': mime or 'image/jpeg', 'b64': image_b64}])
+        if not isinstance(res, dict):
+            raise RuntimeError('bad response')
+        if res.get('error'):
+            raise RuntimeError(str(res['error']))
+        items = res.get('items')
+        items = items if isinstance(items, list) else []
+    except Exception as e:
+        summary['error'] = f'extraction failed ({e})'
+        storage.add_ingest_log({**log, 'outcome': f'error: {summary["error"]}'})
+        return summary
+
+    existing = storage.get_proposals()
+    sched_events = (storage.get_cached_schedule() or {}).get('events', [])
+    dropped = 0
+    for item in items:
+        prop = normalize_item(item)
+        if prop is None or _is_duplicate(prop, existing, sched_events):
+            dropped += 1
+            continue
+        prop.update({
+            'source': 'photo',
+            'source_from': '',
+            'source_subject': (caption or '(photo)')[:200],
+            # No sender to learn from — member guess > default calendar.
+            'calendar_id': _calendar_for_member_name(prop.get('member_name'))
+                or (settings.get('default_calendar_id') or None),
+        })
+        storage.add_proposal(prop)
+        existing.append(prop)
+        summary['proposed'] += 1
+
+    n = summary['proposed']
+    if n:
+        outcome = f'proposed {n} item{"s" if n != 1 else ""}'
+        if dropped:
+            outcome += f' ({dropped} dropped as duplicate/low-confidence)'
+    elif dropped:
+        outcome = f'nothing new ({dropped} dropped as duplicate/low-confidence)'
+    else:
+        outcome = 'no actionable items'
+    storage.add_ingest_log({**log, 'outcome': outcome})
+    return summary
+
+
 # --- orchestration ----------------------------------------------------------
 
 def run_ingest() -> dict:

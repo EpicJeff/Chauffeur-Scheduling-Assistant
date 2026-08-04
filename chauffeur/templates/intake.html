@@ -55,11 +55,17 @@
 
             <!-- ===== Proposals ===== -->
             <section class="mb-10">
-                <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center justify-between gap-2 flex-wrap mb-3">
                     <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">Waiting for approval</h3>
-                    <button @click="checkNow()" :disabled="checking"
-                        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
-                        x-text="checking ? 'Checking mailbox...' : 'Check mailbox now'"></button>
+                    <div class="flex items-center gap-2">
+                        <input type="file" accept="image/*" class="hidden" x-ref="photoInput" @change="uploadPhoto($event)">
+                        <button @click="$refs.photoInput.click()" :disabled="uploadingPhoto"
+                            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                            x-text="uploadingPhoto ? 'Reading photo…' : '📸 Add from photo'"></button>
+                        <button @click="checkNow()" :disabled="checking"
+                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                            x-text="checking ? 'Checking mailbox...' : 'Check mailbox now'"></button>
+                    </div>
                 </div>
                 <div x-show="proposals.length === 0" class="text-gray-500 bg-gray-800 rounded-xl p-6">
                     Nothing waiting. New proposals appear here (and parents get a push) when family email contains
@@ -84,7 +90,8 @@
                                         x-text="'👤 Looks like: ' + p.member_name"></p>
                                     <p class="text-xs text-gray-500 mt-2 italic" x-show="p.notes" x-text="p.notes"></p>
                                     <p class="text-xs text-gray-600 mt-1 truncate"
-                                        x-text="'✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
+                                        x-text="p.source === 'photo' ? '📸 ' + (p.source_subject || '(photo)')
+                                            : '✉️ ' + (p.source_from || '') + ' — ' + (p.source_subject || '')"></p>
                                     <p class="text-xs text-amber-400/80 mt-1" x-show="p.sender_ignores"
                                         x-text="'🤔 You\'ve ignored the last ' + p.sender_ignores + ' from this sender — consider a Gmail filter'"></p>
                                     <!-- Edit-before-approve: fix the extraction instead of
@@ -243,6 +250,7 @@
                 taskTargets: [],
                 checking: false,
                 savingConfig: false,
+                uploadingPhoto: false,
                 busyId: null,
 
                 async init() {
@@ -393,6 +401,25 @@
                         await fetch(`${this.apiBase}api/proposals/${p.id}/ignore`, { method: 'POST' });
                         await this.loadProposals();
                     } finally { this.busyId = null; }
+                },
+                async uploadPhoto(ev) {
+                    const file = ev.target.files && ev.target.files[0];
+                    ev.target.value = '';
+                    if (!file) return;
+                    this.uploadingPhoto = true;
+                    try {
+                        const fd = new FormData();
+                        fd.append('photo', file);
+                        const res = await fetch(`${this.apiBase}api/ingest/photo`, { method: 'POST', body: fd });
+                        const s = await res.json();
+                        if (!res.ok) showGlobalAlert(s.detail || 'Photo upload failed.');
+                        else if (s.error) showGlobalAlert('Photo processing failed: ' + s.error);
+                        else if (s.proposed) showGlobalAlert(`Found ${s.proposed} item${s.proposed !== 1 ? 's' : ''} in the photo — waiting below.`);
+                        else showGlobalAlert('No date-bound items found in that photo.');
+                        await Promise.all([this.loadProposals(), this.loadLog()]);
+                    } catch (e) {
+                        showGlobalAlert('Photo upload failed: ' + e.message);
+                    } finally { this.uploadingPhoto = false; }
                 },
                 async checkNow() {
                     this.checking = true;

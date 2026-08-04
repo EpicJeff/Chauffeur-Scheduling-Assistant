@@ -5,6 +5,16 @@
   "start_url": "./app",
   "scope": "./",
   "display": "standalone",
+  "share_target": {
+    "action": "share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [{ "name": "photos", "accept": ["image/*"] }]
+    }
+  },
   "orientation": "portrait",
   "background_color": "#0a0a0a",
   "theme_color": "#171717",

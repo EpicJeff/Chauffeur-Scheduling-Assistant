@@ -2,7 +2,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header
+from fastapi import FastAPI, BackgroundTasks, Response, HTTPException, WebSocket, WebSocketDisconnect, Header, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -2695,6 +2695,45 @@ def run_ingest_now():
 @app.get("/api/ingest/log")
 def ingest_log(limit: int = 50):
     return storage.get_ingest_log(limit=limit)
+
+_PHOTO_MAX_BYTES = 8 * 1024 * 1024
+
+@app.post("/api/ingest/photo")
+async def ingest_photo(photo: UploadFile = File(...), caption: str = Form('')):
+    """Intake phase 3 (vision capture): snap the backpack flyer / screenshot
+    the group text → the same proposal queue as email ingest."""
+    import base64
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > _PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
+    mime = (photo.content_type or '').lower()
+    if not mime.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Only images are supported")
+    from services import email_ingest
+    summary = email_ingest.run_photo_ingest(
+        base64.b64encode(data).decode('ascii'), mime, (caption or '').strip())
+    summary['pending'] = len(storage.get_proposals('proposed'))
+    return summary
+
+@app.post("/share")
+async def pwa_share_target(photos: list[UploadFile] = File(default=[]),
+                           title: str = Form(''), text: str = Form('')):
+    """Android PWA share-target (manifest.json share_target → this route,
+    which is why the manifest is served from the origin root): sharing an
+    image to the installed app drops it into the intake pipeline, then
+    bounces into the PWA. iOS has never supported PWA share targets — the
+    in-app 📸 buttons are the capture path there."""
+    import base64
+    caption = ' '.join(x for x in [(title or '').strip(), (text or '').strip()] if x)[:200]
+    for up in photos[:1]:  # v1: first image only
+        data = await up.read()
+        mime = (up.content_type or '').lower()
+        if data and len(data) <= _PHOTO_MAX_BYTES and mime.startswith('image/'):
+            from services import email_ingest
+            email_ingest.run_photo_ingest(base64.b64encode(data).decode('ascii'), mime, caption)
+    return RedirectResponse(url='app?view=family', status_code=303)
 
 @app.get("/api/proposals")
 def list_proposals(status: str = 'proposed'):

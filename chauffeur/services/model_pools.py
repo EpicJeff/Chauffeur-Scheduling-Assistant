@@ -46,6 +46,10 @@ TIER_CHAINS = {
     'interactive': ['lite', 'gemma'],
     'background': ['gemma', 'lite'],
     'heavy': ['flash', 'lite', 'gemma'],
+    # Image-input calls (intake vision capture). Gemma is text-only so it is
+    # excluded; flash first because flyers/screenshots are the hard case and
+    # volume is family-scale (dozens/week vs the ~100/day flash quota).
+    'vision': ['flash', 'lite'],
 }
 
 # model -> unix timestamp until which it is skipped
@@ -135,7 +139,7 @@ def resolve_model(tier: str, settings: dict = None) -> str:
 def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str,
                    temperature: float = 0.1, timeout_s: int = 60,
                    gemma_timeout_s: int = None, max_models: int = 4,
-                   settings: dict = None) -> dict:
+                   settings: dict = None, images: list = None) -> dict:
     """JSON LLM call that walks the tier's pool chain: 429/5xx/parse failures
     advance to the next model (marking quota cooldowns), success returns the
     parsed dict with '_model' set. Gemini only — ollama callers keep their own
@@ -148,7 +152,8 @@ def call_pool_json(tier: str, api_key: str, system_prompt: str, user_prompt: str
         t = gemma_timeout_s if (gemma_timeout_s and is_gemma(model)) else timeout_s
         try:
             res = _llm._call_llm_json('gemini', '', api_key, model, system_prompt,
-                                      user_prompt, temperature=temperature, timeout_s=t)
+                                      user_prompt, temperature=temperature, timeout_s=t,
+                                      images=images)
         except Exception as e:
             last_err = str(e)
             note_failure(model, last_err)

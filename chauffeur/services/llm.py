@@ -535,7 +535,9 @@ Do NOT wrap the output in markdown code blocks like ```json ... ```. Just return
         return 0, "Failed to parse LLM evaluation."
 
 
-def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180) -> dict:
+def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_prompt: str, user_prompt: str, temperature: float = 0.1, tools: list = None, timeout_s: int = 180, images: list = None) -> dict:
+    # images: [{'mime': 'image/jpeg', 'b64': '<base64>'}] — Gemini only
+    # (attached as inline_data parts); the ollama branch ignores them.
     import json
     import urllib.request
     
@@ -586,11 +588,17 @@ def _call_llm_json(provider: str, url: str, api_key: str, model: str, system_pro
             if gemini_model.startswith('models/'):
                 gemini_model = gemini_model[7:]
             req_url = f"https://generativelanguage.googleapis.com/v1/models/{gemini_model}:generateContent?key={api_key}"
+            user_parts = [{"text": f"{system_prompt}\n\nUser Request: {user_prompt}"}]
+            for img in (images or []):
+                user_parts.append({"inline_data": {
+                    "mime_type": img.get('mime') or 'image/jpeg',
+                    "data": img['b64'],
+                }})
             payload = {
                 "contents": [
                     {
                         "role": "user",
-                        "parts": [{"text": f"{system_prompt}\n\nUser Request: {user_prompt}"}]
+                        "parts": user_parts
                     }
                 ],
                 "generationConfig": {
