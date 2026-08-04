@@ -6791,7 +6791,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     continue
                     
                 if matcher.does_event_match_rule(e, rule, passengers):
-                    matched_pax = [p for p in passengers if str(p.id) in rule.passenger_ids]
+                    # Rules store passenger ids OR raw calendar ids (calendar-created
+                    # rules use the latter) — resolve both, exactly like
+                    # does_event_match_rule does, so the event's calendar_ids get
+                    # rewritten to real passenger ids. Leaving raw calendar ids
+                    # here blinded the trip-away suppression filter downstream.
+                    matched_pax = [p for p in passengers
+                                   if str(p.id) in rule.passenger_ids
+                                   or (p.calendar_ids and any(c in rule.passenger_ids for c in p.calendar_ids))]
                     for p in matched_pax:
                         if p not in matched_passengers:
                             matched_passengers.append(p)
@@ -6999,10 +7006,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         if getattr(e, 'calendar_ids', []):
             kept_cids = []
             for cid in e.calendar_ids:
-                pax_entity = f"passenger_{cid}"
+                # A cid may be a resolved passenger id OR a raw Google calendar
+                # id (events bound by a rule with no resolvable passengers keep
+                # their raw cids). Resolve to passenger entities the same way
+                # the solver's compute_event_trip_entities does, so both sides
+                # agree on who is on the trip.
+                cid_entities = {f"passenger_{p.id}" for p in passengers
+                                if str(cid) == str(p.id) or (p.calendar_ids and cid in p.calendar_ids)}
+                if not cid_entities:
+                    cid_entities = {f"passenger_{cid}"}
                 on_trip = False
                 for tm in trip_metadata:
-                    if pax_entity in tm['entities'] or 'global' in tm['entities']:
+                    if cid_entities.issubset(tm['entities']) or 'global' in tm['entities']:
                         trip_start = tm['start']
                         trip_end = tm['end']
                         # Keep passengers on events NEAR the trip destination — an
