@@ -40,9 +40,12 @@ DEFAULT_CLOSED_KEYWORDS = ('no school, holiday, break, closed, '
 # districts put "First Day of School" on a timed event). Broad on purpose;
 # the manual settings are the escape hatch for an unrecognizable calendar.
 FIRST_DAY_KEYWORDS = ('first day of school', 'first day for students',
-                      'school begins', 'school starts', '1st day of school')
+                      'first day of classes', 'first day of class',
+                      'school begins', 'school starts', 'classes begin',
+                      '1st day of school')
 LAST_DAY_KEYWORDS = ('last day of school', 'last day for students',
-                     'school ends', 'end of school year')
+                     'last day of classes', 'last day of class',
+                     'school ends', 'classes end', 'end of school year')
 # A first day with no last-day event published yet: assume ~11 months.
 OPEN_YEAR_DAYS = 330
 
@@ -83,14 +86,16 @@ def _event_date(e):
 
 def _pair_intervals(firsts, lasts):
     """Pair sorted first-day dates with the next last-day date after each
-    into (start, end) school-year intervals; unpaired firsts get an
-    open-ended interval. Firsts inside an existing interval are ignored."""
+    into (start, end, end_estimated) school-year intervals; unpaired firsts
+    get an open-ended interval whose end is a synthetic estimate, never a
+    real event. Firsts inside an existing interval are ignored."""
     intervals = []
     for f in sorted(firsts):
-        if any(s <= f <= e for s, e in intervals):
+        if any(s <= f <= e for s, e, _ in intervals):
             continue
         nxt = next((l for l in sorted(lasts) if l >= f), None)
-        intervals.append((f, nxt or f + datetime.timedelta(days=OPEN_YEAR_DAYS)))
+        intervals.append((f, nxt or f + datetime.timedelta(days=OPEN_YEAR_DAYS),
+                          nxt is None))
     return intervals
 
 
@@ -183,7 +188,7 @@ def school_in_session(day) -> bool:
     with _lock:
         # Auto bounds only when the parent hasn't taken manual control.
         if not manual_bounds and _cache['intervals'] \
-                and not any(s <= day <= e for s, e in _cache['intervals']):
+                and not any(s <= day <= e for s, e, _ in _cache['intervals']):
             return False
         return day.isoformat() not in _cache['dates']
 
@@ -206,7 +211,7 @@ def status():
     }
     if cal_id and _ensure_cache(cal_id, settings, today):
         with _lock:
-            out['detected_years'] = [[s.isoformat(), e.isoformat()]
-                                     for s, e in _cache['intervals']]
+            out['detected_years'] = [[s.isoformat(), e.isoformat(), bool(est)]
+                                     for s, e, est in _cache['intervals']]
             out['no_school_days_cached'] = len(_cache['dates'])
     return out

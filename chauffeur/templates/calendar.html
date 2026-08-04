@@ -200,6 +200,17 @@
             border-color: var(--ha-primary-color) !important;
         }
         body.ha-theme .ambient-glow { display: none !important; }
+        /* The event-details modal uses translucent-white text; ha_theme.html
+           only remaps bare .text-white, so on a light HA theme these stayed
+           near-white on the light glass panel. Remap them to the theme text
+           color at similar opacities. Scoped to the modal — the calendar
+           grid's text-white/NN chips sit on event-colored backgrounds and
+           must stay white. */
+        body.ha-theme #simple-event-modal .text-white\/80 { color: color-mix(in srgb, var(--ha-primary-text) 85%, transparent) !important; }
+        body.ha-theme #simple-event-modal .text-white\/60 { color: color-mix(in srgb, var(--ha-primary-text) 70%, transparent) !important; }
+        body.ha-theme #simple-event-modal .text-white\/50 { color: color-mix(in srgb, var(--ha-primary-text) 60%, transparent) !important; }
+        body.ha-theme #simple-event-modal .text-white\/40 { color: color-mix(in srgb, var(--ha-primary-text) 55%, transparent) !important; }
+        body.ha-theme #simple-event-modal .hover\:text-white:hover { color: var(--ha-primary-text) !important; }
 
         /* Agenda view */
         .agenda-btn {
@@ -1119,20 +1130,25 @@
 
                         let fcEvents = Array.from(eventsMap.values());
 
-                        // Apply filtering
+                        // Apply filtering. Passengers define who an event is
+                        // "for"; the driver only counts when there are no
+                        // passengers (their own event). Counting the driver on
+                        // passenger events meant assigned events never hid —
+                        // a visible parent-driver kept every ride on screen.
                         fcEvents = fcEvents.filter(ev => {
                             let participants = new Set();
                             if (ev.extendedProps.passengers) {
                                 ev.extendedProps.passengers.forEach(p => participants.add(p.name));
                             }
-                            if (ev.extendedProps.driverName && ev.extendedProps.driverName !== 'Multiple Drivers') {
+                            if (participants.size === 0
+                                && ev.extendedProps.driverName && ev.extendedProps.driverName !== 'Multiple Drivers') {
                                 participants.add(ev.extendedProps.driverName);
                             }
-                            
+
                             // If event has no mapped participants, show it
                             if (participants.size === 0) return true;
-                            
-                            // If ALL participants are in hiddenMembers, hide event
+
+                            // Hide only when EVERY person it's for is toggled off
                             let allHidden = true;
                             for (let p of participants) {
                                 if (!window.hiddenMembers.has(p)) {

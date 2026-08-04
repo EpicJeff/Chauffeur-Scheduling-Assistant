@@ -886,23 +886,18 @@ def create_trip_api(req: CreateTripRequest):
 @app.get("/trip")
 def trip_view(request: Request, event_id: str):
     import datetime
-    # Kiosk displays get a read-only compact view: no editing surfaces and no
-    # Mapbox map loads (wall displays reload often and would burn the quota).
-    if request.query_params.get("kiosk") == "true":
-        response = templates.TemplateResponse(request=request, name="trip_kiosk.html", context={
-            "event_id": event_id
-        })
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        return response
-
     current_month = datetime.datetime.now().strftime("%Y-%m")
     mapbox_key = maps.get_mapbox_api_key()
     enable_loads = maps.get_map_option('enable_mapbox_map_loads', True)
     limit = maps.get_map_option('mapbox_map_loads_limit', 45000)
     current_usage = storage.get_mapbox_usage(current_month, 'map_loads')
     allow_map_loads = enable_loads and (current_usage < limit)
-    
-    response = templates.TemplateResponse(request=request, name="trip.html", context={
+
+    # Kiosk displays get a read-only compact view: no editing surfaces, but
+    # the same map (quota-gated like the full page — kiosks reload often, so
+    # the monthly map-load limit is the safety valve).
+    name = "trip_kiosk.html" if request.query_params.get("kiosk") == "true" else "trip.html"
+    response = templates.TemplateResponse(request=request, name=name, context={
         "event_id": event_id,
         "mapbox_key": mapbox_key,
         "allow_map_loads": allow_map_loads

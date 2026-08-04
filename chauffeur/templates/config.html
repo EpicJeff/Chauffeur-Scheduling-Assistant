@@ -3572,7 +3572,7 @@
                         line += ` Manual override: ${s.manual_start ? fmt(s.manual_start) : '…'} – ${s.manual_end ? fmt(s.manual_end) : '…'}.`;
                     } else if (s.detected_years && s.detected_years.length) {
                         line += ` Detected school year${s.detected_years.length > 1 ? 's' : ''}: `
-                            + s.detected_years.map(y => `${fmt(y[0])} – ${fmt(y[1])}`).join(', ') + '.';
+                            + s.detected_years.map(y => `${fmt(y[0])} – ${fmt(y[1])}${y[2] ? ' (end estimated — no last-day event recognized)' : ''}`).join(', ') + '.';
                     } else {
                         line += ' ⚠️ No "First/Last Day of School" events found on the calendar — set the override dates.';
                     }
@@ -3995,7 +3995,7 @@
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
                         allowed_driver_ids: [...(car.allowed_driver_ids || [])],
                         allowed_passenger_ids: car.allowed_passenger_ids ? [...car.allowed_passenger_ids] : null,
-                        default_driver_id: car.default_driver_id || '',
+                        default_driver_id: '',
                         unavailable_ranges: (car.unavailable_ranges || []).map(r => ({ ...r })),
                         is_disabled: !!car.is_disabled,
                         notes: car.notes || '',
@@ -4007,6 +4007,13 @@
                     this.carPaxMode = car.allowed_passenger_ids ? 'limited' : 'any';
                     this.editCarId = car.doc_id;
                     this.showCarForm = true;
+                    // The usual-driver <option>s are x-for generated from
+                    // allowed_driver_ids; a native <select> silently drops a
+                    // value set before its option exists, so apply it after
+                    // the options render.
+                    this.$nextTick(() => {
+                        this.newCar.default_driver_id = car.default_driver_id || '';
+                    });
                 },
 
                 cancelEditCar() {

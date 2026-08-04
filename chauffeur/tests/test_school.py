@@ -127,6 +127,31 @@ def scenario_auto_year_bounds_from_markers():
               "before the first first-day is out")
 
 
+def scenario_classes_wording_and_estimated_flag():
+    # Districts that say "classes" instead of "school" must still be
+    # recognized — a missed last-day marker silently turns into a synthetic
+    # +330d year end (the July-20-out-of-nowhere bug).
+    school._reset_cache()
+    _settings(school_calendar_id="school")
+    f = MONDAY - datetime.timedelta(days=98)
+    l = MONDAY + datetime.timedelta(days=98)
+    with _gcal_events([_all_day("First Day of Classes", f),
+                       _all_day("Last day of classes", l)]):
+        check(school.school_in_session(MONDAY) is True, "inside the year")
+        check(school.school_in_session(l + datetime.timedelta(days=7)) is False,
+              "'last day of classes' recognized as the year end")
+        st = school.status()
+        check(st['detected_years'] == [[f.isoformat(), l.isoformat(), False]],
+              "paired year reported with end_estimated=False")
+    # An unpaired first day surfaces its synthetic end as estimated.
+    school._reset_cache()
+    with _gcal_events([_all_day("First Day of Classes", f)]):
+        school.school_in_session(MONDAY)
+        st = school.status()
+        check(len(st['detected_years']) == 1 and st['detected_years'][0][2] is True,
+              "open-ended year reported with end_estimated=True")
+
+
 def scenario_open_ended_year_and_manual_override():
     school._reset_cache()
     _settings(school_calendar_id="school")
@@ -166,6 +191,7 @@ SCENARIOS = [
     scenario_custom_keywords,
     scenario_fetch_failure_fails_open,
     scenario_auto_year_bounds_from_markers,
+    scenario_classes_wording_and_estimated_flag,
     scenario_open_ended_year_and_manual_override,
     scenario_bus_launch_honors_the_gate,
 ]

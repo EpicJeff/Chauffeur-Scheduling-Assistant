@@ -10,6 +10,8 @@
     </script>
     {% include 'ha_theme.html' %}
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
     <style>
         .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -17,6 +19,9 @@
         /* Hero text sits on a photo behind a dark gradient — it must stay
            white even when the HA theme maps text-white to a dark color. */
         .hero-text, .hero-text * { color: #fff !important; }
+
+        /* Mapbox popups keep their own light chrome regardless of theme. */
+        .mapboxgl-popup-content { color: #111; }
     </style>
 </head>
 
@@ -42,6 +47,17 @@
                 </div>
             </div>
         </div>
+
+        <!-- Map -->
+        <section id="map-section" class="hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-lg font-bold text-white">Map</h2>
+                <span id="map-day-hint" class="text-xs text-gray-400">Tap a day below to see its stops and routes</span>
+            </div>
+            <div class="rounded-2xl overflow-hidden border border-gray-700 shadow-lg">
+                <div id="poi-map" class="w-full h-[340px] sm:h-[400px]"></div>
+            </div>
+        </section>
 
         <!-- Daily Itinerary -->
         <section id="days-section" class="hidden">
@@ -82,9 +98,36 @@
         <p id="empty-msg" class="hidden text-center text-gray-400 py-10">Nothing planned for this trip yet.</p>
     </main>
 
+    <!-- Read-only details modal (attractions + accommodations) -->
+    <div id="details-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onclick="if (event.target === this) closeDetails()">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto no-scrollbar shadow-2xl">
+            <div class="relative">
+                <div id="detail-header" class="h-36 bg-cover bg-center bg-gray-700"></div>
+                <button onclick="closeDetails()" aria-label="Close"
+                    class="absolute top-3 right-3 bg-black/50 hover:bg-black/70 rounded-full w-8 h-8 flex items-center justify-center font-bold" style="color:#fff">✕</button>
+            </div>
+            <div class="p-4 flex flex-col gap-3">
+                <div>
+                    <h3 id="detail-title" class="text-xl font-extrabold text-white leading-tight"></h3>
+                    <p id="detail-subtitle" class="text-sm text-gray-400 mt-0.5"></p>
+                </div>
+                <div id="detail-chips" class="flex flex-wrap gap-1.5"></div>
+                <div id="detail-rows" class="flex flex-col gap-2.5"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const EVENT_ID = '{{ event_id }}';
+        const MAPBOX_KEY = '{{ mapbox_key }}';
+        const ALLOW_MAP_LOADS = {{ allow_map_loads | lower }};
         let tripData = null;
+        let poiMap = null;
+        let mapMarkers = [];
+        let routeLayerKeys = [];
+        let selectedDayKey = null;
+        let groupedActivities = {};
+        let cachedRoutes = {};
 
         function esc(s) {
             return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -109,9 +152,13 @@
             return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         }
 
-        function categoryEmoji(act) {
-            const relatedPoi = (tripData.metadata.pois || []).find(p =>
+        function poiForActivity(act) {
+            return (tripData.metadata.pois || []).find(p =>
                 p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
+        }
+
+        function categoryEmoji(act) {
+            const relatedPoi = poiForActivity(act);
             if (relatedPoi && relatedPoi.category) {
                 const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️', 'other': '📍' };
                 const norm = relatedPoi.category.toLowerCase().trim();
@@ -175,11 +222,15 @@
             }
         }
 
+        function tzOptions() {
+            return tripData.event.timeZone && tripData.event.timeZone !== 'UTC'
+                ? { timeZone: tripData.event.timeZone } : {};
+        }
+
         function renderDays() {
             const acts = tripData.activities || [];
             if (acts.length === 0) return false;
-            const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== 'UTC'
-                ? { timeZone: tripData.event.timeZone } : {};
+            const tzOpts = tzOptions();
 
             // Group by day, mirroring trip.html's renderActivities().
             const grouped = {};
@@ -206,6 +257,8 @@
                 if (!grouped[dayKey]) grouped[dayKey] = { sortKey, items: [] };
                 grouped[dayKey].items.push(act);
             });
+            Object.values(grouped).forEach(g => g.items.sort((a, b) => (a.start || 0) - (b.start || 0)));
+            groupedActivities = grouped;
 
             const sortedKeys = Object.keys(grouped).sort((a, b) => grouped[a].sortKey - grouped[b].sortKey);
             const track = document.getElementById('days-track');
@@ -215,10 +268,12 @@
             sortedKeys.forEach(dayKey => {
                 const slide = document.createElement('div');
                 const isToday = !isFlexibleDraft() && dayKey === todayKey;
-                slide.className = `snap-start shrink-0 w-[260px] bg-gray-800 border ${isToday ? 'border-blue-500' : 'border-gray-700'} rounded-2xl p-3 flex flex-col`;
+                slide.dataset.dayKey = dayKey;
+                slide.dataset.todayBorder = isToday ? 'border-blue-500' : 'border-gray-700';
+                slide.className = `snap-start shrink-0 w-[260px] bg-gray-800 border ${isToday ? 'border-blue-500' : 'border-gray-700'} rounded-2xl p-3 flex flex-col cursor-pointer`;
                 let rows = `<div class="flex items-center justify-between border-b border-gray-700 pb-2 mb-2">
                     <h3 class="text-white font-bold text-sm">${esc(dayKey)}</h3>
-                    ${isToday ? '<span class="text-[10px] font-bold text-blue-400 uppercase tracking-wide">Today</span>' : ''}
+                    <span class="day-badge text-[10px] font-bold text-blue-400 uppercase tracking-wide">${isToday ? 'Today' : ''}</span>
                 </div><div class="flex flex-col gap-2 max-h-[300px] overflow-y-auto no-scrollbar">`;
                 grouped[dayKey].items.forEach(act => {
                     const start = act.start ? new Date(act.start * 1000) : null;
@@ -230,12 +285,31 @@
                     </div>`;
                 });
                 slide.innerHTML = rows + '</div>';
+                slide.addEventListener('click', () => toggleDay(dayKey));
                 track.appendChild(slide);
                 if (isToday) todaySlide = slide;
             });
 
             if (todaySlide) setTimeout(() => track.scrollTo({ left: todaySlide.offsetLeft - track.offsetLeft }), 50);
             return true;
+        }
+
+        function toggleDay(dayKey) {
+            selectedDayKey = selectedDayKey === dayKey ? null : dayKey;
+            document.querySelectorAll('#days-track [data-day-key]').forEach(slide => {
+                const selected = slide.dataset.dayKey === selectedDayKey;
+                slide.classList.remove('border-blue-500', 'border-gray-700', 'border-indigo-400');
+                slide.classList.add(selected ? 'border-indigo-400' : slide.dataset.todayBorder);
+                const badge = slide.querySelector('.day-badge');
+                if (badge) badge.innerText = selected ? 'On map'
+                    : (slide.dataset.todayBorder === 'border-blue-500' ? 'Today' : '');
+            });
+            const hint = document.getElementById('map-day-hint');
+            if (hint) hint.innerText = selectedDayKey
+                ? `Showing ${selectedDayKey} — tap the day again for the whole trip`
+                : 'Tap a day below to see its stops and routes';
+            if (selectedDayKey) document.getElementById('map-section').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            renderMapContent();
         }
 
         function renderFlights() {
@@ -269,7 +343,7 @@
             const track = document.getElementById('accs-track');
             accs.forEach(acc => {
                 const slide = document.createElement('div');
-                slide.className = 'snap-start shrink-0 w-[280px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col';
+                slide.className = 'snap-start shrink-0 w-[280px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col cursor-pointer hover:border-gray-500';
                 const img = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`;
                 slide.innerHTML = `
                     <div class="h-24 bg-cover bg-center bg-gray-700" style="background-image:url('${img}')"></div>
@@ -283,6 +357,7 @@
                         </div>
                         ${acc.estimated_price_usd ? `<p class="text-right text-emerald-400 font-black text-sm">$${Math.round(acc.estimated_price_usd).toLocaleString()}<span class="text-[10px] text-gray-400 font-normal"> / night</span></p>` : ''}
                     </div>`;
+                slide.addEventListener('click', () => openAccDetails(tripData.metadata.accommodations.indexOf(acc)));
                 track.appendChild(slide);
             });
             return true;
@@ -298,9 +373,9 @@
                 'want': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
                 'stretch': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
             };
-            pois.forEach(poi => {
+            pois.forEach((poi, idx) => {
                 const slide = document.createElement('div');
-                slide.className = 'snap-start shrink-0 w-[240px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col';
+                slide.className = 'snap-start shrink-0 w-[240px] bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden flex flex-col cursor-pointer hover:border-gray-500';
                 const prio = poi.priority || 'want';
                 // Same image sourcing as trip.html's attraction cards: image_url
                 // only (leading slash stripped for HA ingress-relative paths),
@@ -319,9 +394,256 @@
                             : '<span class="bg-gray-700 text-gray-400 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Unscheduled</span>'}
                     </div>
                     </div>`;
+                slide.addEventListener('click', () => openPoiDetails(idx));
                 track.appendChild(slide);
             });
             return true;
+        }
+
+        // ---------- Read-only details modal ----------
+
+        function detailRow(label, value, opts = {}) {
+            if (!value) return '';
+            const body = opts.href
+                ? `<a href="${esc(opts.href)}" target="_blank" rel="noopener" class="text-sm text-blue-400 font-semibold break-all">${esc(value)}</a>`
+                : `<p class="text-sm text-gray-200 whitespace-pre-wrap">${esc(value)}</p>`;
+            return `<div class="bg-gray-700/60 rounded-lg p-2.5">
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">${esc(label)}</p>
+                ${body}</div>`;
+        }
+
+        function showDetails({ image, title, subtitle, chips, rows }) {
+            document.getElementById('detail-header').style.backgroundImage = image ? `url('${image}')` : 'none';
+            document.getElementById('detail-title').innerText = title || '';
+            document.getElementById('detail-subtitle').innerText = subtitle || '';
+            document.getElementById('detail-chips').innerHTML = chips || '';
+            document.getElementById('detail-rows').innerHTML = rows || '';
+            document.getElementById('details-modal').classList.remove('hidden');
+        }
+
+        function closeDetails() {
+            document.getElementById('details-modal').classList.add('hidden');
+        }
+
+        function openPoiDetails(idx) {
+            const poi = (tripData.metadata.pois || [])[idx];
+            if (!poi) return;
+            const prio = poi.priority || 'want';
+            const prioChip = {
+                'must': '<span class="bg-red-500/20 text-red-400 border-red-500/30 text-[10px] px-2 py-0.5 rounded-full border font-bold">Must See</span>',
+                'want': '<span class="bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px] px-2 py-0.5 rounded-full border font-bold">Want</span>',
+                'stretch': '<span class="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-2 py-0.5 rounded-full border font-bold">Stretch</span>'
+            }[prio];
+            const schedChip = poi.is_scheduled
+                ? '<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold">Scheduled</span>'
+                : '<span class="bg-gray-700 text-gray-400 border border-gray-600 text-[10px] px-2 py-0.5 rounded-full font-bold">Unscheduled</span>';
+            const imgUrl = (poi.image_url || '').startsWith('/api/')
+                ? poi.image_url.substring(1) : (poi.image_url || '');
+            const notes = [poi.description, poi.notes].filter(Boolean).join('\n\n');
+            const idealTime = (poi.ideal_start_time || poi.ideal_end_time)
+                ? `${poi.ideal_start_time || '?'} – ${poi.ideal_end_time || '?'}` : '';
+            showDetails({
+                image: imgUrl,
+                title: poi.name,
+                subtitle: [poi.category, poi.location].filter(Boolean).join(' · '),
+                chips: `${prioChip}${schedChip}`,
+                rows: detailRow('The experience', poi.experience)
+                    + detailRow('Why Argyle picked this', poi.why_picked)
+                    + detailRow('Notes', notes)
+                    + detailRow('Suggested duration', poi.duration_mins ? `${poi.duration_mins} min` : '')
+                    + detailRow('Ideal time', idealTime)
+                    + detailRow('Opening hours', poi.opening_hours)
+                    + detailRow('Cuisine', poi.cuisine)
+                    + detailRow('Internet', poi.internet_access)
+                    + detailRow('Website', poi.website, { href: poi.website })
+                    + detailRow('Phone', poi.phone, { href: poi.phone ? `tel:${poi.phone}` : null })
+                    + detailRow('More info', poi.link ? 'Open link' : '', { href: poi.link })
+            });
+        }
+
+        function openAccDetails(idx) {
+            const acc = (tripData.metadata.accommodations || [])[idx];
+            if (!acc) return;
+            const img = `api/unsplash/background?query=${encodeURIComponent(acc.name || '').replace(/'/g, '%27')}${acc.wikidata_id ? '&wikidata_id=' + encodeURIComponent(acc.wikidata_id) : ''}`;
+            const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([acc.name, acc.location].filter(Boolean).join(' '))}`;
+            showDetails({
+                image: img,
+                title: `🏨 ${acc.name || 'Accommodation'}`,
+                subtitle: acc.location || '',
+                chips: '',
+                rows: detailRow('Check-in', formatAccDate(acc.check_in_date))
+                    + detailRow('Check-out', formatAccDate(acc.check_out_date))
+                    + detailRow('Price', acc.estimated_price_usd ? `$${Math.round(acc.estimated_price_usd).toLocaleString()} / night` : '')
+                    + detailRow('Internet', acc.internet_access)
+                    + detailRow('Notes', acc.notes)
+                    + detailRow('Website', acc.website, { href: acc.website })
+                    + detailRow('Phone', acc.phone, { href: acc.phone ? `tel:${acc.phone}` : null })
+                    + detailRow('Find on Google Maps', 'Open map', { href: mapsUrl })
+            });
+        }
+        window.kioskOpenPoi = openPoiDetails;
+        window.kioskOpenAcc = openAccDetails;
+
+        // ---------- Map ----------
+
+        function haversineKm(a, b) {
+            const R = 6371, dLat = (b[1] - a[1]) * Math.PI / 180, dLng = (b[0] - a[0]) * Math.PI / 180;
+            const h = Math.sin(dLat / 2) ** 2
+                + Math.cos(a[1] * Math.PI / 180) * Math.cos(b[1] * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(h));
+        }
+
+        function activityCoords(act) {
+            const poi = poiForActivity(act);
+            return (poi && poi.lat != null && poi.lng != null) ? [poi.lng, poi.lat] : null;
+        }
+
+        function selectedDateStr() {
+            if (!selectedDayKey || !groupedActivities[selectedDayKey]) return null;
+            const first = groupedActivities[selectedDayKey].items.find(a => a.start);
+            if (!first) return null;
+            // en-CA formats as YYYY-MM-DD in the trip's timezone.
+            return new Date(first.start * 1000).toLocaleDateString('en-CA', tzOptions());
+        }
+
+        function initMap() {
+            const pois = tripData.metadata.pois || [];
+            const accs = tripData.metadata.accommodations || [];
+            const hasCoords = pois.some(p => p.lat != null && p.lng != null)
+                || accs.some(a => a.lat != null && a.lng != null);
+            if (!MAPBOX_KEY || !ALLOW_MAP_LOADS || !hasCoords || typeof mapboxgl === 'undefined') return;
+
+            document.getElementById('map-section').classList.remove('hidden');
+            mapboxgl.accessToken = MAPBOX_KEY;
+            poiMap = new mapboxgl.Map({
+                container: 'poi-map',
+                style: 'mapbox://styles/mapbox/dark-v11',
+                center: [-98.5795, 39.8283],
+                zoom: 3
+            });
+            poiMap.addControl(new mapboxgl.NavigationControl());
+            poiMap.once('load', () => {
+                fetch('api/telemetry/mapbox_map_load', { method: 'POST' }).catch(() => {});
+                renderMapContent();
+            });
+        }
+
+        function clearRoutes() {
+            routeLayerKeys.forEach(key => {
+                if (poiMap.getLayer(`route-layer-${key}`)) poiMap.removeLayer(`route-layer-${key}`);
+                if (poiMap.getSource(`route-source-${key}`)) poiMap.removeSource(`route-source-${key}`);
+            });
+            routeLayerKeys = [];
+        }
+
+        function renderMapContent() {
+            if (!poiMap) return;
+            if (!poiMap.isStyleLoaded()) { poiMap.once('idle', renderMapContent); return; }
+
+            mapMarkers.forEach(m => m.remove());
+            mapMarkers = [];
+            clearRoutes();
+
+            const pois = tripData.metadata.pois || [];
+            const accs = tripData.metadata.accommodations || [];
+            const bounds = new mapboxgl.LngLatBounds();
+            let allowedIds = null;
+            if (selectedDayKey && groupedActivities[selectedDayKey]) {
+                allowedIds = new Set(groupedActivities[selectedDayKey].items.map(a => a.id));
+            }
+
+            pois.forEach((poi, idx) => {
+                if (poi.lat == null || poi.lng == null) return;
+                if (allowedIds) {
+                    const onDay = poi.event_id && [...allowedIds].some(id =>
+                        id === poi.event_id || id.endsWith(poi.event_id));
+                    if (!onDay) return;
+                }
+                const color = poi.is_scheduled ? '#10b981'
+                    : ({ 'must': '#ef4444', 'want': '#3b82f6', 'stretch': '#eab308' }[poi.priority] || '#3b82f6');
+                const popup = new mapboxgl.Popup({ offset: 18 }).setHTML(
+                    `<div style="font-weight:700;margin-bottom:4px;">${esc(poi.name)}</div>
+                     <button onclick="window.kioskOpenPoi(${idx})"
+                        style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-weight:700;cursor:pointer;">Details</button>`);
+                const marker = new mapboxgl.Marker({ color }).setLngLat([poi.lng, poi.lat]).setPopup(popup).addTo(poiMap);
+                mapMarkers.push(marker);
+                bounds.extend([poi.lng, poi.lat]);
+            });
+
+            const dateStr = selectedDateStr();
+            accs.forEach((acc, idx) => {
+                if (acc.lat == null || acc.lng == null) return;
+                if (dateStr && acc.check_in_date && acc.check_out_date
+                    && !(acc.check_in_date <= dateStr && dateStr <= acc.check_out_date)) return;
+                const el = document.createElement('div');
+                el.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#a855f7;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:pointer;';
+                el.textContent = '🏨';
+                const popup = new mapboxgl.Popup({ offset: 18 }).setHTML(
+                    `<div style="font-weight:700;margin-bottom:4px;">${esc(acc.name)}</div>
+                     <button onclick="window.kioskOpenAcc(${idx})"
+                        style="background:#a855f7;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-weight:700;cursor:pointer;">Details</button>`);
+                const marker = new mapboxgl.Marker({ element: el }).setLngLat([acc.lng, acc.lat]).setPopup(popup).addTo(poiMap);
+                mapMarkers.push(marker);
+                bounds.extend([acc.lng, acc.lat]);
+            });
+
+            if (!bounds.isEmpty()) poiMap.fitBounds(bounds, { padding: 60, maxZoom: 14 });
+            if (selectedDayKey) drawDayRoutes(selectedDayKey);
+        }
+
+        async function drawDayRoutes(dayKey) {
+            const items = (groupedActivities[dayKey] || {}).items || [];
+            const legs = [];
+            for (let i = 0; i < items.length - 1; i++) {
+                const a = items[i], b = items[i + 1];
+                const ca = activityCoords(a), cb = activityCoords(b);
+                if (ca && cb) legs.push({ key: `${a.id}-${b.id}`, a, b, ca, cb });
+            }
+            for (const leg of legs) {
+                if (!cachedRoutes[leg.key]) {
+                    const walkable = haversineKm(leg.ca, leg.cb) < 1.2;
+                    const route = await fetchRoute(leg, walkable ? 'walking' : 'driving')
+                        || (walkable ? await fetchRoute(leg, 'driving') : null);
+                    if (!route) continue;
+                    cachedRoutes[leg.key] = route;
+                }
+                // Day may have changed while the route was in flight.
+                if (selectedDayKey !== dayKey) return;
+                drawRoute(leg.key, cachedRoutes[leg.key]);
+            }
+        }
+
+        async function fetchRoute(leg, profile) {
+            try {
+                const params = `origin=${encodeURIComponent(leg.a.location || leg.a.title || '')}`
+                    + `&destination=${encodeURIComponent(leg.b.location || leg.b.title || '')}`
+                    + `&profile=${profile}`
+                    + `&origin_lat=${leg.ca[1]}&origin_lng=${leg.ca[0]}&dest_lat=${leg.cb[1]}&dest_lng=${leg.cb[0]}`;
+                const res = await fetch(`api/maps/route_geometry?${params}`);
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (!data.geometry) return null;
+                return { geometry: data.geometry, type: profile };
+            } catch (e) { return null; }
+        }
+
+        function drawRoute(key, route) {
+            if (!poiMap.isStyleLoaded()) { poiMap.once('idle', () => drawRoute(key, route)); return; }
+            if (poiMap.getSource(`route-source-${key}`)) return;
+            poiMap.addSource(`route-source-${key}`, {
+                type: 'geojson',
+                data: { type: 'Feature', properties: {}, geometry: route.geometry }
+            });
+            poiMap.addLayer({
+                id: `route-layer-${key}`,
+                type: 'line',
+                source: `route-source-${key}`,
+                layout: { 'line-join': 'round', 'line-cap': 'round' },
+                paint: route.type === 'walking'
+                    ? { 'line-color': '#10b981', 'line-width': 3.5, 'line-dasharray': [1, 1.5] }
+                    : { 'line-color': '#3b82f6', 'line-width': 3.5 }
+            });
+            routeLayerKeys.push(key);
         }
 
         async function loadTrip() {
@@ -353,9 +675,11 @@
                 }
             });
             if (!any) document.getElementById('empty-msg').classList.remove('hidden');
+            initMap();
         }
 
         document.addEventListener('DOMContentLoaded', loadTrip);
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetails(); });
         window.addEventListener('resize', () => ['days', 'flights', 'accs', 'pois'].forEach(k => {
             if (!document.getElementById(`${k}-section`).classList.contains('hidden')) setupCarousel(k);
         }));
