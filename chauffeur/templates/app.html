@@ -407,6 +407,9 @@
         let selectedMemberId = localStorage.getItem('chauffeur_member_id');
         let currentDates = [];
         let activeDateIndex = 0;
+        let timelineInitialized = false;    // first build snaps to today
+        const _timelineLoadTs = Date.now(); // early scrolls = snapshot restoration, not the user
+        let _timelineUserTouched = false;   // real interaction disables the restoration guard
         let routeContext = null;
         let currentView = localStorage.getItem('chauffeur_view') || 'drives';
 
@@ -3077,7 +3080,6 @@
             const dId = selectedDriverId;
             if (!scheduleData || !dId) return;
 
-            const savedScrollLeft = container.scrollLeft;
             const savedPaneScrolls = {};
             const existingPanes = container.querySelectorAll('[id^="pane-"]');
             existingPanes.forEach(p => {
@@ -3392,8 +3394,18 @@
                 container.appendChild(pane);
             });
 
-            // Restore scroll state synchronously to prevent jumping
-            container.scrollLeft = savedScrollLeft;
+            // The horizontal position is tracked by INDEX (activeDateIndex),
+            // never by raw pixels: an iOS PWA relaunch restores stale element
+            // scroll offsets from its page snapshot after first paint, which
+            // opened the strip on an arbitrary day pane. The first build
+            // snaps to today; rebuilds keep the pane the user is on.
+            if (!timelineInitialized) {
+                const todayStr = new Date().toLocaleDateString('en-CA');
+                activeDateIndex = Math.max(0, currentDates.indexOf(todayStr));
+                timelineInitialized = true;
+            }
+            activeDateIndex = Math.max(0, Math.min(activeDateIndex, currentDates.length - 1));
+            container.scrollLeft = activeDateIndex * container.clientWidth;
             Object.keys(savedPaneScrolls).forEach(id => {
                 const p = document.getElementById(id);
                 if (p) p.scrollTop = savedPaneScrolls[id];
@@ -3402,15 +3414,22 @@
             updateHeaderDate();
 
             // Set up scroll snapping logic
+            container.ontouchstart = () => { _timelineUserTouched = true; };
+            container.onpointerdown = () => { _timelineUserTouched = true; };
             container.onscroll = () => {
-                const scrollLeft = container.scrollLeft;
                 const paneWidth = container.clientWidth;
                 if (paneWidth === 0) return;
-                const idx = Math.round(scrollLeft / paneWidth);
-                if (idx !== activeDateIndex) {
-                    activeDateIndex = idx;
-                    updateHeaderDate();
+                const idx = Math.round(container.scrollLeft / paneWidth);
+                if (idx === activeDateIndex) return;
+                // Scroll events in the first moments of page life that the
+                // user didn't initiate are the browser replaying its stale
+                // snapshot — force the strip back to the intended pane.
+                if (!_timelineUserTouched && Date.now() - _timelineLoadTs < 2000) {
+                    container.scrollLeft = activeDateIndex * paneWidth;
+                    return;
                 }
+                activeDateIndex = idx;
+                updateHeaderDate();
             };
         }
 
@@ -3547,6 +3566,7 @@
         }
 
         function prevDay() {
+            _timelineUserTouched = true;
             if (currentView === 'myday') { mydayShift(-1); return; }
             if (activeDateIndex > 0) {
                 const container = document.getElementById('days-container');
@@ -3558,6 +3578,7 @@
         }
 
         function nextDay() {
+            _timelineUserTouched = true;
             if (currentView === 'myday') { mydayShift(1); return; }
             if (activeDateIndex < currentDates.length - 1) {
                 const container = document.getElementById('days-container');
@@ -3626,7 +3647,7 @@
             activeDateIndex = 0;
             mydayOffset = 0;
             const container = document.getElementById('days-container');
-            if (container) container.scrollLeft = 0; // buildTimeline restores this as the saved position
+            if (container) container.scrollLeft = 0; // immediate visual reset; buildTimeline positions by activeDateIndex
             if (scheduleData && selectedDriverId) buildTimeline();
             if (currentView === 'myday') renderMyDay();
         }
