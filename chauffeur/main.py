@@ -7650,6 +7650,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             
             base_schedules[date_str] = {
                 "assignments": sched.get("assignments", {}),
+                # Every key Pass 3 persists must survive this reuse branch —
+                # omitting one silently erases it from the daily cache on the
+                # next routine refresh (how car_assignments kept vanishing).
+                "car_assignments": sched.get("car_assignments", {}),
                 "unassigned": sched.get("unassigned", []),
                 "lateness_warnings": sched.get("lateness_warnings", []),
                 "ghost_assignments": sched.get("ghost_assignments", {}),
