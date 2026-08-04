@@ -317,6 +317,35 @@ def ensure_member_roles():
 
 ensure_member_roles()
 
+def ensure_member_colors():
+    """One-time seed of child identity colors. Person colors on the calendar
+    used to be hash-assigned from the Google calendar id (see the PALETTE in
+    calendar.get_calendar_metadata); now the member's color_code is the single
+    source of truth everywhere. Children created passenger-first all sat at
+    the default blue, so without seeding the switch would render every kid
+    identical — adopt the hash color each kid was already showing. Adults
+    chose their colors (inherited from the driver record at member creation)
+    and are never touched. The color_seeded stamp makes this strictly
+    one-shot: a child who later deliberately picks the default blue is not
+    re-seeded on restart."""
+    PALETTE = ["#3B82F6", "#10B981", "#8B5CF6", "#EC4899",
+               "#14B8A6", "#F97316", "#06B6D4", "#84CC16"]
+    with db_lock:
+        pax_by_id = {p.get('id'): p for p in passengers_table.all()}
+        for m in members_table.all():
+            if m.get('color_seeded'):
+                continue
+            updates = {'color_seeded': True}
+            is_child = m.get('role') == 'child' or m.get('is_child')
+            if is_child and (m.get('color_code') or '').lower() == '#3b82f6':
+                p = pax_by_id.get(m.get('passenger_id')) or {}
+                cals = p.get('calendar_ids') or []
+                if cals:
+                    updates['color_code'] = PALETTE[sum(ord(c) for c in cals[0]) % len(PALETTE)]
+            members_table.update(updates, doc_ids=[m.doc_id])
+
+ensure_member_colors()
+
 def ensure_family_channel():
     """Singleton all-family chat channel (kind='family', empty member_ids =
     implicitly everyone). Idempotent."""
@@ -598,6 +627,14 @@ def add_driver(driver_data: dict) -> int:
         doc_id = drivers_table.insert(driver_data)
         ensure_members()
         return doc_id
+
+def update_driver_fields(driver_id: str, updates: dict) -> bool:
+    """Partial update of a driver record by its string id (not doc_id).
+    For cosmetic fields only (e.g. color_code synced from the member's
+    identity color) — deliberately does NOT invalidate schedule caches,
+    since nothing the solver reads changes."""
+    with db_lock:
+        return bool(drivers_table.update(updates, Query().id == driver_id))
 
 def delete_driver(doc_id: int):
     with db_lock:

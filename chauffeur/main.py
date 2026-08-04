@@ -2968,6 +2968,12 @@ def update_member_endpoint(member_id: str, updates: dict):
         updates['is_child'] = updates['role'] == 'child'
     if not storage.update_member(member_id, updates):
         raise HTTPException(status_code=404, detail="Member not found")
+    if 'color_code' in updates:
+        # Identity color is the single source of truth — keep the legacy
+        # driver record in step so anything still reading it agrees.
+        m = storage.get_member(member_id)
+        if m and m.get('driver_id'):
+            storage.update_driver_fields(m['driver_id'], {'color_code': updates['color_code']})
     return {"status": "updated"}
 
 @app.delete("/api/members/{member_id}")
@@ -6227,9 +6233,56 @@ def test_push_notification(driver_id: str = None):
     return {"status": "sent"}
 
 
+def _apply_identity_colors(cal_meta: dict) -> dict:
+    """Family-member identity color (color_code) is the single source of truth
+    for person colors. Calendar metadata colors were only ever a deterministic
+    hash of the calendar id string (calendar.get_calendar_metadata) — nobody
+    chose them. Overlays the member's color onto every metadata entry they
+    own: their passenger-id key and all linked driver/passenger calendar ids.
+    Must run at SERVE time (not just cache-build time) so a color edit shows
+    up without waiting for caches to rebuild."""
+    if not cal_meta:
+        return cal_meta
+    try:
+        drivers_by_id = {d.get('id'): d for d in storage.get_all_drivers()}
+        pax_by_id = {p.get('id'): p for p in storage.get_all_passengers()}
+        for m in storage.get_all_members():
+            color = m.get('color_code')
+            if not color:
+                continue
+            keys = []
+            d = drivers_by_id.get(m.get('driver_id'))
+            if d:
+                keys.extend(d.get('calendar_ids') or [])
+            p = pax_by_id.get(m.get('passenger_id'))
+            if p:
+                keys.append(str(p.get('id')))
+                keys.extend(p.get('calendar_ids') or [])
+            for k in keys:
+                if k in cal_meta and isinstance(cal_meta[k], dict):
+                    cal_meta[k] = {**cal_meta[k], 'backgroundColor': color}
+    except Exception as ex:
+        logger.warning(f"Identity color overlay failed: {ex}")
+    return cal_meta
+
+
+def _identity_driver_colors(driver_list) -> list:
+    """Serve drivers with their member identity color so dashboard columns
+    match event bars and pills; the driver record's own color_code is a
+    legacy field kept only as a fallback."""
+    out = []
+    for d in driver_list or []:
+        dd = d.dict() if hasattr(d, 'dict') else dict(d)
+        m = storage.get_member_by_driver_id(dd.get('id'))
+        if m and m.get('color_code'):
+            dd['color_code'] = m['color_code']
+        out.append(dd)
+    return out
+
+
 @app.post("/api/calendars/metadata")
 def get_calendars_metadata(calendar_ids: list[str]):
-    return calendar.get_calendar_metadata(calendar_ids)
+    return _apply_identity_colors(calendar.get_calendar_metadata(calendar_ids))
 
 # --- Events API ---
 from typing import Optional
@@ -7370,7 +7423,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "unassigned": combined_true_unassigned,
             "no_location": no_location_events,
             "overridden_events": matcher.get_effective_overridden_event_ids(list(all_events_for_ui.values()), overrides),
-            "calendar_metadata": calendar_metadata,
+            "calendar_metadata": _apply_identity_colors(calendar_metadata),
             "lateness_warnings": combined_lateness_warnings,
             "passenger_calendar_ids": calendar_ids,
             "driver_events": driver_events_ids,
@@ -7378,7 +7431,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "diagnostics": diagnostics,
             "matched_rules": matched_rules,
             "passengers": passengers,
-            "drivers": drivers,
+            "drivers": _identity_driver_colors(drivers),
             "solving_dates": schedule_coordinator.get_solving_dates(),
             "ai_metadata": combined_ai_metadata,
             # Persisted so /api/overrides/check can explain trip conflicts
@@ -8035,6 +8088,10 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 cached["prep_by_event"] = _prep_by_event(cached.get("events"))
                 cached["prep_confirmed"] = storage.get_confirmed_preps()
                 cached["solving_dates"] = schedule_coordinator.get_solving_dates()
+                # Identity colors at serve time: cached metadata/driver colors
+                # predate any color edit made since the cache was built.
+                cached["calendar_metadata"] = _apply_identity_colors(cached.get("calendar_metadata") or {})
+                cached["drivers"] = _identity_driver_colors(cached.get("drivers"))
                 # Rate limit background refreshes to every 5 minutes per date range
                 import time
                 global last_bg_refresh
