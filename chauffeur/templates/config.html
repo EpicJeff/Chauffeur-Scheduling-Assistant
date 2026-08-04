@@ -687,6 +687,43 @@
                                 that day.
                             </p>
                         </div>
+                        <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <span class="font-bold text-gray-300">🏫 School Calendar</span>
+                            <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Calendar</label>
+                                    <select x-model="schoolCalendarId" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 max-w-[240px]">
+                                        <option value="">— not set (weekdays only) —</option>
+                                        <template x-for="c in calendarIds" :key="c">
+                                            <option :value="c" x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">School year</label>
+                                    <input type="date" x-model="schoolYearStart" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                    <span class="text-gray-500 text-sm">to</span>
+                                    <input type="date" x-model="schoolYearEnd" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-2 flex-1 min-w-[240px]">
+                                    <label class="text-sm text-gray-400 font-semibold shrink-0">No-school keywords</label>
+                                    <input type="text" x-model="schoolClosedKeywords" @change="saveSettings()"
+                                        placeholder="no school, holiday, break, closed, teacher workday"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
+                                </div>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                Tells Chauffeur what a school day is. School-day features (the after-school
+                                pickup push, bus leave-by lines) run on weekdays inside the school year,
+                                skipping any day the chosen calendar has an all-day event matching a
+                                no-school keyword — subscribe your district's calendar as an ICS feed and
+                                pick it here. Nothing set = plain weekdays, as before. Dates outside the
+                                school year (summer!) never count as school days.
+                            </p>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-6 border-t border-gray-700 flex justify-between items-center">
@@ -1134,6 +1171,26 @@
                                                         class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
                                                 </div>
                                             </div>
+                                            <details class="mt-2">
+                                                <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Other bus platforms: explicit HA entities (blank = Here Comes The Bus auto-discovery)</summary>
+                                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">AM stop-ETA sensor</span>
+                                                        <input type="text" x-model="memberEdit.bus_am_eta_entity" placeholder="sensor.…"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">PM stop-ETA sensor</span>
+                                                        <input type="text" x-model="memberEdit.bus_pm_eta_entity" placeholder="sensor.…"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-xs text-gray-500 mb-0.5">Bus-running binary sensor</span>
+                                                        <input type="text" x-model="memberEdit.bus_active_entity" placeholder="binary_sensor.…"
+                                                            class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-full">
+                                                    </div>
+                                                </div>
+                                            </details>
                                         </div>
                                         <button @click="testNotify(member)" x-show="member.notify_service"
                                             class="bg-purple-700 hover:bg-purple-600 text-white font-bold px-4 py-3 rounded transition-colors shadow-md text-sm">Test
@@ -2796,6 +2853,10 @@
                 kidDigestEnabled: true,
                 kidDigestTime: '19:30',
                 kidDigestCutover: '19:00',
+                schoolCalendarId: '',
+                schoolYearStart: '',
+                schoolYearEnd: '',
+                schoolClosedKeywords: '',
                 kidQuietStart: '20:30',
                 kidQuietEnd: '07:00',
                 llmTestResult: null,
@@ -3164,6 +3225,10 @@
                     this.kidDigestEnabled = data.kid_digest_enabled !== false;
                     this.kidDigestTime = data.kid_digest_time || '19:30';
                     this.kidDigestCutover = data.kid_digest_cutover_time || '19:00';
+                    this.schoolCalendarId = data.school_calendar_id || '';
+                    this.schoolYearStart = data.school_year_start || '';
+                    this.schoolYearEnd = data.school_year_end || '';
+                    this.schoolClosedKeywords = data.school_closed_keywords || '';
                     this.kidQuietStart = data.kid_quiet_start || '20:30';
                     this.kidQuietEnd = data.kid_quiet_end || '07:00';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
@@ -3261,6 +3326,10 @@
                             kid_digest_enabled: this.kidDigestEnabled,
                             kid_digest_time: this.kidDigestTime || '19:30',
                             kid_digest_cutover_time: this.kidDigestCutover || '19:00',
+                            school_calendar_id: this.schoolCalendarId || '',
+                            school_year_start: this.schoolYearStart || '',
+                            school_year_end: this.schoolYearEnd || '',
+                            school_closed_keywords: this.schoolClosedKeywords || '',
                             kid_quiet_start: this.kidQuietStart || '20:30',
                             kid_quiet_end: this.kidQuietEnd || '07:00'
                         };
@@ -3635,6 +3704,9 @@
                         bus_pm_stop_time: member.bus_pm_stop_time || '',
                         bus_walk_mins: member.bus_walk_mins || null,
                         bus_entity_prefix: member.bus_entity_prefix || '',
+                        bus_am_eta_entity: member.bus_am_eta_entity || '',
+                        bus_pm_eta_entity: member.bus_pm_eta_entity || '',
+                        bus_active_entity: member.bus_active_entity || '',
                     };
                 },
                 async resetMemberPin(member) {
@@ -3667,6 +3739,9 @@
                     updates.bus_pm_stop_time = updates.bus_pm_stop_time || null;
                     updates.bus_walk_mins = parseInt(updates.bus_walk_mins) || null;
                     updates.bus_entity_prefix = (updates.bus_entity_prefix || '').trim() || null;
+                    updates.bus_am_eta_entity = (updates.bus_am_eta_entity || '').trim() || null;
+                    updates.bus_pm_eta_entity = (updates.bus_pm_eta_entity || '').trim() || null;
+                    updates.bus_active_entity = (updates.bus_active_entity || '').trim() || null;
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },

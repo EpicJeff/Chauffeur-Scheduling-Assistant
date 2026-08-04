@@ -17,6 +17,11 @@ Member fields (children, set in Config → People next to school hours):
 - bus_walk_mins      int     — walk to the stop (default 5)
 - bus_entity_prefix  str     — HCTB entity prefix override; defaults to the
   member's lowercase first name (HCTB entities are sensor.{first}_bus_*)
+- bus_am_eta_entity / bus_pm_eta_entity / bus_active_entity — EXPLICIT HA
+  entity ids for districts on OTHER tracking platforms (Traversa, Edulog,
+  Zonar, …): any integration exposing a stop-ETA sensor (HH:MM or ISO
+  timestamp state) and an "is running" binary sensor plugs in here; blank
+  = HCTB auto-discovery.
 """
 import datetime
 
@@ -45,24 +50,48 @@ def _fmt(t):
     return t.strftime('%I:%M %p').lstrip('0')
 
 
+def _parse_time_state(s):
+    """A sensor state as a local time-of-day: 'HH:MM[:SS]' or a full ISO
+    timestamp (device_class timestamp platforms), else None."""
+    s = str(s).strip()
+    if 'T' in s:
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace('Z', '+00:00'))
+            if dt.tzinfo:
+                dt = dt.astimezone()
+            return dt.time().replace(second=0, microsecond=0)
+        except ValueError:
+            return None
+    return _parse_hhmm(s)
+
+
 def live_stop_time(member, period='am'):
-    """HCTB's stop-arrival estimate as datetime.time, or None (no HA, no
-    integration, sensor unknown/unavailable). Never raises."""
+    """The tracker's stop-arrival estimate as datetime.time, or None (no HA,
+    no integration, sensor unknown/unavailable). Explicit entity override
+    first (any platform), else HCTB auto-discovery. Never raises."""
     try:
         from services import ha_api
-        st = ha_api.get_state(f"sensor.{_prefix(member)}_bus_{period}_stop_arrival_time")
+        ent = (member.get(f'bus_{period}_eta_entity') or '').strip() \
+            or f"sensor.{_prefix(member)}_bus_{period}_stop_arrival_time"
+        st = ha_api.get_state(ent)
         if not st or str(st.get('state')) in ('unknown', 'unavailable', 'None', ''):
             return None
-        return _parse_hhmm(st['state'])
+        return _parse_time_state(st['state'])
     except Exception:
         return None
 
 
 def bus_active(member):
-    """True while HCTB says the bus is actually out (in-service flag or
-    ignition). Live estimates are only trusted while this holds."""
+    """True while the tracker says the bus is actually out. An explicit
+    bus_active_entity (any platform) is authoritative when set; else the
+    HCTB in-service/ignition pair. Live estimates are only trusted while
+    this holds."""
     try:
         from services import ha_api
+        explicit = (member.get('bus_active_entity') or '').strip()
+        if explicit:
+            st = ha_api.get_state(explicit)
+            return bool(st and st.get('state') == 'on')
         for key in ('in_service', 'ignition'):
             st = ha_api.get_state(f"binary_sensor.{_prefix(member)}_bus_{key}")
             if st and st.get('state') == 'on':
@@ -85,7 +114,11 @@ def morning_launch(member, date_str, rides=None):
         day = datetime.date.fromisoformat(date_str)
     except (ValueError, TypeError):
         return None
-    if day.weekday() >= 5:
+    # school_in_session covers weekends AND — when the family configured
+    # them — the school-year bounds and no-school calendar days, so the bus
+    # line disappears over summer, breaks, and teacher workdays.
+    from services import school
+    if not school.school_in_session(day):
         return None
     school_start = _parse_hhmm(member.get('school_hours_start')) or datetime.time(9, 30)
     for r in (rides or []):

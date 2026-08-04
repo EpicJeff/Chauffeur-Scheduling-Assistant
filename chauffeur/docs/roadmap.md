@@ -173,6 +173,14 @@ never enters the solver.
   HCTB stop estimate when the bus is out today, else static; yields to any
   morning car ride), "🚌 Bus home today" dismissal-push branch. Lateness ≥4
   min only, worded as "no rush". Tests: tests/test_bus.py.
+- **School-calendar awareness + generic bus entities. SHIPPED v2.41.0
+  (2026-08-03).** `services/school.py` `school_in_session(day)` (weekends /
+  year-bounds settings / designated no-school calendar with keyword-matched
+  all-day events; cached, fails open) now gates the dismissal push AND the
+  bus launch — retroactively fixing K4c's fire-on-holidays gap. Per-kid
+  explicit ETA/active entity fields make the live bus layer work with ANY
+  district tracker that has an HA integration (HCTB auto-discovery stays
+  the zero-config default).
 - **B2 — the live morning layer (next).** (1) Kiosk live chip during the AM
   run window: the routines-kiosk digest strip polls a light bus-status
   endpoint (~60s while 6-9am) showing "🚌 on the way · stop ~7:24 ·

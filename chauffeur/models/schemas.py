@@ -98,6 +98,11 @@ class FamilyMember(BaseModel):
     bus_pm_stop_time: Optional[str] = None    # HH:MM — usual afternoon drop
     bus_walk_mins: Optional[int] = None       # walk to the stop (default 5)
     bus_entity_prefix: Optional[str] = None   # HCTB entity prefix override
+    # Explicit HA entity ids for non-HCTB bus platforms (blank = HCTB
+    # auto-discovery): stop-ETA sensors + an "is running" binary sensor.
+    bus_am_eta_entity: Optional[str] = None
+    bus_pm_eta_entity: Optional[str] = None
+    bus_active_entity: Optional[str] = None
     pin_hash: Optional[str] = None            # pbkdf2; never exposed via API
     pin_salt: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
@@ -362,6 +367,14 @@ class Settings(BaseModel):
     # disables the window.
     kid_quiet_start: str = "20:30"
     kid_quiet_end: str = "07:00"
+    # School calendar (services/school.py): what a "school day" is. All
+    # empty = plain weekday behavior. The designated calendar's all-day
+    # events matching a no-school keyword mark school out; the year bounds
+    # are how summer is known without guessing from event titles.
+    school_calendar_id: str = ""
+    school_year_start: str = ""       # YYYY-MM-DD, update once a year
+    school_year_end: str = ""         # YYYY-MM-DD
+    school_closed_keywords: str = ""  # comma list; empty = built-in default
     calendar_ids: List[str]
     # One of calendar_ids, starred in Config → General. The family's shared
     # calendar: intake proposals with no clear owner (and whole-family /

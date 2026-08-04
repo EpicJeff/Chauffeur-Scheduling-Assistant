@@ -148,14 +148,16 @@ async def push_notification_loop():
                 print(f"Kid digest error: {kde}")
 
             # --- School-day-end pickup push (K4c): per child with school
-            # hours set, weekdays only, once per day, at dismissal. A missed
-            # window (>45 min late, e.g. server was down) stays silent — a
-            # stale pickup push is worse than none. ---
+            # hours set, school days only (school_in_session: weekdays, and
+            # when configured the school-year bounds + no-school calendar
+            # days), once per day, at dismissal. A missed window (>45 min
+            # late, e.g. server was down) stays silent — a stale pickup push
+            # is worse than none. ---
             try:
-                from services import family_digest
+                from services import family_digest, school
                 now_dt = datetime.now()
                 settings = storage.get_settings() or {}
-                if now_dt.weekday() < 5 \
+                if school.school_in_session(now_dt.date()) \
                         and not family_digest.in_kid_quiet_hours(now_dt, settings):
                     today_str = now_dt.strftime('%Y-%m-%d')
                     sent = dict(storage.get_app_state("school_end_push_sent") or {})
