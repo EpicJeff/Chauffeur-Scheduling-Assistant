@@ -939,6 +939,15 @@
                                     }));
                                     
                                     const isUnassigned = true_unassigned.includes(ev.id);
+                                    // Unassignable vs. merely unassigned: when EVERY driver
+                                    // is hard-blocked (no 'optimization' reasons), assigning
+                                    // a driver isn't the fix — surface it as a conflict
+                                    // instead of shouting "Needs driver".
+                                    let isConflict = false;
+                                    if (isUnassigned) {
+                                        const reasons = Object.values((data.diagnostics || {})[ev.id] || {});
+                                        isConflict = reasons.length > 0 && reasons.every(r => r && r.type !== 'optimization');
+                                    }
                                     let driverName = null;
                                     if (!isUnassigned && assignments[ev.id]) {
                                         const d = drivers.find(d => d.id === assignments[ev.id]);
@@ -968,6 +977,10 @@
                                         
                                         // Merge drivers
                                         if (isUnassigned) {
+                                            // Conflict only if every unassigned leg is a conflict —
+                                            // one assignable leg keeps the actionable red badge.
+                                            existing.extendedProps.isConflict = existing.extendedProps.isUnassigned
+                                                ? (existing.extendedProps.isConflict && isConflict) : isConflict;
                                             existing.extendedProps.isUnassigned = true;
                                             existing.extendedProps.driverName = null;
                                         } else if (driverName) {
@@ -992,6 +1005,7 @@
                                                 description: ev.description,
                                                 passengers: [...passengerPills],
                                                 isUnassigned: isUnassigned,
+                                                isConflict: isConflict,
                                                 driverName: driverName,
                                                 isErrand: false,
                                                 tripSuppressed: !!ev.trip_suppressed,
@@ -1160,6 +1174,9 @@
                     if (props.tripSuppressed) {
                         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-gray-500/20 text-gray-300 border border-gray-500/30 mb-4';
                         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Ignored for the driving schedule — everyone attending is away on a trip during this event.';
+                    } else if (props.isConflict) {
+                        banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-4';
+                        banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Scheduling conflict — every driver is blocked for this event, so assigning one won\'t fix it.';
                     } else if (props.isUnassigned) {
                         banner.className = 'rounded-lg p-3 text-sm font-bold flex items-center gap-2 bg-red-500/20 text-red-400 border border-red-500/30 mb-4';
                         banner.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> This event has a scheduling conflict and needs a driver assigned.';
@@ -1370,13 +1387,17 @@
 
                 dayEvents.forEach(ev => {
                     const props = ev.extendedProps || {};
-                    const barColor = props.isUnassigned ? '#ef4444'
+                    const barColor = props.isUnassigned ? (props.isConflict ? '#f59e0b' : '#ef4444')
                         : (props.rawColor || ev.backgroundColor || '#3b82f6');
                     const timeLabel = ev.allDay ? 'Entire day'
                         : `${fmtTime(new Date(ev.start))}${ev.end ? ' – ' + fmtTime(new Date(ev.end)) : ''}`;
 
                     let badge = '';
-                    if (props.isUnassigned) {
+                    if (props.tripSuppressed) {
+                        badge = '<span class="text-[10px] font-bold text-gray-400 shrink-0">✈️ Trip conflict</span>';
+                    } else if (props.isConflict) {
+                        badge = '<span class="text-[10px] font-bold text-amber-400 shrink-0">⚠️ Conflict</span>';
+                    } else if (props.isUnassigned) {
                         badge = '<span class="text-[10px] font-bold text-red-400 shrink-0">⚠️ Needs driver</span>';
                     } else if (props.driverName) {
                         badge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 shrink-0 max-w-[80px] truncate">${_agEsc(props.driverName)}</span>`;
@@ -1385,7 +1406,7 @@
                     }
 
                     const row = document.createElement('div');
-                    row.className = 'agenda-event rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors flex flex-col gap-0.5';
+                    row.className = `agenda-event rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors flex flex-col gap-0.5${props.tripSuppressed ? ' opacity-50' : ''}`;
                     row.style.borderLeft = `4px solid ${barColor}`;
                     row.innerHTML = `
                         <span class="text-[11px] font-semibold text-gray-400">${_agEsc(timeLabel)}</span>

@@ -1600,9 +1600,11 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
-def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None) -> dict:
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None) -> dict:
     if passengers is None:
         passengers = []
+    if trip_metadata is None:
+        trip_metadata = []
         
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
     event_requires_attendance = {
@@ -1632,11 +1634,15 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
     for u_id in unassigned_ids:
         e = event_map.get(u_id)
         if not e: continue
-        
+
         diagnostics[u_id] = {}
+        # Trip entities for this event, mirroring the solver's trip-assignment
+        # constraint so trip bans are diagnosed instead of falling through to
+        # the generic "optimization" reason.
+        e_trip_ents = compute_event_trip_entities([e], passengers).get(e.id, set()) if trip_metadata else set()
         for d in drivers:
             reason = None
-            
+
             # 1. Overrides
             eff_did = effective_override_map.get(e.id)
             if eff_did:
@@ -1749,6 +1755,28 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                             }
                             break
                         
+            # 2.7 Trip bans (same rules as the solver's trip-assignment constraint)
+            if not reason and trip_metadata:
+                for trip in trip_metadata:
+                    trip_ents = set(trip.get('entities') or [])
+                    is_global = 'global' in trip_ents
+                    if not (e.start < trip['end'] and e.end > trip['start']):
+                        continue
+                    if (e.id, d.id) in overridden_pairs:
+                        continue
+                    trip_name = trip.get('title') or 'a trip'
+                    driver_on_trip = (f"driver_{d.id}" in trip_ents) or is_global
+                    pax_on_trip = is_global or (bool(e_trip_ents) and e_trip_ents.issubset(trip_ents))
+                    if driver_on_trip:
+                        if e.location and trip.get('location'):
+                            t_mins = get_travel_time_minutes(e.location, trip['location'])
+                            if t_mins > 60:
+                                reason = {"text": f"Driver is away on '{trip_name}' and this event is about {t_mins} minutes from the trip destination.", "type": "trip_conflict"}
+                                break
+                    elif pax_on_trip:
+                        reason = {"text": f"This event's passengers are away on '{trip_name}', and this driver is not on that trip.", "type": "trip_conflict"}
+                        break
+
             # 3. Rule constraints
             if not reason:
                 for r in rules:

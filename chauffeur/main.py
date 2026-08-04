@@ -7005,14 +7005,23 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     if pax_entity in tm['entities'] or 'global' in tm['entities']:
                         trip_start = tm['start']
                         trip_end = tm['end']
+                        # Keep passengers on events NEAR the trip destination — an
+                        # on-trip driver can still take them there. Only meaningful
+                        # when the trip actually HAS a driver ('global' counts): a
+                        # kid away at camp alone has no one to shuttle them, so the
+                        # solver bans every driver regardless of distance. The
+                        # radius MUST match the solver's on-trip driver limit
+                        # (60 min, see matcher.py trip-assignment constraint):
+                        # any passenger kept here but unassignable by every driver
+                        # surfaces as a bogus red "Needs driver".
                         is_near_trip = False
-                        if tm.get('location') and getattr(e, 'location', None):
-                            # Ensure we don't drop events located NEAR the trip destination
+                        trip_has_driver = 'global' in tm['entities'] or any(
+                            str(ent).startswith('driver_') for ent in tm['entities'])
+                        if trip_has_driver and tm.get('location') and getattr(e, 'location', None):
                             try:
                                 tt = maps.get_travel_time_minutes(e.location, tm['location'])
-                                # Ignore the 15-minute fallback for `is_near_trip` if we are confident it failed.
-                                # Actually, if it's 15, we accept it as near. 
-                                if tt <= 180:
+                                # The 15-minute routing fallback counts as near.
+                                if tt <= 60:
                                     is_near_trip = True
                             except:
                                 pass
@@ -7249,7 +7258,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             diagnostics = {}
         else:
             diagnostics = matcher.compute_diagnostics(
-                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers
+                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata
             )
 
         duplicate_groups = []
