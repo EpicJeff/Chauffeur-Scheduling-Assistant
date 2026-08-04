@@ -142,23 +142,29 @@ def scenario_fuel_errand_dedupe():
     check(len(storage.get_all_errands()) == 1, "still one errand")
 
 
-def scenario_sweep_pushes_and_dedupes():
+def scenario_sweep_proposes_and_dedupes():
+    # C3: readiness produces an approval PROPOSAL (charge buffer for EVs),
+    # not a bare push; dedupe is keyed on the drive's date.
     _reset()
     storage.members_table.insert({'id': 'm1', 'name': 'Jeff', 'role': 'parent', 'driver_id': 'd1'})
-    storage.members_table.insert({'id': 'm2', 'name': 'Sam', 'role': 'parent', 'driver_id': 'd2'})
     _mk_car(ha_battery_entity='sensor.b', default_driver_id='d1')
     _stub_states({'sensor.b': {'state': '12'}})
     _cache_day(0, {'e1': 'c1'}, [_ev('e1', 'Practice', 3)])
 
-    sent = []
-    actions = cars.run_sweep(lambda m, t, b: sent.append((m['id'], t)), now=NOW)
-    check(len(actions) == 1 and actions[0].startswith('car_ready:c1:'), f"one readiness push, got {actions}")
-    check(sent == [('m1', '🔌 Charge the Minivan')],
-          f"targets the usual driver's member only, got {sent}")
+    delivered = []
+    orig_deliver = cars._deliver_proposal
+    cars._deliver_proposal = lambda s, p, b: delivered.append(p) or 'pid'
+    try:
+        actions = cars.run_sweep(lambda m, t, b: None, now=NOW)
+        check(len(actions) == 1 and actions[0].startswith('car_ready:c1:'),
+              f"one readiness proposal, got {actions}")
+        check(len(delivered) == 1 and delivered[0]['kind'] == 'charge_buffer',
+              f"EV low battery -> charge-buffer proposal, got {delivered}")
 
-    sent2 = []
-    actions2 = cars.run_sweep(lambda m, t, b: sent2.append(t), now=NOW)
-    check(actions2 == [] and sent2 == [], "same day -> deduped, no second push")
+        actions2 = cars.run_sweep(lambda m, t, b: None, now=NOW)
+        check(actions2 == [] and len(delivered) == 1, "same drive date -> deduped")
+    finally:
+        cars._deliver_proposal = orig_deliver
 
 
 def scenario_sweep_away_push_targets_parents_without_default():
@@ -184,7 +190,7 @@ SCENARIOS = [
     scenario_away_warning,
     scenario_upcoming_from_daily_cache,
     scenario_fuel_errand_dedupe,
-    scenario_sweep_pushes_and_dedupes,
+    scenario_sweep_proposes_and_dedupes,
     scenario_sweep_away_push_targets_parents_without_default,
 ]
 

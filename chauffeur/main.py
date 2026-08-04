@@ -2951,6 +2951,13 @@ class ActionProposalAct(BaseModel):
     member_id: str      # the family member tapping the button
 
 
+@app.get("/api/action-proposals")
+def list_action_proposals(status: str = "proposed"):
+    """Pending (or filtered) agent action proposals — the dashboard's
+    approvals banner polls this (C3, docs/car_errand_proposals_design.md)."""
+    return storage.get_action_proposals(status=status or None)
+
+
 @app.post("/api/action-proposals/{proposal_id}/act")
 def act_on_action_proposal(proposal_id: str, req: ActionProposalAct, background_tasks: BackgroundTasks):
     """Approve or dismiss an agent action proposal from a chat card. Approval

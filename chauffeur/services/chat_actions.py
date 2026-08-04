@@ -77,6 +77,7 @@ ADMIN_ACTIONS = {
     "add_priority_rule", "delete_priority_rule",
     "add_errand", "update_errand", "delete_errand", "add_errand_rule",
     "create_event",
+    "add_car_stop",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -92,6 +93,7 @@ ACTION_LABELS = {
     "delete_errand": "Remove errand",
     "add_errand_rule": "Add errand rule",
     "create_event": "Add to calendar",
+    "add_car_stop": "Car stop",
 }
 
 
@@ -166,9 +168,43 @@ def _create_event(payload: dict) -> dict:
     return {"status": "success", "message": f"Added '{title}' to the calendar."}
 
 
+def _add_car_stop(payload: dict) -> dict:
+    """Materialize an approved fuel-stop / charge-buffer proposal (C3,
+    docs/car_errand_proposals_design.md) as a priority errand; the errand pass
+    then places it minimum-detour — before the first event, between events,
+    drop-off-and-run, or on the way home."""
+    from services import storage
+    from models.schemas import Errand
+    title = (payload.get('title') or '').strip()
+    location = (payload.get('location') or '').strip()
+    if not title or not location:
+        return {"status": "error", "message": "The proposal is missing its title or location."}
+    car_id = str(payload.get('car_id') or '')
+    starts_on = None
+    td = (payload.get('target_date') or '').strip()
+    if td:
+        try:
+            import datetime as _dt
+            starts_on = _dt.datetime.fromisoformat(td).timestamp()
+        except ValueError:
+            starts_on = None
+    errand = Errand(
+        title=title, location=location,
+        duration_mins=int(payload.get('duration_mins') or 15),
+        priority=1, window_days=1, starts_on=starts_on,
+        tags=['auto_car_fuel', car_id] if car_id else ['auto_car_fuel'],
+        allowed_drivers=[str(x) for x in (payload.get('allowed_drivers') or [])],
+    )
+    storage.add_errand(errand.model_dump())
+    return {"status": "success",
+            "message": f"Added '{title}' — the solver will slot it with minimum detour."}
+
+
 def _execute(action_type: str, payload: dict) -> dict:
     """Run an approved action through the tested handlers."""
     from services import agent_tools
+    if action_type == "add_car_stop":
+        return _add_car_stop(payload)
     if action_type == "reassign_driver":
         from services.agent_tools_v2 import assign_driver_to_event_fuzzy
         return assign_driver_to_event_fuzzy(payload.get("event_name"),

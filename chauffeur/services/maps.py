@@ -1243,3 +1243,74 @@ def search_places(query: str, proximity_location: str = None) -> list[dict]:
 
     # No Mapbox available/enabled — fall back to the junk-filtered Nominatim results.
     return nominatim_results
+
+
+def _encode_polyline(coords, precision=5):
+    """GeoJSON [lon, lat] pairs -> encoded polyline string (standard lat,lng
+    delta encoding), for Search Box search-along-route."""
+    factor = 10 ** precision
+    output = []
+    prev_lat = prev_lon = 0
+    for lon, lat in coords:
+        ilat, ilon = round(lat * factor), round(lon * factor)
+        for v in (ilat - prev_lat, ilon - prev_lon):
+            v = ~(v << 1) if v < 0 else (v << 1)
+            while v >= 0x20:
+                output.append(chr((0x20 | (v & 0x1f)) + 63))
+                v >>= 5
+            output.append(chr(v + 63))
+        prev_lat, prev_lon = ilat, ilon
+    return ''.join(output)
+
+
+def search_category(category: str, lat: float = None, lon: float = None, limit: int = 10,
+                    route_coords=None, time_deviation_mins: float = 8):
+    """Mapbox Search Box category search (e.g. 'gas_station'), either near a
+    point (lat/lon proximity) or ALONG A ROUTE when route_coords (GeoJSON
+    [lon, lat] pairs) is given — search-along-route via sar_type=isochrone
+    with a polyline-encoded route, results constrained to a time_deviation-
+    minute detour. No session token; billed under the 'category' cap. Used by
+    the C3 car-stop proposals. Returns [{name, address, lat, lon}]; [] when
+    Mapbox is unavailable — callers must have a non-Mapbox fallback."""
+    mapbox_key = get_mapbox_api_key()
+    settings = storage.get_settings()
+    if not mapbox_key or settings.get('disable_mapbox', False):
+        return []
+    try:
+        check_usage_limits_and_spikes('category', 1)
+        url = f"https://api.mapbox.com/search/searchbox/v1/category/{category}"
+        params = {"access_token": mapbox_key, "limit": max(1, min(int(limit), 25)),
+                  "language": "en"}
+        if route_coords:
+            # Downsample: no need to send thousands of vertices for a suburban run.
+            step = max(1, len(route_coords) // 200)
+            params.update({
+                "sar_type": "isochrone",
+                "route": _encode_polyline(route_coords[::step]),
+                "route_geometry": "polyline",
+                "time_deviation": max(1, float(time_deviation_mins)),
+                "navigation_profile": "driving",
+                "origin": f"{route_coords[0][0]},{route_coords[0][1]}",
+            })
+        elif lat is not None and lon is not None:
+            params["proximity"] = f"{lon},{lat}"
+        else:
+            return []
+        resp = requests.get(url, params=params, timeout=8)
+        if resp.status_code != 200:
+            return []
+        out = []
+        for f in resp.json().get("features", []):
+            props = f.get("properties", {})
+            name = props.get("name", "")
+            place = props.get("place_formatted", "")
+            coords = f.get("geometry", {}).get("coordinates", [])
+            if name and coords and len(coords) == 2:
+                full_address = f"{name}, {place}".strip(", ")
+                storage.set_cached_geocode(full_address, float(coords[1]), float(coords[0]), full_address)
+                out.append({"name": name, "address": full_address,
+                            "lat": float(coords[1]), "lon": float(coords[0])})
+        return out
+    except Exception as ex:
+        print(f"Mapbox category search exception: {ex}")
+        return []

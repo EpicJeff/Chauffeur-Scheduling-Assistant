@@ -352,6 +352,15 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
         per_driver.setdefault(d_id, []).append((start, f"Errand: {er.get('title') or 'Errand'}"))
 
     label = day_label(tomorrow)
+    # Car readiness notes (C3): "⛽ Minivan at 15% — see the fuel-stop
+    # proposal" per affected driver. Built here (not at delivery) so the
+    # get_drive_digest agent tool shows the same thing.
+    fuel_notes = {}
+    try:
+        from services import cars as _cars
+        fuel_notes = _cars.digest_fuel_notes(tomorrow.isoformat())
+    except Exception as e:
+        print(f"[family_digest] car fuel notes failed: {e}")
     drivers = {}
     for d_id, items in per_driver.items():
         items.sort(key=lambda x: x[0])
@@ -359,6 +368,8 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
                  for start, title in items[:6]]
         if len(items) > 6:
             lines.append(f"...and {len(items) - 6} more")
+        if fuel_notes.get(d_id):
+            lines.append(fuel_notes[d_id])
         n = len(items)
         drivers[d_id] = {"title": f"{label}: {n} drive{'s' if n != 1 else ''}",
                          "lines": lines, "count": n}

@@ -115,7 +115,8 @@ def upcoming_car_events(cars, hours=UPCOMING_WINDOW_HOURS, now=None):
             if start is None or not (now <= start <= horizon):
                 continue
             title = (e.get('title') if isinstance(e, dict) else getattr(e, 'title', '')) or 'a drive'
-            by_car.setdefault(str(cid), []).append({'id': eid, 'title': title, 'start': start})
+            loc = (e.get('location') if isinstance(e, dict) else getattr(e, 'location', None)) or None
+            by_car.setdefault(str(cid), []).append({'id': eid, 'title': title, 'start': start, 'location': loc})
             car_by_event[eid] = str(cid)
     for lst in by_car.values():
         lst.sort(key=lambda x: x['start'])
@@ -186,6 +187,127 @@ def in_progress_car_ids():
             if k in ca:
                 out.add(str(ca[k]))
     return out
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    import math
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def pick_station(origin, dest, settings=None):
+    """Best gas station along the origin->dest corridor (C3): cached route
+    polyline fed to Mapbox search-along-route (/suggest with an encoded
+    polyline — Mapbox ranks by actual detour time). Fallbacks, in order:
+    one category search at the polyline midpoint ranked by distance-to-route;
+    the `car_fuel_station` setting; a category search near the origin; None
+    (the proposal still goes out, worded 'find a station on the way')."""
+    from services import maps, storage
+    settings = settings or storage.get_settings()
+    coords = []
+    try:
+        geo = maps.get_route_geometry(origin, dest) if origin and dest else None
+        coords = ((geo or {}).get('geometry') or {}).get('coordinates') or []
+    except Exception:
+        coords = []
+    if coords:
+        sar = maps.search_category('gas_station', route_coords=coords,
+                                   time_deviation_mins=8, limit=10)
+        if sar:
+            best = sar[0]
+            return {'name': best['name'], 'address': best['address'], 'source': 'sar'}
+        # SAR unavailable (older keys/regions): one proximity search at the
+        # midpoint, ranked by distance to the polyline as a detour proxy.
+        mid = coords[len(coords) // 2]
+        candidates = maps.search_category('gas_station', mid[1], mid[0], limit=10)
+        if candidates:
+            step = max(1, len(coords) // 40)
+            sampled = coords[::step]
+
+            def detour(c):
+                return min(_haversine_m(c['lat'], c['lon'], p[1], p[0]) for p in sampled)
+
+            best = min(candidates, key=detour)
+            return {'name': best['name'], 'address': best['address'], 'source': 'route'}
+    fixed = (str(settings.get('car_fuel_station') or '')).strip()
+    if fixed:
+        return {'name': fixed, 'address': fixed, 'source': 'setting'}
+    try:
+        o = maps.geocode_address(origin) if origin else None
+        if o:
+            near = maps.search_category('gas_station', o[0], o[1], limit=5)
+            if near:
+                return {'name': near[0]['name'], 'address': near[0]['address'], 'source': 'near_origin'}
+    except Exception:
+        pass
+    return None
+
+
+def _deliver_proposal(summary, payload, body):
+    """Create the add_car_stop proposal and post its card to the family
+    channel — parents approve there, and the chat fan-out pushes phones.
+    Returns the proposal id (or None). Separated for test injection."""
+    from services import storage, chat_actions
+    res = chat_actions.create_action_proposal('add_car_stop', summary, payload)
+    if res.get('status') != 'success':
+        return None
+    pid = res['proposal_id']
+    try:
+        fam = storage.get_family_channel()
+        if fam:
+            storage.update_action_proposal(pid, {'channel_id': fam['id']})
+            argyle = storage.ensure_argyle_member()
+            from services.agent_tools_v2 import _post_chat_message
+            _post_chat_message(fam, argyle, body, card=res['card'])
+    except Exception as ex:
+        print(f"car stop proposal delivery failed: {ex}")
+    return pid
+
+
+def digest_fuel_notes(target_date_str):
+    """{driver_id: note} fuel/charge lines for the evening tomorrow-digest.
+    Informational only — the actionable card comes from the sweep."""
+    from services import storage
+    notes = {}
+    cars_list = [c for c in storage.get_all_cars()
+                 if not c.get('is_disabled') and has_telemetry(c)]
+    if not cars_list:
+        return notes
+    settings = storage.get_settings()
+
+    def _flt(key, default):
+        try:
+            return float(settings.get(key) or default)
+        except (ValueError, TypeError):
+            return default
+
+    fuel_warn = _flt('car_fuel_warn_pct', DEFAULT_FUEL_WARN_PCT)
+    batt_warn = _flt('car_battery_warn_pct', DEFAULT_BATTERY_WARN_PCT)
+    cache = storage.get_cached_daily_schedule(target_date_str)
+    sched = (cache or {}).get('schedule') or {}
+    ca = sched.get('car_assignments') or {}
+    assignments = sched.get('assignments') or {}
+    for c in cars_list:
+        cid = str(c.get('id'))
+        ev_ids = [eid for eid, x in ca.items() if str(x) == cid]
+        if not ev_ids:
+            continue
+        lv = car_levels(c)
+        line = None
+        if lv.get('battery_pct') is not None and lv['battery_pct'] < batt_warn:
+            line = f"🔌 {c.get('name')} at {int(lv['battery_pct'])}% charge — plug it in tonight"
+        elif lv.get('fuel_pct') is not None and lv['fuel_pct'] < fuel_warn:
+            line = f"⛽ {c.get('name')} at {int(lv['fuel_pct'])}% fuel — see the fuel-stop proposal"
+        if line:
+            for eid in ev_ids:
+                d_id = assignments.get(eid)
+                if d_id:
+                    notes.setdefault(d_id, line)
+    return notes
 
 
 def ensure_fuel_errand(car, settings):
@@ -272,25 +394,78 @@ def run_sweep(send, now=None):
                 pass
         actions.append(key)
 
+    home = None
+    try:
+        from services import maps as _maps
+        home = _maps.get_home_location()
+    except Exception:
+        home = None
+
     for w in readiness_warnings(cars, levels, upcoming, battery_warn, fuel_warn):
         car = w['car']
-        key = f"car_ready:{car.get('id')}:{today}"
+        first = w['events'][0]
+        target_date = first['start'].strftime('%Y-%m-%d')
+        # Key on the date of the DRIVE, not of the check: the evening sweep
+        # proposes for tomorrow ("still low after today's drives") as its own
+        # event, separate from the morning's same-day proposal.
+        key = f"car_ready:{car.get('id')}:{target_date}"
         if key in sent:
             continue
+        sent[key] = now.timestamp()
+        changed = True
+        actions.append(key)
         nm = car.get('name') or 'the car'
-        first = w['events'][0]
         when = first['start'].strftime('%I:%M %p').lstrip('0')
         n = len(w['events'])
         drives = f"{n} drive{'s' if n != 1 else ''}"
+        day_word = 'today' if target_date == today else 'tomorrow'
+        allowed = [str(x) for x in (car.get('allowed_driver_ids') or [])]
+
         if w['kind'] == 'battery':
-            title = f"🔌 Charge the {nm}"
-            body = f"Battery at {int(w['level'])}% with {drives} in the next 24h (first: {first['title']} at {when}). Plug it in."
+            # EVs reserve TIME, not a place — the car's nav picks the charger.
+            dur = int(_flt('car_charge_buffer_mins', 25))
+            payload = {'car_id': str(car.get('id')), 'kind': 'charge_buffer',
+                       'title': f"🔌 Charging time for {nm}",
+                       'location': first.get('location') or home or '',
+                       'duration_mins': dur, 'target_date': target_date,
+                       'allowed_drivers': allowed}
+            summary = f"Hold {dur} min of charging time for the {nm} ({int(w['level'])}%, {drives} {day_word})"
+            body = (f"🔌 The {nm} is at {int(w['level'])}% with {drives} {day_word} "
+                    f"(first: {first['title']} at {when}). Plug it in at home — or approve to hold "
+                    f"charging time in the schedule and let the car pick the charger.")
         else:
-            title = f"⛽ Fuel up the {nm}"
-            body = f"Fuel at {int(w['level'])}% with {drives} in the next 24h (first: {first['title']} at {when})."
-            if auto_errand and ensure_fuel_errand(car, settings):
-                body += " Added a fuel-up errand to the schedule."
-        fire(key, car, title, body)
+            if target_date == today:
+                origin = w['events'][-1].get('location') or home
+                dest = home
+            else:
+                origin = home
+                dest = first.get('location') or home
+            station = pick_station(origin, dest, settings)
+            st_name = (station or {}).get('name')
+            payload = {'car_id': str(car.get('id')), 'kind': 'fuel',
+                       'title': f"⛽ Fuel up {nm}" + (f" — {st_name}" if st_name else ''),
+                       'location': (station or {}).get('address') or home or '',
+                       'station_name': st_name,
+                       'duration_mins': 15, 'target_date': target_date,
+                       'allowed_drivers': allowed}
+            summary = f"⛽ Fuel stop for the {nm}" + (f" at {st_name}" if st_name else '') + \
+                      f" ({int(w['level'])}%, {drives} {day_word})"
+            body = (f"⛽ The {nm} is at {int(w['level'])}% with {drives} {day_word} "
+                    f"(first: {first['title']} at {when})." +
+                    (f" Best stop on the route: {st_name}." if st_name
+                     else " Approve and I'll fit a stop in."))
+
+        if auto_errand and w['kind'] == 'fuel' and payload['location']:
+            # Legacy opt-in: skip the card, add the errand directly.
+            from services.chat_actions import _add_car_stop
+            _add_car_stop(payload)
+            for m in targets(car):
+                try:
+                    send(m, payload['title'], body + " Added to the schedule.")
+                except Exception:
+                    pass
+            continue
+        _deliver_proposal(summary, payload, body)
 
     for w in away_warnings(cars, locations, upcoming, in_progress_car_ids(), now=now):
         car = w['car']

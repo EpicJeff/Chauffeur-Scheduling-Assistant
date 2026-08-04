@@ -2554,6 +2554,15 @@ def update_action_proposal(proposal_id: str, updates: dict) -> None:
     with db_lock:
         agent_action_proposals_table.update(updates, Query().id == proposal_id)
 
+def get_action_proposals(status: str = None, limit: int = 25) -> List[dict]:
+    """Newest-first action proposals, optionally filtered by status (C3: the
+    dashboard's pending-approvals banner reads status='proposed')."""
+    with db_lock:
+        rows = [dict(r) for r in agent_action_proposals_table.all()
+                if status is None or r.get('status') == status]
+        rows.sort(key=lambda r: r.get('created_at', 0), reverse=True)
+        return rows[:limit]
+
 def add_ingest_log(entry: dict, cap: int = 200) -> None:
     """Append an accountability row. CONSECUTIVE IDENTICAL rows (same
     from/subject/outcome — in practice a repeated '(poll)' error while the

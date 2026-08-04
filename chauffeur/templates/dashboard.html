@@ -110,6 +110,8 @@
                 Options</button>
         </div>
 
+        <div id="proposals-banner" class="hidden mb-6"></div>
+
         <div id="inbox-container" class="hidden mb-6">
             <h2 class="text-2xl font-bold text-yellow-500 mb-4 flex items-center">
                 <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -497,8 +499,68 @@
                 const inboxContainer = document.getElementById('inbox-container');
                 if (inboxContainer) inboxContainer.classList.add('hidden');
             }
-
+            if (!isReadOnly && !isKiosk) {
+                loadProposalsBanner();
+                setInterval(loadProposalsBanner, 120000);
+            }
         });
+
+        // --- Pending agent proposals (C3: fuel stops / charge buffers) ---
+        let _proposalActorId = null;
+        async function _resolveProposalActor() {
+            // Approval is parent/adult-scoped. Prefer the member this browser
+            // uses in the PWA; fall back to the first parent on record.
+            if (_proposalActorId) return _proposalActorId;
+            try {
+                const members = await fetch('api/members').then(r => r.json());
+                const stored = localStorage.getItem('chauffeur_member_id');
+                const mine = members.find(m => m.id === stored && ['parent', 'adult'].includes(m.role));
+                const parent = mine || members.find(m => m.role === 'parent');
+                _proposalActorId = parent ? parent.id : null;
+            } catch (e) { console.error('proposal actor lookup failed', e); }
+            return _proposalActorId;
+        }
+
+        async function loadProposalsBanner() {
+            const el = document.getElementById('proposals-banner');
+            if (!el) return;
+            let props = [];
+            try {
+                props = await fetch('api/action-proposals?status=proposed').then(r => r.json());
+            } catch (e) { return; }
+            props = (props || []).filter(p => p.action_type === 'add_car_stop');
+            if (!props.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+            el.innerHTML = props.map(p => `
+                <div class="bg-teal-900/60 border border-teal-600 text-teal-100 p-4 rounded-xl shadow-lg mb-2 flex justify-between items-center gap-4">
+                    <div class="min-w-0">
+                        <span class="text-[10px] uppercase tracking-widest font-bold text-teal-300 bg-teal-800/60 px-2 py-0.5 rounded">Needs approval</span>
+                        <span class="font-bold block mt-1 truncate">${(p.summary || '').replace(/</g, '&lt;')}</span>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                        <button onclick="actOnDashProposal('${p.id}', 'approve')"
+                            class="bg-teal-600 hover:bg-teal-500 px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-colors text-white">Approve</button>
+                        <button onclick="actOnDashProposal('${p.id}', 'dismiss')"
+                            class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-bold shadow-md transition-colors text-white">Dismiss</button>
+                    </div>
+                </div>`).join('');
+            el.classList.remove('hidden');
+        }
+
+        async function actOnDashProposal(pid, act) {
+            const memberId = await _resolveProposalActor();
+            if (!memberId) return showGlobalAlert('No parent member found to act as.');
+            try {
+                const res = await fetch(`api/action-proposals/${pid}/act`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ act: act, member_id: memberId })
+                }).then(r => r.json());
+                if (res.status === 'error') showGlobalAlert(res.message || 'That action failed.');
+            } catch (e) {
+                showGlobalAlert('Could not reach the server.');
+            }
+            loadProposalsBanner();
+        }
 
         const localSolvingDates = new Set();
         let routeEdges = {};
