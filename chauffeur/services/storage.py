@@ -471,21 +471,57 @@ def get_cached_geocode(address: str):
                 geocode_cache_table.remove(Query().address == address.strip().lower())
         return None
 
-def set_cached_geocode(address: str, lat: float, lon: float, display_name: str = ""):
+def set_cached_geocode(address: str, lat: float, lon: float, display_name: str = "",
+                       precision: str = 'exact'):
+    """precision: 'exact' (street-level, final) | 'city' (city/state fallback
+    — reusable but RETRYABLE, never a permanent pin) | 'failed'. ts enables
+    the daily retry of non-exact entries (maps._usable_cached)."""
+    import time
     try:
         lat = float(lat)
         lon = float(lon)
     except (ValueError, TypeError):
         print(f"Error: Refusing to cache invalid coordinates for {address}: lat={lat}, lon={lon}")
         return
-        
+
     with db_lock:
         geocode_cache_table.upsert({
             'address': address.strip().lower(),
             'lat': lat,
             'lon': lon,
-            'display_name': display_name
+            'display_name': display_name,
+            'precision': precision,
+            'ts': time.time(),
         }, Query().address == address.strip().lower())
+
+def delete_cached_geocode(address: str):
+    """Purge an address's cached geocode — used when home_location changes so
+    the new address always gets a fresh street-level lookup."""
+    with db_lock:
+        geocode_cache_table.remove(Query().address == address.strip().lower())
+
+def heal_amputated_geocodes() -> int:
+    """One-time v2.56.4 migration (main startup, app_state-gated).
+    extract_street_address used to amputate the street line from 4-part
+    digit-leading addresses (the Mapbox-canonical shape), so geocodes — and
+    every Matrix travel time derived from them — could silently be
+    city-center. Remove geocode rows whose address starts with a house
+    number the display_name doesn't echo (poisoned or failed), and reset
+    the distance/route/schedule caches so durations re-derive from healed
+    coordinates. Matrix re-priming is a bounded one-time cost; wrong travel
+    times forever is not."""
+    import re
+    with db_lock:
+        removed = 0
+        for r in geocode_cache_table.all():
+            m = re.match(r'^\s*(\d+)\b', r.get('address') or '')
+            if m and m.group(1) not in (r.get('display_name') or ''):
+                geocode_cache_table.remove(doc_ids=[r.doc_id])
+                removed += 1
+        distance_cache_table.truncate()
+        route_geometry_cache_table.truncate()
+        _invalidate_schedule_caches()
+        return removed
 
 _distance_mem_cache = None
 

@@ -2648,7 +2648,13 @@ def nearby_gas_stations(limit: int = 6):
             entry["distance_km"] = None
         stations.append(entry)
     stations.sort(key=lambda s: s["distance_km"] if s["distance_km"] is not None else 999)
-    return {"stations": stations, "home": {"lat": o[0], "lon": o[1]}}
+    # What the home pin actually resolved to — surfaced in the UI so a
+    # city-center geocode is VISIBLE instead of silently wrong.
+    home_row = storage.get_cached_geocode(maps.extract_street_address(home)) \
+        or storage.get_cached_geocode(home) or {}
+    return {"stations": stations, "home": {"lat": o[0], "lon": o[1]},
+            "home_label": home_row.get('display_name') or home,
+            "home_precision": home_row.get('precision') or 'exact'}
 
 # --- ICS Feed Subscriptions API (intake arc phase 1) ---
 
@@ -6113,6 +6119,20 @@ def update_settings(settings: Settings, background_tasks: BackgroundTasks):
     # intake mailbox credentials on every config-page save.
     incoming = settings.model_dump(exclude_unset=True)
     current = storage.get_settings() or {}
+    # A home address must never keep a stale/poisoned geocode: purge its
+    # cache entries when the address changes, or when the stored entry
+    # isn't street-level ('city'/'failed') — so re-saving settings is a
+    # user-visible "force a fresh lookup" lever.
+    new_home = (incoming.get('home_location') or '').strip()
+    if new_home:
+        changed = new_home != (current.get('home_location') or '').strip()
+        row = storage.get_cached_geocode(new_home) \
+            or storage.get_cached_geocode(maps.extract_street_address(new_home))
+        suspect = bool(row) and (row.get('precision') or 'exact') != 'exact'
+        if changed or suspect:
+            for key in {new_home, maps.extract_street_address(new_home)}:
+                if key:
+                    storage.delete_cached_geocode(key)
     current.update(incoming)
     storage.update_settings(current)
     background_tasks.add_task(trigger_background_refresh)

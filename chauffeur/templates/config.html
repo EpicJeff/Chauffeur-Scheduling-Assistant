@@ -1555,6 +1555,13 @@
                                                      : 'Closest to home — tap to choose (saves right away):'"></p>
                             <div id="station-map" x-show="stationMapOk"
                                 class="w-full h-80 rounded-xl border border-gray-700 overflow-hidden"></div>
+                            <p x-show="stationHomeLabel" x-cloak class="text-xs mt-1.5"
+                                :class="stationHomePrecision === 'exact' ? 'text-gray-500' : 'text-amber-400'">
+                                <span x-text="'🏠 pin: ' + stationHomeLabel"></span>
+                                <span x-show="stationHomePrecision !== 'exact'"> — this is only city-level!
+                                    The exact address couldn't be found; it will retry within a day, or re-save
+                                    your Home Location (General tab) to force a fresh lookup now.</span>
+                            </p>
                             <!-- fallback when the map can't load (no key / map-load quota) -->
                             <div x-show="!stationMapOk" class="flex flex-wrap gap-1.5">
                                 <template x-for="(st, si) in nearbyStations" :key="si">
@@ -3393,6 +3400,8 @@
                 stationSearchBusy: false,
                 stationSearchError: '',
                 stationHome: null,
+                stationHomeLabel: '',
+                stationHomePrecision: 'exact',
                 stationMapOk: false,
                 suggestedRoutesEnabled: true,
                 chatSuggestionsEnabled: false,
@@ -4487,6 +4496,8 @@
                         const data = await res.json();
                         this.nearbyStations = data.stations || [];
                         this.stationHome = data.home || null;
+                        this.stationHomeLabel = data.home_label || '';
+                        this.stationHomePrecision = data.home_precision || 'exact';
                         if (data.error) this.stationSearchError = data.error;
                         if (this.nearbyStations.length) await this.renderStationMap();
                     } catch (e) {
@@ -4520,23 +4531,37 @@
                     stationMarkers.forEach(m => m.remove());
                     stationMarkers = [];
                     const bounds = new mapboxgl.LngLatBounds();
-                    if (this.stationHome) {
+                    // Styled pins, not raw emoji divs: bare emoji markers render
+                    // as unreadable blobs on some platforms and give no size
+                    // guarantee. Fixed-size ringed circles are unambiguous.
+                    const mkPin = (emoji, ring) => {
                         const el = document.createElement('div');
-                        el.textContent = '🏠';
-                        el.style.fontSize = '24px';
-                        el.title = 'Home';
-                        stationMarkers.push(new mapboxgl.Marker(el)
-                            .setLngLat([this.stationHome.lon, this.stationHome.lat]).addTo(stationMap));
+                        el.style.cssText = 'width:34px;height:34px;border-radius:50%;'
+                            + `background:#111827;border:3px solid ${ring};display:flex;`
+                            + 'align-items:center;justify-content:center;font-size:16px;'
+                            + 'line-height:1;box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer';
+                        el.textContent = emoji;
+                        return el;
+                    };
+                    if (this.stationHome) {
+                        // The home pin explains itself: tap it to see exactly what
+                        // the address resolved to — a city-center geocode must be
+                        // VISIBLE, never silent.
+                        const homePopup = new mapboxgl.Popup({ offset: 20, closeButton: false }).setHTML(`
+                            <div style="font-family:Inter,sans-serif;min-width:170px">
+                                <div style="font-weight:700;color:#111">🏠 Home pin</div>
+                                <div style="font-size:12px;color:#555;margin-top:2px">${(this.stationHomeLabel || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>
+                                ${this.stationHomePrecision !== 'exact' ? '<div style="font-size:12px;color:#b45309;margin-top:4px;font-weight:700">⚠️ City-level only — re-save your Home Location to force a fresh lookup.</div>' : ''}
+                            </div>`);
+                        stationMarkers.push(new mapboxgl.Marker(mkPin('🏠', '#f59e0b'))
+                            .setLngLat([this.stationHome.lon, this.stationHome.lat])
+                            .setPopup(homePopup).addTo(stationMap));
                         bounds.extend([this.stationHome.lon, this.stationHome.lat]);
                     }
                     window.__pickStationFromMap = (i) => this.pickStation(this.nearbyStations[i]);
                     this.nearbyStations.forEach((st, i) => {
                         if (st.lat == null || st.lon == null) return;
-                        const el = document.createElement('div');
-                        el.textContent = '⛽';
-                        el.style.fontSize = '22px';
-                        el.style.cursor = 'pointer';
-                        el.style.filter = 'drop-shadow(0 1px 2px rgba(0,0,0,.6))';
+                        const el = mkPin('⛽', '#0d9488');
                         const popup = new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(`
                             <div style="font-family:Inter,sans-serif;min-width:160px">
                                 <div style="font-weight:700;color:#111">${esc(st.name)}</div>
@@ -4548,7 +4573,17 @@
                             .setLngLat([st.lon, st.lat]).setPopup(popup).addTo(stationMap));
                         bounds.extend([st.lon, st.lat]);
                     });
-                    if (!bounds.isEmpty()) stationMap.fitBounds(bounds, { padding: 56, maxZoom: 14 });
+                    // The container was hidden until this render pass, so the GL
+                    // canvas sized itself against a zero/partial-width box —
+                    // resize FIRST, then fit (fitBounds on a wrong-size canvas
+                    // miscenters), and once more after layout settles.
+                    const fit = () => {
+                        if (!stationMap) return;
+                        stationMap.resize();
+                        if (!bounds.isEmpty()) stationMap.fitBounds(bounds, { padding: 56, maxZoom: 14 });
+                    };
+                    requestAnimationFrame(fit);
+                    setTimeout(fit, 300);
                 },
                 async pickStation(st) {
                     this.carFuelStation = st.address ? `${st.name}, ${st.address}` : st.name;

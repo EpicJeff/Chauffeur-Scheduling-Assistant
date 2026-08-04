@@ -790,17 +790,25 @@ def extract_street_address(address: str) -> str:
         if re.match(r'^\s*\d', part):
             first_digit_index = i
             break
-            
+
+    if first_digit_index == 0:
+        # Already starts with the house number — this IS the street address.
+        # The old code fell through to the >3-parts "drop the business name"
+        # heuristic, which amputated the street line from Mapbox-canonical
+        # addresses ("123 St, City, State ZIP, United States" → "City, State
+        # ZIP, United States") and geocoded HOME to the city center (v2.56.4).
+        return ", ".join(parts)
+
     if first_digit_index > 0:
         # If the part is just a number/zip code near the end, only drop the first part (business name)
         if first_digit_index >= len(parts) - 3 and re.match(r'^\s*\d+\s*$', parts[first_digit_index].split()[0]):
             return ", ".join(parts[1:])
         else:
             return ", ".join(parts[first_digit_index:])
-            
+
     if len(parts) > 3:
         return ", ".join(parts[1:])
-        
+
     return address
 
 _TZ_FINDER = None
@@ -822,82 +830,106 @@ def get_timezone(address: str) -> str:
     except ImportError:
         return "UTC"
 
+GEOCODE_RETRY_SECS = 24 * 3600  # non-exact cache entries retry daily
+
+
+def _usable_cached(cached, want_address: str):
+    """(coords_or_None, should_retry). Exact street-level hits are final.
+    City-fallback and failed entries are RETRYABLE once per day — a single
+    bad geocode (rate limit, network blip) must never weld an address to the
+    city center forever, which is exactly what the old permanent cache did
+    to home_location (v2.56.4). Legacy rows have no precision field, so
+    they're sniffed: an address that starts with a house number whose cached
+    display_name doesn't contain that number is a city-level result wearing
+    an exact entry's key."""
+    import re as _re
+    import time as _time
+    if not cached:
+        return None, True
+    try:
+        lat, lon = float(cached.get('lat')), float(cached.get('lon'))
+    except (ValueError, TypeError):
+        return None, True
+    failed = (lat == 0.0 and lon == 0.0)
+    precision = cached.get('precision')
+    if precision is None and not failed:
+        m = _re.match(r'^\s*(\d+)\b', want_address or '')
+        if m and m.group(1) not in (cached.get('display_name') or ''):
+            precision = 'city'  # legacy poisoned entry — heal it
+        else:
+            precision = 'exact'
+    stale = (_time.time() - float(cached.get('ts') or 0)) >= GEOCODE_RETRY_SECS
+    if failed:
+        return None, stale
+    if precision == 'city':
+        return (lat, lon), stale
+    return (lat, lon), False
+
+
 def geocode_address(address: str) -> Optional[tuple[float, float]]:
     if not address or not address.strip():
         return None
-        
+
     # Extract the core street address first to avoid wasting geocoding requests
     cleaned_address = extract_street_address(address)
-    
-    # Check cache for cleaned address first
-    cached = storage.get_cached_geocode(cleaned_address)
-    if cached:
-        try:
-            lat = float(cached.get('lat'))
-            lon = float(cached.get('lon'))
-            if lat != 0.0 or lon != 0.0:
-                return lat, lon
-        except (ValueError, TypeError):
-            pass
 
-    # Call API lookup for cleaned address (if not cached or cached as failed)
-    res = None
-    if not cached or (float(cached.get('lat', 0)) == 0.0 and float(cached.get('lon', 0)) == 0.0):
-        res = _geocode_address_api_lookup(cleaned_address)
-        if res:
-            lat, lon, display_name = res
-            storage.set_cached_geocode(cleaned_address, lat, lon, display_name)
-            if cleaned_address != address:
-                storage.set_cached_geocode(address, lat, lon, display_name)
-            return lat, lon
+    coords, retry = _usable_cached(storage.get_cached_geocode(cleaned_address), cleaned_address)
+    if not retry:
+        # exact hit (final) — or a fresh cached failure (None): both settle
+        # without touching the API; failures re-try daily via ts.
+        return coords
+    last_resort = coords  # a stale city-level hit: retry now, but never lose it
+
+    # Street-level lookup for the cleaned address
+    res = _geocode_address_api_lookup(cleaned_address)
+    if res:
+        lat, lon, display_name = res
+        storage.set_cached_geocode(cleaned_address, lat, lon, display_name)
+        if cleaned_address != address:
+            storage.set_cached_geocode(address, lat, lon, display_name)
+        return lat, lon
 
     # If the cleaned address lookup failed, fallback to the original detailed address
     if cleaned_address != address:
-        cached_orig = storage.get_cached_geocode(address)
-        if cached_orig:
-            try:
-                lat = float(cached_orig.get('lat'))
-                lon = float(cached_orig.get('lon'))
-                if lat != 0.0 or lon != 0.0:
-                    return lat, lon
-            except (ValueError, TypeError):
-                pass
+        coords, retry = _usable_cached(storage.get_cached_geocode(address), address)
+        if coords and not retry:
+            return coords
+        last_resort = last_resort or coords
+        print(f"Geocoding failed for cleaned address '{cleaned_address}'. Retrying with original: '{address}'")
+        res_orig = _geocode_address_api_lookup(address)
+        if res_orig:
+            lat, lon, display_name = res_orig
+            storage.set_cached_geocode(address, lat, lon, display_name)
+            return lat, lon
 
-        if not cached_orig or (float(cached_orig.get('lat', 0)) == 0.0 and float(cached_orig.get('lon', 0)) == 0.0):
-            print(f"Geocoding failed for cleaned address '{cleaned_address}'. Retrying with original: '{address}'")
-            res_orig = _geocode_address_api_lookup(address)
-            if res_orig:
-                lat, lon, display_name = res_orig
-                storage.set_cached_geocode(address, lat, lon, display_name)
-                return lat, lon
-
-    # If both failed (or were cached as failed), fallback to city/state (last 3 components of the address)
+    # Street-level failed: city/state fallback (last 3 address components).
+    # Cached under the full address as precision='city' — reused today,
+    # RETRIED at street level tomorrow. Never a permanent pin.
     parts = address.split(',')
     if len(parts) >= 3:
         city_state = ", ".join([p.strip() for p in parts[-3:]])
-        cached_city = storage.get_cached_geocode(city_state)
-        if cached_city:
-            try:
-                lat = float(cached_city.get('lat'))
-                lon = float(cached_city.get('lon'))
-                if lat != 0.0 or lon != 0.0:
-                    return lat, lon
-            except (ValueError, TypeError):
-                pass
-                
-        if not cached_city or (float(cached_city.get('lat', 0)) == 0.0 and float(cached_city.get('lon', 0)) == 0.0):
+        coords, retry = _usable_cached(storage.get_cached_geocode(city_state), city_state)
+        if not coords or retry:
             print(f"Geocoding failed for full address. Retrying with city/state: '{city_state}'")
             res = _geocode_address_api_lookup(city_state)
             if res:
                 lat, lon, display_name = res
                 storage.set_cached_geocode(city_state, lat, lon, display_name)
-                storage.set_cached_geocode(address, lat, lon, display_name)
-                return lat, lon
+                coords = (lat, lon)
+        if coords:
+            row = storage.get_cached_geocode(city_state) or {}
+            storage.set_cached_geocode(address, coords[0], coords[1],
+                                       row.get('display_name') or city_state,
+                                       precision='city')
+            return coords
 
-    # Write failed status to cache for both so we don't spam the API on failure
-    storage.set_cached_geocode(cleaned_address, 0.0, 0.0, "FAILED_GEOCODE")
+    if last_resort:
+        return last_resort  # stale city coords beat nothing — retry again tomorrow
+
+    # Cache the failure (daily retry via ts) so we don't spam the API
+    storage.set_cached_geocode(cleaned_address, 0.0, 0.0, "FAILED_GEOCODE", precision='failed')
     if cleaned_address != address:
-        storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE")
+        storage.set_cached_geocode(address, 0.0, 0.0, "FAILED_GEOCODE", precision='failed')
     return None
 
 
