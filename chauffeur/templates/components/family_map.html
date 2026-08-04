@@ -82,22 +82,35 @@
             }
             seen.add(loc.member_id);
             const label = loc.avatar || (loc.name || '?').charAt(0).toUpperCase();
+            // Cars get a rounded-square marker so a glance separates the
+            // fleet from the family.
+            const radius = loc.is_car ? '30%' : '50%';
             const markerInner = loc.image
-                ? `<img src="${loc.image}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+                ? `<img src="${loc.image}" style="width:100%;height:100%;object-fit:cover;border-radius:${radius}">`
                 : _fmEscape(label);
             const icon = L.divIcon({
                 className: '',
-                html: `<div style="width:38px;height:38px;border-radius:50%;background:#171717;border:3px solid ${loc.color_code || '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.5);overflow:hidden">${markerInner}</div>`,
+                html: `<div style="width:38px;height:38px;border-radius:${radius};background:#171717;border:3px solid ${loc.color_code || '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.5);overflow:hidden">${markerInner}</div>`,
                 iconSize: [38, 38],
                 iconAnchor: [19, 19],
                 popupAnchor: [0, -20]
             });
             const canMessage = typeof messageMember === 'function'
                 && typeof selectedMemberId !== 'undefined' && selectedMemberId
-                && selectedMemberId !== loc.member_id;
+                && selectedMemberId !== loc.member_id
+                && !loc.is_car;
+            let carStats = '';
+            if (loc.is_car) {
+                const bits = [];
+                if (loc.battery_pct != null) bits.push(`🔌 ${Math.round(loc.battery_pct)}%`);
+                if (loc.fuel_pct != null) bits.push(`⛽ ${Math.round(loc.fuel_pct)}%`);
+                if (loc.range != null) bits.push(`${Math.round(loc.range)} mi range`);
+                if (bits.length) carStats = `<div style="margin-top:4px;font-weight:700">${bits.join(' · ')}</div>`;
+            }
             const popup = `<div style="min-width:140px">
                 <div style="font-weight:800">${_fmEscape(loc.name)}</div>
-                <div style="color:var(--ha-secondary-text, #666);text-transform:capitalize">${_fmEscape(loc.state || '')}</div>
+                <div style="color:var(--ha-secondary-text, #666);text-transform:capitalize">${_fmEscape((loc.state || '').replace(/_/g, ' '))}</div>
+                ${carStats}
                 ${drivingLine ? `<div style="margin-top:4px">${drivingLine}</div>` : ''}
                 ${canMessage ? `<button onclick="messageMember('${loc.member_id}')" style="margin-top:6px;background:var(--ha-primary-color, #2563eb);color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 10px;width:100%;cursor:pointer">Message</button>` : ''}
             </div>`;

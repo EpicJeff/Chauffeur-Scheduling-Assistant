@@ -53,7 +53,15 @@ Cars are an optional entity (Config → People tab → Cars; `/api/cars`; `Car` 
 - **Diagnostics**: unassignment reasons of type `"car"` — "No car this driver may drive works for this event: …", per-car failure detail (seats, car-seat restriction, unavailable + reason), and the `max_passengers` cap. Static bans only; a car merely claimed by another driver at that hour falls through to the generic conflict/optimization reasons.
 - **Agent tool** `manage_car` (v1 registry, bridged to the chat widget): create/update/delete cars and `set_unavailable`/`clear_unavailable` date ranges ("the minivan is loaned to Aunt Sarah through Friday"). Cars also appear in `get_current_state`.
 - **Photos** (v2.48.0): cars and family members can carry an `image` — a ~128px square data-URL photo, client-side cropped/resized on upload (Config → People / Cars), stored in the entity document (no file hosting). Photos win over emoji/initials wherever the surface has room: config lists, PWA member switcher and driver header, kid-lens driver chips and the "in the {car}" line, the driver-view Take-the-car chip, family-map markers, chores/routines tiles. Tiny calendar/dashboard chips stay icon+name.
-- **Not modeled** (candidates for C2 with HA telemetry): fuel/charge, live car location, cars consumed by a pooled driver's personal (non-solver) events.
+- **Not modeled in the solver**: live car location, cars consumed by a pooled driver's personal (non-solver) events, mileage-based energy math.
+
+### Car Telemetry (C2, v2.49.0 — docs/car_telemetry_design.md, services/cars.py)
+Cars optionally map HA entities (explicit ids, no auto-discovery — Config → Cars form): `ha_device_tracker`, `ha_battery_entity` (EV %), `ha_fuel_entity` (%), `ha_range_entity` (display only). All unset → the car is untouched by every telemetry feature. **Telemetry informs humans and creates errands; it never moves solver assignments.**
+- **Family map**: cars with a tracker appear as rounded-square markers (photo/emoji) with a popup showing zone, 🔌/⛽ levels, range, and the in-progress drive using the car; zone chip when the tracker has no coords.
+- **Readiness pushes** (30-min sweep in the push loop, quiet-hours gated, dedupe `car_ready:{car}:{date}`): battery below `car_battery_warn_pct` (30) or fuel below `car_fuel_warn_pct` (25) **and** the car has drives in the next 24h (from daily-cache `car_assignments`) → push to the usual driver's member, else all parents. Battery outranks fuel (one push; charging is the cheaper ask).
+- **Auto fuel errand** (`car_auto_errand`, default off): low-fuel warning also creates a "⛽ Fuel up {car}" errand (15 min, car's drivers, location `car_fuel_station` else home, tags `auto_car_fuel`+car id for dedupe) — the solver's errand pass schedules it into a free window. EVs never get an errand (charging happens at home).
+- **Away warning** (dedupe `car_away:{car}:{event}`): a drive within 3h + tracker not `home` + no in-progress drive using the car → "{Car} isn't home; {event} at {time} assumes it's available."
+- Settings live in Config → Cars → "Car alerts". HA entity mapping is config-UI only (not exposed through `manage_car`).
 
 ---
 

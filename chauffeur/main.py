@@ -232,6 +232,26 @@ async def push_notification_loop():
             except Exception as we:
                 print(f"Watcher sweep error: {we}")
 
+            # --- Car readiness sweep (C2, docs/car_telemetry_design.md) ---
+            # Charge/fuel-before-drives pushes + away-from-home warnings.
+            # Inert when no car has HA fields; quiet-hours gated like the kid
+            # pushes; time-gated to 30 min with the marker set FIRST.
+            try:
+                from services import family_digest
+                now_dt = datetime.datetime.now()
+                if not family_digest.in_kid_quiet_hours(now_dt, storage.get_settings() or {}):
+                    last = float(storage.get_app_state("car_readiness_last_run") or 0)
+                    if time.time() - last >= 1800:
+                        storage.set_app_state("car_readiness_last_run", time.time())
+                        from services import cars as cars_svc
+
+                        def _car_push(member, title, body):
+                            _notify_member_lanes(member, title, body, '/app')
+
+                        await asyncio.to_thread(cars_svc.run_sweep, _car_push)
+            except Exception as ce:
+                print(f"Car readiness sweep error: {ce}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
@@ -4990,6 +5010,44 @@ def family_locations():
                     last_updated=s.get('last_updated'),
                 )
         out.append(entry)
+
+    # Cars with a device tracker join the map (C2, docs/car_telemetry_design.md).
+    # Location informs humans only — it never feeds the solver.
+    try:
+        from services import cars as cars_svc
+        sched_ca = dict(sched.get('car_assignments', {})) if sched else {}
+        driving_by_car = {}
+        for leg in storage.get_in_progress_drives():
+            ev_id = _leg_event_id(leg)
+            c_id = sched_ca.get(ev_id)
+            ev = events_by_id.get(ev_id)
+            if c_id and ev and c_id not in driving_by_car:
+                driving_by_car[str(c_id)] = ev.get('title') or 'a drive'
+        for c in storage.get_all_cars():
+            if c.get('is_disabled') or not c.get('ha_device_tracker'):
+                continue
+            loc = cars_svc.car_location(c) or {}
+            levels = cars_svc.car_levels(c)
+            out.append({
+                'member_id': f"car:{c.get('id')}",
+                'name': c.get('name'),
+                'color_code': c.get('color_code'),
+                'avatar': c.get('icon') or '🚗',
+                'image': c.get('image'),
+                'is_child': False,
+                'is_car': True,
+                'state': loc.get('state'),
+                'latitude': loc.get('latitude'),
+                'longitude': loc.get('longitude'),
+                'gps_accuracy': loc.get('gps_accuracy'),
+                'last_updated': loc.get('last_updated'),
+                'battery_pct': levels.get('battery_pct'),
+                'fuel_pct': levels.get('fuel_pct'),
+                'range': levels.get('range'),
+                'driving': {'leg_title': driving_by_car[str(c.get('id'))]} if str(c.get('id')) in driving_by_car else None,
+            })
+    except Exception as ce:
+        print(f"family_locations: car entries failed: {ce}")
     return out
 
 @app.get("/api/channels")

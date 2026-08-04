@@ -89,6 +89,13 @@ class Car(BaseModel):
     unavailable_ranges: List[CarUnavailableRange] = Field(default_factory=list)
     is_disabled: bool = False
     notes: Optional[str] = ""
+    # C2 telemetry (docs/car_telemetry_design.md): explicit HA entity mapping,
+    # no auto-discovery — car integrations vary too much. All None -> the car
+    # is untouched by every telemetry feature.
+    ha_device_tracker: Optional[str] = None   # device_tracker.* — location
+    ha_battery_entity: Optional[str] = None   # sensor.* — EV charge %
+    ha_fuel_entity: Optional[str] = None      # sensor.* — fuel level %
+    ha_range_entity: Optional[str] = None     # sensor.* — remaining range (display only)
 
 class FamilyMember(BaseModel):
     # Overlay entity: one record per human. Drivers/passengers stay the

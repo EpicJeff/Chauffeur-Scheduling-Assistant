@@ -1457,6 +1457,45 @@
                                         class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-2 rounded text-sm transition-colors">Add</button>
                                 </div>
                             </div>
+                            <div class="mt-4" x-show="haStatus && haStatus.available">
+                                <label class="block text-gray-400 mb-1 text-sm">Home Assistant
+                                    <span class="text-gray-600">(optional — map location, charge/fuel reminders)</span></label>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div>
+                                        <span class="block text-xs text-gray-500 mb-0.5">Location (device tracker)</span>
+                                        <select x-model="newCar.ha_device_tracker"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                            <option value="">— none —</option>
+                                            <template x-for="t in haDeviceTrackers" :key="t.entity_id">
+                                                <option :value="t.entity_id" x-text="t.name"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <span class="block text-xs text-gray-500 mb-0.5">Battery / charge % sensor</span>
+                                        <input type="text" list="ha-sensor-list" x-model="newCar.ha_battery_entity"
+                                            placeholder="sensor.…"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                                    </div>
+                                    <div>
+                                        <span class="block text-xs text-gray-500 mb-0.5">Fuel level % sensor</span>
+                                        <input type="text" list="ha-sensor-list" x-model="newCar.ha_fuel_entity"
+                                            placeholder="sensor.…"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                                    </div>
+                                    <div>
+                                        <span class="block text-xs text-gray-500 mb-0.5">Range remaining sensor</span>
+                                        <input type="text" list="ha-sensor-list" x-model="newCar.ha_range_entity"
+                                            placeholder="sensor.…"
+                                            class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm font-mono">
+                                    </div>
+                                </div>
+                                <datalist id="ha-sensor-list">
+                                    <template x-for="s in haSensors" :key="s.entity_id">
+                                        <option :value="s.entity_id" x-text="s.name"></option>
+                                    </template>
+                                </datalist>
+                            </div>
                             <div class="mt-4 flex items-center gap-3">
                                 <label class="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" x-model="newCar.is_disabled" class="sr-only peer">
@@ -1474,6 +1513,37 @@
                                     class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
                             </div>
                         </div>
+                    </div>
+                    <div class="mt-6 pt-4 border-t border-gray-700" x-show="cars.length">
+                        <h3 class="text-sm font-bold text-gray-300 mb-2">Car alerts</h3>
+                        <div class="flex flex-wrap items-end gap-4">
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-xs">🔌 Charge reminder below %</label>
+                                <input type="number" min="5" max="90" x-model.number="carBatteryWarnPct"
+                                    class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white w-24">
+                            </div>
+                            <div>
+                                <label class="block text-gray-400 mb-1 text-xs">⛽ Fuel reminder below %</label>
+                                <input type="number" min="5" max="90" x-model.number="carFuelWarnPct"
+                                    class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white w-24">
+                            </div>
+                            <div class="flex-1 min-w-[180px]">
+                                <label class="block text-gray-400 mb-1 text-xs">Gas station (for auto errands)</label>
+                                <input type="text" x-model="carFuelStation" placeholder="e.g. Costco Gas, Main St"
+                                    class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            </div>
+                            <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
+                                <input type="checkbox" x-model="carAutoErrand" class="accent-teal-500 w-4 h-4">
+                                Auto-add fuel-up errands
+                            </label>
+                            <button @click="saveSettings()"
+                                class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
+                                Alerts</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Reminders push to the car's usual driver (else parents)
+                            when it's low with drives coming in the next 24h, or when it isn't home shortly before a
+                            drive. Each car needs its HA sensors mapped in its form above; the fleet shows on the
+                            family map once a location tracker is set.</p>
                     </div>
                 </div>
 
@@ -3067,6 +3137,10 @@
                 enableAiThemes: true,
                 loadBalancingEnabled: false,
                 loadBalancingMetric: 'occupied_time',
+                carBatteryWarnPct: 30,
+                carFuelWarnPct: 25,
+                carAutoErrand: false,
+                carFuelStation: '',
                 suggestedRoutesEnabled: true,
                 chatSuggestionsEnabled: false,
                 tomorrowDigestEnabled: true,
@@ -3138,6 +3212,8 @@
                 haPersons: [],
                 haMediaPlayers: [],
                 haNotifyServices: [],
+                haDeviceTrackers: [],
+                haSensors: [],
                 testNotifyResult: '',
                 editErrandRuleId: null,
                 editRuleId: null,
@@ -3448,6 +3524,10 @@
                     this.enableAiThemes = data.enable_ai_themes !== false;
                     this.loadBalancingEnabled = data.load_balancing_enabled === true;
                     this.loadBalancingMetric = data.load_balancing_metric || 'occupied_time';
+                    this.carBatteryWarnPct = data.car_battery_warn_pct != null ? data.car_battery_warn_pct : 30;
+                    this.carFuelWarnPct = data.car_fuel_warn_pct != null ? data.car_fuel_warn_pct : 25;
+                    this.carAutoErrand = data.car_auto_errand === true;
+                    this.carFuelStation = data.car_fuel_station || '';
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
                     this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
                     this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
@@ -3574,6 +3654,10 @@
                             enable_ai_themes: this.enableAiThemes,
                             load_balancing_enabled: this.loadBalancingEnabled,
                             load_balancing_metric: this.loadBalancingMetric,
+                            car_battery_warn_pct: parseFloat(this.carBatteryWarnPct) || 30,
+                            car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
+                            car_auto_errand: this.carAutoErrand,
+                            car_fuel_station: (this.carFuelStation || '').trim(),
                             suggested_routes_enabled: this.suggestedRoutesEnabled,
                             chat_suggestions_enabled: this.chatSuggestionsEnabled,
                             tomorrow_digest_enabled: this.tomorrowDigestEnabled,
@@ -3858,7 +3942,7 @@
                 },
 
                 blankCar() {
-                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' };
+                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '', ha_device_tracker: '', ha_battery_entity: '', ha_fuel_entity: '', ha_range_entity: '' };
                 },
 
                 // Client-side photo shrink: square-crop to 128px JPEG so the
@@ -3914,7 +3998,11 @@
                         default_driver_id: car.default_driver_id || '',
                         unavailable_ranges: (car.unavailable_ranges || []).map(r => ({ ...r })),
                         is_disabled: !!car.is_disabled,
-                        notes: car.notes || ''
+                        notes: car.notes || '',
+                        ha_device_tracker: car.ha_device_tracker || '',
+                        ha_battery_entity: car.ha_battery_entity || '',
+                        ha_fuel_entity: car.ha_fuel_entity || '',
+                        ha_range_entity: car.ha_range_entity || ''
                     };
                     this.carPaxMode = car.allowed_passenger_ids ? 'limited' : 'any';
                     this.editCarId = car.doc_id;
@@ -3962,6 +4050,9 @@
                         payload.allowed_passenger_ids = this.carPaxMode === 'limited' && Array.isArray(payload.allowed_passenger_ids) && payload.allowed_passenger_ids.length
                             ? payload.allowed_passenger_ids : null;
                         payload.default_driver_id = payload.default_driver_id || null;
+                        for (const k of ['ha_device_tracker', 'ha_battery_entity', 'ha_fuel_entity', 'ha_range_entity']) {
+                            payload[k] = (payload[k] || '').trim() || null;
+                        }
                         if (!payload.id) delete payload.id;
 
                         if (this.editCarId) {
@@ -4216,14 +4307,18 @@
                         const res = await fetch(`${this.apiBase}api/ha/status`);
                         this.haStatus = await res.json();
                         if (!this.haStatus.available) return;
-                        const [persons, players, notify] = await Promise.all([
+                        const [persons, players, notify, trackers, sensors] = await Promise.all([
                             fetch(`${this.apiBase}api/ha/entities?domain=person`).then(r => r.json()),
                             fetch(`${this.apiBase}api/ha/entities?domain=media_player`).then(r => r.json()),
                             fetch(`${this.apiBase}api/ha/notify_services`).then(r => r.json()),
+                            fetch(`${this.apiBase}api/ha/entities?domain=device_tracker`).then(r => r.json()),
+                            fetch(`${this.apiBase}api/ha/entities?domain=sensor`).then(r => r.json()),
                         ]);
                         this.haPersons = persons;
                         this.haMediaPlayers = players;
                         this.haNotifyServices = notify;
+                        this.haDeviceTrackers = Array.isArray(trackers) ? trackers : [];
+                        this.haSensors = Array.isArray(sensors) ? sensors : [];
                     } catch (e) {
                         console.error("Failed to load HA options", e);
                         this.haStatus = { available: false, mode: 'error' };
