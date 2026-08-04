@@ -142,26 +142,55 @@
     body.ha-theme .bg-gray-900\/30,
     body.ha-theme .bg-gray-900\/40,
     body.ha-theme .bg-gray-900\/50,
-    body.ha-theme .bg-gray-900\/60 {
+    body.ha-theme .bg-gray-900\/60,
+    body.ha-theme .bg-gray-900\/70,
+    body.ha-theme .bg-gray-900\/80,
+    body.ha-theme .bg-gray-900\/90 {
         background-color: var(--ha-bg, #111111) !important;
     }
 
+    body.ha-theme .bg-gray-800\/30,
     body.ha-theme .bg-gray-800\/40,
-    body.ha-theme .bg-gray-800\/60 {
+    body.ha-theme .bg-gray-800\/50,
+    body.ha-theme .bg-gray-800\/60,
+    body.ha-theme .bg-gray-800\/70,
+    body.ha-theme .bg-gray-800\/80,
+    body.ha-theme .bg-gray-800\/90 {
         background-color: var(--ha-card-bg, #1c1c1c) !important;
     }
 
+    body.ha-theme .bg-gray-700\/30,
     body.ha-theme .bg-gray-700\/40,
-    body.ha-theme .bg-gray-700\/60 {
+    body.ha-theme .bg-gray-700\/50,
+    body.ha-theme .bg-gray-700\/60,
+    body.ha-theme .bg-gray-700\/70,
+    body.ha-theme .bg-gray-700\/80,
+    body.ha-theme .bg-gray-700\/90 {
         background-color: var(--ha-header-bg, #333333) !important;
     }
 
+    /* Opacity-suffixed gray BORDERS (errands input frame / properties bar,
+       todo cards). Bare border-gray-* are mapped above; the /NN variants
+       stayed hard-dark on light themes. */
+    body.ha-theme .border-gray-800\/50,
+    body.ha-theme .border-gray-800\/60,
+    body.ha-theme .border-gray-700\/40,
+    body.ha-theme .border-gray-700\/50,
+    body.ha-theme .border-gray-700\/60,
+    body.ha-theme .border-gray-600\/50,
     body.ha-theme .border-indigo-900\/60,
     body.ha-theme .border-indigo-800\/60,
     body.ha-theme .border-blue-800\/60,
     body.ha-theme .border-emerald-800\/60,
     body.ha-theme .border-amber-500\/40 {
         border-color: var(--ha-divider, #333333) !important;
+    }
+
+    /* Red-tinted constraint toggles (errands edit modal): mirror the blue
+       rule so the "prohibited" state stays legible on light themes. */
+    body.ha-theme .bg-red-900\/40,
+    body.ha-theme .bg-red-900\/50 {
+        background-color: rgba(239, 68, 68, 0.15) !important;
     }
 
     /* Accent text used by the kid boards: blend toward the theme's text
