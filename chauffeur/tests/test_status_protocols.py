@@ -639,7 +639,41 @@ def scenario_beats_backward_compat_and_banner_fields():
           "banner payload carries within_span + beat messages")
 
 
+def scenario_prep_beats_before_the_event():
+    _reset()
+    beats = [
+        {"anchor": "start", "offset_days": -2, "audience": "adults", "need": None,
+         "message": "Prep day — pack the hospital bag, lay out the meds list."},
+        {"anchor": "start", "offset_days": -1, "audience": "kids", "need": None,
+         "message": "Tomorrow's Mom's treatment day — tonight is movie night, "
+                    "your pick."},
+    ]
+    pid = _mk_protocol(beats=beats)
+    in2 = (TODAY + datetime.timedelta(days=2)).isoformat()
+    storage.add_status_day({"date": in2, "protocol_id": pid})
+    # start-2 == today: the adults' prep beat DMs today, nothing to kids
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        sent = status_protocols.send_beat_dms(now=NOON)
+    check(len(sent) == 1, f"prep beat fires two days BEFORE the event, got {sent}")
+    keys = [c.args[0].get("dm_key") or "" for c in post.call_args_list]
+    check(all("kid" not in k for k in keys) and any("dadm" in k for k in keys),
+          f"prep logistics go to adults only, got {keys}")
+    check(status_protocols.kid_lines(TODAY.isoformat()) == [],
+          "an adults-only prep day shows kids nothing")
+    # start-1: the kids' own pre-event beat rides their surfaces
+    in1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+    l = status_protocols.kid_lines(in1)
+    check(l == ["💙 Tomorrow's Mom's treatment day — tonight is movie night, "
+                "your pick."],
+          f"kids' before-beat lands on their surfaces, got {l}")
+    # and no driver ban leaks backward: prep days are message-only
+    feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), in2)
+    check([f["date"] for f in feed] == [in2],
+          f"only the event day itself bans the driver, got {feed}")
+
+
 SCENARIOS = [
+    scenario_prep_beats_before_the_event,
     scenario_day_dedupe_and_protocol_cascade,
     scenario_date_bound_resolution,
     scenario_digest_leads_with_status_and_includes_every_kid,

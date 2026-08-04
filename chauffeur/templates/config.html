@@ -1659,17 +1659,23 @@
                             <div class="mt-4">
                                 <label class="block text-gray-400 mb-1 text-sm">Timeline beats
                                     <span class="text-gray-600">(every family's arc is different — write what each day
-                                        around the event means, in your words. "1 day after" a chemo day can carry
-                                        different words and different needs than the day itself; beats can land before,
-                                        during, or after the event. A beat's words replace the default line for that
-                                        day; a beat's need changes the driving rules for that day only.)</span></label>
+                                        around the event means, in your words. A prep day "2 days before the start"
+                                        (pack, lay out the meds list), the rest day "1 day after" with different words
+                                        and needs than the day itself, a recovery check-in "3 days after" — beats land
+                                        before, during, or after the event. A beat's words replace the default line for
+                                        that day; a beat's need changes the driving rules for that day only.)</span></label>
                                 <template x-for="(b, bi) in newStatusProtocol.beats" :key="bi">
                                     <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3 mb-2">
                                         <div class="flex gap-2 flex-wrap items-center mb-2">
-                                            <input type="number" min="-30" max="45" x-model.number="b.offset_days"
+                                            <input type="number" min="1" max="45" x-show="b.direction !== 'on'"
+                                                x-model.number="b.offset_abs"
                                                 class="bg-gray-900 border border-gray-600 rounded p-2 text-white w-20 text-sm">
-                                            <span class="text-xs text-gray-400"
-                                                x-text="b.offset_days === 0 ? 'days (on the day)' : (b.offset_days < 0 ? 'days before' : 'days after')"></span>
+                                            <select x-model="b.direction"
+                                                class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
+                                                <option value="before">day(s) before</option>
+                                                <option value="on">on the day of</option>
+                                                <option value="after">day(s) after</option>
+                                            </select>
                                             <select x-model="b.anchor"
                                                 class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm">
                                                 <option value="start">the start</option>
@@ -1698,7 +1704,7 @@
                                             class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm"></textarea>
                                     </div>
                                 </template>
-                                <button @click="newStatusProtocol.beats.push({ anchor: 'start', offset_days: 1, audience: 'kids', message: '', need: '' })"
+                                <button @click="newStatusProtocol.beats.push({ anchor: 'start', offset_abs: 1, direction: 'after', audience: 'kids', message: '', need: '' })"
                                     class="border border-dashed border-gray-600 hover:border-sky-500 hover:text-sky-300 text-gray-400 font-bold px-4 py-2 rounded-lg text-sm transition-colors">+
                                     Add a beat</button>
                             </div>
@@ -4464,7 +4470,10 @@
                         keywords_text: (p.keywords || []).join(', '),
                         call_time: p.call_time || '',
                         beats: (p.beats || []).map(b => ({ anchor: b.anchor || 'start',
-                            offset_days: b.offset_days || 0, audience: b.audience || 'kids',
+                            offset_abs: Math.abs(b.offset_days || 0) || 1,
+                            direction: (b.offset_days || 0) < 0 ? 'before'
+                                : ((b.offset_days || 0) > 0 ? 'after' : 'on'),
+                            audience: b.audience || 'kids',
                             message: b.message || '', need: b.need || '' })),
                     };
                     this.showStatusForm = true;
@@ -4482,7 +4491,9 @@
                         call_time: f.call_time || null,
                         beats: (f.beats || [])
                             .filter(b => (b.message || '').trim() || b.need)
-                            .map(b => ({ anchor: b.anchor, offset_days: b.offset_days || 0,
+                            .map(b => ({ anchor: b.anchor,
+                                         offset_days: b.direction === 'on' ? 0
+                                             : (b.direction === 'before' ? -1 : 1) * Math.max(1, b.offset_abs || 1),
                                          audience: b.audience, message: (b.message || '').trim(),
                                          need: b.need || null })),
                     };
