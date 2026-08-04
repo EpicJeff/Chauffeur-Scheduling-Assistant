@@ -649,34 +649,39 @@
                                 mentioned exactly once, never between 9pm and 8am.
                             </p>
                         </div>
-                        <div class="flex flex-col sm:flex-row sm:items-center gap-4 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <div class="flex items-center space-x-3 shrink-0">
-                                <label class="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" x-model="kidDigestEnabled" @change="saveSettings()"
-                                        class="sr-only peer">
-                                    <div
-                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
-                                    </div>
-                                </label>
-                                <span class="font-bold text-gray-300">🌙 Kid Digest</span>
-                            </div>
-                            <div x-show="kidDigestEnabled" class="flex items-center gap-2 shrink-0">
-                                <label class="text-sm text-gray-400 font-semibold" for="kidDigestTime">Send after</label>
-                                <input type="time" id="kidDigestTime" x-model="kidDigestTime" @change="saveSettings()"
-                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                            </div>
-                            <div class="flex items-center gap-2 shrink-0">
-                                <label class="text-sm text-gray-400 font-semibold">Board shows tomorrow after</label>
-                                <input type="time" x-model="kidDigestCutover" @change="saveSettings()"
-                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                            </div>
-                            <div class="flex items-center gap-2 shrink-0">
-                                <label class="text-sm text-gray-400 font-semibold">Kid quiet hours</label>
-                                <input type="time" x-model="kidQuietStart" @change="saveSettings()"
-                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                                <span class="text-gray-500 text-sm">to</span>
-                                <input type="time" x-model="kidQuietEnd" @change="saveSettings()"
-                                    class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                        <!-- Controls row ABOVE the description: with both in one flex row
+                             the shrink-0 controls crushed the paragraph into a one-word-
+                             per-line sliver (user screenshot 2026-08-03). -->
+                        <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                                <div class="flex items-center space-x-3 shrink-0">
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" x-model="kidDigestEnabled" @change="saveSettings()"
+                                            class="sr-only peer">
+                                        <div
+                                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                        </div>
+                                    </label>
+                                    <span class="font-bold text-gray-300">🌙 Kid Digest</span>
+                                </div>
+                                <div x-show="kidDigestEnabled" class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold" for="kidDigestTime">Send after</label>
+                                    <input type="time" id="kidDigestTime" x-model="kidDigestTime" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Board shows tomorrow after</label>
+                                    <input type="time" x-model="kidDigestCutover" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Kid quiet hours</label>
+                                    <input type="time" x-model="kidQuietStart" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                    <span class="text-gray-500 text-sm">to</span>
+                                    <input type="time" x-model="kidQuietEnd" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                </div>
                             </div>
                             <p class="text-sm text-gray-500">
                                 Each child gets a "🌙 Tomorrow" Argyle DM — their rides with who's driving,
@@ -711,7 +716,7 @@
                                         class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
                                 </div>
                                 <div class="flex items-center gap-2 shrink-0">
-                                    <label class="text-sm text-gray-400 font-semibold">School year</label>
+                                    <label class="text-sm text-gray-400 font-semibold" title="Auto-detected from the calendar's First/Last Day of School events; setting either date takes manual control">School year override</label>
                                     <input type="date" x-model="schoolYearStart" @change="saveSettings()"
                                         class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
                                     <span class="text-gray-500 text-sm">to</span>
@@ -729,12 +734,16 @@
                                 Tells Chauffeur what a school day is. School-day features (the after-school
                                 pickup push, bus leave-by lines) run on weekdays inside the school year,
                                 skipping any day the chosen calendar has an all-day event matching a
-                                no-school keyword. A district Google calendar works directly — paste its
-                                calendar ID (public calendars just work; a private one must be shared with
-                                the same service account as your family calendars). An ICS-fed calendar
-                                works too. Nothing set = plain weekdays, as before. Dates outside the
-                                school year (summer!) never count as school days.
+                                no-school keyword. The school year is <span class="text-gray-400 font-semibold">detected
+                                automatically</span> from the calendar's "First/Last Day of School" events —
+                                the override dates are only for calendars without those markers (setting
+                                either date takes full manual control). A district Google calendar works
+                                directly — paste its calendar ID (public calendars just work; a private one
+                                must be shared with the same service account as your family calendars). An
+                                ICS-fed calendar works too. Nothing set = plain weekdays, as before.
                             </p>
+                            <p class="text-sm text-gray-400" x-show="schoolStatus && schoolStatus.calendar_configured"
+                                x-html="schoolStatusLine()"></p>
                         </div>
                     </div>
 
@@ -2869,6 +2878,7 @@
                 schoolYearStart: '',
                 schoolYearEnd: '',
                 schoolClosedKeywords: '',
+                schoolStatus: null,
                 kidQuietStart: '20:30',
                 kidQuietEnd: '07:00',
                 llmTestResult: null,
@@ -3241,6 +3251,7 @@
                     this.schoolYearStart = data.school_year_start || '';
                     this.schoolYearEnd = data.school_year_end || '';
                     this.schoolClosedKeywords = data.school_closed_keywords || '';
+                    this.loadSchoolStatus();  // non-blocking; may take a moment (gcal fetch)
                     this.kidQuietStart = data.kid_quiet_start || '20:30';
                     this.kidQuietEnd = data.kid_quiet_end || '07:00';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
@@ -3252,6 +3263,30 @@
                         const res = await fetch(`${this.apiBase}api/ha/entities?domain=weather`);
                         this.weatherEntities = res.ok ? await res.json() : [];
                     } catch (e) { this.weatherEntities = []; }
+                },
+                async loadSchoolStatus() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/school/status`);
+                        this.schoolStatus = res.ok ? await res.json() : null;
+                    } catch (e) { this.schoolStatus = null; }
+                },
+                schoolStatusLine() {
+                    const s = this.schoolStatus;
+                    if (!s || !s.calendar_configured) return '';
+                    const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+                    let line = s.in_session_today ? '✅ School is in session today.' : '🏖️ School is out today.';
+                    if (s.manual_start || s.manual_end) {
+                        line += ` Manual override: ${s.manual_start ? fmt(s.manual_start) : '…'} – ${s.manual_end ? fmt(s.manual_end) : '…'}.`;
+                    } else if (s.detected_years && s.detected_years.length) {
+                        line += ` Detected school year${s.detected_years.length > 1 ? 's' : ''}: `
+                            + s.detected_years.map(y => `${fmt(y[0])} – ${fmt(y[1])}`).join(', ') + '.';
+                    } else {
+                        line += ' ⚠️ No "First/Last Day of School" events found on the calendar — set the override dates.';
+                    }
+                    if (s.no_school_days_cached) {
+                        line += ` ${s.no_school_days_cached} no-school day${s.no_school_days_cached !== 1 ? 's' : ''} recognized.`;
+                    }
+                    return line;
                 },
                 async addCalendarId() {
                     const val = this.newCalendarIdInput.trim();
@@ -3351,6 +3386,7 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
                         });
+                        this.loadSchoolStatus();  // non-blocking refresh of the 🏫 line
                         if (this.isHomeAssistant) {
                             await fetch(`${this.apiBase}api/settings/ha_sync`, { method: 'POST' });
                         }

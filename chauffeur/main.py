@@ -931,6 +931,14 @@ def weather_daily(days: int = 7, start: str = None):
         return []
 
 
+@app.get("/api/school/status")
+def school_status():
+    """What the school-day system currently believes (Config diagnostics):
+    in-session today, detected school years, cached closure count."""
+    from services import school
+    return school.status()
+
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}

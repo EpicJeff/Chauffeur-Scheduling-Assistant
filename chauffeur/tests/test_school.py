@@ -103,6 +103,49 @@ def scenario_fetch_failure_fails_open():
         check(school.school_in_session(MONDAY) is False, "stale cache still answers")
 
 
+def scenario_auto_year_bounds_from_markers():
+    school._reset_cache()
+    _settings(school_calendar_id="school")
+    f1 = MONDAY - datetime.timedelta(days=98)
+    l1 = MONDAY + datetime.timedelta(days=98)
+    f2 = MONDAY + datetime.timedelta(days=168)
+    events = [
+        _all_day("First Day of School", f1),
+        _all_day("Last Day of School", l1),
+        # Some districts put the marker on a TIMED event — still a marker.
+        {"summary": "First Day of School",
+         "start": {"dateTime": datetime.datetime.combine(f2, datetime.time(8)).isoformat()},
+         "end": {}},
+    ]
+    with _gcal_events(events):
+        check(school.school_in_session(MONDAY) is True, "inside the detected year")
+        summer = MONDAY + datetime.timedelta(days=126)
+        check(school.school_in_session(summer) is False, "summer between years is out")
+        check(school.school_in_session(MONDAY + datetime.timedelta(days=175)) is True,
+              "next detected year (timed marker) back in session")
+        check(school.school_in_session(f1 - datetime.timedelta(days=7)) is False,
+              "before the first first-day is out")
+
+
+def scenario_open_ended_year_and_manual_override():
+    school._reset_cache()
+    _settings(school_calendar_id="school")
+    f = MONDAY - datetime.timedelta(days=14)
+    with _gcal_events([_all_day("School Begins", f)]):
+        check(school.school_in_session(MONDAY) is True,
+              "first day with no last day yet: open-ended year in session")
+        check(school.school_in_session(f + datetime.timedelta(days=336)) is False,
+              "open-ended year still closes ~11 months out")
+    # Setting either manual date disables auto-detection entirely.
+    school._reset_cache()
+    _settings(school_calendar_id="school",
+              school_year_start=(MONDAY - datetime.timedelta(days=30)).isoformat())
+    with _gcal_events([_all_day("First Day of School", MONDAY - datetime.timedelta(days=98)),
+                       _all_day("Last Day of School", MONDAY + datetime.timedelta(days=98))]):
+        check(school.school_in_session(MONDAY + datetime.timedelta(days=126)) is True,
+              "manual bound set -> auto intervals ignored (parent took control)")
+
+
 def scenario_bus_launch_honors_the_gate():
     school._reset_cache()
     _settings()
@@ -122,6 +165,8 @@ SCENARIOS = [
     scenario_no_school_calendar_events,
     scenario_custom_keywords,
     scenario_fetch_failure_fails_open,
+    scenario_auto_year_bounds_from_markers,
+    scenario_open_ended_year_and_manual_override,
     scenario_bus_launch_honors_the_gate,
 ]
 
