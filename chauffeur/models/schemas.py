@@ -59,6 +59,7 @@ class Driver(BaseModel):
     phone_number: Optional[str] = None
     cell_carrier: Optional[str] = None
     bio: Optional[str] = ""
+    max_passengers: Optional[int] = None  # graduated-licensing cap, independent of car
 
 class Passenger(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -67,6 +68,26 @@ class Passenger(BaseModel):
     hashtags: List[str] = Field(default_factory=list)
     requires_attendance: bool = False
     bio: Optional[str] = ""
+
+class CarUnavailableRange(BaseModel):
+    start: str                      # ISO date, inclusive
+    end: str                        # ISO date, inclusive
+    reason: Optional[str] = ""
+
+class Car(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str
+    icon: Optional[str] = None      # emoji; None -> generic car glyph
+    color_code: str = '#6b7280'
+    seat_capacity: int = 4          # passenger seats, excluding the driver
+    # Drivers permitted behind the wheel. A driver listed on NO car keeps an
+    # implicit personal car (solver ignores cars for them entirely).
+    allowed_driver_ids: List[str] = Field(default_factory=list)
+    allowed_passenger_ids: Optional[List[str]] = None  # None = anyone fits (no car-seat restriction)
+    default_driver_id: Optional[str] = None
+    unavailable_ranges: List[CarUnavailableRange] = Field(default_factory=list)
+    is_disabled: bool = False
+    notes: Optional[str] = ""
 
 class FamilyMember(BaseModel):
     # Overlay entity: one record per human. Drivers/passengers stay the

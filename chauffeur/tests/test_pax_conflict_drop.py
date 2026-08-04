@@ -92,7 +92,7 @@ def scenario_solver_schedules_both_after_drop():
     matcher.resolve_passenger_double_bookings(events, PAX)
     drivers = [Driver(id="d1", name="Mom", color_code="#fff"),
                Driver(id="d2", name="Dad", color_code="#000")]
-    assignments, unassigned, _ = matcher.solve_schedule(events, drivers, [], [], passengers=PAX)
+    assignments, unassigned, _, _ = matcher.solve_schedule(events, drivers, [], [], passengers=PAX)
     check(len(assignments) == 2 and not unassigned,
           f"both events schedule after the drop, got assignments={assignments} unassigned={unassigned}")
 

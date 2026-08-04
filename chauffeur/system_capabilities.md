@@ -42,6 +42,20 @@ Interaction with other weights (all metrics):
 
 ---
 
+### Cars & Vehicle Assignment (C1, v2.47.0 — docs/car_entity_design.md)
+Cars are an optional entity (Config → People tab → Cars; `/api/cars`; `Car` in `models/schemas.py`). Each car has: `seat_capacity` (passenger seats, excluding the driver), `allowed_driver_ids`, optional `allowed_passenger_ids` (car-seat restrictions; `null` = anyone fits), optional `default_driver_id` (the "usual" driver), `unavailable_ranges` (inclusive ISO date ranges — loaned out, in the shop), and `is_disabled`.
+
+- **Inert when unconfigured**: with zero cars the solver builds no car variables or constraints — behavior is identical to the pre-car model, and `car_assignments` (4th return value of `solve_schedule`, `event_id → car_id`) is empty.
+- **Implicit personal car**: a driver listed in **no** car's `allowed_driver_ids` is untouched by every car constraint. Only "pooled" drivers (listed on ≥1 car) must draw a workable car for each assigned event: the car must permit them, fit the event's passengers (count and, if restricted, identity), and not be in an unavailable range. A pooled driver with no workable car is banned from the event — escapable by manual override like every other hard ban.
+- **Contention & handoffs**: a car is never in two places at once. Two different drivers may reuse the same car for nearby events only if the gap covers `travel(e1 → home) + travel(home → e2)` — handoffs happen at home; midday non-home handoffs are deliberately unmodeled. A driver chaining back-to-back events keeps the same physical car (and cannot chain into an event their current car can't serve without time to swap at home).
+- **Swap penalty `−2500`**: using a car whose `default_driver_id` is someone else. Above priority deltas (≤ ~1,500) so priority alone never forces a key swap; below a `preferred` rule (`+10,000`) so rules can. Swaps render with an amber `⇄` accent on calendar badges and PWA family-card chips.
+- **`Driver.max_passengers`** (optional): driver-level passenger cap independent of cars (teen graduated-licensing laws). Applies even with zero cars configured; override-escapable.
+- **Diagnostics**: unassignment reasons of type `"car"` — "No car this driver may drive works for this event: …", per-car failure detail (seats, car-seat restriction, unavailable + reason), and the `max_passengers` cap. Static bans only; a car merely claimed by another driver at that hour falls through to the generic conflict/optimization reasons.
+- **Agent tool** `manage_car` (v1 registry, bridged to the chat widget): create/update/delete cars and `set_unavailable`/`clear_unavailable` date ranges ("the minivan is loaned to Aunt Sarah through Friday"). Cars also appear in `get_current_state`.
+- **Not modeled** (candidates for C2 with HA telemetry): fuel/charge, live car location, cars consumed by a pooled driver's personal (non-solver) events.
+
+---
+
 ## Travel Time Data & Caching
 Travel times come from Mapbox's Matrix API using the free-flow `driving` profile (no traffic-aware profile is requested anywhere, and cached reads always report a traffic delay of `0`). Durations are therefore treated as **static**: a cached value for a pair of fixed addresses does not go stale, and the solver reads them without an age check.
 - **Priming**: each schedule refresh primes only the location pairs it does not already have. Stale-but-valid pairs are never re-purchased — doing so previously exceeded the 100,000 element/month Matrix allowance.

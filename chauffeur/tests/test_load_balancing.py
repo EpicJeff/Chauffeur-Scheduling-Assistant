@@ -33,7 +33,7 @@ def scenario_bucket_fill_default():
     drivers = [mk_driver(1, 1), mk_driver(2, 4), mk_driver(3, 4), mk_driver(4, 4)]
     events = [mk_event(i, 8 + i * 2) for i in range(4)]
 
-    assignments, unassigned, _ = matcher.solve_schedule(events, drivers, [])
+    assignments, unassigned, _, _ = matcher.solve_schedule(events, drivers, [])
     check(not unassigned, "all events assigned")
     check(all(d == "d1" for d in assignments.values()),
           f"default mode stacks everything on the priority driver, got {assignments}")
@@ -45,7 +45,7 @@ def scenario_load_balancing_spreads():
     drivers = [mk_driver(1, 1), mk_driver(2, 4), mk_driver(3, 4), mk_driver(4, 4)]
     events = [mk_event(i, 8 + i * 2) for i in range(4)]
 
-    assignments, unassigned, _ = matcher.solve_schedule(events, drivers, [], load_balancing=True)
+    assignments, unassigned, _, _ = matcher.solve_schedule(events, drivers, [], load_balancing=True)
     check(not unassigned, "all events assigned")
     loads = {}
     for d_id in assignments.values():
@@ -61,7 +61,7 @@ def scenario_attendee_still_wins():
     events = [mk_event(i, 8 + i * 2) for i in range(3)]
     driver_events = {"d1": [events[0], events[1]]}  # d1 attends e0 and e1
 
-    assignments, unassigned, _ = matcher.solve_schedule(
+    assignments, unassigned, _, _ = matcher.solve_schedule(
         events, drivers, [], driver_events=driver_events, load_balancing=True)
     check(not unassigned, "all events assigned")
     check(assignments["e0"] == "d1" and assignments["e1"] == "d1",
@@ -77,7 +77,7 @@ def scenario_metric_events_vs_occupied():
     durations = [120, 40, 40, 40]
     events = [mk_event(i, 8 + i * 3, duration_mins=durations[i]) for i in range(4)]
 
-    a_ev, un_ev, _ = matcher.solve_schedule(events, drivers, [],
+    a_ev, un_ev, _, _ = matcher.solve_schedule(events, drivers, [],
                                             load_balancing=True, load_balancing_metric='events')
     check(not un_ev, "all events assigned (events metric)")
     counts = {}
@@ -86,7 +86,7 @@ def scenario_metric_events_vs_occupied():
     check(sorted(counts.values()) == [2, 2],
           f"events metric splits 2/2 regardless of duration, got {a_ev}")
 
-    a_oc, un_oc, _ = matcher.solve_schedule(events, drivers, [],
+    a_oc, un_oc, _, _ = matcher.solve_schedule(events, drivers, [],
                                             load_balancing=True, load_balancing_metric='occupied_time')
     check(not un_oc, "all events assigned (occupied metric)")
     mins = {}
@@ -106,7 +106,7 @@ def scenario_metric_driving_time_spreads():
         d.home_location = "Home"
     events = [mk_event(i, 8 + i * 3, location="Venue") for i in range(4)]
 
-    assignments, unassigned, _ = matcher.solve_schedule(
+    assignments, unassigned, _, _ = matcher.solve_schedule(
         events, drivers, [], load_balancing=True, load_balancing_metric='driving_time')
     check(not unassigned, "all events assigned")
     counts = {}
@@ -123,7 +123,7 @@ def scenario_metric_driving_time_prefers_local():
     d2 = mk_driver(2, 4); d2.home_location = "Venue"
     events = [mk_event(i, 8 + i * 3, location="Venue") for i in range(4)]
 
-    assignments, unassigned, _ = matcher.solve_schedule(
+    assignments, unassigned, _, _ = matcher.solve_schedule(
         events, [d1, d2], [], load_balancing=True, load_balancing_metric='driving_time')
     check(not unassigned, "all events assigned")
     check(all(d_id == "d2" for d_id in assignments.values()),
@@ -139,7 +139,7 @@ def scenario_overrides_beat_balancing():
                  for i, e in enumerate(events)]
 
     for metric in ("events", "driving_time", "occupied_time"):
-        assignments, unassigned, _ = matcher.solve_schedule(
+        assignments, unassigned, _, _ = matcher.solve_schedule(
             events, drivers, [], overrides=overrides,
             load_balancing=True, load_balancing_metric=metric)
         check(not unassigned and all(d == "d1" for d in assignments.values()),
@@ -162,10 +162,10 @@ def scenario_dropoff_before_trip_window_assignable():
     trip_over = {"id": "t1", "start": ev.start.replace(hour=0), "end": ev.start.replace(hour=0) + dt.timedelta(days=4),
                  "location": None, "entities": {"passenger_p1"}}
 
-    a1, u1, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip_after])
+    a1, u1, _, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip_after])
     check(a1.get(ev.id) == "d2", f"drop-off before the trip window assigns normally, got {a1}, {u1}")
 
-    a2, u2, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip_over])
+    a2, u2, _, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip_over])
     check(ev.id in u2, f"same event inside the window stays banned, got {a2}")
 
 
@@ -181,11 +181,11 @@ def scenario_override_beats_trip_ban():
     trip = {"id": "t1", "start": ev.start - dt.timedelta(days=1), "end": ev.end + dt.timedelta(days=1),
             "location": None, "entities": {"passenger_p1"}}
 
-    a_no, un_no, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip])
+    a_no, un_no, _, _ = matcher.solve_schedule([ev], drivers, [], passengers=[pax], trip_metadata=[trip])
     check(ev.id in un_no, f"without an override the trip ban leaves it unassigned, got {a_no}")
 
     ovr = [{"event_id": ev.id, "driver_id": "d2", "created_at": 1750000000}]
-    a_ovr, un_ovr, _ = matcher.solve_schedule([ev], drivers, [], overrides=ovr,
+    a_ovr, un_ovr, _, _ = matcher.solve_schedule([ev], drivers, [], overrides=ovr,
                                               passengers=[pax], trip_metadata=[trip])
     check(a_ovr.get(ev.id) == "d2", f"override onto the trip-banned driver wins, got {a_ovr}")
 

@@ -2833,6 +2833,7 @@
                         location: ev.location,
                         calendarIds: [...(ev.calendar_ids || [])],
                         driverIds: new Set(),
+                        carIds: new Set(),
                         legs: [],
                         isUnassigned: false,
                         suppressed: !!ev.trip_suppressed,
@@ -2848,6 +2849,11 @@
                 }
                 const assigned = (assignments && assignments[ev.id]) || (ghost_assignments && ghost_assignments[ev.id]);
                 if (assigned) card.driverIds.add(assigned);
+                const carId = (scheduleData.car_assignments || {})[ev.id];
+                if (carId) {
+                    if (!card.carIds) card.carIds = new Set();
+                    card.carIds.add(carId);
+                }
                 if (trueUnassigned.includes(ev.id)) card.isUnassigned = true;
 
                 // Split dropoff/pickup halves are independently overridable by
@@ -2921,15 +2927,27 @@
             const needsChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ ${label}</span>`;
             const grayChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-gray-700/40 text-gray-400 border border-gray-600">${label}</span>`;
 
+            // Car chips (absent for zero-car families). Amber ⇄ = not this
+            // driver's usual car — a key handoff the humans must coordinate.
+            const carChips = (card.carIds && card.carIds.size)
+                ? [...card.carIds].map(cid => {
+                    const c = (scheduleData.cars || []).find(x => x.id === cid);
+                    if (!c) return '';
+                    const swap = !!(c.default_driver_id && card.driverIds.size === 1 && !card.driverIds.has(c.default_driver_id));
+                    const cls = swap ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-gray-700/40 text-gray-300 border-gray-600';
+                    return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border ${cls}" title="${swap ? 'Not the usual driver for this car' : 'Assigned car'}">${c.icon || '🚗'} ${c.name}${swap ? ' ⇄' : ''}</span>`;
+                }).join('')
+                : '';
+
             if (card.legs && card.legs.length > 0) {
                 return [...card.legs].sort((a, b) => new Date(a.start) - new Date(b.start)).map(l => {
                     const label = l.type === 'dropoff' ? 'Dropoff' : 'Pickup';
                     if (l.driverId) return driverChip(l.driverId, label) || grayChip(`${label}: ?`);
                     return l.isUnassigned ? needsChip(`${label}: Needs Driver`) : grayChip(`${label}: Unassigned`);
-                }).join('');
+                }).join('') + carChips;
             }
             if (card.isUnassigned) return needsChip('NEEDS DRIVER');
-            return [...card.driverIds].map(id => driverChip(id, '')).join('');
+            return [...card.driverIds].map(id => driverChip(id, '')).join('') + carChips;
         }
 
         function renderFamilyCard(card) {

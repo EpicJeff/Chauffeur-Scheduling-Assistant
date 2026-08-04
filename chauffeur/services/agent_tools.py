@@ -78,6 +78,24 @@ class DeleteOverrideTool(BaseModel):
     """
     event_id: str = Field(..., description="The ID of the event to clear the override for.")
 
+class ManageCarTool(BaseModel):
+    """
+    Creates, updates, or deletes a family car, or marks it unavailable (loaned out, in the shop).
+    Cars limit who can drive which events: seat capacity, allowed drivers, and car-seat passenger
+    restrictions. A driver listed on no car keeps an unrestricted personal car. Use action
+    'set_unavailable' for things like 'the minivan is loaned to Aunt Sarah through Friday'.
+    """
+    action: str = Field(..., description="'create', 'update', 'delete', 'set_unavailable' (add an unavailability date range), or 'clear_unavailable' (remove all unavailability ranges).")
+    car_id: str = Field("", description="Car id or exact car name. Required for every action except 'create'.")
+    name: str = Field("", description="Car name, e.g. 'Minivan'. Required for 'create'.")
+    seat_capacity: int = Field(0, description="Passenger seats excluding the driver. Defaults to 4 on create; 0 means 'leave unchanged' on update.")
+    allowed_driver_ids: List[str] = Field(default=[], description="Driver IDs permitted to drive this car.")
+    allowed_passenger_ids: List[str] = Field(default=[], description="Passenger IDs allowed to ride (car-seat restrictions). Empty means anyone fits.")
+    default_driver_id: str = Field("", description="The driver who usually has this car; the solver avoids reassigning it away from them.")
+    unavailable_start: str = Field("", description="For 'set_unavailable': first unavailable date (YYYY-MM-DD, inclusive).")
+    unavailable_end: str = Field("", description="For 'set_unavailable': last unavailable date (YYYY-MM-DD, inclusive).")
+    unavailable_reason: str = Field("", description="For 'set_unavailable': why, e.g. 'loaned to Aunt Sarah'.")
+
 class UpdateMemoryTool(BaseModel):
     """
     Saves custom instructions or rules for yourself to remember persistently across sessions. Use this when the user tells you to 'remember' a global preference or instruction.
@@ -461,6 +479,7 @@ TOOL_SCHEMAS = {
     "run_solver": RunSolverTool.model_json_schema(),
     "add_override": AddOverrideTool.model_json_schema(),
     "delete_override": DeleteOverrideTool.model_json_schema(),
+    "manage_car": ManageCarTool.model_json_schema(),
     "update_memory": UpdateMemoryTool.model_json_schema(),
     "add_errand": AddErrandTool.model_json_schema(),
     "update_errand": UpdateErrandTool.model_json_schema(),
@@ -530,6 +549,7 @@ def handle_get_current_state(args: dict) -> dict:
     state = {
         "drivers": storage.get_all_drivers(),
         "passengers": storage.get_all_passengers(),
+        "cars": storage.get_all_cars(),
         "routing_rules": storage.get_all_rules(),
         "priority_rules": storage.get_all_priority_rules(),
         "overrides": storage.get_all_overrides(),
@@ -552,6 +572,62 @@ def handle_get_current_state(args: dict) -> dict:
                 
     state["schedule"] = clean_events
     return state
+
+def handle_manage_car(args: dict) -> dict:
+    from services import storage
+    action = (args.get("action") or "").strip().lower()
+    cars = storage.get_all_cars()
+
+    if action == "create":
+        from models.schemas import Car
+        car = Car(
+            name=(args.get("name") or "").strip() or "Car",
+            seat_capacity=int(args.get("seat_capacity") or 4),
+            allowed_driver_ids=args.get("allowed_driver_ids") or [],
+            allowed_passenger_ids=(args.get("allowed_passenger_ids") or None),
+            default_driver_id=(args.get("default_driver_id") or None),
+        )
+        doc_id = storage.add_car(car.model_dump())
+        return {"status": "success", "car_id": car.id, "doc_id": doc_id}
+
+    needle = (args.get("car_id") or "").strip().lower()
+    car = next((c for c in cars if str(c.get("id", "")).lower() == needle
+                or (c.get("name") or "").strip().lower() == needle), None)
+    if not car:
+        known = ", ".join(f"{c.get('name')} ({c.get('id')})" for c in cars) or "none"
+        return {"status": "error", "message": f"No car matching '{args.get('car_id')}'. Known cars: {known}"}
+    doc_id = car["doc_id"]
+    updated = {k: v for k, v in car.items() if k != "doc_id"}
+
+    if action == "delete":
+        storage.delete_car(doc_id)
+        return {"status": "success", "deleted": car.get("name")}
+    if action == "set_unavailable":
+        if not args.get("unavailable_start") or not args.get("unavailable_end"):
+            return {"status": "error", "message": "unavailable_start and unavailable_end (YYYY-MM-DD) are required"}
+        updated["unavailable_ranges"] = (updated.get("unavailable_ranges") or []) + [{
+            "start": args["unavailable_start"], "end": args["unavailable_end"],
+            "reason": args.get("unavailable_reason") or ""}]
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated["name"], "unavailable_ranges": updated["unavailable_ranges"]}
+    if action == "clear_unavailable":
+        updated["unavailable_ranges"] = []
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated["name"], "unavailable_ranges": []}
+    if action == "update":
+        if (args.get("name") or "").strip():
+            updated["name"] = args["name"].strip()
+        if args.get("default_driver_id"):
+            updated["default_driver_id"] = args["default_driver_id"]
+        if int(args.get("seat_capacity") or 0) > 0:
+            updated["seat_capacity"] = int(args["seat_capacity"])
+        if args.get("allowed_driver_ids"):
+            updated["allowed_driver_ids"] = args["allowed_driver_ids"]
+        if args.get("allowed_passenger_ids"):
+            updated["allowed_passenger_ids"] = args["allowed_passenger_ids"]
+        storage.update_car(doc_id, updated)
+        return {"status": "success", "car": updated}
+    return {"status": "error", "message": f"Unknown action '{action}'. Use create/update/delete/set_unavailable/clear_unavailable."}
 
 def handle_add_routing_rule(args: dict) -> dict:
     from services import storage
@@ -1563,6 +1639,7 @@ TOOL_HANDLERS = {
     "run_solver": handle_run_solver,
     "add_override": handle_add_override,
     "delete_override": handle_delete_override,
+    "manage_car": handle_manage_car,
     "update_memory": handle_update_memory,
     "add_errand": handle_add_errand,
     "update_errand": handle_update_errand,

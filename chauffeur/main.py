@@ -54,7 +54,7 @@ def ensure_vapid_keys():
 
 ensure_vapid_keys()
 
-from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier
+from models.schemas import Driver, Rule, Settings, PriorityRule, ManualOverride, Passenger, Car, FamilyMember, TelemetryEvent, Errand, ErrandRule, StatusTier
 from services import storage, calendar, maps
 from solver import matcher
 from fastapi.templating import Jinja2Templates
@@ -2530,6 +2530,29 @@ def update_passenger(doc_id: int, passenger: Passenger, background_tasks: Backgr
 @app.delete("/api/passengers/{doc_id}")
 def delete_passenger(doc_id: int, background_tasks: BackgroundTasks):
     storage.delete_passenger(doc_id)
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "deleted"}
+
+# --- Cars API ---
+@app.get("/api/cars")
+def get_cars():
+    return storage.get_all_cars()
+
+@app.post("/api/cars")
+def create_car(car: Car, background_tasks: BackgroundTasks):
+    doc_id = storage.add_car(car.model_dump() if hasattr(car, 'model_dump') else car.dict())
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"doc_id": doc_id, "status": "created"}
+
+@app.put("/api/cars/{doc_id}")
+def update_car(doc_id: int, car: Car, background_tasks: BackgroundTasks):
+    storage.update_car(doc_id, car.model_dump() if hasattr(car, 'model_dump') else car.dict())
+    background_tasks.add_task(refresh_schedule_logic)
+    return {"status": "updated"}
+
+@app.delete("/api/cars/{doc_id}")
+def delete_car(doc_id: int, background_tasks: BackgroundTasks):
+    storage.delete_car(doc_id)
     background_tasks.add_task(refresh_schedule_logic)
     return {"status": "deleted"}
 
@@ -6674,7 +6697,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 
     passengers_data = storage.get_all_passengers()
     passengers = [Passenger(**p) for p in passengers_data]
-    
+
+    cars_data = storage.get_all_cars()
+    cars = [Car(**{k: v for k, v in c.items() if k != 'doc_id'}) for c in cars_data if not c.get('is_disabled', False)]
+
     passenger_calendar_map = {}
     passenger_calendar_ids = set()
     for p in passengers:
@@ -7260,6 +7286,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     def compile_and_save_combined():
         nonlocal calendar_metadata
         combined_assignments = {}
+        combined_car_assignments = {}
         combined_unassigned = []
         combined_lateness_warnings = []
         combined_ghost_assignments = {}
@@ -7285,6 +7312,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             if daily_cache and 'schedule' in daily_cache:
                 sched = daily_cache['schedule']
                 combined_assignments.update(sched.get('assignments', {}))
+                combined_car_assignments.update(sched.get('car_assignments', {}))
                 combined_unassigned.extend(sched.get('unassigned', []))
                 combined_lateness_warnings.extend(sched.get('lateness_warnings', []))
                 combined_ghost_assignments.update(sched.get('ghost_assignments', {}))
@@ -7334,7 +7362,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             diagnostics = {}
         else:
             diagnostics = matcher.compute_diagnostics(
-                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata
+                combined_true_unassigned, list(all_events_for_ui.values()), drivers, driver_events_map, combined_assignments, overrides, rules, passengers=passengers, trip_metadata=trip_metadata, cars=cars
             )
 
         duplicate_groups = []
@@ -7421,6 +7449,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "duplicate_groups": duplicate_groups,
             "events": list(all_events_for_ui.values()),
             "assignments": combined_assignments,
+            "car_assignments": combined_car_assignments,
+            "cars": cars,
             "ghost_assignments": combined_ghost_assignments,
             "ghost_drivers": combined_ghost_drivers,
             "route_edges": combined_route_edges,
@@ -7659,8 +7689,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         if draft:
             assignments = {}
+            car_assignments = {}
             if daily_cache and 'schedule' in daily_cache and 'assignments' in daily_cache['schedule']:
                 assignments = dict(daily_cache['schedule']['assignments'])
+                car_assignments = dict(daily_cache['schedule'].get('car_assignments', {}))
             elif previous_assignments:
                 assignments = dict(previous_assignments)
             
@@ -7679,8 +7711,8 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             conflicts = []
             true_unassigned = unassigned
         else:
-            assignments, unassigned, lateness_warnings = matcher.solve_schedule(
-                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric
+            assignments, unassigned, lateness_warnings, car_assignments = matcher.solve_schedule(
+                daily_events_to_solve, drivers, rules, priority_rules, overrides=overrides, previous_assignments=previous_assignments, driver_events=driver_events_map, passengers=passengers, trip_metadata=trip_metadata, theme=default_theme, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric, cars=cars
             )
             
             unassigned_events = [e for e in daily_events_to_solve if e.id in unassigned]
@@ -7695,6 +7727,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         base_schedules[date_str] = {
             "assignments": assignments,
+            "car_assignments": car_assignments,
             "unassigned": unassigned,
             "lateness_warnings": lateness_warnings,
             "ghost_assignments": ghost_assignments,
@@ -7762,6 +7795,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         daily_schedule = {
             "assignments": base['assignments'],
+            "car_assignments": base.get('car_assignments', {}),
             "unassigned": base['unassigned'],
             "lateness_warnings": base['lateness_warnings'],
             "ghost_assignments": base['ghost_assignments'],
@@ -7803,7 +7837,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 }]
                 
                 for t in o_themes:
-                    a, u, lw = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric)
+                    a, u, lw, _ca = matcher.solve_schedule(d_evs, drvs, rls, prls, overrides=ovr, previous_assignments=prev, driver_events=d_map, passengers=paxs, trip_metadata=meta, theme=t, load_balancing=load_balancing, load_balancing_metric=load_balancing_metric)
                     ue = [e for e in d_evs if e.id in u]
                     ae = [e for e in d_evs if e.id in a]
                     ga, gd = matcher.solve_ghost_routes(ue, ae, rls, paxs, trip_metadata=meta) if suggested_routes_enabled else ({}, [])
@@ -7979,6 +8013,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                         
                         all_cached = True
                         combined_assignments = {}
+                        combined_car_assignments = {}
                         combined_unassigned = []
                         combined_lateness_warnings = []
                         combined_ghost_assignments = {}
@@ -8010,7 +8045,11 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             sched = daily_cache['schedule']
                             for e_id, d_id in sched.get('assignments', {}).items():
                                 combined_assignments[e_id] = d_id
-                                
+
+                            for e_id, c_id in sched.get('car_assignments', {}).items():
+                                combined_car_assignments[e_id] = c_id
+
+
                             for e_id in sched.get('unassigned', []):
                                 if e_id not in combined_unassigned:
                                     combined_unassigned.append(e_id)
@@ -8060,6 +8099,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                             global_cache = storage.get_cached_schedule() or {}
                             cached = {
                                 "assignments": combined_assignments,
+                                "car_assignments": combined_car_assignments,
                                 "unassigned": combined_true_unassigned,
                                 "lateness_warnings": combined_lateness_warnings,
                                 "ghost_assignments": combined_ghost_assignments,
@@ -8081,6 +8121,7 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                                 "ai_metadata": global_cache.get("ai_metadata", {}),
                                 "drivers": [d.dict() if hasattr(d, 'dict') else d for d in storage.get_all_drivers() if not d.get('is_disabled')],
                                 "passengers": storage.get_all_passengers(),
+                                "cars": [c for c in storage.get_all_cars() if not c.get('is_disabled')],
                                 "no_location": combined_events_to_solve and [e.get('id') for e in combined_events_to_solve if not e.get('location')] or []
                             }
                             # Hash the combined events list to use as events_hash

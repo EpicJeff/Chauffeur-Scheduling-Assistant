@@ -1339,6 +1339,7 @@ BRIDGED_V1_TOOLS = [
     "update_memory", "search_places",
     "generate_trip_plan",
     "add_trip_accommodation", "edit_trip_accommodation", "edit_trip_poi",
+    "manage_car",
 ]
 
 # Subset whose success means the driver schedule changed and the client must
@@ -1351,6 +1352,7 @@ SCHEDULE_MUTATING_V1_TOOLS = {
     "run_solver",
     "add_errand", "update_errand", "delete_errand",
     "add_errand_rule", "delete_errand_rule",
+    "manage_car",
 }
 
 

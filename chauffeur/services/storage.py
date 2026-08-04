@@ -145,6 +145,7 @@ with db_lock:
     prep_kits_table = db.table('prep_kits')
     prep_status_table = db.table('prep_status')
     daily_stats_table = db.table('daily_stats')
+    cars_table = db.table('cars')
 
     if BACKEND != 'sqlite':
         fix_corrupted_db(ROUTES_DB_PATH)
@@ -742,6 +743,36 @@ def delete_passenger(doc_id: int):
         mark_all_daily_schedules_dirty()
         cache_table.truncate()
         passengers_table.remove(doc_ids=[doc_id])
+
+def get_all_cars() -> List[dict]:
+    with db_lock:
+        cars = []
+        for c in cars_table.all():
+            doc = dict(c)
+            doc['doc_id'] = c.doc_id
+            cars.append(doc)
+        return cars
+
+def add_car(car_data: dict) -> int:
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        return cars_table.insert(car_data)
+
+def update_car(doc_id: int, car_data: dict):
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        cars_table.update(car_data, doc_ids=[doc_id])
+
+def delete_car(doc_id: int):
+    with db_lock:
+        custom_schedules_table.truncate()
+        mark_all_daily_schedules_dirty()
+        cache_table.truncate()
+        cars_table.remove(doc_ids=[doc_id])
 
 # Family member CRUD (overlay entity; see FamilyMember in models/schemas.py)
 def get_all_members() -> List[dict]:

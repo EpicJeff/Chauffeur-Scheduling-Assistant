@@ -784,7 +784,18 @@
                         });
                     }
                     metaRow.appendChild(paxContainer);
-                    
+
+                    // Car badge (TimeGrid only; absent for zero-car families).
+                    // Amber ⇄ accent = not this driver's usual car — a real-world
+                    // key handoff the humans need to coordinate.
+                    if (!isMonth && props.carName && !isUnassigned) {
+                        let carBadge = document.createElement('div');
+                        carBadge.className = `font-bold rounded shadow-sm truncate max-w-[80px] text-[9px] px-1.5 py-0.5 ${props.carSwap ? 'bg-amber-500/80 text-white' : 'bg-black/30 text-white/90'}`;
+                        carBadge.innerText = props.carName + (props.carSwap ? ' ⇄' : '');
+                        carBadge.title = props.carSwap ? "Car swap: not this driver's usual car" : 'Assigned car';
+                        metaRow.appendChild(carBadge);
+                    }
+
                     // Driver Badge
                     let rightBadge = document.createElement('div');
                     if (isUnassigned) {
@@ -841,6 +852,8 @@
 
                         let eventsMap = new Map();
                         const assignments = data.assignments || {};
+                        const carAssignments = data.car_assignments || {};
+                        const carsById = new Map((data.cars || []).map(c => [c.id, c]));
                         const true_unassigned = data.true_unassigned || [];
                         const drivers = data.drivers || [];
                         
@@ -953,6 +966,14 @@
                                         const d = drivers.find(d => d.id === assignments[ev.id]);
                                         if (d) driverName = d.name;
                                     }
+                                    let carName = null, carSwap = false;
+                                    if (!isUnassigned && carAssignments[ev.id]) {
+                                        const car = carsById.get(carAssignments[ev.id]);
+                                        if (car) {
+                                            carName = (car.icon || '🚗') + ' ' + car.name;
+                                            carSwap = !!(car.default_driver_id && car.default_driver_id !== assignments[ev.id]);
+                                        }
+                                    }
                                     
                                     if (eventsMap.has(baseId)) {
                                         let existing = eventsMap.get(baseId);
@@ -992,6 +1013,14 @@
                                                 }
                                             }
                                         }
+                                        if (carName && !existing.extendedProps.isUnassigned) {
+                                            if (!existing.extendedProps.carName) {
+                                                existing.extendedProps.carName = carName;
+                                            } else if (existing.extendedProps.carName !== carName) {
+                                                existing.extendedProps.carName = 'Multiple cars';
+                                            }
+                                            if (carSwap) existing.extendedProps.carSwap = true;
+                                        }
                                     } else {
                                         eventsMap.set(baseId, {
                                             id: baseId,
@@ -1007,6 +1036,8 @@
                                                 isUnassigned: isUnassigned,
                                                 isConflict: isConflict,
                                                 driverName: driverName,
+                                                carName: carName,
+                                                carSwap: carSwap,
                                                 isErrand: false,
                                                 tripSuppressed: !!ev.trip_suppressed,
                                                 rawColor: color,

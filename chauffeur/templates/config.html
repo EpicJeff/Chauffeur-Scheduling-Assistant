@@ -1271,6 +1271,171 @@
                     </div>
                 </div>
 
+                <!-- Cars (People tab sub-panel) -->
+                <div x-show="activeTab === 'family'" x-cloak x-transition.opacity
+                    class="bg-gray-800 p-8 rounded-2xl mb-10 shadow-2xl border border-gray-700">
+                    <h2 class="text-3xl font-bold mb-2 text-teal-300">Cars</h2>
+                    <p class="text-gray-400 text-sm mb-4">The household fleet. Cars limit who can take which
+                        events: passenger seats, who's allowed behind the wheel, and car-seat restrictions. The
+                        solver assigns a car to every drive and never double-books one; two drivers can reuse a
+                        car only when there's time to hand it off at home. <b>Anyone listed on no car keeps an
+                            unrestricted personal car</b> — leave this section empty and scheduling behaves
+                        exactly as before.</p>
+                    <div class="space-y-3">
+                        <template x-for="car in cars" :key="car.doc_id">
+                            <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
+                                :class="car.is_disabled ? 'opacity-50' : ''">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl border-4 bg-gray-800"
+                                        :style="'border-color: ' + (car.color_code || '#6b7280')">
+                                        <span x-text="car.icon || '🚗'"></span>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-lg font-bold text-white" x-text="car.name"></h3>
+                                        <div class="text-xs text-gray-400 flex gap-2 flex-wrap items-center mt-0.5">
+                                            <span x-text="car.seat_capacity + ' passenger seats'"></span>
+                                            <span class="text-gray-600">·</span>
+                                            <span x-text="'Drivers: ' + carDriverNames(car)"></span>
+                                            <span x-show="car.default_driver_id" class="text-gray-600">·</span>
+                                            <span x-show="car.default_driver_id"
+                                                x-text="'usually ' + driverNameById(car.default_driver_id)"></span>
+                                            <span x-show="car.allowed_passenger_ids"
+                                                class="px-2 py-0.5 bg-amber-900/40 text-amber-300 rounded-full font-bold">car-seat
+                                                limited</span>
+                                            <span x-show="carUnavailableNote(car)"
+                                                class="px-2 py-0.5 bg-red-900/40 text-red-300 rounded-full font-bold"
+                                                x-text="carUnavailableNote(car)"></span>
+                                            <span x-show="car.is_disabled"
+                                                class="px-2 py-0.5 bg-gray-700 text-gray-300 rounded-full font-bold uppercase">disabled</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button @click="editCar(car)"
+                                        class="text-blue-500 hover:text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Edit</button>
+                                    <button @click="deleteCar(car.doc_id)"
+                                        class="text-red-500 hover:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg transition-colors font-bold text-sm">Delete</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="mt-4">
+                        <button x-show="!showCarForm" @click="openCarForm()"
+                            class="w-full border border-dashed border-gray-600 hover:border-teal-500 hover:text-teal-300 text-gray-400 font-bold py-4 rounded-xl transition-colors">+
+                            Add a Car</button>
+                        <div x-show="showCarForm" x-cloak
+                            class="bg-gray-700/30 p-5 rounded-xl border border-gray-600 border-dashed">
+                            <h3 class="text-lg font-bold text-white mb-4"
+                                x-text="editCarId ? ('Car — ' + newCar.name) : 'New Car'"></h3>
+                            <div class="flex gap-4 items-end flex-wrap">
+                                <div class="flex-1 min-w-[160px]">
+                                    <label class="block text-gray-400 mb-1 text-sm">Name</label>
+                                    <input type="text" x-model="newCar.name" placeholder="e.g. Minivan"
+                                        class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Icon (emoji)</label>
+                                    <input type="text" x-model="newCar.icon" maxlength="4" placeholder="🚐"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Color</label>
+                                    <input type="color" x-model="newCar.color_code"
+                                        class="bg-gray-900 border border-gray-600 rounded p-1 h-12 w-16">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Passenger seats
+                                        <span class="text-gray-600">(excluding driver)</span></label>
+                                    <input type="number" min="0" max="20" x-model.number="newCar.seat_capacity"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Who may drive it</label>
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="d in drivers" :key="d.id">
+                                        <button @click="toggleCarDriver(d.id)"
+                                            class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors"
+                                            :class="newCar.allowed_driver_ids.includes(d.id) ? 'bg-teal-600/40 border-teal-500 text-teal-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                            x-text="d.name"></button>
+                                    </template>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">Drivers not listed on any car keep an
+                                    unrestricted personal car.</p>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Usual driver
+                                    <span class="text-gray-600">(the solver avoids taking their car away)</span></label>
+                                <select x-model="newCar.default_driver_id"
+                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                    <option value="">— none —</option>
+                                    <template x-for="d in drivers.filter(d => newCar.allowed_driver_ids.includes(d.id))"
+                                        :key="d.id">
+                                        <option :value="d.id" x-text="d.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Who fits (car seats)</label>
+                                <div class="flex items-center gap-4 mb-2">
+                                    <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                                        <input type="radio" value="any" x-model="carPaxMode" class="accent-teal-500">
+                                        Anyone fits</label>
+                                    <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                                        <input type="radio" value="limited" x-model="carPaxMode" class="accent-teal-500">
+                                        Only selected passengers</label>
+                                </div>
+                                <div x-show="carPaxMode === 'limited'" class="flex flex-wrap gap-2">
+                                    <template x-for="p in passengers" :key="p.id">
+                                        <button @click="toggleCarPassenger(p.id)"
+                                            class="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors"
+                                            :class="(newCar.allowed_passenger_ids || []).includes(p.id) ? 'bg-amber-600/40 border-amber-500 text-amber-200' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-400'"
+                                            x-text="p.name"></button>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block text-gray-400 mb-1 text-sm">Unavailable
+                                    <span class="text-gray-600">(loaned out, in the shop — the solver won't use it)</span></label>
+                                <template x-for="(r, idx) in newCar.unavailable_ranges" :key="idx">
+                                    <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
+                                        <span x-text="r.start + ' → ' + r.end + (r.reason ? ' · ' + r.reason : '')"></span>
+                                        <button @click="newCar.unavailable_ranges.splice(idx, 1)"
+                                            class="text-gray-400 hover:text-red-400 font-bold">✕</button>
+                                    </div>
+                                </template>
+                                <div class="flex gap-2 flex-wrap items-center">
+                                    <input type="date" x-model="newCarRange.start"
+                                        class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                    <span class="text-gray-500">to</span>
+                                    <input type="date" x-model="newCarRange.end"
+                                        class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                                    <input type="text" x-model="newCarRange.reason" placeholder="reason (optional)"
+                                        class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm flex-1 min-w-[140px]">
+                                    <button @click="addCarUnavailableRange()"
+                                        class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-2 rounded text-sm transition-colors">Add</button>
+                                </div>
+                            </div>
+                            <div class="mt-4 flex items-center gap-3">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="newCar.is_disabled" class="sr-only peer">
+                                    <div
+                                        class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+                                    </div>
+                                </label>
+                                <span class="text-sm text-gray-300">Disabled (ignored by the solver entirely)</span>
+                            </div>
+                            <div class="flex gap-4 mt-5 items-center">
+                                <button @click="submitCar()" :disabled="saving"
+                                    class="bg-teal-600 hover:bg-teal-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center"
+                                    x-text="saving ? 'Saving...' : (editCarId ? 'Save Car' : 'Add Car')"></button>
+                                <button @click="cancelEditCar()"
+                                    class="bg-gray-600 hover:bg-gray-500 px-6 py-3 rounded-lg font-bold text-white shadow-md transition-colors h-12 flex items-center">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Passenger profile form (People tab sub-panel) -->
                 <div x-show="activeTab === 'family' && showPassengerForm" x-cloak x-transition.opacity
                     id="passengerFormPanel" style="order: 2"
@@ -2895,6 +3060,12 @@
                 newDriverCalendarInput: '',
                 newDriverHashtagInput: '',
                 newPassenger: { name: '', hashtags: [], calendar_ids: [], requires_attendance: false, bio: '' },
+                cars: [],
+                showCarForm: false,
+                editCarId: null,
+                carPaxMode: 'any',
+                newCar: { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' },
+                newCarRange: { start: '', end: '', reason: '' },
                 showDriverForm: false,
                 showPassengerForm: false,
                 showAddPerson: false,
@@ -2938,6 +3109,7 @@
                     await this.loadSettings();
                     await this.loadDrivers();
                     await this.loadPassengers();
+                    await this.loadCars();
                     this.loadIcsFeeds();  // not awaited: feeds are a side panel
                     await this.loadMembers();
                     this.loadHaOptions();  // not awaited: HA may be slow/absent
@@ -3630,6 +3802,142 @@
                         console.error("Failed to load passengers", e);
                         this.passengers = [];
                     }
+                },
+
+                // --- Cars ---
+                async loadCars() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/cars`);
+                        const data = await res.json();
+                        this.cars = Array.isArray(data) ? data : [];
+                    } catch (e) {
+                        console.error("Failed to load cars", e);
+                        this.cars = [];
+                    }
+                },
+
+                blankCar() {
+                    return { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' };
+                },
+
+                openCarForm() {
+                    this.newCar = this.blankCar();
+                    this.carPaxMode = 'any';
+                    this.editCarId = null;
+                    this.showCarForm = true;
+                },
+
+                editCar(car) {
+                    this.newCar = {
+                        id: car.id,
+                        name: car.name || '',
+                        icon: car.icon || '',
+                        color_code: car.color_code || '#6b7280',
+                        seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
+                        allowed_driver_ids: [...(car.allowed_driver_ids || [])],
+                        allowed_passenger_ids: car.allowed_passenger_ids ? [...car.allowed_passenger_ids] : null,
+                        default_driver_id: car.default_driver_id || '',
+                        unavailable_ranges: (car.unavailable_ranges || []).map(r => ({ ...r })),
+                        is_disabled: !!car.is_disabled,
+                        notes: car.notes || ''
+                    };
+                    this.carPaxMode = car.allowed_passenger_ids ? 'limited' : 'any';
+                    this.editCarId = car.doc_id;
+                    this.showCarForm = true;
+                },
+
+                cancelEditCar() {
+                    this.newCar = this.blankCar();
+                    this.editCarId = null;
+                    this.showCarForm = false;
+                },
+
+                toggleCarDriver(driverId) {
+                    const i = this.newCar.allowed_driver_ids.indexOf(driverId);
+                    if (i >= 0) {
+                        this.newCar.allowed_driver_ids.splice(i, 1);
+                        if (this.newCar.default_driver_id === driverId) this.newCar.default_driver_id = '';
+                    } else {
+                        this.newCar.allowed_driver_ids.push(driverId);
+                    }
+                },
+
+                toggleCarPassenger(paxId) {
+                    if (!Array.isArray(this.newCar.allowed_passenger_ids)) this.newCar.allowed_passenger_ids = [];
+                    const i = this.newCar.allowed_passenger_ids.indexOf(paxId);
+                    if (i >= 0) this.newCar.allowed_passenger_ids.splice(i, 1);
+                    else this.newCar.allowed_passenger_ids.push(paxId);
+                },
+
+                addCarUnavailableRange() {
+                    if (!this.newCarRange.start || !this.newCarRange.end) return showGlobalAlert('Both start and end dates are required');
+                    if (this.newCarRange.end < this.newCarRange.start) return showGlobalAlert('End date is before start date');
+                    this.newCar.unavailable_ranges.push({ ...this.newCarRange });
+                    this.newCarRange = { start: '', end: '', reason: '' };
+                },
+
+                async submitCar() {
+                    this.saving = true;
+                    try {
+                        if (!this.newCar.name) return showGlobalAlert('Name is required');
+                        if (!this.newCar.allowed_driver_ids.length && !this.newCar.is_disabled) {
+                            return showGlobalAlert('Pick at least one allowed driver — a car nobody may drive can never be used. (Or mark it disabled.)');
+                        }
+                        const payload = { ...this.newCar };
+                        payload.allowed_passenger_ids = this.carPaxMode === 'limited' && Array.isArray(payload.allowed_passenger_ids) && payload.allowed_passenger_ids.length
+                            ? payload.allowed_passenger_ids : null;
+                        payload.default_driver_id = payload.default_driver_id || null;
+                        if (!payload.id) delete payload.id;
+
+                        if (this.editCarId) {
+                            await fetch(`${this.apiBase}api/cars/${this.editCarId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        } else {
+                            await fetch(`${this.apiBase}api/cars`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                        }
+                        this.cancelEditCar();
+                        await this.loadCars();
+                    } finally {
+                        this.saving = false;
+                    }
+                },
+
+                async deleteCar(docId) {
+                    if (!await promptConfirm('Delete car', 'Delete this car? Drivers listed only on it go back to an unrestricted personal car.', 'Delete')) return;
+                    await fetch(`${this.apiBase}api/cars/${docId}`, { method: 'DELETE' });
+                    this.cancelEditCar();
+                    await this.loadCars();
+                },
+
+                driverNameById(id) {
+                    const d = this.drivers.find(d => d.id === id);
+                    return d ? d.name : id;
+                },
+
+                carDriverNames(car) {
+                    const ids = car.allowed_driver_ids || [];
+                    if (!ids.length) return 'nobody';
+                    return ids.map(id => this.driverNameById(id)).join(', ');
+                },
+
+                carUnavailableNote(car) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    for (const r of (car.unavailable_ranges || [])) {
+                        if (r.start && r.end && r.start <= today && today <= r.end) {
+                            return 'unavailable' + (r.reason ? ': ' + r.reason : '') + ' until ' + r.end;
+                        }
+                        if (r.start && r.start > today) {
+                            return 'unavailable ' + r.start + ' → ' + r.end + (r.reason ? ' (' + r.reason + ')' : '');
+                        }
+                    }
+                    return '';
                 },
 
                 // --- ICS calendar feeds ---

@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple, Optional
 from ortools.sat.python import cp_model
-from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Passenger
+from models.schemas import Event, Driver, Rule, PriorityRule, ManualOverride, Passenger, Car
 from services.maps import get_travel_time_minutes as _raw_get_travel_time_minutes
 
 def get_travel_time_minutes(origin, dest, departure_time=None, return_traffic=False):
@@ -342,13 +342,17 @@ def solve_schedule(
     trip_metadata: List[dict] = None,
     theme: dict = None,
     load_balancing: bool = False,
-    load_balancing_metric: str = 'occupied_time'
-) -> Tuple[Dict[str, str], List[str]]:
+    load_balancing_metric: str = 'occupied_time',
+    cars: List[Car] = None
+) -> Tuple[Dict[str, str], List[str], Dict[str, str], Dict[str, str]]:
     """
     Solves the driver assignment problem using OR-Tools CP-SAT solver.
     Returns:
         assignments: Dict mapping event_id -> driver_id
         unassigned: List of event_ids that could not be assigned
+        lateness_warnings: Dict mapping event_id -> warning string
+        car_assignments: Dict mapping event_id -> car_id (only events whose
+            driver draws from the shared car pool; empty when no cars defined)
     """
     if previous_assignments is None:
         previous_assignments = {}
@@ -470,6 +474,17 @@ def solve_schedule(
     # 2. Constraint: Each event is assigned to AT MOST 1 driver
     for e in assignable_events:
         model.AddAtMostOne(assign_vars[(e.id, d.id)] for d in drivers)
+
+    # 2a-cap. Driver-level passenger cap (graduated-licensing laws). Applies
+    # with or without cars configured; inert unless max_passengers is set.
+    for e in assignable_events:
+        n_pax = len(get_event_passenger_ids(e, passengers))
+        if n_pax == 0:
+            continue
+        for d in drivers:
+            cap = getattr(d, 'max_passengers', None)
+            if cap is not None and n_pax > cap and (e.id, d.id) not in overridden_pairs:
+                model.Add(assign_vars[(e.id, d.id)] == 0)
 
     # 2b. Constraint: A passenger cannot be scheduled for overlapping events at different locations
     for i in range(len(assignable_events)):
@@ -672,8 +687,143 @@ def solve_schedule(
                         # Transit impossible. Severely penalize instead of banning so least-bad driver is picked if forced
                         objective_terms.append(assign_vars[(e.id, d.id)] * -2000000)
 
+    # 3d. Car dimension (C1, docs/car_entity_design.md). Entirely inert when no
+    # cars are configured: no variables, no constraints — the pre-car model is
+    # identical. A driver listed on no car keeps an implicit personal car and
+    # is never touched by any constraint in this block.
+    car_vars = {}
+    active_cars = [c for c in (cars or []) if not getattr(c, 'is_disabled', False)]
+    if active_cars:
+        allowed_by_car = {c.id: set(str(x) for x in (c.allowed_driver_ids or [])) for c in active_cars}
+        pooled_driver_ids = set()
+        for s in allowed_by_car.values():
+            pooled_driver_ids.update(s)
+
+        def car_unavailable_for(c, e):
+            for r in (c.unavailable_ranges or []):
+                r_start = r.get('start') if isinstance(r, dict) else getattr(r, 'start', None)
+                r_end = r.get('end') if isinstance(r, dict) else getattr(r, 'end', None)
+                if r_start and r_end and e.start.date().isoformat() <= r_end and e.end.date().isoformat() >= r_start:
+                    return True
+            return False
+
+        # Cars workable for an event irrespective of driver: capacity, car-seat
+        # passenger restrictions, availability windows.
+        car_ok = {}
+        for e in assignable_events:
+            pids = set(str(p) for p in get_event_passenger_ids(e, passengers))
+            ok = []
+            for c in active_cars:
+                if len(pids) > c.seat_capacity:
+                    continue
+                if c.allowed_passenger_ids is not None and not pids <= set(str(p) for p in c.allowed_passenger_ids):
+                    continue
+                if car_unavailable_for(c, e):
+                    continue
+                ok.append(c)
+            car_ok[e.id] = ok
+
+        # Channeling: an assigned pooled driver takes exactly one car they may
+        # drive that works for the event. A pooled driver with no workable car
+        # is banned from the event (manual override escapes, as everywhere).
+        eligible_map = {}
+        for e in assignable_events:
+            for d in drivers:
+                if str(d.id) not in pooled_driver_ids:
+                    continue
+                elig = [c for c in car_ok[e.id] if str(d.id) in allowed_by_car[c.id]]
+                eligible_map[(e.id, d.id)] = elig
+                if not elig:
+                    if (e.id, d.id) not in overridden_pairs:
+                        model.Add(assign_vars[(e.id, d.id)] == 0)
+                    continue
+                for c in elig:
+                    if (e.id, c.id) not in car_vars:
+                        car_vars[(e.id, c.id)] = model.NewBoolVar(f'car_{e.id}_{c.id}')
+                model.Add(sum(car_vars[(e.id, c.id)] for c in elig) >= assign_vars[(e.id, d.id)])
+
+        for e in assignable_events:
+            e_cvars = [car_vars[(e.id, c.id)] for c in active_cars if (e.id, c.id) in car_vars]
+            if e_cvars:
+                model.AddAtMostOne(e_cvars)
+
+        # Phantom guard: a car is only "used" when a pooled driver permitted to
+        # drive it is assigned; unassigned events and implicit-personal-car
+        # drivers consume no car.
+        for (e_id, c_id), v in car_vars.items():
+            users = [assign_vars[(e_id, d.id)] for d in drivers
+                     if any(c.id == c_id for c in eligible_map.get((e_id, d.id), []))]
+            model.Add(v <= sum(users))
+
+        # Swap penalty: keep each car with its default driver unless a rule or
+        # feasibility forces otherwise. -2500 sits above priority deltas
+        # (<=1500) so priority alone never causes a swap, below a 'preferred'
+        # rule (+10000) so a rule can still force one.
+        for (e_id, d_id), elig in eligible_map.items():
+            for c in elig:
+                if c.default_driver_id and str(c.default_driver_id) != str(d_id):
+                    swap = model.NewBoolVar(f'car_swap_{e_id}_{d_id}_{c.id}')
+                    model.AddImplication(swap, assign_vars[(e_id, d_id)])
+                    model.AddImplication(swap, car_vars[(e_id, c.id)])
+                    model.AddBoolOr([swap, assign_vars[(e_id, d_id)].Not(), car_vars[(e_id, c.id)].Not()])
+                    objective_terms.append(swap * -2500)
+
+        # Contention + chain continuity. Cars hand off at home: two different
+        # drivers may reuse a car only if the gap covers e1.loc -> home ->
+        # e2.loc. The same driver chaining events keeps the same physical car
+        # (and cannot chain into an event their current car can't serve).
+        # Midday non-home handoffs are deliberately unmodeled (design doc §2).
+        home_loc = theme.get('home_location') if theme else None
+        for i in range(len(sorted_events)):
+            for j in range(i + 1, len(sorted_events)):
+                e1 = sorted_events[i]
+                e2 = sorted_events[j]
+                if (e2.start - e1.end).total_seconds() > 10800:
+                    break
+                e1_cars = set(c.id for c in active_cars if (e1.id, c.id) in car_vars)
+                e2_cars = set(c.id for c in active_cars if (e2.id, c.id) in car_vars)
+                if not e1_cars or not e2_cars:
+                    continue
+                if home_loc and e1.location and e2.location:
+                    needed_secs = (get_travel_time_minutes(e1.location, home_loc) +
+                                   get_travel_time_minutes(home_loc, e2.location)) * 60
+                elif e1.location and e2.location:
+                    needed_secs = get_travel_time_minutes(e1.location, e2.location) * 60
+                else:
+                    needed_secs = 0
+                gap_secs = (e2.start - e1.end).total_seconds()
+                if gap_secs >= needed_secs:
+                    continue  # car can return home between: no coupling
+
+                per_d = []
+                for d in drivers:
+                    if str(d.id) not in pooled_driver_ids:
+                        continue
+                    both = model.NewBoolVar(f'car_same_{e1.id}_{e2.id}_{d.id}')
+                    model.AddImplication(both, assign_vars[(e1.id, d.id)])
+                    model.AddImplication(both, assign_vars[(e2.id, d.id)])
+                    model.AddBoolOr([both, assign_vars[(e1.id, d.id)].Not(), assign_vars[(e2.id, d.id)].Not()])
+                    per_d.append(both)
+                common = e1_cars & e2_cars
+                if not per_d:
+                    for c_id in common:
+                        model.Add(car_vars[(e1.id, c_id)] + car_vars[(e2.id, c_id)] <= 1)
+                    continue
+                same_d = model.NewBoolVar(f'car_samed_{e1.id}_{e2.id}')
+                model.AddMaxEquality(same_d, per_d)
+                for c_id in common:
+                    # different drivers can't share the car in this window...
+                    model.Add(car_vars[(e1.id, c_id)] + car_vars[(e2.id, c_id)] <= 1 + same_d)
+                    # ...and a chaining driver keeps the same physical car
+                    model.Add(car_vars[(e1.id, c_id)] - car_vars[(e2.id, c_id)] + same_d <= 1)
+                    model.Add(car_vars[(e2.id, c_id)] - car_vars[(e1.id, c_id)] + same_d <= 1)
+                for c_id in e1_cars - common:
+                    model.AddImplication(same_d, car_vars[(e1.id, c_id)].Not())
+                for c_id in e2_cars - common:
+                    model.AddImplication(same_d, car_vars[(e2.id, c_id)].Not())
+
     # 4. Rules & Objective
-    
+
     for e in assignable_events:
         # Calculate dynamic base weight for the event
         base_event_weight = int(1000000 * unassigned_penalty_mult)
@@ -964,9 +1114,10 @@ def solve_schedule(
     
     assignments = {}
     unassigned = []
-    
+    car_assignments = {}
+
     lateness_warnings = {}
-    
+
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         for e in assignable_events:
             assigned = False
@@ -977,6 +1128,12 @@ def solve_schedule(
                     break
             if not assigned:
                 unassigned.append(e.id)
+            elif active_cars:
+                for c in active_cars:
+                    v = car_vars.get((e.id, c.id))
+                    if v is not None and solver.BooleanValue(v):
+                        car_assignments[e.id] = c.id
+                        break
                 
         # Calculate actual lateness for the final assigned schedule
         for i in range(len(sorted_events)):
@@ -1012,8 +1169,8 @@ def solve_schedule(
     else:
         # If infeasible (rare with soft assignments), all are unassigned
         unassigned = [e.id for e in events]
-        
-    return assignments, unassigned, lateness_warnings
+
+    return assignments, unassigned, lateness_warnings, car_assignments
 
 def explain_assignment_conflicts(event: Event, driver: Driver, rules: List[Rule] = None,
                                  passengers: List[Passenger] = None, trip_metadata: List[dict] = None,
@@ -1657,11 +1814,12 @@ def compute_conflicts(assignments: Dict[str, str], ghost_assignments: Dict[str, 
                 
     return conflicts
 
-def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None) -> dict:
+def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers: List[Driver], driver_events: dict, assignments: dict, overrides: List[dict], rules: List[Rule], passengers: List[Passenger] = None, trip_metadata: List[dict] = None, cars: List[Car] = None) -> dict:
     if passengers is None:
         passengers = []
     if trip_metadata is None:
         trip_metadata = []
+    active_cars = [c for c in (cars or []) if not getattr(c, 'is_disabled', False)]
         
     req_att_cals = set(cal for p in passengers if p.requires_attendance for cal in p.calendar_ids)
     event_requires_attendance = {
@@ -1833,6 +1991,43 @@ def compute_diagnostics(unassigned_ids: List[str], events: List[Event], drivers:
                     elif pax_on_trip:
                         reason = {"text": f"This event's passengers are away on '{trip_name}', and this driver is not on that trip.", "type": "trip_conflict"}
                         break
+
+            # 2.8 Car constraints (C1, docs/car_entity_design.md): driver
+            # passenger cap and pooled drivers with no workable car. Static
+            # bans only — a car merely being claimed by another driver at that
+            # hour falls through to the generic reasons below.
+            if not reason and (e.id, d.id) not in overridden_pairs:
+                d_cap = getattr(d, 'max_passengers', None)
+                e_pax = set(str(p) for p in get_event_passenger_ids(e, passengers))
+                if d_cap is not None and len(e_pax) > d_cap:
+                    reason = {"text": f"Driver is capped at {d_cap} passenger{'s' if d_cap != 1 else ''}; this event has {len(e_pax)}.", "type": "car"}
+                elif active_cars:
+                    permitted = [c for c in active_cars if str(d.id) in set(str(x) for x in (c.allowed_driver_ids or []))]
+                    if permitted:
+                        fail_texts = []
+                        workable = False
+                        for c in permitted:
+                            if len(e_pax) > c.seat_capacity:
+                                fail_texts.append(f"{c.name} only seats {c.seat_capacity}")
+                                continue
+                            if c.allowed_passenger_ids is not None and not e_pax <= set(str(p) for p in c.allowed_passenger_ids):
+                                fail_texts.append(f"{c.name} can't take these passengers")
+                                continue
+                            unavailable_hit = None
+                            for r0 in (c.unavailable_ranges or []):
+                                r_start = r0.get('start') if isinstance(r0, dict) else getattr(r0, 'start', None)
+                                r_end = r0.get('end') if isinstance(r0, dict) else getattr(r0, 'end', None)
+                                r_note = r0.get('reason') if isinstance(r0, dict) else getattr(r0, 'reason', '')
+                                if r_start and r_end and e.start.date().isoformat() <= r_end and e.end.date().isoformat() >= r_start:
+                                    unavailable_hit = r_note or 'unavailable'
+                                    break
+                            if unavailable_hit:
+                                fail_texts.append(f"{c.name} is unavailable ({unavailable_hit})")
+                                continue
+                            workable = True
+                            break
+                        if not workable:
+                            reason = {"text": "No car this driver may drive works for this event: " + "; ".join(fail_texts) + ".", "type": "car"}
 
             # 3. Rule constraints
             if not reason:
