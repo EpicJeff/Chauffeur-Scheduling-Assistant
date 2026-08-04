@@ -215,6 +215,26 @@ class RoutineItem(BaseModel):
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
     created_at: float = Field(default_factory=time.time)
 
+class StatusBeat(BaseModel):
+    # One beat on a StatusProtocol's timeline: (when, who, what) — the model
+    # from docs/presence_status_design.md, family-authored. `when` is an
+    # anchor±offset so the timeline is RELATIVE and reusable: chemo recovery
+    # is start+1/start+2 (the hard days come AFTER the one-day event), a trip
+    # prep-reminder is start-2, a homecoming beat is end+0. Offsets may land
+    # outside the instance's own dates — that's the point.
+    anchor: str = 'start'          # 'start' | 'end' of the dated instance
+    offset_days: int = 0           # negative = before the anchor
+    # kids -> kid surfaces (digest lead, My Day, dismissal push — no extra
+    # pings); adults -> co-parent DM morning-of (affected member excluded);
+    # affected -> the member themselves; everyone -> all of the above.
+    audience: str = 'kids'         # 'kids' | 'adults' | 'affected' | 'everyone'
+    message: str = ""              # the family's words for that day, verbatim
+    # Optional need override FOR THAT DAY (e.g. protocol default 'cover' on
+    # treatment day, beat 'give_space' on day+2 when driving is fine again).
+    # A cover/help beat outside the instance dates extends solver
+    # unavailability to that day too.
+    need: Optional[str] = None
+
 class StatusProtocol(BaseModel):
     # Presence & Status arc P1 (docs/presence_status_design.md): a reusable
     # family day-type ("Chemo Day", "Night Shift", "Trip Day") — what it
@@ -241,6 +261,10 @@ class StatusProtocol(BaseModel):
     # ("19:30"). Rendered SOFT everywhere ("around 7:30") — a missed call
     # must read as "catch you tomorrow", never a broken chain.
     call_time: Optional[str] = None      # HH:MM
+    # The timeline: relative beats (see StatusBeat). Empty = the built-in
+    # positional defaults (day 1 message / "day N of M" / home day) — beats
+    # override them wherever one lands.
+    beats: List[StatusBeat] = Field(default_factory=list)
     enabled: bool = True
     created_at: float = Field(default_factory=time.time)
 

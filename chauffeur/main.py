@@ -274,6 +274,11 @@ async def push_notification_loop():
                         reported = await asyncio.to_thread(status_protocols.send_coverage_reports)
                         if reported:
                             print(f"Status sweep: sent {len(reported)} coverage report(s)")
+                        # Beat timeline: today's adult/affected-audience beats
+                        # as one-time DMs (kid beats ride the surfaces).
+                        beat_sent = await asyncio.to_thread(status_protocols.send_beat_dms)
+                        if beat_sent:
+                            print(f"Status sweep: delivered {len(beat_sent)} timeline beat(s)")
             except Exception as spe:
                 print(f"Status sweep error: {spe}")
 

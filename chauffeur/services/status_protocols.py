@@ -30,31 +30,74 @@ NEEDS = {
 }
 
 
+# How far a beat may reach beyond its instance's own dates. Bounds the
+# storage query, not the family's intent — recovery arcs fit well inside it.
+MAX_BEAT_REACH_DAYS = 45
+
+
+def _matched_beats(proto: dict, day: dict, date_str: str):
+    """Beats on this protocol that resolve to date_str for this instance
+    (anchor start/end + offset_days)."""
+    out = []
+    try:
+        d0 = datetime.date.fromisoformat(day.get('date'))
+        d1 = datetime.date.fromisoformat(day.get('end_date') or day.get('date'))
+        dq = datetime.date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        return out
+    for b in (proto.get('beats') or []):
+        anchor = d1 if b.get('anchor') == 'end' else d0
+        try:
+            if anchor + datetime.timedelta(days=int(b.get('offset_days') or 0)) == dq:
+                out.append(b)
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
 def active_statuses(date_str: str):
-    """Resolved active statuses for a date: each instance (or multi-day span
-    covering the date, P3) joined to its (enabled) protocol plus display
-    fields. Spans carry day-position awareness — day_pos/day_count/
-    is_home_day — so every surface can speak the timeline ("day 2 of 4",
-    "home day!"). Returns [] on a normal day."""
+    """Resolved active statuses for a date: each instance whose span covers
+    the date — OR whose beat timeline reaches it (a chemo recovery beat on
+    day+2 makes that date a status day even though the calendar event was
+    one day). Spans carry day-position awareness (day_pos/day_count/
+    is_home_day); matched beats carry the family's per-day words and can
+    override the need FOR THAT DAY. Returns [] on a normal day."""
     protocols = {p['id']: p for p in storage.get_all_status_protocols()}
     members = {m['id']: m for m in storage.get_all_members()}
+    try:
+        dq = datetime.date.fromisoformat(date_str)
+        q_start = (dq - datetime.timedelta(days=MAX_BEAT_REACH_DAYS)).isoformat()
+        q_end = (dq + datetime.timedelta(days=MAX_BEAT_REACH_DAYS)).isoformat()
+    except (ValueError, TypeError):
+        q_start = q_end = date_str
     out = []
-    for day in storage.get_status_days(start=date_str, end=date_str):
+    for day in storage.get_status_days(start=q_start, end=q_end):
         proto = protocols.get(day.get('protocol_id'))
         if not proto or not proto.get('enabled', True):
             continue
+        span_end = day.get('end_date') or day.get('date')
+        within_span = day.get('date') <= date_str <= span_end
+        beats = _matched_beats(proto, day, date_str)
+        if not within_span and not beats:
+            continue
         affected = members.get(proto.get('member_id')) or {}
         setter = members.get(day.get('set_by')) or {}
-        need = proto.get('need') or 'give_space'
-        span_end = day.get('end_date') or day.get('date')
+        # Effective need FOR THIS DATE: a beat's override wins; otherwise the
+        # protocol default applies only inside the span (a message-only beat
+        # on day+3 never silently extends a driver ban).
+        beat_need = next((b.get('need') for b in beats if b.get('need')), None)
+        need = beat_need or ((proto.get('need') or 'give_space') if within_span else None)
         try:
             d0 = datetime.date.fromisoformat(day.get('date'))
             d1 = datetime.date.fromisoformat(span_end)
-            dq = datetime.date.fromisoformat(date_str)
             day_count = max(1, (d1 - d0).days + 1)
             day_pos = (dq - d0).days + 1
         except (ValueError, TypeError):
             day_count, day_pos = 1, 1
+
+        def _msgs(*audiences):
+            return "\n".join(b.get('message') for b in beats
+                             if b.get('message') and b.get('audience', 'kids') in audiences)
         out.append({
             'id': day['id'],
             'date': day.get('date'),
@@ -62,13 +105,17 @@ def active_statuses(date_str: str):
             'day_pos': day_pos,
             'day_count': day_count,
             'is_home_day': day_count > 1 and date_str == span_end,
+            'within_span': within_span,
             'protocol_id': proto['id'],
             'name': proto.get('name'),
             'emoji': proto.get('emoji') or '💙',
-            'need': need,
-            'need_label': NEEDS.get(need, NEEDS['give_space'])[0],
+            'need': need or '',
+            'need_label': NEEDS.get(need, ('', ''))[0] if need else '',
             'kid_message': proto.get('kid_message') or '',
             'adult_message': proto.get('adult_message') or '',
+            'beat_kid_message': _msgs('kids', 'everyone'),
+            'beat_adult_message': _msgs('adults', 'everyone'),
+            'beat_affected_message': _msgs('affected', 'everyone'),
             'call_time': proto.get('call_time'),
             'note': day.get('note') or '',
             'member_id': proto.get('member_id'),
@@ -93,28 +140,36 @@ def _fmt_hhmm(hhmm: str):
 def kid_lines(date_str: str):
     """The kid-facing digest/push lines for a date, family's words first.
     A protocol with no kid_message still yields its label — the kid must
-    never see LESS than the adults planned around. P3 spans speak by
-    position (mirroring the kid digest's trip-line convention): day 1 is
-    the family's full message, middle days count ("day 2 of 4") with the
-    soft call window, the last day is the excited home beat."""
+    never see LESS than the adults planned around. An authored BEAT for the
+    date always wins (the family wrote words for exactly this day of the
+    timeline); otherwise spans speak by position (mirroring the kid
+    digest's trip-line convention): day 1 is the family's full message,
+    middle days count ("day 2 of 4"), the last day is the excited home
+    beat."""
     lines = []
     for s in active_statuses(date_str):
         who = s['member_name'] or s['name']
-        if s['is_home_day']:
+        if s['beat_kid_message']:
+            for part in s['beat_kid_message'].split("\n"):
+                lines.append(f"{s['emoji']} {part}")
+        elif not s['within_span']:
+            pass  # adult/affected-only beat day: nothing for the kids
+        elif s['is_home_day']:
             lines.append(f"🏠 {who} — home day! 🎉")
             continue
-        if s['day_count'] > 1 and s['day_pos'] > 1:
-            line = f"{s['emoji']} {s['name']} — day {s['day_pos']} of {s['day_count']}"
+        elif s['day_count'] > 1 and s['day_pos'] > 1:
+            lines.append(f"{s['emoji']} {s['name']} — day {s['day_pos']} of {s['day_count']}")
         else:
             body = s['kid_message'] or f"It's a {s['name']} day."
             line = f"{s['emoji']} {body}"
             if s['note']:
                 line += f" ({s['note']})"
-        lines.append(line)
+            lines.append(line)
         # Soft nightly call window on away nights (never the home day —
         # they're walking in the door). "Around", by design: a slid or
         # missed call is "catch you tomorrow", not a broken chain.
-        if s['day_count'] > 1 and s['call_time'] and s['day_pos'] < s['day_count']:
+        if s['within_span'] and s['day_count'] > 1 and s['call_time'] \
+                and s['day_pos'] < s['day_count']:
             lines.append(f"📞 Around {_fmt_hhmm(s['call_time'])} — call with {who}")
     return lines
 
@@ -331,23 +386,78 @@ def unavailable_driver_dates(start: str, end: str):
     being cared for). clear_deck/give_space days don't touch driving.
     main.refresh_schedule_logic turns these into synthetic one-day
     'unavailable' Rules, so the solver machinery needs nothing new."""
-    out = []
-    protocols = {p['id']: p for p in storage.get_all_status_protocols()}
     members = {m['id']: m for m in storage.get_all_members()}
-    for day in storage.get_status_days(start=start, end=end):
-        proto = protocols.get(day.get('protocol_id'))
-        if not proto or not proto.get('enabled', True):
-            continue
-        if (proto.get('need') or 'give_space') not in ('cover', 'help'):
-            continue
-        member = members.get(proto.get('member_id')) or {}
-        if not member.get('driver_id'):
-            continue  # not a driver — nothing to take out of the rotation
-        out.append({'date': day.get('date'),
-                    'end_date': day.get('end_date') or day.get('date'),
-                    'driver_id': member['driver_id'],
-                    'label': f"{proto.get('name')} — {member.get('name')}"})
+    out = []
+    try:
+        d = datetime.date.fromisoformat(start)
+        end_d = datetime.date.fromisoformat(end)
+    except (ValueError, TypeError):
+        return out
+    # Per-date, because beats make the need a function of the DAY: protocol
+    # default 'cover' can relax to 'give_space' on day 2 (driving is fine
+    # again), and a cover beat on day+1 extends the ban past a one-day
+    # event. Emitted per (driver, date); contiguous runs are fine as
+    # individual one-day rules.
+    while d <= end_d:
+        seen_drivers = set()
+        for s in active_statuses(d.isoformat()):
+            if s['need'] not in ('cover', 'help'):
+                continue
+            member = members.get(s.get('member_id')) or {}
+            drv = member.get('driver_id')
+            if not drv or drv in seen_drivers:
+                continue  # not a driver — nothing to take out of the rotation
+            seen_drivers.add(drv)
+            out.append({'date': d.isoformat(), 'end_date': d.isoformat(),
+                        'driver_id': drv,
+                        'label': f"{s['name']} — {member.get('name')}"})
+        d += datetime.timedelta(days=1)
     return out
+
+
+def send_beat_dms(now: datetime.datetime = None):
+    """Deliver today's adult/affected-audience beats as Argyle DMs, once per
+    (instance, beat, date). Kids-audience beats need NO push machinery —
+    they ride the existing surfaces (last night's digest previewed them,
+    My Day shows them, the dismissal push restates them); DMing them too
+    would be the N-pings failure. 'adults' excludes the affected member
+    (day+1 care logistics are for the co-parent); 'affected' is the member
+    themselves; 'everyone' reaches both (kids still via surfaces)."""
+    now = now or datetime.datetime.now()
+    today = now.date().isoformat()
+    marks = dict(storage.get_app_state('status_beat_dms') or {})
+    cutoff = now.timestamp() - 60 * 86400
+    marks = {k: v for k, v in marks.items() if v >= cutoff}
+    members = {m['id']: m for m in storage.get_all_members()}
+    protocols = {p['id']: p for p in storage.get_all_status_protocols()}
+    sent = []
+    for s in active_statuses(today):
+        proto = protocols.get(s['protocol_id']) or {}
+        day_row = storage.get_status_day(s['id']) or {}
+        for idx, b in enumerate(_matched_beats(proto, day_row, today)):
+            audience = b.get('audience', 'kids')
+            if audience == 'kids' or not (b.get('message') or '').strip():
+                continue
+            key = f"{s['id']}:{idx}:{today}"
+            if key in marks:
+                continue
+            marks[key] = now.timestamp()
+            body = f"{s['emoji']} {s['name']}: {b['message']}"
+            targets = []
+            if audience in ('adults', 'everyone'):
+                targets += _adults(exclude_ids={s['member_id']} if s['member_id'] else ())
+            if audience in ('affected', 'everyone') and s['member_id']:
+                affected = members.get(s['member_id'])
+                if affected:
+                    targets.append(affected)
+            for t in targets:
+                try:
+                    _post_dm(t['id'], body)
+                except Exception as e:
+                    print(f"Status beat DM failed for {t.get('name')}: {e}")
+            sent.append(key)
+    storage.set_app_state('status_beat_dms', marks)
+    return sent
 
 
 def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4):
@@ -382,7 +492,9 @@ def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4
         proto = protocols.get(day.get('protocol_id'))
         if not proto or not proto.get('enabled', True):
             continue
-        if (proto.get('need') or 'give_space') not in ('cover', 'help'):
+        beat_needs = {b.get('need') for b in (proto.get('beats') or []) if b.get('need')}
+        if (proto.get('need') or 'give_space') not in ('cover', 'help') \
+                and not (beat_needs & {'cover', 'help'}):
             continue
         affected = members.get(proto.get('member_id')) or {}
         span_start = day.get('date')

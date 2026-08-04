@@ -423,10 +423,13 @@ def scenario_span_announce_and_agent_span():
     r = agent_tools_v2.set_household_status("work trip", fri.isoformat(),
                                             end_date=TODAY.isoformat())
     check(r["status"] == "error", "a span ending before it starts is refused")
-    # solver feed spans the whole range
+    # solver feed covers every day of the span (per-date since beats can
+    # vary the need day-by-day)
     feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), fri.isoformat())
-    check(len(feed) == 1 and feed[0]["end_date"] == fri.isoformat(),
-          f"one range entry covering the span, got {feed}")
+    expect = [(TODAY + datetime.timedelta(days=i)).isoformat() for i in range(3)]
+    check(sorted(f["date"] for f in feed) == expect
+          and all(f["driver_id"] == "d1" for f in feed),
+          f"every span day bans Dad's driver, got {feed}")
 
 
 def scenario_sweep_collapses_trip_slices():
@@ -515,6 +518,127 @@ def scenario_coverage_waits_for_resolve():
               "report fires once the schedule is solved again")
 
 
+# --- Beat timelines: (when, who, what) relative to the event ---
+
+CHEMO_BEATS = [
+    # The arc the fixed positional model couldn't express: the event is ONE
+    # day, but the family's timeline isn't — and the hard days come after.
+    {"anchor": "start", "offset_days": 1, "audience": "kids", "need": "cover",
+     "message": "Mom's extra tired today — this is the rest day. "
+                "Quiet afternoon, and she'd love a hug when you get home."},
+    {"anchor": "start", "offset_days": 1, "audience": "adults", "need": None,
+     "message": "Rough day — keep her hydrated, meds at 6."},
+    {"anchor": "start", "offset_days": 3, "audience": "kids", "need": "give_space",
+     "message": "Mom's feeling better today — she might even want a board game."},
+    {"anchor": "start", "offset_days": 1, "audience": "affected", "need": None,
+     "message": "Rest day. The schedule's covered — don't even look at it. 💙"},
+]
+
+
+def scenario_beats_chemo_recovery_arc():
+    _reset()
+    pid = _mk_protocol(beats=CHEMO_BEATS)  # 1-day event, need=cover
+    storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid})
+    d1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+    d2 = (TODAY + datetime.timedelta(days=2)).isoformat()
+    d3 = (TODAY + datetime.timedelta(days=3)).isoformat()
+    d4 = (TODAY + datetime.timedelta(days=4)).isoformat()
+    # day 0: protocol's own words (no beat on the day itself)
+    check(status_protocols.kid_lines(TODAY.isoformat())[0].startswith("💙 Mom's resting"),
+          "treatment day keeps the protocol's main message")
+    # day +1: the beat's words — OUTSIDE the 1-day event's own dates
+    l1 = status_protocols.kid_lines(d1)
+    check(l1 == ["💙 Mom's extra tired today — this is the rest day. "
+                 "Quiet afternoon, and she'd love a hug when you get home."],
+          f"day+1 beat reaches past the event, got {l1}")
+    # day +2: no beat, outside span -> silence (never invent a line)
+    check(status_protocols.kid_lines(d2) == [], "no beat on day+2 -> normal day")
+    # day +3: the recovery beat
+    check("board game" in status_protocols.kid_lines(d3)[0], "day+3 recovery words")
+    check(status_protocols.kid_lines(d4) == [], "timeline ends when the beats do")
+    # an adults-only beat day shows nothing to kids
+    active_d1 = status_protocols.active_statuses(d1)[0]
+    check("hydrated" in active_d1["beat_adult_message"]
+          and "hydrated" not in active_d1["beat_kid_message"],
+          "audiences stay separate")
+
+
+def scenario_beat_need_overrides_drive_solver():
+    _reset()
+    pid = _mk_protocol(beats=CHEMO_BEATS)  # protocol need=cover (Mom, d2)
+    storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid})
+    end = (TODAY + datetime.timedelta(days=4)).isoformat()
+    feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), end)
+    dates = sorted(f["date"] for f in feed)
+    d1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+    check(dates == [TODAY.isoformat(), d1],
+          f"cover on day 0 (protocol) + day 1 (beat override) ONLY — day+3's "
+          f"give_space beat frees the driver, got {dates}")
+    # inside a span, a beat can RELAX the default: 3-day cover span, day 2
+    # beat says give_space -> day 2 is drivable
+    _reset()
+    relax = [{"anchor": "start", "offset_days": 1, "audience": "kids",
+              "need": "give_space", "message": "Feeling better already."}]
+    pid = _mk_protocol(name="Recovery", beats=relax)
+    d_end = (TODAY + datetime.timedelta(days=2)).isoformat()
+    storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid,
+                            "end_date": d_end})
+    feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), d_end)
+    dates = sorted(f["date"] for f in feed)
+    check(dates == [TODAY.isoformat(), d_end],
+          f"the middle day's beat relaxes cover -> only days 0 and 2 banned, got {dates}")
+
+
+def scenario_beat_dms_audiences_once():
+    _reset()
+    pid = _mk_protocol(beats=CHEMO_BEATS)
+    yesterday = (TODAY - datetime.timedelta(days=1)).isoformat()
+    storage.add_status_day({"date": yesterday, "protocol_id": pid})
+    # today is beat day +1: adults beat + affected beat due
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        sent = status_protocols.send_beat_dms(now=NOON)
+    check(len(sent) == 2, f"two non-kid beats today (adults + affected), got {sent}")
+    bodies = {}
+    for c in post.call_args_list:
+        for m_id in ("dadm", "momm", "kid1", "kid2"):
+            if m_id in (c.args[0].get("dm_key") or ""):
+                bodies.setdefault(m_id, []).append(c.args[2])
+    check(set(bodies) == {"dadm", "momm"}, f"kid beats never DM (surfaces carry them), got {set(bodies)}")
+    check(any("hydrated" in b for b in bodies["dadm"])
+          and not any("hydrated" in b for b in bodies["momm"]),
+          "adults beat goes to the co-parent, not the affected member")
+    check(any("don't even look" in b for b in bodies["momm"]),
+          "affected beat reaches the member themselves")
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        check(status_protocols.send_beat_dms(now=NOON) == [], "beats DM once")
+        check(post.call_count == 0, "no repeats")
+
+
+def scenario_beats_backward_compat_and_banner_fields():
+    _reset()
+    # no beats -> P3 positional behavior byte-identical
+    pid = _mk_protocol(name="Work Trip", emoji="🧳", member_id="dadm",
+                       call_time="19:30")
+    d2 = (TODAY + datetime.timedelta(days=2)).isoformat()
+    storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid,
+                            "end_date": d2})
+    mid = (TODAY + datetime.timedelta(days=1)).isoformat()
+    l = status_protocols.kid_lines(mid)
+    check(l[0] == "🧳 Work Trip — day 2 of 3" and "📞" in l[1],
+          f"beat-less protocols keep the positional timeline, got {l}")
+    # a beat on the middle day replaces the count line but keeps the call line
+    storage.update_status_protocol(pid, {"beats": [
+        {"anchor": "start", "offset_days": 1, "audience": "kids",
+         "message": "Dad lands in Kyoto today — ask him about the trains!", "need": None}]})
+    l = status_protocols.kid_lines(mid)
+    check(l[0] == "🧳 Dad lands in Kyoto today — ask him about the trains!"
+          and "📞" in l[1],
+          f"authored beat replaces the default line, call window stays, got {l}")
+    s = status_protocols.active_statuses(mid)[0]
+    check(s["within_span"] and s["beat_kid_message"].startswith("Dad lands"),
+          "banner payload carries within_span + beat messages")
+
+
 SCENARIOS = [
     scenario_day_dedupe_and_protocol_cascade,
     scenario_date_bound_resolution,
@@ -533,6 +657,10 @@ SCENARIOS = [
     scenario_sweep_collapses_trip_slices,
     scenario_coverage_report_plan_assist,
     scenario_coverage_waits_for_resolve,
+    scenario_beats_chemo_recovery_arc,
+    scenario_beat_need_overrides_drive_solver,
+    scenario_beat_dms_audiences_once,
+    scenario_beats_backward_compat_and_banner_fields,
 ]
 
 if __name__ == "__main__":

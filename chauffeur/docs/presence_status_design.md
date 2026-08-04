@@ -1,8 +1,10 @@
 # Presence & Status Arc — design map (drafted 2026-08-04)
 
-> Status: **P1 v2.53.0, P2 v2.54.0, P3 v2.55.0 SHIPPED (2026-08-04)** — the
-> "never guess" loop, the-calendar-knows + cover/help solver needs, and the
-> trip timeline (spans, positional beats, call windows, coverage reports).
+> Status: **P1 v2.53.0, P2 v2.54.0, P3 v2.55.0, P3b v2.56.0 SHIPPED
+> (2026-08-04)** — the "never guess" loop; the-calendar-knows + cover/help
+> solver needs; the trip timeline (spans, call windows, coverage reports);
+> and the full relative beat grammar (anchor±offset × audience × words ×
+> need — the chemo recovery arc works now, not just trips).
 > Slice 4 (Presence) remains design. It is
 > **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
@@ -307,5 +309,24 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    the 80%. Traveler-as-audience trimmed to: traveler sees the same span
    banner (own My Day) and is excluded from coverage noise. Tests: 5 new
    scenarios (17 total).
+
+   **P3b — the real beat grammar — SHIPPED v2.56.0 (2026-08-04).** Family
+   feedback on the P3 ship, same day: "the fixed positional timeline is
+   trip-specific — chemo day 1 ≠ day 3 ≠ day 5, everyone's needs and
+   timelines differ; a list of beats with times relative to the event is
+   the only way to model this." Correct, and it is exactly this doc's
+   original model — the P3 'no authorable grammar' call is REVERSED.
+   Shipped: `StatusProtocol.beats` = [(anchor start|end, offset_days,
+   audience kids|adults|affected|everyone, message, need-override)].
+   Beats may land OUTSIDE the instance's own dates (the chemo case: the
+   event is one day, the recovery arc isn't); an authored beat's words
+   replace the default line for that day; a beat's need changes that day's
+   driving rules only (message-only beats outside the span never extend a
+   ban). Kids beats deliver via existing surfaces only (no new pings);
+   adults/affected beats DM once, morning-of, co-parent excluding the
+   affected member. Positional defaults remain the zero-config fallback —
+   beat-less protocols behave byte-identically to P3. Helpers as a beat
+   audience: deferred. Tests: 4 new scenarios incl. the full chemo
+   recovery arc (21 total).
 4. **Presence** — light activity-tied capture → route-to-kept-away → kiosk
    render, starting from the messaging layer.

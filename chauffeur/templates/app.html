@@ -762,17 +762,23 @@
             const cards = (statusDays || []).map(s => {
                 const isSpan = (s.day_count || 1) > 1;
                 const homeDay = !!s.is_home_day;
-                // Middle span days keep the banner light (the full message
+                const inSpan = s.within_span !== false;
+                // An authored BEAT for this day always wins — the family
+                // wrote words for exactly this day of the timeline. Else:
+                // middle span days keep the banner light (the full message
                 // already landed on day 1); the last day is the celebration.
-                const msg = homeDay ? `${mfEscape(s.member_name || s.name)} comes home today! 🎉`
+                const beatMsg = isAdult ? s.beat_adult_message : s.beat_kid_message;
+                const msg = beatMsg ? mfEscape(beatMsg)
+                    : !inSpan ? ''
+                    : homeDay ? `${mfEscape(s.member_name || s.name)} comes home today! 🎉`
                     : (isSpan && s.day_pos > 1) ? ''
                     : mfEscape(isAdult ? (s.adult_message || s.kid_message) : s.kid_message);
                 const meta = [];
-                if (isSpan && !homeDay) meta.push(`day ${s.day_pos} of ${s.day_count}`);
+                if (isSpan && inSpan && !homeDay) meta.push(`day ${s.day_pos} of ${s.day_count}`);
                 if (isAdult && s.need_label) meta.push(s.need_label);
                 if (s.set_by_name) meta.push('set by ' + s.set_by_name);
                 else if (s.source === 'calendar') meta.push('📅 from ' + (s.source_detail || 'the calendar'));
-                const callLine = (isSpan && s.call_time && !homeDay && s.day_pos < s.day_count)
+                const callLine = (isSpan && inSpan && s.call_time && !homeDay && s.day_pos < s.day_count)
                     ? `<p class="text-xs text-sky-300/90 mt-1">📞 Around ${fmtHHMM(s.call_time)} — call with ${mfEscape(s.member_name || 'home')}</p>` : '';
                 return `
                 <div class="bg-sky-950/60 border border-sky-800/60 rounded-xl p-3 mb-1">
