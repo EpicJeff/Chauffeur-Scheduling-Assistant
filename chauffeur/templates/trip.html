@@ -77,6 +77,7 @@
     <div class="gradient-overlay"></div>
 
     {% include 'nav.html' %}
+    {% include 'components/trip_logic.html' %}
 
     <!-- Main Content Grid -->
     <div class="flex-1 flex flex-col p-6 md:p-12 gap-8 z-10 w-full max-w-[1800px] mx-auto overflow-y-auto">
@@ -1004,21 +1005,8 @@
             }
         }
 
-        // Commute lines are map-only (no pill). If the activity endpoint has no
-        // known coordinates, the backend geocodes its label and the line can
-        // dead-end at a spot with no marker — callers skip those routes.
         function actHasKnownCoords(act) {
-            const p = (tripData.metadata.pois || []).find(x => x.event_id === act.id || (x.event_id && act.id.endsWith(x.event_id)));
-            if (p && p.lat && p.lng) return true;
-            const a = (tripData.metadata.accommodations || []).find(x => x.id === act.id);
-            return !!(a && a.lat && a.lng);
-        }
-
-        function haversineKm(lat1, lng1, lat2, lng2) {
-            const r = 6371, toRad = d => d * Math.PI / 180;
-            const dp = toRad(lat2 - lat1), dl = toRad(lng2 - lng1);
-            const a = Math.sin(dp/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dl/2)**2;
-            return 2 * r * Math.asin(Math.sqrt(a));
+            return TripLogic.actHasKnownCoords(tripData, act);
         }
 
         async function loadRouteBetweenNow(act, nextAct, pill, dayKey, isCommute = false) {
@@ -1032,61 +1020,17 @@
 
             try {
                 const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+                const route = await TripLogic.fetchRouteGeometry(apiBase,
+                    act.location, nextAct.location,
+                    TripLogic.actCoords(tripData, act),
+                    TripLogic.actCoords(tripData, nextAct));
 
-                let originLat = null, originLng = null, destLat = null, destLng = null;
-                const pOrig = tripData.metadata.pois.find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
-                if (pOrig && pOrig.lat) { originLat = pOrig.lat; originLng = pOrig.lng; }
-                else if (tripData.metadata.accommodations) {
-                    const aOrig = tripData.metadata.accommodations.find(a => a.id === act.id);
-                    if (aOrig && aOrig.lat) { originLat = aOrig.lat; originLng = aOrig.lng; }
-                }
-                const pDest = tripData.metadata.pois.find(p => p.event_id === nextAct.id || (p.event_id && nextAct.id.endsWith(p.event_id)));
-                if (pDest && pDest.lat) { destLat = pDest.lat; destLng = pDest.lng; }
-                else if (tripData.metadata.accommodations) {
-                    const aDest = tripData.metadata.accommodations.find(a => a.id === nextAct.id);
-                    if (aDest && aDest.lat) { destLat = aDest.lat; destLng = aDest.lng; }
-                }
-
-                let coordsParams = '';
-                if (originLat !== null && destLat !== null) {
-                    coordsParams = `&origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
-                }
-
-                // Pick the likely profile up front from straight-line distance: beyond
-                // ~1.2km nobody walks, so skip the wasted walking request entirely.
-                let tryWalkingFirst = true;
-                if (originLat !== null && destLat !== null) {
-                    tryWalkingFirst = haversineKm(originLat, originLng, destLat, destLng) <= 1.2;
-                }
-
-                let type = 'walking';
-                let duration = 0;
-                let geometry = null;
-
-                if (tryWalkingFirst) {
-                    let res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=walking${coordsParams}`);
-                    let data = await res.json();
-                    if (data.duration_mins !== undefined && data.duration_mins <= 15) {
-                        duration = data.duration_mins;
-                        geometry = data.geometry;
-                    }
-                }
-                if (!geometry) {
-                    const res = await fetch(`${apiBase}api/maps/route_geometry?origin=${encodeURIComponent(act.location)}&destination=${encodeURIComponent(nextAct.location)}&profile=driving${coordsParams}`);
-                    const data = await res.json();
-                    if (data.duration_mins !== undefined) {
-                        type = 'driving';
-                        duration = data.duration_mins;
-                        geometry = data.geometry;
-                    }
-                }
-
-                if (geometry && !activeRouteKeys.has(routeKey)) {
+                if (route && !activeRouteKeys.has(routeKey)) {
                     // The itinerary was re-rendered without this pair while the
                     // fetch was in flight — caching it now would draw a phantom line.
                     if (pill) pill.remove();
-                } else if (geometry) {
-                    cachedRoutes[routeKey] = { type, duration, geometry, act, nextAct, dayKey, isCommute };
+                } else if (route) {
+                    cachedRoutes[routeKey] = { ...route, act, nextAct, dayKey, isCommute };
                     updateRoutePill(pill, cachedRoutes[routeKey]);
                     if (renderMapTimeout) clearTimeout(renderMapTimeout);
                     renderMapTimeout = setTimeout(() => { renderMap(); }, 300);
@@ -1131,18 +1075,12 @@
 
 
 
-        // Flexible-date drafts live on a mock calendar behind the scenes; those
-        // fake dates must NEVER be shown to the user — only trip-day numbers.
         function isFlexibleDraft() {
-            return !!(tripData.metadata.is_draft && tripData.metadata.mock_start_date);
+            return TripLogic.isFlexibleDraft(tripData);
         }
 
         function accDateToDayNum(dateStr) {
-            if (!dateStr || !isFlexibleDraft()) return null;
-            const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
-            tripStart.setHours(0,0,0,0);
-            const d = new Date(dateStr + "T00:00:00");
-            return Math.round((d - tripStart) / 86400000) + 1;
+            return TripLogic.accDateToDayNum(tripData, dateStr);
         }
 
         function dayNumToAccDate(dayNum) {
@@ -1745,36 +1683,8 @@
                 return;
             }
             
-            const grouped = {};
-            tripData.activities.forEach(act => {
-                const start = act.start ? new Date(act.start * 1000) : null;
-                let dayKey = 'Unscheduled';
-                let sortKey = 9999999999;
-                
-                if (start) {
-                    const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
-                    if (tripData.metadata.is_draft && tripData.metadata.mock_start_date) {
-                        const tripStart = new Date(tripData.metadata.mock_start_date * 1000);
-                        tripStart.setHours(0,0,0,0);
-                        const actStart = new Date(start);
-                        actStart.setHours(0,0,0,0);
-                        const msDiff = actStart - tripStart;
-                        const dayNum = Math.floor(msDiff / (1000 * 60 * 60 * 24)) + 1;
-                        dayKey = `Day ${dayNum} - ${start.toLocaleDateString('en-US', {weekday:'short', ...tzOpts})}`;
-                        sortKey = dayNum;
-                    } else {
-                        dayKey = start.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric', ...tzOpts});
-                        const s = new Date(start);
-                        s.setHours(0,0,0,0);
-                        sortKey = s.getTime();
-                    }
-                }
-                
-                if(!grouped[dayKey]) grouped[dayKey] = { sortKey: sortKey, items: [] };
-                grouped[dayKey].items.push(act);
-            });
-            
-            const sortedKeys = Object.keys(grouped).sort((a,b) => grouped[a].sortKey - grouped[b].sortKey);
+            const grouped = TripLogic.groupActivities(tripData);
+            const sortedKeys = TripLogic.sortedDayKeys(grouped);
             groupedActivities = grouped;
             
             sortedKeys.forEach(dayKey => {
@@ -1786,61 +1696,20 @@
                 col.innerHTML = `<div class="flex justify-between items-center border-b border-white/10 pb-2 mb-2 cursor-pointer hover:text-blue-400 group" onclick="toggleDayFilter('${safeDayKey}')"><h3 class="text-white font-bold group-hover:text-blue-400 transition-colors">${dayKey}</h3><button onclick="event.stopPropagation(); clearDay('${safeDayKey}')" class="text-xs text-red-400 hover:text-red-300">Clear</button></div>`;
                 
                 const dayItems = grouped[dayKey].items;
-                let dayAccAct = null;
-                let dayReturnsToAcc = false;
-                if (dayItems.length > 0 && tripData.metadata.accommodations && tripData.metadata.accommodations.length > 0) {
-                    const firstAct = dayItems[0];
-                    if (firstAct.start) {
-                        const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
-                        const d = new Date(firstAct.start * 1000);
-                        const year = d.toLocaleDateString('en-US', { year: 'numeric', ...tzOpts });
-                        const month = d.toLocaleDateString('en-US', { month: '2-digit', ...tzOpts });
-                        const day = d.toLocaleDateString('en-US', { day: '2-digit', ...tzOpts });
-                        const dateStr = `${year}-${month}-${day}`;
-                        
-                        // The day's routing base is the stay you sleep at that night
-                        // (check_in <= date < check_out), matching the solver's day->home-base
-                        // map. The checked-out stay is only a fallback (final/gap day: you
-                        // woke up there and no stay covers the night).
-                        const staysWithCoords = tripData.metadata.accommodations.filter(a =>
-                            a.check_in_date && a.check_out_date && a.lat && a.lng
-                        );
-                        const checkinAcc = staysWithCoords.find(a => dateStr >= a.check_in_date && dateStr < a.check_out_date);
-                        const checkoutAcc = staysWithCoords.find(a => dateStr === a.check_out_date);
-                        const acc = checkinAcc || checkoutAcc;
-                        if (acc) {
-                            dayAccAct = { id: acc.id, location: acc.location || acc.name, name: acc.name };
-                            // Only route back to the stay in the evening if you
-                            // actually sleep there tonight — on a checkout-only
-                            // (departure/gap) day you leave and don't return.
-                            dayReturnsToAcc = !!checkinAcc;
-                            if (checkinAcc && checkoutAcc && checkoutAcc.id !== checkinAcc.id) {
-                                // Switch day: transfer old stay -> new stay (drop the bags),
-                                // then the day's POI routes run from the new stay.
-                                const prevAccAct = { id: checkoutAcc.id, location: checkoutAcc.location || checkoutAcc.name, name: checkoutAcc.name };
-                                loadRouteBetween(prevAccAct, dayAccAct, null, dayKey, true);
-                            }
-                            // Morning stay->activity commute only if you woke up at a
-                            // stay: either you checked out of one today, or tonight's
-                            // stay was already checked into before today. On arrival
-                            // day (check-in == today, no prior stay) the day doesn't
-                            // start at the hotel.
-                            const wokeUpAtStay = !!checkoutAcc || (checkinAcc && dateStr > checkinAcc.check_in_date);
-                            if (wokeUpAtStay && actHasKnownCoords(firstAct)) {
-                                loadRouteBetween(dayAccAct, firstAct, null, dayKey, true);
-                            }
-                        }
+                const dayDateStr = TripLogic.dateStrForDay(tripData, grouped, dayKey);
+                TripLogic.stayCommutes(tripData, dayItems, dayDateStr).forEach(leg => {
+                    if (leg.kind === 'transfer') {
+                        loadRouteBetween(TripLogic.accAsAct(leg.fromAcc), TripLogic.accAsAct(leg.toAcc), null, dayKey, true);
+                    } else if (leg.kind === 'morning') {
+                        loadRouteBetween(TripLogic.accAsAct(leg.fromAcc), leg.toAct, null, dayKey, true);
+                    } else {
+                        loadRouteBetween(leg.fromAct, TripLogic.accAsAct(leg.toAcc), null, dayKey, true);
                     }
-                }
-                
-                let bgPoiAct = null;
-                for(let act of dayItems) {
-                    const p = (tripData.metadata.pois || []).find(x => x.event_id === act.id || (x.event_id && act.id.endsWith(x.event_id)));
-                    if (p && p.is_background) {
-                        bgPoiAct = act;
-                        break;
-                    }
-                }
+                });
+
+                const bgPoiAct = TripLogic.backgroundThemeAct(tripData, dayItems);
+                const interLegByFrom = new Map(
+                    TripLogic.interLegs(tripData, dayItems).map(l => [l.from.id, l]));
                 
                 let container = col;
                 if (bgPoiAct) {
@@ -1869,23 +1738,7 @@
                     const tzOpts = tripData.event.timeZone && tripData.event.timeZone !== "UTC" ? { timeZone: tripData.event.timeZone } : {};
                     const timeStr = start ? start.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', ...tzOpts}) : '';
                     
-                    const relatedPoi = (tripData.metadata.pois || []).find(p => p.event_id === act.id || (p.event_id && act.id.endsWith(p.event_id)));
-                    let emoji = '📍';
-                    if (relatedPoi && relatedPoi.category) {
-                        const catEmojis = { 'sightseeing': '📸', 'food': '🍽️', 'activity': '🏃', 'shopping': '🛍️', 'other': '📍' };
-                        const normalizedCat = relatedPoi.category.toLowerCase().trim();
-                        if (catEmojis[normalizedCat]) {
-                            emoji = catEmojis[normalizedCat];
-                        } else {
-                            // Backwards compatibility for old trips that had emojis embedded in the category name
-                            const match = relatedPoi.category.match(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u);
-                            if (match) emoji = match[0];
-                        }
-                    } else {
-                        const t = act.title.toLowerCase();
-                        if (t.includes('flight') || t.includes('train') || t.includes('drive') || t.includes('travel')) emoji = '✈️';
-                        else if (t.includes('hotel') || t.includes('resort') || t.includes('airbnb') || t.includes('stay')) emoji = '🏨';
-                    }
+                    const emoji = TripLogic.categoryEmoji(tripData, act);
 
                     const card = document.createElement('div');
                     card.className = "bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:bg-gray-700 transition shadow-lg relative overflow-hidden group flex flex-col gap-1";
@@ -1904,21 +1757,15 @@
                     `;
                     container.appendChild(card);
                     
-                    if (index < grouped[dayKey].items.length - 1) {
-                        const nextAct = grouped[dayKey].items[index+1];
-                        if (bgPoiAct && nextAct.id === bgPoiAct.id) {
-                            // Don't draw route pill to the background container itself if it's next
-                        } else if (act.location && nextAct.location) {
-                            const pillId = `route-pill-${act.id}-${nextAct.id}`;
-                            const pill = document.createElement('div');
-                            pill.id = pillId;
-                            pill.className = "self-center my-1 py-1 px-3 rounded-full bg-gray-800 border border-gray-700 text-xs text-gray-400 flex items-center gap-1 shadow-sm opacity-50";
-                            pill.innerHTML = `<svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>Calculating...</span>`;
-                            container.appendChild(pill);
-                            loadRouteBetween(act, nextAct, pill, dayKey);
-                        }
-                    } else if (dayAccAct && dayReturnsToAcc && actHasKnownCoords(act)) {
-                        loadRouteBetween(act, dayAccAct, null, dayKey, true);
+                    const interLeg = interLegByFrom.get(act.id);
+                    if (interLeg) {
+                        const pillId = `route-pill-${act.id}-${interLeg.to.id}`;
+                        const pill = document.createElement('div');
+                        pill.id = pillId;
+                        pill.className = "self-center my-1 py-1 px-3 rounded-full bg-gray-800 border border-gray-700 text-xs text-gray-400 flex items-center gap-1 shadow-sm opacity-50";
+                        pill.innerHTML = `<svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg><span>Calculating...</span>`;
+                        container.appendChild(pill);
+                        loadRouteBetween(interLeg.from, interLeg.to, pill, dayKey);
                     }
                 });
                 grid.appendChild(col);
@@ -3659,27 +3506,15 @@
                 
                 if (selectedDayKey && groupedActivities[selectedDayKey]) {
                     allowedActivityIds = new Set(groupedActivities[selectedDayKey].items.map(a => a.id));
-                    
-                    // Determine the YYYY-MM-DD for the selected day to filter accommodations
-                    if (selectedDayKey !== 'Unscheduled' && groupedActivities[selectedDayKey].items.length > 0) {
-                        const firstAct = groupedActivities[selectedDayKey].items[0];
-                        if (firstAct.start) {
-                            const start = new Date(firstAct.start * 1000);
-                            const tzOpts = tripData.metadata.timeZone ? { timeZone: tripData.metadata.timeZone } : {};
-                            const parts = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', ...tzOpts }).formatToParts(start);
-                            const y = parts.find(p => p.type === 'year').value;
-                            const m = parts.find(p => p.type === 'month').value;
-                            const d = parts.find(p => p.type === 'day').value;
-                            selectedDateStr = `${y}-${m}-${d}`;
-                        }
-                    }
+                    // YYYY-MM-DD of the selected day, to filter accommodations.
+                    selectedDateStr = TripLogic.dateStrForDay(tripData, groupedActivities, selectedDayKey);
                 }
-                
+
                 tripData.metadata.pois.forEach((poi, idx) => {
                     if (allowedActivityIds) {
                         let match = false;
                         allowedActivityIds.forEach(actId => {
-                            if (poi.event_id === actId || (poi.event_id && actId.endsWith(poi.event_id))) match = true;
+                            if (TripLogic.poiMatchesActivityId(poi, actId)) match = true;
                         });
                         if (!match) return; // Skip marker for other days
                     }
@@ -3697,25 +3532,10 @@
                         `;
                         const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
 
-                        let marker;
-                        if (poi.is_background) {
-                            // Day themes aren't activity pins: star badge matching the
-                            // itinerary's "Day Theme" container styling.
-                            const el = document.createElement('div');
-                            el.className = `w-9 h-9 ${poi.is_scheduled ? 'bg-indigo-600' : 'bg-gray-500'} rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white cursor-pointer`;
-                            el.innerHTML = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>';
-                            marker = new mapboxgl.Marker({element: el})
-                                .setLngLat([poi.lng, poi.lat])
-                                .setPopup(popup)
-                                .addTo(poiMap);
-                        } else {
-                            const prioHexColors = { 'must': '#ef4444', 'want': '#3b82f6', 'stretch': '#eab308' };
-                            const markerColor = poi.is_scheduled ? '#10b981' : (prioHexColors[poi.priority] || '#3b82f6');
-                            marker = new mapboxgl.Marker({color: markerColor})
-                                .setLngLat([poi.lng, poi.lat])
-                                .setPopup(popup)
-                                .addTo(poiMap);
-                        }
+                        const marker = new mapboxgl.Marker(TripLogic.poiMarkerOptions(poi))
+                            .setLngLat([poi.lng, poi.lat])
+                            .setPopup(popup)
+                            .addTo(poiMap);
 
                         mapMarkers.push(marker);
                         bounds.extend([poi.lng, poi.lat]);
@@ -3741,13 +3561,8 @@
                             </div>
                         `;
                         const popup = new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupContent);
-                        
-                        // Custom hotel-like icon
-                        const el = document.createElement('div');
-                        el.className = 'w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center shadow-lg border-2 border-white text-white cursor-pointer';
-                        el.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>';
-                        
-                        const marker = new mapboxgl.Marker({element: el})
+
+                        const marker = new mapboxgl.Marker(TripLogic.accMarkerElement())
                             .setLngLat([acc.lng, acc.lat])
                             .setPopup(popup)
                             .addTo(poiMap);
@@ -3788,12 +3603,7 @@
                                 'line-join': 'round',
                                 'line-cap': 'round'
                             },
-                            paint: {
-                                'line-color': r.isCommute ? '#a855f7' : (r.type === 'walking' ? '#10b981' : '#3b82f6'),
-                                'line-width': r.isCommute ? 3 : 4,
-                                'line-dasharray': r.isCommute ? [2, 2] : (r.type === 'walking' ? [2, 2] : [1]),
-                                'line-opacity': r.isCommute ? 0.7 : 1
-                            }
+                            paint: TripLogic.routePaint(r)
                         });
                     }
                     
