@@ -280,19 +280,63 @@ def normalize_item(item: dict, now=None) -> dict:
     }
 
 
+def _title_tokens(s: str) -> set:
+    return set(re.findall(r'[a-z0-9]+', (s or '').lower()))
+
+
+def _ts(iso: str):
+    try:
+        return datetime.datetime.fromisoformat(iso).timestamp()
+    except Exception:
+        return None
+
+
+def _titles_similar(a_tokens: set, b_tokens: set, times_match: bool) -> bool:
+    """Token-set comparison: word order and punctuation never matter. One
+    title containing all of the other's words is a match outright; otherwise
+    Jaccard overlap decides, with a looser bar when the clock times agree.
+    Thresholds: 0.6 with matching times keeps 'Game vs Eagles' vs 'Game vs
+    Hawks' (two kids, same 9am slot, overlap 0.5) as separate events while
+    catching any real rephrasing; 0.75 without time evidence."""
+    if not a_tokens or not b_tokens:
+        return False
+    if a_tokens <= b_tokens or b_tokens <= a_tokens:
+        return True
+    overlap = len(a_tokens & b_tokens) / len(a_tokens | b_tokens)
+    return overlap >= (0.6 if times_match else 0.75)
+
+
 def _is_duplicate(prop: dict, existing: list, sched_events: list) -> bool:
-    """Same title (case-insensitive) on the same day as any prior proposal
-    (any status — ignored must stay ignored) or any scheduled event."""
+    """Same day as any prior proposal (any status — ignored must stay
+    ignored) or any scheduled event, with the same/contained title OR a
+    near-identical word set. Email reminders routinely rephrase what an ICS
+    feed already created ('Game vs Eagles - U12 Blue' vs 'U12 Blue game vs.
+    Eagles'), so exact/substring matching alone let duplicates through;
+    matching start/end times lower the similarity bar."""
     title = prop['title'].lower().lstrip('📌 ').strip()
+    tokens = _title_tokens(title)
     day = prop['start'][:10]
+    p_start, p_end = _ts(prop.get('start')), _ts(prop.get('end'))
+
+    def _same(o_title, o_start, o_end):
+        o_title = (o_title or '').lower().lstrip('📌 ').strip()
+        if not o_title:
+            return False
+        if title == o_title or title in o_title or o_title in title:
+            return True
+        times_match = (p_start is not None and (s := _ts(o_start)) is not None
+                       and abs(p_start - s) <= 30 * 60
+                       and (p_end is None or (e := _ts(o_end)) is None
+                            or abs(p_end - e) <= 30 * 60))
+        return _titles_similar(tokens, _title_tokens(o_title), times_match)
+
     for p in existing:
         if (p.get('start') or '')[:10] == day \
-                and (p.get('title') or '').lower().lstrip('📌 ').strip() == title:
+                and _same(p.get('title'), p.get('start'), p.get('end')):
             return True
     for ev in sched_events:
-        ev_title = (ev.get('title') or '').lower().strip()
-        if (ev.get('start') or '')[:10] == day and ev_title \
-                and (title in ev_title or ev_title in title):
+        if (ev.get('start') or '')[:10] == day \
+                and _same(ev.get('title'), ev.get('start'), ev.get('end')):
             return True
     return False
 

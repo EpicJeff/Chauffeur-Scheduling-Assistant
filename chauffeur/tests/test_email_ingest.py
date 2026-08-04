@@ -208,10 +208,67 @@ def test_log_collapse():
     storage.ingest_log_table.truncate()
 
 
+def test_fuzzy_dedup():
+    print("Fuzzy dedupe (ICS event vs rephrased email reminder) ...")
+    day = IN_5_DAYS
+
+    def prop(title, start_h=None, end_h=None):
+        if start_h is None:
+            return {'title': title, 'start': day, 'end': day}
+        s = datetime.datetime.fromisoformat(f"{day}T{start_h}:00").astimezone()
+        e = datetime.datetime.fromisoformat(f"{day}T{end_h}:00").astimezone()
+        return {'title': title, 'start': s.isoformat(), 'end': e.isoformat()}
+
+    def sched(title, start_h=None, end_h=None, day_offset=0):
+        d = (datetime.date.fromisoformat(day) + datetime.timedelta(days=day_offset)).isoformat()
+        if start_h is None:
+            return {'title': title, 'start': d, 'end': d}
+        s = datetime.datetime.fromisoformat(f"{d}T{start_h}:00").astimezone()
+        e = datetime.datetime.fromisoformat(f"{d}T{end_h}:00").astimezone()
+        return {'title': title, 'start': s.isoformat(), 'end': e.isoformat()}
+
+    dup = email_ingest._is_duplicate
+
+    # Same words, different order/punctuation, same times -> duplicate
+    check(dup(prop('U12 Blue game vs. Eagles', '09:00', '10:30'),
+              [], [sched('Game vs Eagles - U12 Blue', '09:00', '10:30')]),
+          "reordered/punctuated title with matching times is a duplicate")
+
+    # Rephrased with one extra word, same times -> duplicate (containment)
+    check(dup(prop('Soccer game vs Eagles U12 Blue', '09:00', '10:30'),
+              [], [sched('Game vs Eagles - U12 Blue', '09:00', '10:30')]),
+          "superset word set with matching times is a duplicate")
+
+    # Two DIFFERENT games, same 9am slot (two kids' teams) -> NOT duplicates
+    check(not dup(prop('Game vs Hawks', '09:00', '10:30'),
+                  [], [sched('Game vs Eagles', '09:00', '10:30')]),
+          "different opponent at the same time is kept")
+
+    # Same rephrased title on a DIFFERENT day -> not a duplicate
+    check(not dup(prop('U12 Blue game vs. Eagles', '09:00', '10:30'),
+                  [], [sched('Game vs Eagles - U12 Blue', '09:00', '10:30', day_offset=1)]),
+          "same title on another day is kept")
+
+    # All-day (no time evidence): identical word set still matches...
+    check(dup(prop('Picture day - Riverside Elementary'),
+              [], [sched('Riverside Elementary Picture Day')]),
+          "all-day reordered title is a duplicate")
+    # ...but moderate overlap without time evidence is kept
+    check(not dup(prop('Fall festival setup'),
+                  [], [sched('Fall festival cleanup')]),
+          "moderate overlap without matching times is kept")
+
+    # Fuzzy matching also applies against prior proposals (ignored included)
+    check(dup(prop('U12 Blue game vs. Eagles', '09:00', '10:30'),
+              [dict(sched('Game vs Eagles - U12 Blue', '09:00', '10:30'), status='ignored')], []),
+          "rephrased duplicate of an ignored proposal stays suppressed")
+
+
 if __name__ == '__main__':
     test_mime_and_allowlist()
     test_normalize()
     test_run_ingest()
     test_log_collapse()
+    test_fuzzy_dedup()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
