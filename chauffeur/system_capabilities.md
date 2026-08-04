@@ -52,6 +52,7 @@ Cars are an optional entity (Config → People tab → Cars; `/api/cars`; `Car` 
 - **`Driver.max_passengers`** (optional): driver-level passenger cap independent of cars (teen graduated-licensing laws). Applies even with zero cars configured; override-escapable.
 - **Diagnostics**: unassignment reasons of type `"car"` — "No car this driver may drive works for this event: …", per-car failure detail (seats, car-seat restriction, unavailable + reason), and the `max_passengers` cap. Static bans only; a car merely claimed by another driver at that hour falls through to the generic conflict/optimization reasons.
 - **Agent tool** `manage_car` (v1 registry, bridged to the chat widget): create/update/delete cars and `set_unavailable`/`clear_unavailable` date ranges ("the minivan is loaned to Aunt Sarah through Friday"). Cars also appear in `get_current_state`.
+- **Photos** (v2.48.0): cars and family members can carry an `image` — a ~128px square data-URL photo, client-side cropped/resized on upload (Config → People / Cars), stored in the entity document (no file hosting). Photos win over emoji/initials wherever the surface has room: config lists, PWA member switcher and driver header, kid-lens driver chips and the "in the {car}" line, the driver-view Take-the-car chip, family-map markers, chores/routines tiles. Tiny calendar/dashboard chips stay icon+name.
 - **Not modeled** (candidates for C2 with HA telemetry): fuel/charge, live car location, cars consumed by a pooled driver's personal (non-solver) events.
 
 ---

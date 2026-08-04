@@ -1,7 +1,7 @@
 # Car Entity & Solver Car Dimension (C1) — Design
 
 Status: **IMPLEMENTED** (v2.47.0 — solver in `solver/matcher.py`, tests in `tests/test_cars.py`)
-Arc: C1 = entity + solver + UI + agent tools. C2 (later) = HA telemetry (fuel/charge → reminders/errands, observed car location warnings).
+Arc: C1 = entity + solver + UI + agent tools. C2 (later) = HA telemetry (fuel/charge → reminders/errands, observed car location warnings, cars as markers on the family map — location informs humans, never the solver).
 
 ## 1. Problem
 

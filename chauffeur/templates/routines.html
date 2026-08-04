@@ -88,9 +88,11 @@
                             <template x-for="k in digestCards()" :key="'kd-' + k.id">
                                 <div class="bg-gray-800/60 rounded-2xl border border-indigo-900/60 p-4">
                                     <div class="flex items-center gap-3 pb-2 border-b border-gray-700 mb-3">
-                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0"
-                                            :style="'background-color:' + (k.color_code || '#3b82f6')"
-                                            x-text="k.avatar || (k.name || '?').charAt(0)"></div>
+                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm shrink-0 overflow-hidden"
+                                            :style="'background-color:' + (k.color_code || '#3b82f6')">
+                                            <template x-if="k.image"><img :src="k.image" class="w-full h-full object-cover"></template>
+                                            <template x-if="!k.image"><span x-text="k.avatar || (k.name || '?').charAt(0)"></span></template>
+                                        </div>
                                         <div class="font-bold text-white flex-1 truncate" x-text="k.name"></div>
                                         <div x-show="k.streak" class="text-orange-400 font-black text-sm shrink-0">
                                             <span x-text="k.streak"></span>🔥
@@ -116,9 +118,11 @@
                             <div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-4 flex flex-col gap-3">
                                 <!-- Lane header -->
                                 <div class="flex items-center gap-3 pb-2 border-b border-gray-700">
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
-                                        :style="'background-color:' + (s.color_code || '#3b82f6')"
-                                        x-text="s.avatar || (s.name || '?').charAt(0)"></div>
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
+                                        :style="'background-color:' + (s.color_code || '#3b82f6')">
+                                        <template x-if="s.image"><img :src="s.image" class="w-full h-full object-cover"></template>
+                                        <template x-if="!s.image"><span x-text="s.avatar || (s.name || '?').charAt(0)"></span></template>
+                                    </div>
                                     <div class="min-w-0 flex-1">
                                         <div class="font-bold text-white text-lg truncate" x-text="s.name"></div>
                                         <template x-if="s.status">
@@ -175,9 +179,11 @@
                         <section class="bg-gray-800 rounded-2xl border border-gray-700 shadow-lg overflow-hidden">
                             <!-- Block header -->
                             <div class="flex items-center gap-3 px-5 py-4 bg-gray-800 border-b border-gray-700/70">
-                                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shrink-0"
-                                    :style="'background-color:' + (member.color_code || '#3b82f6')"
-                                    x-text="member.avatar || (member.name || '?').charAt(0)"></div>
+                                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shrink-0 overflow-hidden"
+                                    :style="'background-color:' + (member.color_code || '#3b82f6')">
+                                    <template x-if="member.image"><img :src="member.image" class="w-full h-full object-cover"></template>
+                                    <template x-if="!member.image"><span x-text="member.avatar || (member.name || '?').charAt(0)"></span></template>
+                                </div>
                                 <h3 class="text-xl font-bold text-white" x-text="member.name + \"'s routine\""></h3>
                                 <template x-if="streakFor(member.id)">
                                     <div class="flex items-center gap-3 ml-2">

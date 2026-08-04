@@ -78,6 +78,7 @@ class Car(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
     icon: Optional[str] = None      # emoji; None -> generic car glyph
+    image: Optional[str] = None     # small data-URL photo (~128px); shown where chips have room
     color_code: str = '#6b7280'
     seat_capacity: int = 4          # passenger seats, excluding the driver
     # Drivers permitted behind the wheel. A driver listed on NO car keeps an
@@ -97,6 +98,7 @@ class FamilyMember(BaseModel):
     name: str
     color_code: str = '#3b82f6'
     avatar: Optional[str] = None  # emoji or static path; None -> initials
+    image: Optional[str] = None   # small data-URL photo (~128px); wins over avatar where surfaces have room
     bio: Optional[str] = ""
     can_drive: bool = False
     is_child: bool = False  # legacy display flag, kept in sync with role

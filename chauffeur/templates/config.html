@@ -1025,10 +1025,15 @@
                             <div class="bg-gray-900 p-5 rounded-xl shadow-sm">
                                 <div class="flex flex-col md:flex-row justify-between md:items-center">
                                     <div class="flex items-center mb-4 md:mb-0">
-                                        <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white border-4 bg-gray-800"
+                                        <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl mr-4 text-white border-4 bg-gray-800 overflow-hidden"
                                             :style="'border-color: ' + (member.color_code || '#3b82f6')">
-                                            <span
-                                                x-text="member.avatar || (member.name || '?').charAt(0).toUpperCase()"></span>
+                                            <template x-if="member.image">
+                                                <img :src="member.image" class="w-full h-full object-cover">
+                                            </template>
+                                            <template x-if="!member.image">
+                                                <span
+                                                    x-text="member.avatar || (member.name || '?').charAt(0).toUpperCase()"></span>
+                                            </template>
                                         </div>
                                         <div>
                                             <h3 class="text-xl font-bold text-white" x-text="member.name"></h3>
@@ -1095,6 +1100,22 @@
                                                 optional)</label>
                                             <input type="text" x-model="memberEdit.avatar" maxlength="4"
                                                 class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-24">
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-400 mb-1 text-sm">Photo (wins over
+                                                emoji)</label>
+                                            <div class="flex items-center gap-2">
+                                                <img x-show="memberEdit.image" :src="memberEdit.image"
+                                                    class="w-12 h-12 rounded-full object-cover border-2 border-gray-600">
+                                                <label
+                                                    class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-3 rounded cursor-pointer text-sm transition-colors">
+                                                    <span x-text="memberEdit.image ? 'Change' : 'Upload'"></span>
+                                                    <input type="file" accept="image/*" class="hidden"
+                                                        @change="onPhotoPicked($event, memberEdit)">
+                                                </label>
+                                                <button x-show="memberEdit.image" @click="memberEdit.image = null"
+                                                    class="text-red-400 hover:text-red-300 font-bold text-sm px-2">✕</button>
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-gray-400 mb-1 text-sm">Role</label>
@@ -1286,9 +1307,14 @@
                             <div class="bg-gray-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3"
                                 :class="car.is_disabled ? 'opacity-50' : ''">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl border-4 bg-gray-800"
+                                    <div class="w-11 h-11 rounded-full flex items-center justify-center text-2xl border-4 bg-gray-800 overflow-hidden"
                                         :style="'border-color: ' + (car.color_code || '#6b7280')">
-                                        <span x-text="car.icon || '🚗'"></span>
+                                        <template x-if="car.image">
+                                            <img :src="car.image" class="w-full h-full object-cover">
+                                        </template>
+                                        <template x-if="!car.image">
+                                            <span x-text="car.icon || '🚗'"></span>
+                                        </template>
                                     </div>
                                     <div>
                                         <h3 class="text-lg font-bold text-white" x-text="car.name"></h3>
@@ -1337,6 +1363,21 @@
                                     <label class="block text-gray-400 mb-1 text-sm">Icon (emoji)</label>
                                     <input type="text" x-model="newCar.icon" maxlength="4" placeholder="🚐"
                                         class="bg-gray-900 border border-gray-600 rounded p-3 text-white w-20">
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Photo (wins over emoji)</label>
+                                    <div class="flex items-center gap-2">
+                                        <img x-show="newCar.image" :src="newCar.image"
+                                            class="w-12 h-12 rounded-lg object-cover border-2 border-gray-600">
+                                        <label
+                                            class="bg-gray-600 hover:bg-gray-500 text-white font-bold px-3 py-3 rounded cursor-pointer text-sm transition-colors">
+                                            <span x-text="newCar.image ? 'Change' : 'Upload'"></span>
+                                            <input type="file" accept="image/*" class="hidden"
+                                                @change="onPhotoPicked($event, newCar)">
+                                        </label>
+                                        <button x-show="newCar.image" @click="newCar.image = null"
+                                            class="text-red-400 hover:text-red-300 font-bold text-sm px-2">✕</button>
+                                    </div>
                                 </div>
                                 <div>
                                     <label class="block text-gray-400 mb-1 text-sm">Color</label>
@@ -3817,7 +3858,40 @@
                 },
 
                 blankCar() {
-                    return { name: '', icon: '', color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' };
+                    return { name: '', icon: '', image: null, color_code: '#6b7280', seat_capacity: 4, allowed_driver_ids: [], allowed_passenger_ids: null, default_driver_id: '', unavailable_ranges: [], is_disabled: false, notes: '' };
+                },
+
+                // Client-side photo shrink: square-crop to 128px JPEG so the
+                // data URL stays ~5-15KB inside the entity document — no file
+                // hosting needed, survives backups, works on the HA add-on.
+                photoToDataUrl(file) {
+                    return new Promise((resolve, reject) => {
+                        if (!file || !file.type.startsWith('image/')) return reject(new Error('Not an image'));
+                        const img = new Image();
+                        img.onload = () => {
+                            const size = 128;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = size; canvas.height = size;
+                            const side = Math.min(img.width, img.height);
+                            const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+                            canvas.getContext('2d').drawImage(img, sx, sy, side, side, 0, 0, size, size);
+                            URL.revokeObjectURL(img.src);
+                            resolve(canvas.toDataURL('image/jpeg', 0.85));
+                        };
+                        img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Could not read image')); };
+                        img.src = URL.createObjectURL(file);
+                    });
+                },
+
+                async onPhotoPicked(event, target) {
+                    const file = event.target.files && event.target.files[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    try {
+                        target.image = await this.photoToDataUrl(file);
+                    } catch (e) {
+                        showGlobalAlert('Could not read that image file.');
+                    }
                 },
 
                 openCarForm() {
@@ -3832,6 +3906,7 @@
                         id: car.id,
                         name: car.name || '',
                         icon: car.icon || '',
+                        image: car.image || null,
                         color_code: car.color_code || '#6b7280',
                         seat_capacity: car.seat_capacity != null ? car.seat_capacity : 4,
                         allowed_driver_ids: [...(car.allowed_driver_ids || [])],
@@ -4050,6 +4125,7 @@
                         name: member.name,
                         color_code: member.color_code || '#3b82f6',
                         avatar: member.avatar || '',
+                        image: member.image || null,
                         role: member.role || 'adult',
                         ha_person_entity: member.ha_person_entity || '',
                         notify_service: member.notify_service || '',
@@ -4086,6 +4162,7 @@
                 async saveMember(member) {
                     const updates = { ...this.memberEdit };
                     updates.avatar = updates.avatar ? updates.avatar.trim() : null;
+                    updates.image = updates.image || null;
                     updates.ha_person_entity = updates.ha_person_entity || null;
                     updates.notify_service = updates.notify_service || null;
                     updates.media_player_entity = updates.media_player_entity || null;

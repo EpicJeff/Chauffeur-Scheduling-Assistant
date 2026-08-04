@@ -529,9 +529,15 @@
             }
 
             document.getElementById('driver-name').textContent = m.name;
-            document.getElementById('driver-avatar').textContent = m.avatar || (m.name || '?').charAt(0).toUpperCase();
-            document.getElementById('driver-avatar').style.borderColor = m.color_code || '#3b82f6';
-            document.getElementById('driver-avatar').style.color = m.color_code || '#3b82f6';
+            const _avEl = document.getElementById('driver-avatar');
+            if (m.image) {
+                _avEl.classList.add('overflow-hidden');
+                _avEl.innerHTML = `<img src="${m.image}" class="w-full h-full object-cover rounded-full">`;
+            } else {
+                _avEl.textContent = m.avatar || (m.name || '?').charAt(0).toUpperCase();
+            }
+            _avEl.style.borderColor = m.color_code || '#3b82f6';
+            _avEl.style.color = m.color_code || '#3b82f6';
 
             document.getElementById('screen-select-driver').classList.add('hidden');
             document.getElementById('screen-schedule').classList.remove('hidden');
@@ -773,8 +779,8 @@
                     }
                     return `<div class="flex items-center justify-between mt-2 gap-2">
                         <div class="flex items-center gap-2 text-sm text-gray-300 min-w-0">
-                            <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800 shrink-0"
-                                style="border-color:${l.driver.color_code || '#3b82f6'};color:${l.driver.color_code || '#3b82f6'}">${mfEscape(l.driver.avatar || (l.driver.name || '?').charAt(0).toUpperCase())}</span>
+                            <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800 shrink-0 overflow-hidden"
+                                style="border-color:${l.driver.color_code || '#3b82f6'};color:${l.driver.color_code || '#3b82f6'}">${avatarInner(l.driver, l.driver.avatar || (l.driver.name || '?').charAt(0).toUpperCase())}</span>
                             <span class="truncate">${l.car ? mfEscape(l.car.icon || '🚗') : '🚗'} <b>${mfEscape(l.driver.name)}</b> — ${lbl} ${t}${l.car ? ' · in the ' + mfEscape(l.car.name) : ''}${l.status === 'in_progress' ? ' · <span class="text-blue-300 font-bold">on the way</span>' : ''}</span>
                         </div>
                         <div class="flex gap-2 shrink-0">${driverButtons(l.driver, r.title)}</div>
@@ -785,9 +791,9 @@
                 driverRow = `
                 <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
                     <div class="flex items-center gap-2 text-sm text-gray-300">
-                        <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800"
-                            style="border-color:${r.driver.color_code || '#3b82f6'};color:${r.driver.color_code || '#3b82f6'}">${mfEscape(r.driver.avatar || (r.driver.name || '?').charAt(0).toUpperCase())}</span>
-                        ${r.car ? mfEscape(r.car.icon || '🚗') : '🚗'} <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you${r.car ? ` in the <b>${mfEscape(r.car.name)}</b>` : ''}
+                        <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800 overflow-hidden"
+                            style="border-color:${r.driver.color_code || '#3b82f6'};color:${r.driver.color_code || '#3b82f6'}">${avatarInner(r.driver, r.driver.avatar || (r.driver.name || '?').charAt(0).toUpperCase())}</span>
+                        ${r.car && r.car.image ? `<img src="${r.car.image}" class="w-6 h-6 rounded object-cover inline-block shrink-0">` : mfEscape((r.car && r.car.icon) || '🚗')} <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you${r.car ? ` in the <b>${mfEscape(r.car.name)}</b>` : ''}
                     </div>
                     <div class="flex gap-2">${driverButtons(r.driver, r.title)}</div>
                 </div>`;
@@ -1293,6 +1299,14 @@
                 .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        // Avatar circle content: photo wins over emoji/initials. The container
+        // must carry overflow-hidden + rounded-full for the crop to hold.
+        function avatarInner(entity, fallbackText) {
+            return entity && entity.image
+                ? `<img src="${entity.image}" class="w-full h-full object-cover">`
+                : mfEscape(fallbackText);
+        }
+
         function channelDisplay(c) {
             if (c.kind === 'family') return { name: 'Family', color: '#3b82f6', avatar: '👨‍👩‍👧‍👦' };
             if (c.kind === 'event') return { name: c.title || 'Event chat', color: '#8b5cf6', avatar: '📅' };
@@ -1308,7 +1322,8 @@
             return {
                 name: other.name || 'Chat',
                 color: other.color_code || '#6b7280',
-                avatar: other.avatar || (other.name || '?').charAt(0).toUpperCase()
+                avatar: other.avatar || (other.name || '?').charAt(0).toUpperCase(),
+                image: other.image || null
             };
         }
 
@@ -1348,8 +1363,8 @@
                 return `
                 <button onclick="openChannel('${c.id}')"
                     class="w-full flex items-center gap-3 p-3.5 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 text-left">
-                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-white shrink-0"
-                        style="border-color: ${d.color}">${mfEscape(d.avatar)}</div>
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-white shrink-0 overflow-hidden"
+                        style="border-color: ${d.color}">${avatarInner(d, d.avatar)}</div>
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
                             <span class="font-bold text-white truncate">${mfEscape(d.name)}</span>
@@ -1545,8 +1560,8 @@
             list.innerHTML = items.map(m => `
                 <button onclick="toggleNewChatMember('${m.id}')"
                     class="w-full flex items-center gap-2.5 p-2 rounded-xl bg-gray-800 active:bg-gray-700 text-left">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-white shrink-0"
-                        style="border-color: ${m.color_code || '#6b7280'}">${mfEscape(m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-white shrink-0 overflow-hidden"
+                        style="border-color: ${m.color_code || '#6b7280'}">${avatarInner(m, m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>
                     <span class="font-semibold text-white">${mfEscape(m.name)}</span>
                     ${m.role === 'helper' ? '<span class="text-[10px] uppercase tracking-wide text-amber-400 font-bold ml-auto">Helper</span>' : ''}
                 </button>`).join('')
@@ -2097,20 +2112,22 @@
                 return;
             }
 
-            list.innerHTML = driversData.map(d => `
+            list.innerHTML = driversData.map(d => {
+                const dm = membersData.find(m => m.driver_id === d.id) || {};
+                return `
                 <button onclick="selectDriver('${d.id}')" class="flex items-center gap-4 p-4 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 active:border-gray-700 transition-all shadow-lg text-left w-full">
-                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-black text-2xl border-4 shadow-inner bg-gray-800" style="border-color: ${d.color_code}; color: ${d.color_code}">
-                        ${d.name.charAt(0).toUpperCase()}
+                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-black text-2xl border-4 shadow-inner bg-gray-800 overflow-hidden" style="border-color: ${d.color_code}; color: ${d.color_code}">
+                        ${avatarInner(dm, dm.avatar || d.name.charAt(0).toUpperCase())}
                     </div>
                     <div>
                         <div class="text-xl font-bold text-white">${d.name}</div>
                         <div class="text-sm text-gray-400 font-medium">${d.group} driver</div>
                     </div>
                 </button>
-            `).join('') + passengerMembers.map(m => `
+            `; }).join('') + passengerMembers.map(m => `
                 <button onclick="selectPassengerMember('${m.id}')" class="flex items-center gap-4 p-4 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 active:border-gray-700 transition-all shadow-lg text-left w-full">
-                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-black text-2xl border-4 shadow-inner bg-gray-800" style="border-color: ${m.color_code || '#3b82f6'}; color: ${m.color_code || '#3b82f6'}">
-                        ${m.avatar || (m.name || '?').charAt(0).toUpperCase()}
+                    <div class="w-14 h-14 rounded-full flex items-center justify-center font-black text-2xl border-4 shadow-inner bg-gray-800 overflow-hidden" style="border-color: ${m.color_code || '#3b82f6'}; color: ${m.color_code || '#3b82f6'}">
+                        ${avatarInner(m, m.avatar || (m.name || '?').charAt(0).toUpperCase())}
                     </div>
                     <div>
                         <div class="text-xl font-bold text-white">${m.name}</div>
@@ -3287,7 +3304,10 @@
                         if (evCar) {
                             const carSwap = !!(evCar.default_driver_id && evCar.default_driver_id !== dId);
                             const carCls = carSwap ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-gray-700/40 text-gray-300 border-gray-600';
-                            carChipHtml = `<div class="mb-2"><span class="px-2.5 py-1 text-[11px] font-bold rounded-full border ${carCls}" title="${carSwap ? 'Not your usual car — coordinate the keys' : 'Assigned car'}">${evCar.icon || '🚗'} Take the ${evCar.name}${carSwap ? ' ⇄' : ''}</span></div>`;
+                            const carVisual = evCar.image
+                                ? `<img src="${evCar.image}" class="w-5 h-5 rounded object-cover inline-block align-middle mr-1">`
+                                : `${evCar.icon || '🚗'} `;
+                            carChipHtml = `<div class="mb-2"><span class="px-2.5 py-1 text-[11px] font-bold rounded-full border inline-flex items-center ${carCls}" title="${carSwap ? 'Not your usual car — coordinate the keys' : 'Assigned car'}">${carVisual}Take the ${evCar.name}${carSwap ? ' ⇄' : ''}</span></div>`;
                         }
                     }
 

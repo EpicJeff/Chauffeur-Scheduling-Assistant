@@ -826,7 +826,7 @@ def merge_members(keep_id: str, absorb_id: str) -> Optional[dict]:
             updates['can_drive'] = absorb.get('can_drive', True)
         if not keep.get('passenger_id') and absorb.get('passenger_id'):
             updates['passenger_id'] = absorb['passenger_id']
-        for f in ('ha_person_entity', 'notify_service', 'media_player_entity', 'avatar'):
+        for f in ('ha_person_entity', 'notify_service', 'media_player_entity', 'avatar', 'image'):
             if not keep.get(f) and absorb.get(f):
                 updates[f] = absorb[f]
         if updates:
@@ -1142,6 +1142,7 @@ def get_all_point_balances() -> List[dict]:
         balances.append({
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+            'image': m.get('image'),
             'balance': get_points_balance(m['id']),
         })
     balances.sort(key=lambda b: -b['balance'])

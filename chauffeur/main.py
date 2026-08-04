@@ -3814,6 +3814,7 @@ def routines_streaks():
         out.append({
             'member_id': m['id'], 'name': m.get('name'),
             'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+            'image': m.get('image'),
             'streak': storage.compute_streak(m['id']),
             'status': status_tiers.compute_member_status(m['id'], 'routine'),
         })
@@ -4296,7 +4297,7 @@ def member_day(member_id: str, date: Optional[str] = None):
         c = _cars_by_id.get(car_assignments.get(ev_id))
         if not c:
             return None
-        return {'id': c.get('id'), 'name': c.get('name'), 'icon': c.get('icon')}
+        return {'id': c.get('id'), 'name': c.get('name'), 'icon': c.get('icon'), 'image': c.get('image')}
 
     def _rule_bound(event_ids):
         # Rules can bind passengers to events the child's calendar doesn't
@@ -4324,6 +4325,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             driver_members[driver_id] = {
                 'member_id': m['id'], 'name': m.get('name'),
                 'color_code': m.get('color_code'), 'avatar': m.get('avatar'),
+                'image': m.get('image'),
                 'role': m.get('role', 'adult'),
             } if m else None
         return driver_members[driver_id]
@@ -4964,6 +4966,7 @@ def family_locations():
             'name': m.get('name'),
             'color_code': m.get('color_code'),
             'avatar': m.get('avatar'),
+            'image': m.get('image'),
             'is_child': m.get('is_child', False),
             'state': None,
             'latitude': None,

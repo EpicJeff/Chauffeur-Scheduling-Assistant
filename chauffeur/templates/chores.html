@@ -67,9 +67,11 @@
                                 <div class="text-2xl font-black w-8 text-center shrink-0"
                                     :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
                                     x-text="'#' + (idx + 1)"></div>
-                                <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl text-white shrink-0"
-                                    :style="'background-color:' + (b.color_code || '#3b82f6')"
-                                    x-text="b.avatar || (b.name || '?').charAt(0)"></div>
+                                <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl text-white shrink-0 overflow-hidden"
+                                    :style="'background-color:' + (b.color_code || '#3b82f6')">
+                                    <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
+                                    <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
+                                </div>
                                 <div class="min-w-0 flex-1">
                                     <div class="text-xl font-bold text-white truncate" x-text="b.name"></div>
                                     <template x-if="b.status">
@@ -185,9 +187,11 @@
                                     <div class="text-lg font-black w-7 text-center shrink-0"
                                         :class="idx === 0 ? 'text-yellow-400' : (idx === 1 ? 'text-gray-300' : (idx === 2 ? 'text-amber-600' : 'text-gray-600'))"
                                         x-text="'#' + (idx + 1)"></div>
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0"
-                                        :style="'background-color:' + (b.color_code || '#3b82f6')"
-                                        x-text="b.avatar || (b.name || '?').charAt(0)"></div>
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shrink-0 overflow-hidden"
+                                        :style="'background-color:' + (b.color_code || '#3b82f6')">
+                                        <template x-if="b.image"><img :src="b.image" class="w-full h-full object-cover"></template>
+                                        <template x-if="!b.image"><span x-text="b.avatar || (b.name || '?').charAt(0)"></span></template>
+                                    </div>
                                     <div class="min-w-0 flex-1">
                                         <div class="font-bold text-white text-lg truncate" x-text="b.name"></div>
                                         <template x-if="b.status">
