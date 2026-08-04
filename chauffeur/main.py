@@ -252,6 +252,25 @@ async def push_notification_loop():
             except Exception as ce:
                 print(f"Car readiness sweep error: {ce}")
 
+            # --- Status-day calendar sweep (Presence & Status P2) ---
+            # Protocol keywords vs the cached schedule window: a matching
+            # calendar event auto-sets the status day (adults told with the
+            # matched event named; kids only ever hear today/tomorrow, so
+            # advance sets carry a built-in review window). Quiet-hours
+            # gated like the kid pushes; 30-min cadence, marker set FIRST.
+            try:
+                from services import family_digest, status_protocols
+                now_dt = datetime.now()
+                if not family_digest.in_kid_quiet_hours(now_dt, storage.get_settings() or {}):
+                    last = float(storage.get_app_state("status_sweep_last_run") or 0)
+                    if time.time() - last >= 1800:
+                        storage.set_app_state("status_sweep_last_run", time.time())
+                        created = await asyncio.to_thread(status_protocols.auto_set_from_calendar)
+                        if created:
+                            print(f"Status sweep: auto-set {len(created)} day(s) from the calendar")
+            except Exception as spe:
+                print(f"Status sweep error: {spe}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
@@ -6971,6 +6990,27 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             rules.append(rule_obj)
         except Exception as err:
             logger.warning(f"Skipping invalid rule from database: {err}. Rule data: {r}")
+
+    # Presence & Status P2: status days whose need is 'cover'/'help' take the
+    # affected member's driver out of the rotation for that date, as synthetic
+    # one-day 'unavailable' rules — the existing matcher machinery (bans +
+    # "marked unavailable" diagnostics) does the rest. Immune to the
+    # standard/AI rule toggles: a chemo day isn't a routing preference.
+    # Status-day mutations invalidate the schedule caches (storage), so these
+    # always reflect the current days.
+    try:
+        import datetime as _sd_dt
+        from services import status_protocols as _status
+        _sd_start = _sd_dt.date.today().isoformat()
+        _sd_end = (_sd_dt.date.today() + _sd_dt.timedelta(days=14)).isoformat()
+        for entry in _status.unavailable_driver_dates(_sd_start, _sd_end):
+            rules.append(Rule(driver_id=entry['driver_id'],
+                              constraint_type='unavailable',
+                              start_date=entry['date'], end_date=entry['date']))
+            logger.info(f"Status day: {entry['label']} -> driver {entry['driver_id']} "
+                        f"unavailable {entry['date']}")
+    except Exception as _se:
+        logger.warning(f"Status-day unavailability injection failed: {_se}")
 
     priority_rules = []
     enable_standard_priority_rules = settings.get("enable_standard_priority_rules", True)

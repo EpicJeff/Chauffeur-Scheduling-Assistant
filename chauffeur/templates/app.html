@@ -758,6 +758,7 @@
                 const meta = [];
                 if (isAdult && s.need_label) meta.push(s.need_label);
                 if (s.set_by_name) meta.push('set by ' + s.set_by_name);
+                else if (s.source === 'calendar') meta.push('📅 from ' + (s.source_detail || 'the calendar'));
                 return `
                 <div class="bg-sky-950/60 border border-sky-800/60 rounded-xl p-3 mb-1">
                     <div class="flex items-center gap-2">

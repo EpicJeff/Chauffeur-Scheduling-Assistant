@@ -250,6 +250,12 @@ class StatusDay(BaseModel):
     note: str = ""
     set_by: Optional[str] = None         # member id; None = agent/system
     set_at: float = Field(default_factory=time.time)
+    # P2 calendar trigger: 'calendar' = auto-set by the keyword sweep (the
+    # calendar knows — the set-burden lands on nobody). source_detail carries
+    # the matched event title. Clearing a calendar-set day writes a tombstone
+    # so the sweep never re-sets what a parent dismissed.
+    source: str = 'manual'               # 'manual' | 'calendar'
+    source_detail: Optional[str] = None
 
 class PrepKit(BaseModel):
     # Packing list matched to events with the SAME filter criteria routing

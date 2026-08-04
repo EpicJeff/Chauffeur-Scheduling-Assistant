@@ -2597,10 +2597,16 @@ def get_ingest_log(limit: int = 50) -> List[dict]:
         return rows[:limit]
 
 
-# --- Status protocols & status days (Presence & Status arc P1) ---------------
-# Reusable family day-types + their dated instances. No schedule-cache
-# truncation here: slice 1 never touches the solver (that's the next slice —
-# when it lands, 'cover'/'clear_deck' mutations must invalidate like rules do).
+# --- Status protocols & status days (Presence & Status arc P1/P2) ------------
+# Reusable family day-types + their dated instances. P2: status days feed the
+# solver (need='cover'/'help' -> the affected member's driver is out of the
+# rotation that date), so day/protocol mutations invalidate the schedule
+# caches exactly like rule mutations do.
+
+def _invalidate_schedule_caches():
+    custom_schedules_table.truncate()
+    mark_all_daily_schedules_dirty()
+    cache_table.truncate()
 
 def get_all_status_protocols() -> List[dict]:
     with db_lock:
@@ -2623,6 +2629,7 @@ def add_status_protocol(data: dict) -> str:
 def update_status_protocol(protocol_id: str, updates: dict) -> None:
     with db_lock:
         status_protocols_table.update(updates, Query().id == protocol_id)
+        _invalidate_schedule_caches()  # need/member changes move driver availability
 
 def delete_status_protocol(protocol_id: str) -> None:
     """Deleting a protocol also drops its dated instances — an orphaned
@@ -2630,6 +2637,7 @@ def delete_status_protocol(protocol_id: str) -> None:
     with db_lock:
         status_protocols_table.remove(Query().id == protocol_id)
         status_days_table.remove(Query().protocol_id == protocol_id)
+        _invalidate_schedule_caches()
 
 def get_status_days(start: str = None, end: str = None) -> List[dict]:
     """Dated instances, date-ascending, optionally windowed [start, end]
@@ -2663,15 +2671,30 @@ def add_status_day(data: dict) -> str:
                  'set_at': data['set_at']}, q)
             return dict(existing[0])['id']
         status_days_table.insert(data)
+        _invalidate_schedule_caches()
     return data['id']
 
 def delete_status_day(day_id: str) -> Optional[dict]:
     """Remove and return the instance (the caller announces the correction —
-    'never guessing' means changes of plan get said out loud too)."""
+    'never guessing' means changes of plan get said out loud too). Clearing a
+    calendar-set day writes a dismissal tombstone so the keyword sweep never
+    re-sets what a parent explicitly cleared (pruned past 30 days)."""
+    import time
     with db_lock:
         res = status_days_table.search(Query().id == day_id)
         if not res:
             return None
         row = dict(res[0])
         status_days_table.remove(Query().id == day_id)
+        if row.get('source') == 'calendar':
+            tombs = dict(get_app_state('status_auto_dismissed') or {})
+            cutoff = time.time() - 30 * 86400
+            tombs = {k: v for k, v in tombs.items() if v >= cutoff}
+            tombs[f"{row.get('date')}:{row.get('protocol_id')}"] = time.time()
+            set_app_state('status_auto_dismissed', tombs)
+        _invalidate_schedule_caches()
         return row
+
+def status_auto_dismissed(date: str, protocol_id: str) -> bool:
+    tombs = get_app_state('status_auto_dismissed') or {}
+    return f"{date}:{protocol_id}" in tombs

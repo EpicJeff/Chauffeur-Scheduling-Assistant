@@ -1,8 +1,9 @@
 # Presence & Status Arc — design map (drafted 2026-08-04)
 
-> Status: **P1 SHIPPED v2.53.0 (2026-08-04)** — the "never guess" loop (see
-> build order §1). Slices 2–4 (calendar triggers + solver needs, trip
-> timeline, Presence) remain design. It is **personal** — this is an affected
+> Status: **P1 SHIPPED v2.53.0, P2 SHIPPED v2.54.0 (2026-08-04)** — the
+> "never guess" loop + the-calendar-knows + cover/help solver needs (build
+> order §1–§2). Slices 3–4 (trip timeline, Presence) remain design. It is
+> **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
 > it's us. Build to lived detail, not to guesses.
 
@@ -267,6 +268,23 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    their triggers/solver hooks are slices 2–3. Tests:
    `tests/test_status_protocols.py` (8 scenarios).
 2. **Calendar-trigger + solver needs** (cover / help / clear-the-deck).
+
+   **SHIPPED v2.54.0 (2026-08-04).** Decisions made during build: the sweep
+   AUTO-SETS (no propose-approve card) — the family authored the trigger
+   keywords deliberately, and asking permission would put the set-burden
+   back on a human. Safety is the beat design instead: adults are DM'd
+   immediately naming the matched event ("Clear it from My Day if that's
+   wrong — I won't re-set it"), kids only ever hear today/tomorrow, so an
+   advance auto-set carries a built-in adult review window; clearing a
+   calendar-set day writes a 30-day tombstone the sweep respects — a
+   parent's dismissal is final. Solver: `cover` and `help` become synthetic
+   one-day `unavailable` Rules for the affected member's driver (injected in
+   `refresh_schedule_logic`, immune to rule enable-toggles); `clear_deck` /
+   `give_space` deliberately never touch driving in this slice (protecting
+   the evening from OPTIONAL commitments is a different mechanism than
+   banning a driver — deferred rather than faked with a blunt ban). Status
+   mutations invalidate schedule caches like rule mutations. Tests: 4 new
+   scenarios in `tests/test_status_protocols.py` (12 total).
 3. **Trip timeline** — multi-beat, before/during/after, plan-assist, soft call
    windows (deeplinked).
 4. **Presence** — light activity-tied capture → route-to-kept-away → kiosk

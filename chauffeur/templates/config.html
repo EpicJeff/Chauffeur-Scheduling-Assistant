@@ -1641,8 +1641,9 @@
                             </div>
                             <div class="mt-3">
                                 <label class="block text-gray-400 mb-1 text-sm">Calendar words
-                                    <span class="text-gray-600">(comma-separated — coming next: auto-suggest this day
-                                        type when a matching calendar event lands)</span></label>
+                                    <span class="text-gray-600">(comma-separated — a calendar event containing one of
+                                        these auto-sets this day type: adults are told which event matched, kids only
+                                        ever hear about today/tomorrow, and a cleared day is never re-set)</span></label>
                                 <input type="text" x-model="newStatusProtocol.keywords_text" placeholder="chemo, infusion"
                                     class="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
                             </div>
@@ -1663,6 +1664,8 @@
                                     x-text="d.date + ' · ' + (d.emoji || '💙') + ' ' + d.name + (d.note ? ' · ' + d.note : '')"></span>
                                 <span class="text-xs text-gray-500" x-show="d.set_by_name"
                                     x-text="'set by ' + d.set_by_name"></span>
+                                <span class="text-xs text-sky-400/70" x-show="d.source === 'calendar'"
+                                    x-text="'📅 ' + (d.source_detail || 'from calendar')"></span>
                                 <button @click="clearStatusDayUi(d)"
                                     class="text-gray-400 hover:text-red-400 font-bold">✕</button>
                             </div>

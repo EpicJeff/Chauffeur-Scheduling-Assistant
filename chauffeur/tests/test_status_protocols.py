@@ -251,6 +251,126 @@ def scenario_member_day_carries_status():
           "tomorrow's My Day is clean — date-bound")
 
 
+# --- P2: the calendar knows + solver needs ---
+
+def scenario_calendar_sweep_auto_sets():
+    _reset()
+    pid = _mk_protocol()  # keywords: ["chemo"]
+    in3 = (TODAY + datetime.timedelta(days=3)).isoformat()
+    far = (TODAY + datetime.timedelta(days=30)).isoformat()
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "e1", "title": "Chemo infusion — Mom", "start": f"{in3}T09:00:00",
+             "end": f"{in3}T13:00:00", "calendar_ids": ["momcal"]},
+            {"id": "e2", "title": "Soccer practice", "start": f"{in3}T16:00:00",
+             "end": f"{in3}T17:00:00", "calendar_ids": ["cal1"]},
+            # outside the 7-day horizon: ignored
+            {"id": "e3", "title": "Chemo follow-up", "start": f"{far}T09:00:00",
+             "end": f"{far}T10:00:00", "calendar_ids": ["momcal"]},
+            # errands never trigger
+            {"id": "e4", "title": "pick up chemo prescription", "start": f"{TODAY}T10:00:00",
+             "end": f"{TODAY}T10:30:00", "event_type": "errand"},
+        ],
+        "assignments": {}, "ghost_assignments": {}, "matched_rules": {},
+        "scheduled_errands": []})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        created = status_protocols.auto_set_from_calendar(now=NOON)
+    check(len(created) == 1, f"one match in horizon -> one day set, got {len(created)}")
+    active = status_protocols.active_statuses(in3)
+    check(len(active) == 1 and active[0]["source"] == "calendar"
+          and active[0]["source_detail"] == "Chemo infusion — Mom",
+          f"auto-set carries source + matched event title, got {active}")
+    keys = [c.args[0].get("dm_key") or "" for c in post.call_args_list]
+    check(len(keys) == 2 and all("kid" not in k for k in keys),
+          f"3 days out: adults told (both — nobody set it), kids wait for D-1 digest, got {keys}")
+    adult_body = post.call_args_list[0].args[2]
+    check("Set from the calendar" in adult_body and "Chemo infusion" in adult_body,
+          f"adults told WHICH event matched and how to undo, got {adult_body}")
+    # idempotent: a second sweep sets nothing new
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        check(status_protocols.auto_set_from_calendar(now=NOON) == [],
+              "sweep is idempotent — existing day is never re-set or re-announced")
+        check(post.call_count == 0, "no duplicate announcements")
+
+
+def scenario_cleared_calendar_day_never_resets():
+    _reset()
+    pid = _mk_protocol()
+    in2 = (TODAY + datetime.timedelta(days=2)).isoformat()
+    storage.set_cached_schedule({
+        "events": [{"id": "e1", "title": "chemo", "start": f"{in2}T09:00:00",
+                    "end": f"{in2}T10:00:00", "calendar_ids": ["momcal"]}],
+        "assignments": {}, "ghost_assignments": {}, "matched_rules": {},
+        "scheduled_errands": []})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message'):
+        created = status_protocols.auto_set_from_calendar(now=NOON)
+    check(len(created) == 1, "day auto-set")
+    row = storage.delete_status_day(created[0])
+    check(storage.status_auto_dismissed(in2, pid), "clearing writes the tombstone")
+    with mock.patch.object(agent_tools_v2, '_post_chat_message'):
+        check(status_protocols.auto_set_from_calendar(now=NOON) == [],
+              "a parent's dismissal is FINAL — the sweep never re-sets it")
+    # a manually-cleared MANUAL day leaves no tombstone (only calendar-set days)
+    manual_id = storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid})
+    storage.delete_status_day(manual_id)
+    check(not storage.status_auto_dismissed(TODAY.isoformat(), pid),
+          "manual days don't tombstone (setting again later is normal use)")
+
+
+def scenario_solver_feed_cover_and_help_only():
+    _reset()
+    cover = _mk_protocol()                                   # need=cover, Mom (d2)
+    space = _mk_protocol(name="Rest Evening", need="give_space")
+    helpp = _mk_protocol(name="Care Day", need="help", member_id="dadm")
+    nodrv = _mk_protocol(name="Grandma Day", need="cover", member_id=None)
+    d1 = TODAY.isoformat()
+    d2 = TOMORROW.isoformat()
+    storage.add_status_day({"date": d1, "protocol_id": cover})
+    storage.add_status_day({"date": d1, "protocol_id": space})
+    storage.add_status_day({"date": d2, "protocol_id": helpp})
+    storage.add_status_day({"date": d2, "protocol_id": nodrv})
+    feed = status_protocols.unavailable_driver_dates(d1, d2)
+    check(len(feed) == 2, f"cover+help feed the solver; give_space and no-driver don't, got {feed}")
+    by_date = {f["date"]: f for f in feed}
+    check(by_date[d1]["driver_id"] == "d2" and "Chemo Day" in by_date[d1]["label"],
+          f"cover -> Mom's driver out today, got {by_date[d1]}")
+    check(by_date[d2]["driver_id"] == "d1" and "Care Day" in by_date[d2]["label"],
+          f"help -> the cared-for member's driver out, got {by_date[d2]}")
+    # the synthetic rule shape actually bans through the matcher
+    from models.schemas import Rule, Event
+    import solver.matcher as matcher
+    rule = Rule(driver_id="d2", constraint_type="unavailable",
+                start_date=d1, end_date=d1)
+    ev_today = Event(id="x", title="Anything", source_event_ids=["c::x"],
+                     start=datetime.datetime.combine(TODAY, datetime.time(16, 0)),
+                     end=datetime.datetime.combine(TODAY, datetime.time(17, 0)), calendar_ids=["cal1"])
+    ev_tmrw = Event(id="y", title="Anything", source_event_ids=["c::y"],
+                    start=datetime.datetime.combine(TOMORROW, datetime.time(16, 0)),
+                    end=datetime.datetime.combine(TOMORROW, datetime.time(17, 0)), calendar_ids=["cal1"])
+    check(matcher.does_event_match_rule(ev_today, rule),
+          "date-only unavailable rule matches every event that day")
+    check(not matcher.does_event_match_rule(ev_tmrw, rule),
+          "and nothing on any other day")
+
+
+def scenario_status_mutations_invalidate_schedule_cache():
+    _reset()
+    pid = _mk_protocol()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    with storage.db_lock:
+        storage.cache_table.insert({"probe": True})
+        n_before = len(storage.cache_table.all())
+    day_id = storage.add_status_day({"date": TODAY.isoformat(), "protocol_id": pid})
+    with storage.db_lock:
+        check(len(storage.cache_table.all()) == 0,
+              f"setting a day truncates the schedule cache (was {n_before})")
+        storage.cache_table.insert({"probe": True})
+    storage.delete_status_day(day_id)
+    with storage.db_lock:
+        check(len(storage.cache_table.all()) == 0, "clearing a day truncates it too")
+
+
 SCENARIOS = [
     scenario_day_dedupe_and_protocol_cascade,
     scenario_date_bound_resolution,
@@ -260,6 +380,10 @@ SCENARIOS = [
     scenario_announce_cleared_correction,
     scenario_agent_tool_set_get_clear,
     scenario_member_day_carries_status,
+    scenario_calendar_sweep_auto_sets,
+    scenario_cleared_calendar_day_never_resets,
+    scenario_solver_feed_cover_and_help_only,
+    scenario_status_mutations_invalidate_schedule_cache,
 ]
 
 if __name__ == "__main__":

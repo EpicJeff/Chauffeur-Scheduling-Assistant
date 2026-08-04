@@ -59,6 +59,8 @@ def active_statuses(date_str: str):
             'set_by': day.get('set_by'),
             'set_by_name': setter.get('name'),
             'set_at': day.get('set_at'),
+            'source': day.get('source') or 'manual',
+            'source_detail': day.get('source_detail'),
         })
     return out
 
@@ -147,7 +149,10 @@ def announce_set(day_id: str, now: datetime.datetime = None):
             parts.append(f"Need: {need[0].lower()} ({need[1]}).")
         if s['note']:
             parts.append(s['note'])
-        if s['set_by_name']:
+        if s.get('source') == 'calendar':
+            parts.append(f"📅 Set from the calendar: {s.get('source_detail') or 'a matching event'}."
+                         f" Clear it from My Day if that's wrong — I won't re-set it.")
+        elif s['set_by_name']:
             parts.append(f"Set by {s['set_by_name']}.")
         try:
             _post_dm(adult['id'], "\n".join(parts))
@@ -188,3 +193,82 @@ def active_statuses_by_day_id(day_id: str):
     if not day:
         return []
     return [s for s in active_statuses(day['date']) if s['id'] == day_id]
+
+
+# --- P2: the calendar knows -------------------------------------------------
+
+def auto_set_from_calendar(now: datetime.datetime = None, horizon_days: int = 7):
+    """Keyword sweep over the cached schedule window: a calendar event whose
+    title/description contains a protocol's trigger words auto-sets that
+    status day — the set-burden lands on NOBODY, which is the whole point
+    (the affected parent is least able to remember a tap on their worst day).
+    Safety comes from the beat design, not from asking permission first: the
+    family authored the keywords deliberately, adults are told immediately
+    (with the matched event named and how to undo), and kids only ever hear
+    about today/tomorrow — so a day set in advance has a built-in adult
+    review window before any kid does. A cleared calendar-set day leaves a
+    tombstone and is never re-set. Returns the day ids it created."""
+    now = now or datetime.datetime.now()
+    today = now.date()
+    horizon = today + datetime.timedelta(days=horizon_days)
+    protocols = [p for p in storage.get_all_status_protocols()
+                 if p.get('enabled', True) and p.get('keywords')]
+    if not protocols:
+        return []
+    existing = {(d.get('date'), d.get('protocol_id'))
+                for d in storage.get_status_days(start=today.isoformat(),
+                                                 end=horizon.isoformat())}
+    created = []
+    for ev in (storage.get_cached_schedule() or {}).get('events', []):
+        if ev.get('event_type') == 'errand':
+            continue
+        try:
+            ev_date = datetime.date.fromisoformat(str(ev.get('start', ''))[:10])
+        except (ValueError, TypeError):
+            continue
+        if not (today <= ev_date <= horizon):
+            continue
+        text = f"{ev.get('title') or ''} {ev.get('description') or ''}".lower()
+        for proto in protocols:
+            if not any((kw or '').lower() in text
+                       for kw in proto['keywords'] if (kw or '').strip()):
+                continue
+            key = (ev_date.isoformat(), proto['id'])
+            if key in existing or storage.status_auto_dismissed(*key):
+                continue
+            existing.add(key)
+            day_id = storage.add_status_day({
+                'date': ev_date.isoformat(), 'protocol_id': proto['id'],
+                'note': '', 'set_by': None,
+                'source': 'calendar', 'source_detail': ev.get('title') or ''})
+            created.append(day_id)
+            try:
+                announce_set(day_id, now=now)
+            except Exception as e:
+                print(f"Status auto-set announce failed: {e}")
+    return created
+
+
+def unavailable_driver_dates(start: str, end: str):
+    """P2 solver feed: (date, driver_id, label) for every status day in
+    [start, end] whose protocol needs the affected member OUT of the driving
+    rotation — 'cover' (they're resting/at treatment) and 'help' (they're
+    being cared for). clear_deck/give_space days don't touch driving.
+    main.refresh_schedule_logic turns these into synthetic one-day
+    'unavailable' Rules, so the solver machinery needs nothing new."""
+    out = []
+    protocols = {p['id']: p for p in storage.get_all_status_protocols()}
+    members = {m['id']: m for m in storage.get_all_members()}
+    for day in storage.get_status_days(start=start, end=end):
+        proto = protocols.get(day.get('protocol_id'))
+        if not proto or not proto.get('enabled', True):
+            continue
+        if (proto.get('need') or 'give_space') not in ('cover', 'help'):
+            continue
+        member = members.get(proto.get('member_id')) or {}
+        if not member.get('driver_id'):
+            continue  # not a driver — nothing to take out of the rotation
+        out.append({'date': day.get('date'),
+                    'driver_id': member['driver_id'],
+                    'label': f"{proto.get('name')} — {member.get('name')}"})
+    return out
