@@ -4289,6 +4289,14 @@ def member_day(member_id: str, date: Optional[str] = None):
     assignments = dict(sched.get('assignments', {}))
     assignments.update(sched.get('ghost_assignments', {}))
     matched_rules = sched.get('matched_rules', {}) or {}
+    car_assignments = dict(sched.get('car_assignments', {}) or {})
+    _cars_by_id = {c.get('id'): c for c in storage.get_all_cars()}
+
+    def _ride_car(ev_id):
+        c = _cars_by_id.get(car_assignments.get(ev_id))
+        if not c:
+            return None
+        return {'id': c.get('id'), 'name': c.get('name'), 'icon': c.get('icon')}
 
     def _rule_bound(event_ids):
         # Rules can bind passengers to events the child's calendar doesn't
@@ -4363,6 +4371,7 @@ def member_day(member_id: str, date: Optional[str] = None):
             'end': ev.get('end'),
             'location': ev.get('location'),
             'driver': _driver_member(assignments.get(ev_id)),
+            'car': _ride_car(ev_id),
             'status': status_by_event.get(ev_id),
             'legs': legs or [],
             'prep': _prep.items_for_event(ev, _kits, _pax),
@@ -4385,6 +4394,7 @@ def member_day(member_id: str, date: Optional[str] = None):
                 'type': 'dropoff' if ev_id.endswith('_dropoff') else 'pickup',
                 'start': ev.get('start'),
                 'driver': _driver_member(assignments.get(ev_id)),
+                'car': _ride_car(ev_id),
                 'status': status_by_event.get(ev_id),
             })
         ride = _ride(base[0], base[1], legs)

@@ -775,7 +775,7 @@
                         <div class="flex items-center gap-2 text-sm text-gray-300 min-w-0">
                             <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800 shrink-0"
                                 style="border-color:${l.driver.color_code || '#3b82f6'};color:${l.driver.color_code || '#3b82f6'}">${mfEscape(l.driver.avatar || (l.driver.name || '?').charAt(0).toUpperCase())}</span>
-                            <span class="truncate">🚗 <b>${mfEscape(l.driver.name)}</b> — ${lbl} ${t}${l.status === 'in_progress' ? ' · <span class="text-blue-300 font-bold">on the way</span>' : ''}</span>
+                            <span class="truncate">${l.car ? mfEscape(l.car.icon || '🚗') : '🚗'} <b>${mfEscape(l.driver.name)}</b> — ${lbl} ${t}${l.car ? ' · in the ' + mfEscape(l.car.name) : ''}${l.status === 'in_progress' ? ' · <span class="text-blue-300 font-bold">on the way</span>' : ''}</span>
                         </div>
                         <div class="flex gap-2 shrink-0">${driverButtons(l.driver, r.title)}</div>
                     </div>`;
@@ -787,7 +787,7 @@
                     <div class="flex items-center gap-2 text-sm text-gray-300">
                         <span class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border-2 bg-gray-800"
                             style="border-color:${r.driver.color_code || '#3b82f6'};color:${r.driver.color_code || '#3b82f6'}">${mfEscape(r.driver.avatar || (r.driver.name || '?').charAt(0).toUpperCase())}</span>
-                        🚗 <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you
+                        ${r.car ? mfEscape(r.car.icon || '🚗') : '🚗'} <b>${mfEscape(r.driver.name)}</b>&nbsp;is driving you${r.car ? ` in the <b>${mfEscape(r.car.name)}</b>` : ''}
                     </div>
                     <div class="flex gap-2">${driverButtons(r.driver, r.title)}</div>
                 </div>`;
