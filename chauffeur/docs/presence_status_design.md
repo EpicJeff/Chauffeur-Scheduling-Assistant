@@ -1,8 +1,9 @@
 # Presence & Status Arc — design map (drafted 2026-08-04)
 
-> Status: **P1 SHIPPED v2.53.0, P2 SHIPPED v2.54.0 (2026-08-04)** — the
-> "never guess" loop + the-calendar-knows + cover/help solver needs (build
-> order §1–§2). Slices 3–4 (trip timeline, Presence) remain design. It is
+> Status: **P1 v2.53.0, P2 v2.54.0, P3 v2.55.0 SHIPPED (2026-08-04)** — the
+> "never guess" loop, the-calendar-knows + cover/help solver needs, and the
+> trip timeline (spans, positional beats, call windows, coverage reports).
+> Slice 4 (Presence) remains design. It is
 > **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
 > it's us. Build to lived detail, not to guesses.
@@ -287,5 +288,24 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    scenarios in `tests/test_status_protocols.py` (12 total).
 3. **Trip timeline** — multi-beat, before/during/after, plan-assist, soft call
    windows (deeplinked).
+
+   **SHIPPED v2.55.0 (2026-08-04).** Decisions made during build: no
+   user-authored beat grammar — the canonical timeline is BUILT IN and
+   day-position derived (day 1 = the family's full message, middle = light
+   "day N of M", last = the home-day celebration), because the grammar's
+   value was always the beats themselves, not authoring them. Spans are
+   `StatusDay.end_date` (sweep collapses cached trip slices to one span;
+   agent takes end_date; Config takes date-to-date). The call window is a
+   protocol field (`call_time`) rendered soft everywhere — "around", absent
+   on the home day, no deeplink yet (the family's pipe choice belongs to a
+   later slice). **Plan-assist shipped as the coverage report**: one DM to
+   the other adults per cover/help instance showing the re-solved span —
+   drivers resolved, gaps flagged with an open count — sent from the sweep
+   only after the post-invalidation re-solve lands (retry-not-silent), never
+   to the traveler. The full "here's the fix, or who to ask" propose-repair
+   loop stays future work; making the collisions VISIBLE at load-spike is
+   the 80%. Traveler-as-audience trimmed to: traveler sees the same span
+   banner (own My Day) and is excluded from coverage noise. Tests: 5 new
+   scenarios (17 total).
 4. **Presence** — light activity-tied capture → route-to-kept-away → kiosk
    render, starting from the messaging layer.

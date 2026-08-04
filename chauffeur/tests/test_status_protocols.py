@@ -371,6 +371,150 @@ def scenario_status_mutations_invalidate_schedule_cache():
         check(len(storage.cache_table.all()) == 0, "clearing a day truncates it too")
 
 
+# --- P3: the trip timeline ---
+
+def scenario_span_positions_and_call_window():
+    _reset()
+    pid = _mk_protocol(name="Work Trip", emoji="🧳", member_id="dadm",
+                       need="cover", call_time="19:30",
+                       kid_message="Dad's off to the game studio — "
+                                   "he'll call every night!")
+    d0 = TODAY
+    d3 = TODAY + datetime.timedelta(days=3)
+    storage.add_status_day({"date": d0.isoformat(), "protocol_id": pid,
+                            "end_date": d3.isoformat()})
+    # day 1: the full family message + soft call window
+    l0 = status_protocols.kid_lines(d0.isoformat())
+    check(l0[0] == "🧳 Dad's off to the game studio — he'll call every night!"
+          and l0[1] == "📞 Around 7:30 PM — call with Dad",
+          f"day 1: family's words + soft call window, got {l0}")
+    # middle day: light count line, call window still there
+    l1 = status_protocols.kid_lines((d0 + datetime.timedelta(days=1)).isoformat())
+    check(l1[0] == "🧳 Work Trip — day 2 of 4" and "📞" in l1[1],
+          f"middle day counts, got {l1}")
+    # home day: excitement, NO call line (they're walking in the door)
+    l3 = status_protocols.kid_lines(d3.isoformat())
+    check(l3 == ["🏠 Dad — home day! 🎉"], f"home day is the celebration, got {l3}")
+    # day after: clean (spans are date-bound too)
+    check(status_protocols.kid_lines((d3 + datetime.timedelta(days=1)).isoformat()) == [],
+          "day after the span is a normal day")
+    # positions ride the payload for the banner
+    mid = status_protocols.active_statuses((d0 + datetime.timedelta(days=1)).isoformat())[0]
+    check(mid["day_pos"] == 2 and mid["day_count"] == 4 and not mid["is_home_day"],
+          f"banner gets day_pos/day_count, got {mid['day_pos']}/{mid['day_count']}")
+
+
+def scenario_span_announce_and_agent_span():
+    _reset()
+    _mk_protocol(name="Work Trip", emoji="🧳", member_id="dadm", need="cover",
+                 call_time="19:30", kid_message="Dad's away for work.")
+    fri = TODAY + datetime.timedelta(days=2)
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        r = agent_tools_v2.set_household_status(
+            "work trip", "today", end_date=fri.isoformat(),
+            acting_member=storage.get_member("momm"))
+    check(r["status"] == "success" and "through" in r["message"],
+          f"agent sets a span, got {r}")
+    kid_bodies = [c.args[2] for c in post.call_args_list
+                  if "kid1" in (c.args[0].get("dm_key") or "")]
+    check(kid_bodies and "🏠 Home" in kid_bodies[0] and "📞" in kid_bodies[0],
+          f"kid heads-up carries the whole span: home day + call ritual, got {kid_bodies}")
+    # backwards span rejected
+    r = agent_tools_v2.set_household_status("work trip", fri.isoformat(),
+                                            end_date=TODAY.isoformat())
+    check(r["status"] == "error", "a span ending before it starts is refused")
+    # solver feed spans the whole range
+    feed = status_protocols.unavailable_driver_dates(TODAY.isoformat(), fri.isoformat())
+    check(len(feed) == 1 and feed[0]["end_date"] == fri.isoformat(),
+          f"one range entry covering the span, got {feed}")
+
+
+def scenario_sweep_collapses_trip_slices():
+    _reset()
+    pid = _mk_protocol(name="Work Trip", emoji="🧳", member_id="dadm",
+                       need="cover", keywords=["studio summit"])
+    d1 = TODAY + datetime.timedelta(days=1)
+    d2 = TODAY + datetime.timedelta(days=2)
+    d3 = TODAY + datetime.timedelta(days=3)
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "trip1_slice_0", "title": "Studio Summit ✈️", "event_type": "background_trip",
+             "start": f"{d1}T09:00:00", "end": f"{d1}T23:59:00"},
+            {"id": "trip1_slice_1", "title": "Studio Summit ✈️", "event_type": "background_trip",
+             "start": f"{d2}T00:00:00", "end": f"{d2}T23:59:00"},
+            {"id": "trip1_slice_2", "title": "Studio Summit ✈️", "event_type": "background_trip",
+             "start": f"{d3}T00:00:00", "end": f"{d3}T18:00:00"},
+        ],
+        "assignments": {}, "ghost_assignments": {}, "matched_rules": {},
+        "scheduled_errands": []})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message'):
+        created = status_protocols.auto_set_from_calendar(now=NOON)
+    check(len(created) == 1, f"3 cached slices -> ONE span, got {len(created)}")
+    days = storage.get_status_days()
+    check(days[0]["date"] == d1.isoformat() and days[0]["end_date"] == d3.isoformat(),
+          f"span covers the whole trip, got {days[0]}")
+
+
+def scenario_coverage_report_plan_assist():
+    _reset()
+    pid = _mk_protocol(name="Work Trip", emoji="🧳", member_id="momm", need="cover")
+    d1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+    d2 = (TODAY + datetime.timedelta(days=2)).isoformat()
+    storage.add_status_day({"date": d1, "protocol_id": pid, "end_date": d2})
+    storage.set_cached_schedule({
+        "events": [
+            {"id": "swim", "title": "Swim Practice", "start": f"{d1}T15:15:00",
+             "end": f"{d1}T16:00:00", "calendar_ids": ["cal1"]},
+            {"id": "piano", "title": "Piano", "start": f"{d2}T16:00:00",
+             "end": f"{d2}T17:00:00", "calendar_ids": ["cal1"]},
+            {"id": "out", "title": "Outside the span", "start": f"{TODAY}T10:00:00",
+             "end": f"{TODAY}T11:00:00", "calendar_ids": ["cal1"]},
+        ],
+        "assignments": {"swim": "d1"}, "ghost_assignments": {},
+        "matched_rules": {}, "scheduled_errands": []})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        sent = status_protocols.send_coverage_reports(now=NOON)
+    check(len(sent) == 1, f"one report per instance, got {sent}")
+    keys = [c.args[0].get("dm_key") or "" for c in post.call_args_list]
+    check(len(keys) == 1 and "dadm" in keys[0] and "momm" not in keys[0],
+          f"report goes to the OTHER adult, never the traveler, got {keys}")
+    body = post.call_args_list[0].args[2]
+    check("Coverage while Mom's out" in body and "Swim Practice — Dad" in body
+          and "Piano — ⚠️ needs a driver" in body and "Outside the span" not in body,
+          f"resolved drivers + flagged gaps, span-scoped, got {body}")
+    check("1 still need a driver" in body, f"collision count surfaces, got {body}")
+    # once per instance
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        check(status_protocols.send_coverage_reports(now=NOON) == [],
+              "report is once per instance")
+        check(post.call_count == 0, "no repeat DMs")
+    # give_space days never generate one
+    calm = _mk_protocol(name="Rest Evening", need="give_space")
+    storage.add_status_day({"date": d1, "protocol_id": calm})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        check(status_protocols.send_coverage_reports(now=NOON) == [],
+              "give_space has no coverage to report")
+
+
+def scenario_coverage_waits_for_resolve():
+    _reset()
+    pid = _mk_protocol(need="cover")
+    d1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+    storage.add_status_day({"date": d1, "protocol_id": pid})
+    storage.set_cached_schedule({})  # caches truncated, re-solve pending
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+        check(status_protocols.send_coverage_reports(now=NOON) == [],
+              "empty cache -> no report yet")
+        check(post.call_count == 0, "nothing sent")
+    # marker NOT set: the next sweep (post-solve) still reports
+    storage.set_cached_schedule({
+        "events": [], "assignments": {"x": "d1"}, "ghost_assignments": {},
+        "matched_rules": {}, "scheduled_errands": []})
+    with mock.patch.object(agent_tools_v2, '_post_chat_message'):
+        check(len(status_protocols.send_coverage_reports(now=NOON)) == 1,
+              "report fires once the schedule is solved again")
+
+
 SCENARIOS = [
     scenario_day_dedupe_and_protocol_cascade,
     scenario_date_bound_resolution,
@@ -384,6 +528,11 @@ SCENARIOS = [
     scenario_cleared_calendar_day_never_resets,
     scenario_solver_feed_cover_and_help_only,
     scenario_status_mutations_invalidate_schedule_cache,
+    scenario_span_positions_and_call_window,
+    scenario_span_announce_and_agent_span,
+    scenario_sweep_collapses_trip_slices,
+    scenario_coverage_report_plan_assist,
+    scenario_coverage_waits_for_resolve,
 ]
 
 if __name__ == "__main__":

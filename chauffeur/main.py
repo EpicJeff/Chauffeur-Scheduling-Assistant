@@ -268,6 +268,12 @@ async def push_notification_loop():
                         created = await asyncio.to_thread(status_protocols.auto_set_from_calendar)
                         if created:
                             print(f"Status sweep: auto-set {len(created)} day(s) from the calendar")
+                        # P3 plan-assist beat: coverage report to the other
+                        # adults for upcoming/ongoing cover|help instances
+                        # (skips + retries while the re-solve is pending).
+                        reported = await asyncio.to_thread(status_protocols.send_coverage_reports)
+                        if reported:
+                            print(f"Status sweep: sent {len(reported)} coverage report(s)")
             except Exception as spe:
                 print(f"Status sweep error: {spe}")
 
@@ -5045,11 +5051,15 @@ def list_status_days(start: Optional[str] = None, end: Optional[str] = None):
         start = _dt.date.today().isoformat()
     if end is None:
         end = (_dt.date.today() + _dt.timedelta(days=14)).isoformat()
-    out = []
+    out, seen = [], set()
     d = _dt.date.fromisoformat(start)
     end_d = _dt.date.fromisoformat(end)
     while d <= end_d:
-        out.extend(status_protocols.active_statuses(d.isoformat()))
+        for s in status_protocols.active_statuses(d.isoformat()):
+            if s['id'] in seen:
+                continue  # a span appears once (its first covered day)
+            seen.add(s['id'])
+            out.append(s)
         d += _dt.timedelta(days=1)
     return out
 
@@ -5061,6 +5071,8 @@ def create_status_day(day: StatusDay, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail="Protocol not found")
     try:
         _dt.date.fromisoformat(day.date)
+        if day.end_date and _dt.date.fromisoformat(day.end_date) < _dt.date.fromisoformat(day.date):
+            raise HTTPException(status_code=400, detail="end_date is before date")
     except ValueError:
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
     day_id = storage.add_status_day(day.model_dump())
@@ -7006,9 +7018,10 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
         for entry in _status.unavailable_driver_dates(_sd_start, _sd_end):
             rules.append(Rule(driver_id=entry['driver_id'],
                               constraint_type='unavailable',
-                              start_date=entry['date'], end_date=entry['date']))
+                              start_date=entry['date'],
+                              end_date=entry.get('end_date') or entry['date']))
             logger.info(f"Status day: {entry['label']} -> driver {entry['driver_id']} "
-                        f"unavailable {entry['date']}")
+                        f"unavailable {entry['date']}..{entry.get('end_date') or entry['date']}")
     except Exception as _se:
         logger.warning(f"Status-day unavailability injection failed: {_se}")
 

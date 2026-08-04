@@ -753,21 +753,37 @@
         function renderStatusBanner(statusDays, dateStr) {
             const role = currentMemberRole();
             const isAdult = role === 'parent' || role === 'adult';
+            const fmtHHMM = (t) => {
+                const [h, m] = String(t || '').split(':').map(Number);
+                if (isNaN(h)) return t;
+                const ap = h >= 12 ? 'PM' : 'AM';
+                return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${ap}`;
+            };
             const cards = (statusDays || []).map(s => {
-                const msg = isAdult ? (s.adult_message || s.kid_message) : s.kid_message;
+                const isSpan = (s.day_count || 1) > 1;
+                const homeDay = !!s.is_home_day;
+                // Middle span days keep the banner light (the full message
+                // already landed on day 1); the last day is the celebration.
+                const msg = homeDay ? `${mfEscape(s.member_name || s.name)} comes home today! 🎉`
+                    : (isSpan && s.day_pos > 1) ? ''
+                    : mfEscape(isAdult ? (s.adult_message || s.kid_message) : s.kid_message);
                 const meta = [];
+                if (isSpan && !homeDay) meta.push(`day ${s.day_pos} of ${s.day_count}`);
                 if (isAdult && s.need_label) meta.push(s.need_label);
                 if (s.set_by_name) meta.push('set by ' + s.set_by_name);
                 else if (s.source === 'calendar') meta.push('📅 from ' + (s.source_detail || 'the calendar'));
+                const callLine = (isSpan && s.call_time && !homeDay && s.day_pos < s.day_count)
+                    ? `<p class="text-xs text-sky-300/90 mt-1">📞 Around ${fmtHHMM(s.call_time)} — call with ${mfEscape(s.member_name || 'home')}</p>` : '';
                 return `
                 <div class="bg-sky-950/60 border border-sky-800/60 rounded-xl p-3 mb-1">
                     <div class="flex items-center gap-2">
-                        <span class="text-lg">${s.emoji || '💙'}</span>
+                        <span class="text-lg">${homeDay ? '🏠' : (s.emoji || '💙')}</span>
                         <span class="text-sm font-bold text-sky-100">${mfEscape(s.name || '')}${s.member_name ? ' · ' + mfEscape(s.member_name) : ''}</span>
                         ${isAdult ? `<button onclick="armClearStatus(this, '${s.id}')"
                             class="ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">✕</button>` : ''}
                     </div>
-                    ${msg ? `<p class="text-sm text-sky-200/90 mt-1.5">${mfEscape(msg)}</p>` : ''}
+                    ${msg ? `<p class="text-sm text-sky-200/90 mt-1.5">${msg}</p>` : ''}
+                    ${callLine}
                     ${s.note ? `<p class="text-xs text-sky-300/80 mt-1 italic">${mfEscape(s.note)}</p>` : ''}
                     ${meta.length ? `<p class="text-[10px] text-sky-400/60 mt-1">${mfEscape(meta.join(' · '))}</p>` : ''}
                 </div>`;

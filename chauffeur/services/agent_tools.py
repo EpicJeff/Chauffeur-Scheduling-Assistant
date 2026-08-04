@@ -465,7 +465,8 @@ class SetHouseholdStatusTool(BaseModel):
     Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created in Config, not here.
     """
     protocol_name: str = Field(..., description="Which day type, e.g. 'Chemo Day' — fuzzy matched against the family's configured status day types.")
-    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    target_date: Optional[str] = Field(None, description="Which day (or span start): 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    end_date: Optional[str] = Field(None, description="Optional span end for multi-day statuses ('Dad's away Tuesday through Friday') — same date formats. Omit for a single day.")
     note: Optional[str] = Field(None, description="Optional one-line 'today's different' nudge, e.g. 'rougher than usual'.")
     clear: Optional[bool] = Field(None, description="True to clear this status from that day instead of setting it (announces the change of plans).")
 
@@ -1645,7 +1646,8 @@ def handle_set_household_status(args: dict) -> dict:
     return set_household_status(args.get("protocol_name") or "",
                                 target_date=args.get("target_date") or "today",
                                 note=args.get("note") or "",
-                                clear=bool(args.get("clear")))
+                                clear=bool(args.get("clear")),
+                                end_date=args.get("end_date") or "")
 
 def handle_get_household_status(args: dict) -> dict:
     from services.agent_tools_v2 import get_household_status

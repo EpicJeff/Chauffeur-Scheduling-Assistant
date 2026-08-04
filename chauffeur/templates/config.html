@@ -1623,6 +1623,12 @@
                                         <option value="clear_deck">Clear the deck — family time</option>
                                     </select>
                                 </div>
+                                <div>
+                                    <label class="block text-gray-400 mb-1 text-sm">Call window
+                                        <span class="text-gray-600">(multi-day spans — soft, "around")</span></label>
+                                    <input type="time" x-model="newStatusProtocol.call_time"
+                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white">
+                                </div>
                             </div>
                             <div class="mt-4">
                                 <label class="block text-gray-400 mb-1 text-sm">What the kids hear
@@ -1661,7 +1667,7 @@
                         <template x-for="d in statusDays" :key="d.id">
                             <div class="flex items-center gap-2 mb-1 text-sm text-gray-300">
                                 <span
-                                    x-text="d.date + ' · ' + (d.emoji || '💙') + ' ' + d.name + (d.note ? ' · ' + d.note : '')"></span>
+                                    x-text="d.date + (d.end_date && d.end_date !== d.date ? ' → ' + d.end_date : '') + ' · ' + (d.emoji || '💙') + ' ' + d.name + (d.note ? ' · ' + d.note : '')"></span>
                                 <span class="text-xs text-gray-500" x-show="d.set_by_name"
                                     x-text="'set by ' + d.set_by_name"></span>
                                 <span class="text-xs text-sky-400/70" x-show="d.source === 'calendar'"
@@ -1674,6 +1680,9 @@
                             weeks.</p>
                         <div class="flex gap-2 flex-wrap items-center mt-2">
                             <input type="date" x-model="newStatusDay.date"
+                                class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
+                            <span class="text-gray-500 text-xs">to</span>
+                            <input type="date" x-model="newStatusDay.end_date" title="optional span end (trips)"
                                 class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
                             <select x-model="newStatusDay.protocol_id"
                                 class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white text-sm">
@@ -3355,8 +3364,8 @@
                 statusDays: [],
                 showStatusForm: false,
                 editStatusId: null,
-                newStatusProtocol: { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '' },
-                newStatusDay: { date: '', protocol_id: '', note: '' },
+                newStatusProtocol: { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '', call_time: '' },
+                newStatusDay: { date: '', end_date: '', protocol_id: '', note: '' },
                 memberMergeTarget: '',
                 publicBaseUrl: '',
                 haBaseUrl: '',
@@ -4394,7 +4403,7 @@
                 },
                 openStatusForm() {
                     this.editStatusId = null;
-                    this.newStatusProtocol = { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '' };
+                    this.newStatusProtocol = { emoji: '💙', name: '', member_id: '', need: 'give_space', kid_message: '', adult_message: '', keywords_text: '', call_time: '' };
                     this.showStatusForm = true;
                 },
                 editStatusProtocol(p) {
@@ -4404,6 +4413,7 @@
                         need: p.need || 'give_space', kid_message: p.kid_message || '',
                         adult_message: p.adult_message || '',
                         keywords_text: (p.keywords || []).join(', '),
+                        call_time: p.call_time || '',
                     };
                     this.showStatusForm = true;
                 },
@@ -4417,6 +4427,7 @@
                         member_id: f.member_id || null, need: f.need,
                         kid_message: f.kid_message.trim(), adult_message: f.adult_message.trim(),
                         keywords: f.keywords_text.split(',').map(k => k.trim()).filter(Boolean),
+                        call_time: f.call_time || null,
                     };
                     try {
                         if (this.editStatusId) {
@@ -4443,11 +4454,13 @@
                 async addStatusDayUi() {
                     const d = this.newStatusDay;
                     if (!d.date || !d.protocol_id) { showGlobalAlert('Pick a date and a day type.'); return; }
+                    if (d.end_date && d.end_date < d.date) { showGlobalAlert('The span end is before its start.'); return; }
                     await fetch(`${this.apiBase}api/status/days`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ date: d.date, protocol_id: d.protocol_id, note: d.note.trim() }),
+                        body: JSON.stringify({ date: d.date, end_date: (d.end_date && d.end_date !== d.date) ? d.end_date : null,
+                                               protocol_id: d.protocol_id, note: d.note.trim() }),
                     });
-                    this.newStatusDay = { date: '', protocol_id: '', note: '' };
+                    this.newStatusDay = { date: '', end_date: '', protocol_id: '', note: '' };
                     await this.loadStatusData();
                 },
                 async clearStatusDayUi(d) {

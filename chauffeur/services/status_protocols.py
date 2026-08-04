@@ -31,8 +31,11 @@ NEEDS = {
 
 
 def active_statuses(date_str: str):
-    """Resolved active statuses for a date: each dated instance joined to its
-    (enabled) protocol plus display fields. Returns [] on a normal day."""
+    """Resolved active statuses for a date: each instance (or multi-day span
+    covering the date, P3) joined to its (enabled) protocol plus display
+    fields. Spans carry day-position awareness — day_pos/day_count/
+    is_home_day — so every surface can speak the timeline ("day 2 of 4",
+    "home day!"). Returns [] on a normal day."""
     protocols = {p['id']: p for p in storage.get_all_status_protocols()}
     members = {m['id']: m for m in storage.get_all_members()}
     out = []
@@ -43,9 +46,22 @@ def active_statuses(date_str: str):
         affected = members.get(proto.get('member_id')) or {}
         setter = members.get(day.get('set_by')) or {}
         need = proto.get('need') or 'give_space'
+        span_end = day.get('end_date') or day.get('date')
+        try:
+            d0 = datetime.date.fromisoformat(day.get('date'))
+            d1 = datetime.date.fromisoformat(span_end)
+            dq = datetime.date.fromisoformat(date_str)
+            day_count = max(1, (d1 - d0).days + 1)
+            day_pos = (dq - d0).days + 1
+        except (ValueError, TypeError):
+            day_count, day_pos = 1, 1
         out.append({
             'id': day['id'],
             'date': day.get('date'),
+            'end_date': span_end,
+            'day_pos': day_pos,
+            'day_count': day_count,
+            'is_home_day': day_count > 1 and date_str == span_end,
             'protocol_id': proto['id'],
             'name': proto.get('name'),
             'emoji': proto.get('emoji') or '💙',
@@ -53,6 +69,7 @@ def active_statuses(date_str: str):
             'need_label': NEEDS.get(need, NEEDS['give_space'])[0],
             'kid_message': proto.get('kid_message') or '',
             'adult_message': proto.get('adult_message') or '',
+            'call_time': proto.get('call_time'),
             'note': day.get('note') or '',
             'member_id': proto.get('member_id'),
             'member_name': affected.get('name'),
@@ -65,17 +82,40 @@ def active_statuses(date_str: str):
     return out
 
 
+def _fmt_hhmm(hhmm: str):
+    try:
+        h, m = [int(x) for x in str(hhmm).split(':')[:2]]
+        return datetime.time(h, m).strftime('%I:%M %p').lstrip('0')
+    except (ValueError, TypeError):
+        return str(hhmm)
+
+
 def kid_lines(date_str: str):
     """The kid-facing digest/push lines for a date, family's words first.
     A protocol with no kid_message still yields its label — the kid must
-    never see LESS than the adults planned around."""
+    never see LESS than the adults planned around. P3 spans speak by
+    position (mirroring the kid digest's trip-line convention): day 1 is
+    the family's full message, middle days count ("day 2 of 4") with the
+    soft call window, the last day is the excited home beat."""
     lines = []
     for s in active_statuses(date_str):
-        body = s['kid_message'] or f"It's a {s['name']} day."
-        line = f"{s['emoji']} {body}"
-        if s['note']:
-            line += f" ({s['note']})"
+        who = s['member_name'] or s['name']
+        if s['is_home_day']:
+            lines.append(f"🏠 {who} — home day! 🎉")
+            continue
+        if s['day_count'] > 1 and s['day_pos'] > 1:
+            line = f"{s['emoji']} {s['name']} — day {s['day_pos']} of {s['day_count']}"
+        else:
+            body = s['kid_message'] or f"It's a {s['name']} day."
+            line = f"{s['emoji']} {body}"
+            if s['note']:
+                line += f" ({s['note']})"
         lines.append(line)
+        # Soft nightly call window on away nights (never the home day —
+        # they're walking in the door). "Around", by design: a slid or
+        # missed call is "catch you tomorrow", not a broken chain.
+        if s['day_count'] > 1 and s['call_time'] and s['day_pos'] < s['day_count']:
+            lines.append(f"📞 Around {_fmt_hhmm(s['call_time'])} — call with {who}")
     return lines
 
 
@@ -124,6 +164,10 @@ def announce_set(day_id: str, now: datetime.datetime = None):
         return
     s = statuses[0]
     when = _when_phrase(s['date'], now)
+    is_span = (s.get('end_date') or s['date']) != s['date']
+    end_when = _when_phrase(s.get('end_date') or s['date'], now)
+    if is_span:
+        when = f"{when} through {end_when}"
 
     horizon = (now.date() + datetime.timedelta(days=1)).isoformat()
     kids_ok = s['date'] <= horizon and \
@@ -131,6 +175,11 @@ def announce_set(day_id: str, now: datetime.datetime = None):
     if kids_ok:
         body = s['kid_message'] or f"It's a {s['name']} day {when}."
         line = f"{s['emoji']} Heads up for {when}: {body}"
+        if is_span:
+            # The whole span up front — "never guessing" includes when it ends.
+            line += f"\n🏠 Home {end_when}."
+            if s.get('call_time'):
+                line += f"\n📞 Call window most nights around {_fmt_hhmm(s['call_time'])}."
         if s['note']:
             line += f"\n{s['note']}"
         for kid in _kids():
@@ -147,6 +196,8 @@ def announce_set(day_id: str, now: datetime.datetime = None):
         need = NEEDS.get(s['need'])
         if need:
             parts.append(f"Need: {need[0].lower()} ({need[1]}).")
+        if is_span and s.get('call_time'):
+            parts.append(f"📞 Nightly call window around {_fmt_hhmm(s['call_time'])}.")
         if s['note']:
             parts.append(s['note'])
         if s.get('source') == 'calendar':
@@ -171,9 +222,14 @@ def announce_cleared(day_row: dict, now: datetime.datetime = None):
     name = proto.get('name') or 'status'
     emoji = proto.get('emoji') or '💙'
     when = _when_phrase(day_row.get('date', ''), now)
+    span_end = day_row.get('end_date') or day_row.get('date', '')
+    if span_end != day_row.get('date', ''):
+        when = f"{when} through {_when_phrase(span_end, now)}"
 
     horizon = (now.date() + datetime.timedelta(days=1)).isoformat()
-    if day_row.get('date', '') <= horizon and day_row.get('date', '') >= now.date().isoformat():
+    # Kid-relevant when the span touches today/tomorrow (an ongoing trip
+    # cleared mid-span is exactly the "home early!" moment).
+    if day_row.get('date', '') <= horizon and span_end >= now.date().isoformat():
         if not family_digest.in_kid_quiet_hours(now, storage.get_settings() or {}):
             line = f"{emoji} Change of plans — {when} isn't a {name} day after all."
             for kid in _kids():
@@ -218,29 +274,48 @@ def auto_set_from_calendar(now: datetime.datetime = None, horizon_days: int = 7)
     existing = {(d.get('date'), d.get('protocol_id'))
                 for d in storage.get_status_days(start=today.isoformat(),
                                                  end=horizon.isoformat())}
-    created = []
+
+    # Collapse cached slices back to their real event (background trips are
+    # cached one slice per day — a 5-day trip must become ONE 5-day span,
+    # never five one-day instances), then span the event's own dates.
+    spans = {}  # base id -> {'title','text','start','end'}
     for ev in (storage.get_cached_schedule() or {}).get('events', []):
         if ev.get('event_type') == 'errand':
             continue
+        base = str(ev.get('id', '')).split('_slice_')[0]
         try:
-            ev_date = datetime.date.fromisoformat(str(ev.get('start', ''))[:10])
-        except (ValueError, TypeError):
+            s_dt = datetime.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None)
+            e_dt = datetime.datetime.fromisoformat(str(ev['end'])).replace(tzinfo=None)
+        except (ValueError, TypeError, KeyError):
             continue
-        if not (today <= ev_date <= horizon):
+        # exclusive-midnight ends (all-day convention) belong to the prior day
+        e_date = e_dt.date()
+        if e_date > s_dt.date() and e_dt.time() == datetime.time(0, 0):
+            e_date -= datetime.timedelta(days=1)
+        entry = spans.setdefault(base, {
+            'title': ev.get('title') or '',
+            'text': f"{ev.get('title') or ''} {ev.get('description') or ''}".lower(),
+            'start': s_dt.date(), 'end': e_date})
+        entry['start'] = min(entry['start'], s_dt.date())
+        entry['end'] = max(entry['end'], e_date)
+
+    created = []
+    for span in spans.values():
+        if span['end'] < today or span['start'] > horizon:
             continue
-        text = f"{ev.get('title') or ''} {ev.get('description') or ''}".lower()
         for proto in protocols:
-            if not any((kw or '').lower() in text
+            if not any((kw or '').lower() in span['text']
                        for kw in proto['keywords'] if (kw or '').strip()):
                 continue
-            key = (ev_date.isoformat(), proto['id'])
+            key = (span['start'].isoformat(), proto['id'])
             if key in existing or storage.status_auto_dismissed(*key):
                 continue
             existing.add(key)
             day_id = storage.add_status_day({
-                'date': ev_date.isoformat(), 'protocol_id': proto['id'],
+                'date': span['start'].isoformat(), 'protocol_id': proto['id'],
+                'end_date': span['end'].isoformat() if span['end'] > span['start'] else None,
                 'note': '', 'set_by': None,
-                'source': 'calendar', 'source_detail': ev.get('title') or ''})
+                'source': 'calendar', 'source_detail': span['title']})
             created.append(day_id)
             try:
                 announce_set(day_id, now=now)
@@ -269,6 +344,97 @@ def unavailable_driver_dates(start: str, end: str):
         if not member.get('driver_id'):
             continue  # not a driver — nothing to take out of the rotation
         out.append({'date': day.get('date'),
+                    'end_date': day.get('end_date') or day.get('date'),
                     'driver_id': member['driver_id'],
                     'label': f"{proto.get('name')} — {member.get('name')}"})
     return out
+
+
+def send_coverage_reports(now: datetime.datetime = None, lookahead_days: int = 4):
+    """The plan-assist beat (design doc: 'the crown jewel'): when a
+    cover/help day or span is coming (or already running), the OTHER adults
+    get one Argyle DM showing exactly what the schedule looks like without
+    the affected driver — every event in the span with its resolved driver,
+    unassigned ones flagged. Not a reminder: the solver already reshuffled
+    (status days invalidate the caches); this makes the result — and the
+    collisions — visible at the moment load spikes. Once per instance
+    (app_state marker set only after a successful build, so an unsolved
+    cache retries next sweep instead of going silent)."""
+    now = now or datetime.datetime.now()
+    today = now.date()
+    horizon = (today + datetime.timedelta(days=lookahead_days)).isoformat()
+    sched = storage.get_cached_schedule() or {}
+    if not sched.get('events') and not sched.get('assignments'):
+        return []  # not re-solved yet — retry next sweep
+    sent_marks = dict(storage.get_app_state('status_coverage_sent') or {})
+    cutoff = now.timestamp() - 60 * 86400
+    sent_marks = {k: v for k, v in sent_marks.items() if v >= cutoff}
+
+    protocols = {p['id']: p for p in storage.get_all_status_protocols()}
+    members = {m['id']: m for m in storage.get_all_members()}
+    assignments = dict(sched.get('assignments', {}))
+    assignments.update(sched.get('ghost_assignments', {}))
+
+    sent = []
+    for day in storage.get_status_days(start=today.isoformat(), end=horizon):
+        if day['id'] in sent_marks:
+            continue
+        proto = protocols.get(day.get('protocol_id'))
+        if not proto or not proto.get('enabled', True):
+            continue
+        if (proto.get('need') or 'give_space') not in ('cover', 'help'):
+            continue
+        affected = members.get(proto.get('member_id')) or {}
+        span_start = day.get('date')
+        span_end = day.get('end_date') or span_start
+
+        lines = []
+        for ev in sorted(sched.get('events', []), key=lambda e: str(e.get('start', ''))):
+            if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed'):
+                continue
+            ev_id = str(ev.get('id', ''))
+            if ev_id.endswith('_dropoff') or ev_id.endswith('_pickup'):
+                continue  # split legs: the parent event line is enough here
+            if not (span_start <= str(ev.get('start', ''))[:10] <= span_end):
+                continue
+            try:
+                s_dt = datetime.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None)
+                stamp = f"{s_dt.strftime('%a')} {s_dt.strftime('%I:%M %p').lstrip('0')}"
+            except (ValueError, TypeError, KeyError):
+                stamp = span_start
+            d_id = assignments.get(ev_id)
+            drv = None
+            if d_id and not str(d_id).startswith('ghost_'):
+                drv = next((m for m in members.values()
+                            if m.get('driver_id') == d_id), None)
+            who = (drv or {}).get('name')
+            lines.append(f"• {stamp} — {ev.get('title') or 'Event'} — "
+                         + (who if who else "⚠️ needs a driver"))
+
+        when = _when_phrase(span_start, now)
+        if span_end != span_start:
+            when = f"{when} through {_when_phrase(span_end, now)}"
+        header = (f"🧳 Coverage while {affected.get('name') or 'they'}'s out "
+                  f"({proto.get('name')}, {when}):")
+        if not lines:
+            body = header + "\nNothing on the schedule needs covering. 🎉"
+        else:
+            shown = lines[:14]
+            if len(lines) > 14:
+                shown.append(f"…and {len(lines) - 14} more on the calendar.")
+            body = "\n".join([header] + shown)
+        n_open = sum(1 for l in lines if "needs a driver" in l)
+        if n_open:
+            body += f"\n⚠️ {n_open} still need a driver — tap the dashboard to sort them."
+
+        target_adults = _adults(exclude_ids={proto.get('member_id')}
+                                if proto.get('member_id') else ())
+        for adult in target_adults:
+            try:
+                _post_dm(adult['id'], body)
+            except Exception as e:
+                print(f"Coverage report DM failed for {adult.get('name')}: {e}")
+        sent_marks[day['id']] = now.timestamp()
+        sent.append(day['id'])
+    storage.set_app_state('status_coverage_sent', sent_marks)
+    return sent

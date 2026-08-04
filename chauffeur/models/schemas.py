@@ -234,9 +234,13 @@ class StatusProtocol(BaseModel):
     need: str = 'give_space'
     kid_message: str = ""                # the words the kids get: plan + something they can do
     adult_message: str = ""              # co-parent logistics message
-    # Calendar trigger words for auto-suggest ("chemo", "night shift") —
-    # stored now, matched in the next slice.
+    # Calendar trigger words ("chemo", "night shift") — a matching calendar
+    # event auto-sets the day (P2 sweep), spanning the event's own dates.
     keywords: List[str] = Field(default_factory=list)
+    # P3 trip timeline: optional nightly call window during a multi-day span
+    # ("19:30"). Rendered SOFT everywhere ("around 7:30") — a missed call
+    # must read as "catch you tomorrow", never a broken chain.
+    call_time: Optional[str] = None      # HH:MM
     enabled: bool = True
     created_at: float = Field(default_factory=time.time)
 
@@ -245,8 +249,13 @@ class StatusDay(BaseModel):
     # never lingers past its day, so stale-dial lies (worse than silence) are
     # structurally impossible. note is the one-tap "today's different" nudge.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    date: str                            # YYYY-MM-DD
+    date: str                            # YYYY-MM-DD (span start)
     protocol_id: str
+    # P3: an optional span end (inclusive) turns the instance into a
+    # multi-day timeline (a trip, a hospital stay). None/equal = one day.
+    # Surfaces become day-position aware: heads-up on day 1, "day N of M"
+    # in the middle, an excited home-day beat on the last.
+    end_date: Optional[str] = None       # YYYY-MM-DD
     note: str = ""
     set_by: Optional[str] = None         # member id; None = agent/system
     set_at: float = Field(default_factory=time.time)

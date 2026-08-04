@@ -2641,11 +2641,18 @@ def delete_status_protocol(protocol_id: str) -> None:
 
 def get_status_days(start: str = None, end: str = None) -> List[dict]:
     """Dated instances, date-ascending, optionally windowed [start, end]
-    (ISO dates, inclusive — string compare is safe on YYYY-MM-DD)."""
+    (ISO dates, inclusive — string compare is safe on YYYY-MM-DD). A
+    multi-day span (P3: end_date set) is returned when it OVERLAPS the
+    window, so an ongoing trip still surfaces mid-span."""
     with db_lock:
-        rows = [dict(r) for r in status_days_table.all()
-                if (start is None or r.get('date', '') >= start)
-                and (end is None or r.get('date', '') <= end)]
+        rows = []
+        for r in status_days_table.all():
+            span_end = r.get('end_date') or r.get('date', '')
+            if start is not None and span_end < start:
+                continue
+            if end is not None and r.get('date', '') > end:
+                continue
+            rows.append(dict(r))
         rows.sort(key=lambda r: (r.get('date', ''), r.get('set_at', 0)))
         return rows
 
@@ -2668,7 +2675,8 @@ def add_status_day(data: dict) -> str:
         if existing:
             status_days_table.update(
                 {'note': data.get('note', ''), 'set_by': data.get('set_by'),
-                 'set_at': data['set_at']}, q)
+                 'end_date': data.get('end_date'), 'set_at': data['set_at']}, q)
+            _invalidate_schedule_caches()  # a span end may have moved
             return dict(existing[0])['id']
         status_days_table.insert(data)
         _invalidate_schedule_caches()

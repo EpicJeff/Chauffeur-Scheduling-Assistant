@@ -790,7 +790,7 @@ def post_weekly_digest_now(acting_member: dict = None) -> Dict[str, Any]:
 
 def set_household_status(protocol_name: str, target_date: str = "today",
                          note: str = "", clear: bool = False,
-                         acting_member: dict = None) -> Dict[str, Any]:
+                         end_date: str = "", acting_member: dict = None) -> Dict[str, Any]:
     from services import storage, status_protocols
     if acting_member and acting_member.get('role') in ('child', 'helper'):
         return {"status": "error",
@@ -826,9 +826,19 @@ def set_household_status(protocol_name: str, target_date: str = "today",
                 "message": f"Cleared {proto.get('emoji')} {proto.get('name')} for {when} "
                            f"and let everyone know the plans changed."}
 
+    span_end = None
+    if (end_date or '').strip():
+        end_day = _parse_fuzzy_date(end_date)
+        if end_day < day:
+            return {"status": "error",
+                    "message": f"That span ends ({end_day.strftime('%A')}) before it "
+                               f"starts ({day.strftime('%A')}) — check the dates."}
+        if end_day > day:
+            span_end = end_day.isoformat()
+            when = f"{when} through {end_day.strftime('%A, %b')} {end_day.day}"
     day_id = storage.add_status_day({
         'date': day.isoformat(), 'protocol_id': proto['id'],
-        'note': (note or '').strip(),
+        'end_date': span_end, 'note': (note or '').strip(),
         'set_by': (acting_member or {}).get('id')})
     status_protocols.announce_set(day_id)
     return {"status": "success",
