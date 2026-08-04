@@ -6553,6 +6553,25 @@ def debug_travel(destination: Optional[str] = None, event: Optional[str] = None,
             o["coords"][0], o["coords"][1], d["coords"][0], d["coords"][1]) / 1000, 1)
     out["cached_matrix_mins"] = storage.get_cached_travel_time(
         origin.lower(), destination.lower(), ignore_age=True)
+    # Which origin each DRIVER actually routes from: a driver record's own
+    # home_location OVERRIDES the global home (solver initial edges,
+    # matcher.py) — the classic source of a "9 minutes" chip while the
+    # global-home pair above says 25. uses_own_address: true + a different
+    # resolved_to is the smoking gun.
+    drivers_out = []
+    for drv in storage.get_all_drivers():
+        if drv.get('is_disabled'):
+            continue
+        own = (drv.get('home_location') or '').strip()
+        eff = own or origin
+        drivers_out.append({
+            "driver": drv.get('name'),
+            "uses_own_address": bool(own),
+            "origin": side(eff) if own else "(global home — origin block above)",
+            "cached_matrix_mins_to_destination": storage.get_cached_travel_time(
+                eff.lower(), destination.lower(), ignore_age=True),
+        })
+    out["drivers"] = drivers_out
     if fresh:
         for label, profile in (("fresh_freeflow_mins", "driving"),
                                ("fresh_traffic_mins", "driving-traffic")):

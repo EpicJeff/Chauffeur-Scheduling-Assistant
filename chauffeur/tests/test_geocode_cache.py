@@ -211,10 +211,20 @@ def scenario_debug_travel_forensics():
         "events": [{"id": "g", "title": "Guitar Lesson", "location": dest,
                     "start": "2026-08-04T15:00:00", "end": "2026-08-04T15:30:00"}],
         "assignments": {}, "matched_rules": {}, "scheduled_errands": []})
+    with storage.db_lock:
+        storage.drivers_table.insert({"id": "d1", "name": "Dad", "color_code": "#123",
+                                      "home_location": "Apex, NC"})
+        storage.drivers_table.insert({"id": "d2", "name": "Mom", "color_code": "#456"})
     with mock.patch.object(storage, 'get_cached_travel_time', return_value=9):
         out = main.debug_travel(event="guitar")
     check(out["event"] == "Guitar Lesson" and out["destination"]["raw"] == dest,
           f"?event= resolves the destination from the schedule, got {out['event']}")
+    by_name = {d["driver"]: d for d in out["drivers"]}
+    check(by_name["Dad"]["uses_own_address"] and isinstance(by_name["Dad"]["origin"], dict)
+          and by_name["Dad"]["origin"]["raw"] == "Apex, NC",
+          f"a driver's own home_location override is exposed, got {by_name['Dad']}")
+    check(not by_name["Mom"]["uses_own_address"],
+          "drivers on the global home say so instead of repeating it")
     check(out["origin"]["resolved_to"] == EXACT[2]
           and out["destination"]["resolved_to"] == "9 Elm St, Claybourne, NC",
           "both sides show what they RESOLVED to")
