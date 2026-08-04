@@ -4691,7 +4691,28 @@ def _build_kid_digests(target_date=None):
             print(f"Kid digest: day build failed for {m.get('name')}: {e}")
             continue
         lines = []
-        for r in day.get('rides', []):
+        rides = day.get('rides', [])
+        # Trips lead, span-aware — a week at camp must never read like a
+        # one-hour event (family feedback 2026-08-03). The away window also
+        # suppresses home events the kid can't attend: nothing during camp
+        # says "5:00 PM – Academy".
+        away = []
+        for r in rides:
+            if r.get('event_type') != 'background_trip':
+                continue
+            lines.append(_kid_trip_line(r, target))
+            span = _kid_trip_span(r)
+            if span[0] is not None:
+                away.append(span)
+        for r in rides:
+            if r.get('event_type') == 'background_trip':
+                continue
+            try:
+                start_dt = _dt.datetime.fromisoformat(r['start']).replace(tzinfo=None)
+                if any(a <= start_dt <= b for a, b in away):
+                    continue  # the kid is away — this event can't happen for them
+            except (ValueError, TypeError):
+                pass
             try:
                 t = _dt.datetime.fromisoformat(r['start']).strftime('%I:%M %p').lstrip('0')
                 line = f"{t} – {r.get('title') or 'Event'}"
@@ -4753,6 +4774,49 @@ def _build_kid_digests(target_date=None):
         }
     return {'date': date_str, 'label': family_digest.day_label(target),
             'weather': family_digest.weather_line(target), 'kids': kids}
+
+def _kid_trip_span(ride):
+    """(first_start, last_end) naive datetimes across a background trip's
+    cached slices (base id with `_slice_N` stripped), or (None, None). If the
+    solve window clips a long trip the span is honest-but-short — better
+    than guessing."""
+    import datetime as _dt
+    base_id = str(ride.get('id') or '').split('_slice_')[0]
+    starts, ends = [], []
+    for ev in (storage.get_cached_schedule() or {}).get('events', []):
+        if str(ev.get('id', '')).split('_slice_')[0] != base_id:
+            continue
+        try:
+            starts.append(_dt.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None))
+            ends.append(_dt.datetime.fromisoformat(str(ev['end'])).replace(tzinfo=None))
+        except (ValueError, TypeError, KeyError):
+            continue
+    return (min(starts), max(ends)) if starts else (None, None)
+
+
+def _kid_trip_line(ride, target):
+    """A trip deserves excitement, not a one-hour-looking time entry: turn a
+    background_trip slice into a span-aware line."""
+    title = (ride.get('title') or 'Trip').replace('✈️', '').strip()
+    first, last = _kid_trip_span(ride)
+    if first is None:
+        return f"🧳 {title}"
+    n_days = max(1, (last.date() - first.date()).days + 1)
+    if target == first.date():
+        line = f"🧳 {title} — {n_days}-day adventure begins! 🎉" if n_days > 1 \
+            else f"🧳 {title} begins! 🎉"
+        # Trip times are DESTINATION times (family convention: travel is
+        # excluded — start = arrival there, end = departure from there).
+        if first.hour or first.minute:
+            line += f" Arriving at {first.strftime('%I:%M %p').lstrip('0')}"
+        prep = ride.get('prep') or []
+        if prep:
+            line += f" — pack: {', '.join(prep[:4])}"
+        return line
+    if target == last.date():
+        return f"🏠 Coming home from {title}!"
+    return f"🏕️ {title} — day {(target - first.date()).days + 1} of {n_days}"
+
 
 def _send_kid_digests():
     """K1 delivery: one evening Argyle DM per child previewing tomorrow.

@@ -137,12 +137,52 @@ def scenario_config_bound_event_binds_kid():
     check(any("Camp Kesem" in ln for ln in lines), "and in the kid digest")
 
 
+def scenario_trip_digest_lines():
+    """Trips lead the digest span-aware — departure day says the adventure
+    length and leave time, mid-trip says day N of M, last day says coming
+    home — and home events inside the away window are dropped (the kid
+    can't attend them; family feedback 2026-08-03)."""
+    _reset()
+    import main
+    d0, d1, d2 = TODAY, TODAY + datetime.timedelta(days=1), TODAY + datetime.timedelta(days=2)
+
+    def _slice(n, day, hh_start, hh_end):
+        start = datetime.datetime.combine(day, datetime.time(hh_start))
+        end = datetime.datetime.combine(day, datetime.time(hh_end, 59))
+        return {"id": f"camp_slice_{n}", "title": "Camp Kesem",
+                "event_type": "background_trip", "start": start.isoformat(),
+                "end": end.isoformat(), "calendar_ids": ["cal1"]}
+
+    events = [
+        _slice(0, d0, 14, 23), _slice(1, d1, 0, 23), _slice(2, d2, 0, 11),
+        _ev("acad0", "Academy", 17, day=d0),   # after 2 PM departure: away
+        _ev("acad1", "Academy", 17, day=d1),   # fully away
+        _ev("acad2", "Academy", 17, day=d2),   # after the noon return: home
+    ]
+    _cache(events, {})
+
+    kids_d0 = main._build_kid_digests(d0)["kids"]["kid1"]["lines"]
+    check(any("3-day adventure begins" in ln and "Arriving at 2:00 PM" in ln for ln in kids_d0),
+          f"departure day leads with the adventure line ({kids_d0})")
+    check(not any("Academy" in ln for ln in kids_d0), "post-departure home event dropped")
+
+    kids_d1 = main._build_kid_digests(d1)["kids"]["kid1"]["lines"]
+    check(any("day 2 of 3" in ln for ln in kids_d1), f"mid-trip day count ({kids_d1})")
+    check(not any("Academy" in ln for ln in kids_d1), "mid-trip home event dropped")
+
+    kids_d2 = main._build_kid_digests(d2)["kids"]["kid1"]["lines"]
+    check(any("Coming home from Camp Kesem" in ln for ln in kids_d2),
+          f"last day says coming home ({kids_d2})")
+    check(any("Academy" in ln for ln in kids_d2), "post-return home event kept")
+
+
 SCENARIOS = [
     scenario_school_end_push_names_the_driver,
     scenario_school_end_silence_rules,
     scenario_morning_launch_math,
     scenario_split_ride_launch_and_digest_line,
     scenario_config_bound_event_binds_kid,
+    scenario_trip_digest_lines,
 ]
 
 if __name__ == "__main__":
