@@ -695,10 +695,20 @@
                                     <select x-model="schoolCalendarId" @change="saveSettings()"
                                         class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 max-w-[240px]">
                                         <option value="">— not set (weekdays only) —</option>
+                                        <!-- Keep an unknown saved id selectable (e.g. a pasted district calendar) -->
+                                        <template x-if="schoolCalendarId && !calendarIds.includes(schoolCalendarId)">
+                                            <option :value="schoolCalendarId" x-text="schoolCalendarId"></option>
+                                        </template>
                                         <template x-for="c in calendarIds" :key="c">
                                             <option :value="c" x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
                                         </template>
                                     </select>
+                                </div>
+                                <div class="flex items-center gap-2 flex-1 min-w-[260px]">
+                                    <label class="text-sm text-gray-400 font-semibold shrink-0">or any calendar ID</label>
+                                    <input type="text" x-model="schoolCalendarId" @change="saveSettings()"
+                                        placeholder="district_abc123@group.calendar.google.com"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 w-full">
                                 </div>
                                 <div class="flex items-center gap-2 shrink-0">
                                     <label class="text-sm text-gray-400 font-semibold">School year</label>
@@ -719,8 +729,10 @@
                                 Tells Chauffeur what a school day is. School-day features (the after-school
                                 pickup push, bus leave-by lines) run on weekdays inside the school year,
                                 skipping any day the chosen calendar has an all-day event matching a
-                                no-school keyword — subscribe your district's calendar as an ICS feed and
-                                pick it here. Nothing set = plain weekdays, as before. Dates outside the
+                                no-school keyword. A district Google calendar works directly — paste its
+                                calendar ID (public calendars just work; a private one must be shared with
+                                the same service account as your family calendars). An ICS-fed calendar
+                                works too. Nothing set = plain weekdays, as before. Dates outside the
                                 school year (summer!) never count as school days.
                             </p>
                         </div>
