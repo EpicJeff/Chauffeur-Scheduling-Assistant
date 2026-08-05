@@ -1519,14 +1519,37 @@
             } catch (e) { }
         }
 
+        function dayDivider(ts) {
+            const d = new Date(ts * 1000);
+            const now = new Date();
+            const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+            const dayDiff = Math.round((startOf(now) - startOf(d)) / 86400000);
+            let label;
+            if (dayDiff === 0) label = 'Today';
+            else if (dayDiff === 1) label = 'Yesterday';
+            else if (dayDiff > 1 && dayDiff < 7) label = d.toLocaleDateString([], { weekday: 'long' });
+            else if (d.getFullYear() === now.getFullYear()) label = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+            else label = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+            return `<div class="flex items-center gap-2 my-3 self-stretch">
+                <div class="flex-1 h-px bg-gray-700/60"></div>
+                <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">${label}</span>
+                <div class="flex-1 h-px bg-gray-700/60"></div>
+            </div>`;
+        }
+
         function renderThread(msgs) {
             const wrap = document.getElementById('thread-messages');
+            let lastDay = null;
             wrap.innerHTML = msgs.map(m => {
                 const mine = m.sender_member_id === selectedMemberId;
                 const sender = membersData.find(x => x.id === m.sender_member_id)
                     || (m.sender_member_id === 'argyle' ? { name: 'Argyle', color_code: '#8b5cf6' } : {});
-                const t = new Date(m.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                return `<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
+                const d = new Date(m.ts * 1000);
+                const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+                const divider = dayKey !== lastDay ? dayDivider(m.ts) : '';
+                lastDay = dayKey;
+                const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return `${divider}<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
                     ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
                     <div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>
                     ${m.card ? renderCard(m.card) : ''}
