@@ -48,7 +48,11 @@
                  what fits the day the solver actually produced, and nothing
                  at all when the evening is unconstrained and nothing is due
                  a head start. -->
-            <div x-show="!isKiosk && (suggest.lines.length || suggest.fits.length)"
+            <!-- Always present off-kiosk. Gating the whole card on "is there
+                 something to suggest" hid the editor that lives inside it, so
+                 a family with an empty repertoire had no way to add their
+                 first meal — the one state where the editor matters most. -->
+            <div x-show="!isKiosk"
                 class="mb-6 bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
                 <div class="flex items-baseline justify-between mb-3">
                     <h3 class="text-xs font-black uppercase tracking-widest text-pink-200">🍽️ Tonight</h3>
@@ -61,6 +65,21 @@
                 </template>
                 <div x-show="suggest.nobody_can_eat" class="text-sm text-gray-400">
                     Nothing fits a gap tonight — worth picking something up on the way.
+                </div>
+                <!-- Seed state: the repertoire is empty and nothing can be
+                     filtered until it isn't. Entry cost is one sentence. -->
+                <div x-show="!repertoire.length" class="text-sm text-gray-400">
+                    Name a few things you make on a weeknight and I'll work out the
+                    times and ingredients — then this shows what actually fits the day.
+                    <button @click="showRepertoire = true"
+                        class="ml-1 font-bold text-pink-300 hover:text-pink-200">Add one →</button>
+                </div>
+                <!-- Populated, but the day rules everything out. Say why rather
+                     than rendering an empty box. -->
+                <div x-show="repertoire.length && !suggest.fits.length && !suggest.nobody_can_eat"
+                    class="text-sm text-gray-400">
+                    Nothing in your meals fits today — might be a night to pick
+                    something up.
                 </div>
                 <div class="space-y-2 mt-3">
                     <template x-for="m in suggest.fits" :key="'sf-' + m.id">
