@@ -883,7 +883,8 @@
         async function deleteErrand() {
             const id = document.getElementById('edit-id').value;
             const docId = document.getElementById('edit-doc-id').value;
-            if (!confirm('Are you sure you want to delete this errand?')) return;
+            if (!await promptConfirm('Delete this errand?',
+                                     'It is removed from the schedule for everyone.', 'Delete')) return;
             
             closeEditModal();
             errands = errands.filter(e => e.id !== id);

@@ -3962,7 +3962,9 @@
                     }
                 },
                 async clearCaches() {
-                    if (confirm("Are you sure you want to clear all map and schedule caches? This will force new API calls to Google/Mapbox.")) {
+                    if (await promptConfirm('Clear all caches?',
+                            'Map and schedule caches will be rebuilt from scratch, which spends new Google/Mapbox API calls.',
+                            'Clear caches')) {
                         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
                         fetch(`${apiBase}api/cache`, { method: 'DELETE' })
                             .then(r => {
@@ -5176,7 +5178,8 @@
                     }
                 },
                 async deleteErrandRule(docId) {
-                    if (!confirm('Delete this errand rule?')) return;
+                    if (!await promptConfirm('Delete this errand rule?',
+                                             'This cannot be undone.', 'Delete')) return;
                     await fetch(`${this.apiBase}api/errand_rules/${docId}`, { method: 'DELETE' });
                     await this.loadErrandRules();
                 },
@@ -5245,7 +5248,8 @@
                     await this.loadThemes();
                 },
                 async deleteTheme(doc_id) {
-                    if (confirm("Are you sure you want to delete this theme?")) {
+                    if (await promptConfirm('Delete this theme?',
+                                            'Its weights and penalties are removed from the solver.', 'Delete')) {
                         await fetch(`${this.apiBase}api/themes/${doc_id}`, { method: 'DELETE' });
                         await this.loadThemes();
                     }
@@ -5356,7 +5360,9 @@
                     }
                 },
                 async generateAIRules() {
-                    if (!confirm('Synthesizing rules will replace all existing AI-generated rules. Standard manually-created rules are preserved. Continue?')) {
+                    if (!await promptConfirm('Synthesize rules?',
+                            'Every existing AI-generated rule is replaced. Rules you created by hand are preserved.',
+                            'Synthesize')) {
                         return;
                     }
                     this.aiRulesGenerating = true;

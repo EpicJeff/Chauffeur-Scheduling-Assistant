@@ -222,4 +222,19 @@
     body.ha-theme .text-blue-400 {
         color: color-mix(in srgb, var(--ha-primary-text) 55%, #3b82f6) !important;
     }
+
+    /* Pink is the Moments accent (gallery headings, hearth rail, strip label,
+       rule day-chips in config) and was never mapped — on a LIGHT HA theme
+       text-pink-300 sits on a light card and all but disappears. */
+    body.ha-theme .text-pink-200,
+    body.ha-theme .text-pink-300,
+    body.ha-theme .text-pink-400 {
+        color: color-mix(in srgb, var(--ha-primary-text) 55%, #ec4899) !important;
+    }
+
+    /* NOTE for future work: only the opacity suffixes listed in this file are
+       mapped. A class like bg-gray-900/85 looks identical to /90 on the dark
+       default and then stays hard-dark on a light theme — which is exactly
+       how the Moments back bar shipped as a black band. Stick to the mapped
+       set (/30 /40 /50 /60 /70 /80 /90) or add the variant here. */
 </style>

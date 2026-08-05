@@ -983,7 +983,7 @@
             return new Promise(resolve => {
                 _pwaModal(`
                     <div class="text-white font-bold text-lg mb-1">${mfEscape(title)}</div>
-                    ${message ? `<div class="text-gray-400 text-sm mb-4 leading-snug">${mfEscape(message)}</div>` : '<div class="mb-4"></div>'}
+                    ${message ? `<div class="text-gray-400 text-sm mb-4 leading-snug whitespace-pre-line">${mfEscape(message)}</div>` : '<div class="mb-4"></div>'}
                     <div class="flex gap-2 justify-end">
                         <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">${mfEscape(falseText)}</button>
                         <button data-yes class="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold">${mfEscape(trueText)}</button>
@@ -2813,9 +2813,11 @@
         function verifyChore(id) {
             _chorePost(`${id}/verify`, {}, { 'X-Member-Token': memberToken() });
         }
-        function rejectChore(id) {
-            const reason = prompt('What needs fixing?') || '';
-            _chorePost(`${id}/reject`, { reason: reason }, { 'X-Member-Token': memberToken() });
+        async function rejectChore(id) {
+            const reason = await promptInput('Send it back', 'What needs fixing?',
+                                             { placeholder: 'e.g. the sink is still full', okText: 'Send back' });
+            if (reason === null) return;   // cancelled — do not reject silently
+            _chorePost(`${id}/reject`, { reason: reason || '' }, { 'X-Member-Token': memberToken() });
         }
 
         // --- Family goals (pooled rewards) ---
@@ -3003,7 +3005,8 @@
         }
 
         async function markErrandCompleted(id, btnElement = null) {
-            if (!btnElement && !confirm('Mark this errand as completed?')) return;
+            if (!btnElement && !await promptConfirm('Mark completed?',
+                    'This errand will be marked done for everyone.', 'Mark done')) return;
             try {
                 // We need to fetch the existing errand first
                 const res = await fetch(`${apiBase}api/errands`);
@@ -3553,7 +3556,11 @@
                 }
                 conflicts = [...new Set(conflicts)];
                 if (conflicts.length > 0) {
-                    const proceed = confirm("The solver would normally not assign you this:\n\n• " + conflicts.join("\n• ") + "\n\nOverride anyway?");
+                    const proceed = await promptConfirm(
+                        'Override the solver?',
+                        'The solver would normally not assign you this:\n\n• '
+                            + conflicts.join('\n• '),
+                        'Claim anyway');
                     if (!proceed) {
                         reset();
                         return;
