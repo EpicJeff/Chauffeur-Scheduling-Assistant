@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-05 (v2.71.0 — meals arc M1 + M2 shipped;
+up cold. Last updated: 2026-08-05 (v2.72.0 — meals arc M1–M3 COMPLETE;
 the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
@@ -256,7 +256,12 @@ won't eat in the car at all).
   (thaw) creates a morning touchpoint on K5's launch line. Ordered/hybrid
   meals route via C3's min-detour machinery, and **delivery is a presence
   constraint the solver can check** ("nobody is home 6:00–6:40").
-- **M3 — the repertoire.** Fit, not method: four timing numbers
+- **M3 — the repertoire. SHIPPED v2.72.0 (2026-08-05). THE ARC AS DESIGNED
+  (M1–M3) IS COMPLETE.** Details in system_capabilities.md. Built as designed;
+  the reshape was that `meals_that_fit` returns BLOCKED entries with their
+  reason alongside the fits, so nothing vanishes without explanation, and an
+  empty repertoire and a repertoire where nothing fits are different answers.
+  Original design text follows. Fit, not method: four timing numbers
   (`prep_ahead`/`finish`/`unattended`/`needs_ahead`) instead of one cook time,
   plus `holds_well`, `portability`, and a `source` axis (prep/ordered/hybrid
   with vendor + `order_lead_mins` + pickup/delivery). Ingredients classed

@@ -42,6 +42,72 @@
                 </p>
             </header>
 
+            <!-- ===== 🍽️ Tonight — the repertoire as a FILTER RESULT =====
+                 Deliberately not a browsable meal library: if people start
+                 browsing this it has become a recipe box and failed. It shows
+                 what fits the day the solver actually produced, and nothing
+                 at all when the evening is unconstrained and nothing is due
+                 a head start. -->
+            <div x-show="!isKiosk && (suggest.lines.length || suggest.fits.length)"
+                class="mb-6 bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
+                <div class="flex items-baseline justify-between mb-3">
+                    <h3 class="text-xs font-black uppercase tracking-widest text-pink-200">🍽️ Tonight</h3>
+                    <button @click="showRepertoire = !showRepertoire"
+                        class="text-xs text-gray-500 hover:text-white"
+                        x-text="showRepertoire ? 'Hide meals' : 'Our meals'"></button>
+                </div>
+                <template x-for="(line, i) in suggest.lines" :key="'sl-' + i">
+                    <div class="text-sm text-gray-300 mb-1.5" x-text="line"></div>
+                </template>
+                <div x-show="suggest.nobody_can_eat" class="text-sm text-gray-400">
+                    Nothing fits a gap tonight — worth picking something up on the way.
+                </div>
+                <div class="space-y-2 mt-3">
+                    <template x-for="m in suggest.fits" :key="'sf-' + m.id">
+                        <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
+                            <div class="min-w-0 flex-1">
+                                <div class="font-semibold text-white truncate" x-text="m.name"></div>
+                                <div class="text-[11px] text-gray-500" x-text="mealBlurb(m)"></div>
+                            </div>
+                            <button @click="mealToList(m)"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white shrink-0">
+                                + List
+                            </button>
+                            <button @click="mealServed(m)" title="Records it so the rotation stays honest"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
+                                We had this
+                            </button>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Editor: corrections only. Adding costs one sentence — the
+                     model fills the rest — because nobody fills in twelve
+                     fields and a repertoire that never reaches ~15 entries has
+                     nothing to filter. -->
+                <div x-show="showRepertoire" class="mt-4 pt-4 border-t border-gray-700">
+                    <div class="flex gap-2 mb-3">
+                        <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
+                            placeholder="Something you make — just the name"
+                            class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+                        <button @click="addMeal()" :disabled="!mealDraft.trim() || mealBusy"
+                            class="px-4 py-2.5 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                            x-text="mealBusy ? 'Adding…' : 'Add'"></button>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <template x-for="m in repertoire" :key="'rp-' + m.id">
+                            <span class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-900 border border-gray-700 text-gray-400 flex items-center gap-2">
+                                <span x-text="m.name"></span>
+                                <button @click="deleteMeal(m)" class="text-gray-600 hover:text-red-400">✕</button>
+                            </span>
+                        </template>
+                        <span x-show="!repertoire.length" class="text-xs text-gray-500">
+                            Nothing yet — name a few things you make on a weeknight.
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             <!-- ===== List switcher (stores) ===== -->
             <div class="flex items-center gap-2 mb-5 flex-wrap" x-show="lists.length > 1 || !isKiosk">
                 <template x-for="l in lists" :key="l.id">
@@ -176,6 +242,8 @@
                     (params.get('title') || '').toLowerCase()),
                 lists: [], activeId: null, items: [], members: {},
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
+                suggest: { lines: [], fits: [], nobody_can_eat: false },
+                repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
@@ -186,6 +254,8 @@
                     await this.loadMembers();
                     await this.loadLists();
                     await this.loadItems();
+                    this.loadSuggestions();   // non-blocking: derived, may take a beat
+                    this.loadRepertoire();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
@@ -194,6 +264,78 @@
                         es.onmessage = () => this.loadItems(true);
                     } catch (e) { /* stream is a nicety, not a requirement */ }
                     if (this.isKiosk) setInterval(() => this.loadItems(true), 60000);
+                },
+
+                async loadSuggestions() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/suggestions');
+                        if (!r.ok) return;
+                        const d = await r.json();
+                        this.suggest = {
+                            lines: d.lines || [], fits: d.fits || [],
+                            nobody_can_eat: !!d.nobody_can_eat
+                        };
+                    } catch (e) { }
+                },
+
+                async loadRepertoire() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/repertoire');
+                        this.repertoire = r.ok ? await r.json() : [];
+                    } catch (e) { this.repertoire = []; }
+                },
+
+                mealBlurb(m) {
+                    const hands = (m.prep_ahead_mins || 0) + (m.finish_mins || 0);
+                    const bits = [hands ? hands + ' min hands-on' : 'nothing to make'];
+                    if (m.unattended_mins) bits.push(m.unattended_mins + ' min in the oven');
+                    if (m.needs_ahead && m.needs_ahead !== 'none')
+                        bits.push('needs a ' + m.needs_ahead.replace('_', ' ') + ' head start');
+                    if (m.source === 'ordered') bits.push('ordered');
+                    return bits.join(' · ');
+                },
+
+                async addMeal() {
+                    const name = this.mealDraft.trim();
+                    if (!name) return;
+                    this.mealBusy = true;
+                    try {
+                        // One sentence in; the model fills cook times, portability
+                        // and ingredients. Asking for those up front is how a
+                        // repertoire never reaches critical mass.
+                        await fetch(this.apiBase + 'api/meals/repertoire', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name })
+                        });
+                        this.mealDraft = '';
+                        await this.loadRepertoire();
+                        await this.loadSuggestions();
+                    } catch (e) {
+                        showGlobalAlert('Could not add that meal');
+                    } finally { this.mealBusy = false; }
+                },
+
+                async deleteMeal(m) {
+                    if (!await promptConfirm('Remove "' + m.name + '" from your meals?')) return;
+                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id, { method: 'DELETE' });
+                    await this.loadRepertoire();
+                    await this.loadSuggestions();
+                },
+
+                async mealToList(m) {
+                    const r = await fetch(this.apiBase + 'api/meals/repertoire/' + m.id
+                        + '/to-list?list_id=' + encodeURIComponent(this.activeId || ''), { method: 'POST' });
+                    const d = r.ok ? await r.json() : {};
+                    if (d.reason) showGlobalAlert(m.name + ' is takeout — nothing to buy.');
+                    else if (!(d.added || []).length)
+                        showGlobalAlert('Everything it needs is a staple or already on the list.');
+                    this.loadItems(true);
+                },
+
+                async mealServed(m) {
+                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id + '/served',
+                        { method: 'POST' });
+                    await this.loadSuggestions();
                 },
 
                 async loadMembers() {

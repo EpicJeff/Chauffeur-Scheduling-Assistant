@@ -487,6 +487,31 @@ class RemoveShoppingItemTool(BaseModel):
     item_name: str = Field(..., description="The item to remove.")
     list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
 
+class SuggestDinnerTool(BaseModel):
+    """
+    Answers "what's for dinner?" by filtering the family's OWN meals against today's schedule (time at home, who eats in the car, allergies). Does not invent recipes and does not know what food is in the house.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
+class AddMealToRepertoireTool(BaseModel):
+    """
+    Adds one of the family's regular meals by NAME. Cook times, portability and ingredients are filled in automatically — never ask for them.
+    """
+    name: str = Field(..., description="What the family calls the meal, e.g. 'tacos'.")
+
+class AddMealIngredientsToListTool(BaseModel):
+    """
+    Puts a meal's fresh ingredients on the shopping list; staples the family always has are skipped.
+    """
+    meal_name: str = Field(..., description="Which meal from the repertoire.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class MarkMealServedTool(BaseModel):
+    """
+    Records that the family had a meal ("we had tacos"), keeping the rotation honest. Adds it to the repertoire if missing.
+    """
+    meal_name: str = Field(..., description="What they ate.")
+
 class GetEatingPlanTool(BaseModel):
     """
     Answers "what's the plan for dinner?", "do we have time to cook tonight?", "who's eating when?" from the SCHEDULE: time at home to cook, whether the family eats in shifts, who eats in the car and by when their food must be ready, and whether anyone has no gap to eat. Does NOT know what food is in the house.
@@ -569,6 +594,10 @@ TOOL_SCHEMAS = {
     "check_off_shopping_item": CheckOffShoppingItemTool.model_json_schema(),
     "remove_shopping_item_by_name": RemoveShoppingItemTool.model_json_schema(),
     "get_eating_plan": GetEatingPlanTool.model_json_schema(),
+    "suggest_dinner": SuggestDinnerTool.model_json_schema(),
+    "add_meal_to_repertoire": AddMealToRepertoireTool.model_json_schema(),
+    "add_meal_ingredients_to_list": AddMealIngredientsToListTool.model_json_schema(),
+    "mark_meal_served": MarkMealServedTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1688,6 +1717,23 @@ def handle_remove_shopping_item(args: dict) -> dict:
     return remove_shopping_item_by_name(args.get("item_name") or "",
                                         list_name=args.get("list_name") or "")
 
+def handle_suggest_dinner(args: dict) -> dict:
+    from services.agent_tools_v2 import suggest_dinner
+    return suggest_dinner(args.get("target_date") or "today")
+
+def handle_add_meal_to_repertoire(args: dict) -> dict:
+    from services.agent_tools_v2 import add_meal_to_repertoire
+    return add_meal_to_repertoire(args.get("name") or "")
+
+def handle_add_meal_ingredients_to_list(args: dict) -> dict:
+    from services.agent_tools_v2 import add_meal_ingredients_to_list
+    return add_meal_ingredients_to_list(args.get("meal_name") or "",
+                                        list_name=args.get("list_name") or "")
+
+def handle_mark_meal_served(args: dict) -> dict:
+    from services.agent_tools_v2 import mark_meal_served
+    return mark_meal_served(args.get("meal_name") or "")
+
 def handle_get_eating_plan(args: dict) -> dict:
     from services.agent_tools_v2 import get_eating_plan
     return get_eating_plan(args.get("target_date") or "today")
@@ -1771,6 +1817,10 @@ TOOL_HANDLERS = {
     "check_off_shopping_item": handle_check_off_shopping_item,
     "remove_shopping_item_by_name": handle_remove_shopping_item,
     "get_eating_plan": handle_get_eating_plan,
+    "suggest_dinner": handle_suggest_dinner,
+    "add_meal_to_repertoire": handle_add_meal_to_repertoire,
+    "add_meal_ingredients_to_list": handle_add_meal_ingredients_to_list,
+    "mark_meal_served": handle_mark_meal_served,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

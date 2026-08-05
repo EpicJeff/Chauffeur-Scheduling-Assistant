@@ -400,6 +400,7 @@ with db_lock:
     kid_tasks_table = db.table('kid_tasks')
     shopping_lists_table = db.table('shopping_lists')
     shopping_items_table = db.table('shopping_items')
+    meals_table = db.table('meals')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1688,6 +1689,58 @@ def find_shopping_lists_for_errand(errand: dict) -> List[dict]:
         if (tag and tag in tags) or (store and loc and store == loc):
             out.append(l)
     return out
+
+# --- Meal repertoire (meals & provisioning arc M3) ---
+# Fit, not method. See docs/meal_design.md §M3 and models.schemas.Meal.
+
+def get_meals(include_inactive: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(m) for m in meals_table.all()]
+    if not include_inactive:
+        rows = [m for m in rows if m.get('is_active', True)]
+    # Least-recently-served first: rotation is the point of last_served_at.
+    rows.sort(key=lambda m: (m.get('last_served_at') or 0, (m.get('name') or '').lower()))
+    return rows
+
+def get_meal(meal_id: str) -> Optional[dict]:
+    with db_lock:
+        res = meals_table.search(Query().id == meal_id)
+        return dict(res[0]) if res else None
+
+def find_meal_by_name(name: str) -> Optional[dict]:
+    low = (name or '').strip().lower()
+    if not low:
+        return None
+    rows = get_meals(include_inactive=True)
+    for m in rows:
+        if (m.get('name') or '').strip().lower() == low:
+            return m
+    for m in rows:
+        if low in (m.get('name') or '').strip().lower():
+            return m
+    return None
+
+def add_meal(data: dict) -> str:
+    with db_lock:
+        meals_table.insert(data)
+        return data['id']
+
+def update_meal(meal_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(meals_table.update(data, Query().id == meal_id))
+
+def delete_meal(meal_id: str):
+    with db_lock:
+        meals_table.remove(Query().id == meal_id)
+
+def mark_meal_served(meal_id: str, when: float = None) -> Optional[dict]:
+    """Set where attention already is — the surface that SUGGESTED the meal
+    offers a one-tap 'we had this'. Rotation maintains itself or it does not
+    get maintained."""
+    import time as _time
+    if not update_meal(meal_id, {'last_served_at': when or _time.time()}):
+        return None
+    return get_meal(meal_id)
 
 def add_routine(data: dict) -> str:
     with db_lock:

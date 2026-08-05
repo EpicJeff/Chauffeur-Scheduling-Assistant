@@ -4949,6 +4949,93 @@ def meals_plan(date: Optional[str] = None, meal: str = 'dinner'):
     plan['lines'] = _meals.plan_summary_lines(plan)
     return plan
 
+class MealRequest(BaseModel):
+    name: str
+    enrich: bool = True          # let the model fill the metadata from the name
+
+class MealPatch(BaseModel):
+    # Corrections only — the editor exists so the family can fix what the
+    # model guessed, not so anyone fills in twelve fields up front.
+    name: Optional[str] = None
+    prep_ahead_mins: Optional[int] = None
+    finish_mins: Optional[int] = None
+    unattended_mins: Optional[int] = None
+    needs_ahead: Optional[str] = None
+    holds_well: Optional[bool] = None
+    portability: Optional[str] = None
+    source: Optional[str] = None
+    vendor: Optional[str] = None
+    vendor_location: Optional[str] = None
+    order_lead_mins: Optional[int] = None
+    fulfillment: Optional[str] = None
+    effort: Optional[str] = None
+    serves: Optional[int] = None
+    tags: Optional[List[str]] = None
+    ingredients: Optional[List[Dict[str, Any]]] = None
+    notes: Optional[str] = None
+    link: Optional[str] = None
+    is_active: Optional[bool] = None
+
+@app.get("/api/meals/repertoire")
+def list_meals(include_inactive: bool = False):
+    return storage.get_meals(include_inactive)
+
+@app.post("/api/meals/repertoire")
+def create_meal_api(req: MealRequest):
+    from services import meals as _meals
+    if not (req.name or '').strip():
+        raise HTTPException(status_code=400, detail="A meal needs a name")
+    existing = storage.find_meal_by_name(req.name)
+    if existing:
+        return {**existing, 'existing': True}
+    return _meals.create_meal(req.name, enrich=req.enrich)
+
+@app.patch("/api/meals/repertoire/{meal_id}")
+def patch_meal(meal_id: str, req: MealPatch):
+    if not storage.get_meal(meal_id):
+        raise HTTPException(status_code=404, detail="Meal not found")
+    patch = {k: v for k, v in req.model_dump().items() if v is not None}
+    if patch:
+        storage.update_meal(meal_id, patch)
+    return storage.get_meal(meal_id)
+
+@app.delete("/api/meals/repertoire/{meal_id}")
+def remove_meal(meal_id: str):
+    storage.delete_meal(meal_id)
+    return {"status": "ok"}
+
+@app.post("/api/meals/repertoire/{meal_id}/served")
+def meal_served(meal_id: str):
+    """One tap on the surface that SUGGESTED it — rotation maintains itself
+    where attention already is, or it does not get maintained."""
+    meal = storage.mark_meal_served(meal_id)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    return meal
+
+@app.post("/api/meals/repertoire/{meal_id}/to-list")
+def meal_to_list(meal_id: str, list_id: Optional[str] = None):
+    from services import meals as _meals
+    meal = storage.get_meal(meal_id)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    res = _meals.ingredients_to_shopping(meal, list_id)
+    _touch_stream()
+    return res
+
+@app.get("/api/meals/suggestions")
+def meal_suggestions(date: Optional[str] = None, limit: int = 5):
+    """The repertoire filtered by what the day allows — a query, not planning."""
+    import datetime as _dt
+    from services import meals as _meals
+    date_str = date or _dt.date.today().isoformat()
+    plan = _meals.eating_plan(date_str, 'dinner')
+    res = _meals.meals_that_fit(plan, limit=limit)
+    return {'date': date_str, 'cook_window_mins': plan.get('cook_window_mins'),
+            'split': plan.get('split'), 'packed_count': plan.get('packed_count'),
+            'nobody_can_eat': plan.get('nobody_can_eat'),
+            'lines': _meals.plan_summary_lines(plan), **res}
+
 @app.post("/api/shopping/photo")
 async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
                          list_id: str = Form('')):

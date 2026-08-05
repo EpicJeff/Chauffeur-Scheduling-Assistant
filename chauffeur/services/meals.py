@@ -442,6 +442,280 @@ def eating_plan(date_str: str, meal: str = 'dinner', sched: dict = None,
     }
 
 
+# --- M3: matching the repertoire against the day -----------------------------
+# The repertoire stores FIT, not method, which is what makes this a filter
+# rather than a planning exercise: "3 of yours fit tonight" is a query over
+# what M2 already computed.
+
+# What a meal REQUIRES of the place it is eaten.
+_PORTABILITY_RANK = {'none': 0, 'handheld': 1, 'utensils_ok': 2}
+# What the family is WILLING to do there (the settings).
+_LEVEL_RANK = {'none': 0, 'snack': 1, 'handheld': 2, 'full': 3}
+
+
+def meal_fits_slot(meal: dict, slot: dict) -> tuple:
+    """(fits, reason). Reason explains a NO — the editor and the agent both
+    say why rather than silently hiding a meal."""
+    modality = slot.get('modality')
+    port = str(meal.get('portability') or 'none').lower()
+    if modality in ('in_car', 'at_venue'):
+        if port == 'none':
+            return False, "doesn't travel"
+        level = str(slot.get('dining_level') or 'full').lower()
+        # utensils_ok food needs a family willing to eat a full meal there;
+        # handheld food only needs handheld tolerance.
+        need = 'full' if port == 'utensils_ok' else 'handheld'
+        if _LEVEL_RANK.get(level, 3) < _LEVEL_RANK[need]:
+            return False, f"needs {need} eating {'in the car' if modality == 'in_car' else 'out'}"
+    return True, ""
+
+
+def meal_fits_window(meal: dict, cook_window_mins: int, split: bool) -> tuple:
+    """Time fit. `prep_ahead_mins` can land in any earlier gap, but with only
+    one window known we require the hands-on total to fit inside it.
+    `unattended_mins` deliberately does NOT count against the window — that is
+    the whole point of the roast."""
+    if str(meal.get('source') or 'prep') == 'ordered':
+        return True, ""      # nothing to cook; lead time is handled separately
+    hands_on = int(meal.get('prep_ahead_mins') or 0) + int(meal.get('finish_mins') or 0)
+    if hands_on > max(cook_window_mins, 0):
+        return False, f"needs {hands_on} min hands-on, there's {cook_window_mins}"
+    if split and not meal.get('holds_well'):
+        return False, "doesn't hold for a split dinner"
+    return True, ""
+
+
+def _eater_diet(plan: dict) -> tuple:
+    """(hard_avoid, soft_dislike) tag sets across everyone eating this meal."""
+    avoid, dislike = set(), set()
+    members = {m['id']: m for m in storage.get_all_members()}
+    for p in plan.get('people') or []:
+        m = members.get(p['member_id']) or {}
+        avoid |= {str(t).strip().lower() for t in (m.get('dietary_avoid') or []) if str(t).strip()}
+        dislike |= {str(t).strip().lower() for t in (m.get('dietary_dislike') or []) if str(t).strip()}
+    return avoid, dislike
+
+
+def meals_that_fit(plan: dict, limit: int = 5) -> dict:
+    """Repertoire entries that actually work for this plan, ranked.
+
+    Hard filters: the household's tightest slot (a meal everyone can eat has
+    to survive the car if someone is in the car), the cook window, and
+    allergies. Soft signals only reorder: recency (rotation), dislikes,
+    effort. Returns {'fits': [...], 'blocked': [...]} — blocked entries carry
+    their reason so nothing vanishes without explanation.
+    """
+    repertoire = storage.get_meals()
+    if not repertoire:
+        return {'fits': [], 'blocked': [], 'empty': True}
+
+    avoid, dislike = _eater_diet(plan)
+    window = int(plan.get('cook_window_mins') or 0)
+    split = bool(plan.get('split'))
+    # The binding slot is the most restrictive one anyone actually has.
+    slots = [p['first'] for p in (plan.get('people') or []) if p.get('first')]
+    slots.sort(key=lambda s: _PORTABILITY_RANK.get('none') if s['modality'] == 'at_home' else 1,
+               reverse=True)
+    binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')),
+                   slots[0] if slots else None)
+
+    fits, blocked = [], []
+    for meal in repertoire:
+        tags = {str(t).strip().lower() for t in (meal.get('tags') or [])}
+        if tags & avoid:
+            blocked.append({**meal, 'why': "someone eating can't have it"})
+            continue
+        if binding:
+            ok, why = meal_fits_slot(meal, binding)
+            if not ok:
+                blocked.append({**meal, 'why': why})
+                continue
+        ok, why = meal_fits_window(meal, window, split)
+        if not ok:
+            blocked.append({**meal, 'why': why})
+            continue
+        score = 0.0
+        score -= 2.0 if tags & dislike else 0.0            # soft: demote, never remove
+        score -= {'easy': 0.0, 'normal': 0.5, 'project': 2.0}.get(
+            str(meal.get('effort') or 'normal'), 0.5)
+        last = meal.get('last_served_at') or 0
+        score += min((_now_ts() - last) / 86400.0, 21) / 21.0   # rotation, capped at 3 weeks
+        if meal.get('needs_ahead') not in (None, '', 'none'):
+            score -= 0.75          # possible but it wanted a morning decision
+        fits.append({**meal, 'score': round(score, 3)})
+
+    fits.sort(key=lambda m: -m['score'])
+    return {'fits': fits[:limit], 'blocked': blocked, 'empty': False}
+
+
+def _now_ts() -> float:
+    import time as _t
+    return _t.time()
+
+
+# --- population: the human supplies the NAME, the model supplies the rest ----
+# This is where the phase dies if it dies. Nobody fills in fifteen meals on a
+# form with twelve fields, and a repertoire that never reaches critical mass
+# has nothing to filter. Entry cost must be one sentence.
+
+_META_SYSTEM = (
+    "You turn the NAME of a family meal into scheduling metadata. Reply with "
+    "STRICT JSON only, no prose, no code fences. You are NOT writing a recipe "
+    "— never return steps or instructions.\n\n"
+    "Schema: {\"prep_ahead_mins\": int, \"finish_mins\": int, "
+    "\"unattended_mins\": int, \"needs_ahead\": \"none|thaw|marinate|slow_cooker\", "
+    "\"holds_well\": bool, \"portability\": \"none|handheld|utensils_ok\", "
+    "\"source\": \"prep|ordered|hybrid\", \"effort\": \"easy|normal|project\", "
+    "\"serves\": int, \"tags\": [str], "
+    "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}]}\n\n"
+    "Definitions that matter:\n"
+    "- prep_ahead_mins: hands-on work that can be done EARLIER in the day and "
+    "set aside (chopping, browning, cooking rice).\n"
+    "- finish_mins: hands-on work that must happen close to eating.\n"
+    "- unattended_mins: oven/slow-cooker time needing nobody at the stove. A "
+    "roast is a small finish time and a large unattended time.\n"
+    "- holds_well: survives sitting 60-90 minutes and reheating.\n"
+    "- portability: can it be eaten away from a table? 'utensils_ok' means it "
+    "travels in a container and is eaten with a fork; 'handheld' needs no "
+    "utensils; 'none' does not travel.\n"
+    "- source: 'ordered' for takeout/delivery a family buys, 'hybrid' when "
+    "part is bought and part is made, else 'prep'.\n"
+    "- ingredients: what a shopper would write. kind='staple' for things "
+    "essentially always in a kitchen (salt, oil, common spices, rice, pasta, "
+    "flour); kind='fresh' for anything bought for this dish. Do NOT include "
+    "quantities.\n"
+    "- tags: short lowercase descriptors useful for dietary filtering and "
+    "variety, e.g. ['chicken','mexican','gluten'].\n\n"
+    "Be realistic about a home kitchen on a weeknight. If the name is too "
+    "vague to judge, return conservative middle values rather than refusing."
+)
+
+
+def suggest_meal_metadata(name: str) -> dict:
+    """One LLM call on the INTERACTIVE tier (someone is waiting) turning a bare
+    name into a full entry. Returns {} on any failure — the caller falls back
+    to a plain entry the family can correct, because failing to save a meal
+    someone just named is worse than saving a rough one."""
+    from services import model_pools
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key or not (name or '').strip():
+        return {}
+    try:
+        res = model_pools.call_pool_json(
+            'interactive', api_key, _META_SYSTEM,
+            f"Meal name: {name.strip()}", temperature=0.2, timeout_s=45,
+            settings=settings)
+        if not isinstance(res, dict) or res.get('error'):
+            return {}
+    except Exception as e:
+        print(f"[meals] metadata suggestion failed for {name!r}: {e}")
+        return {}
+
+    def _int(key, lo=0, hi=600):
+        try:
+            return max(lo, min(hi, int(res.get(key) or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _choice(key, allowed, default):
+        v = str(res.get(key) or '').strip().lower()
+        return v if v in allowed else default
+
+    ings = []
+    seen = set()
+    for i in (res.get('ingredients') or [])[:30]:
+        if not isinstance(i, dict):
+            continue
+        nm = str(i.get('name') or '').strip()[:60]
+        if not nm or nm.lower() in seen:
+            continue
+        seen.add(nm.lower())
+        ings.append({'name': nm,
+                     'kind': 'staple' if str(i.get('kind') or '').lower() == 'staple'
+                             else 'fresh'})
+    return {
+        'prep_ahead_mins': _int('prep_ahead_mins'),
+        'finish_mins': _int('finish_mins'),
+        'unattended_mins': _int('unattended_mins'),
+        'needs_ahead': _choice('needs_ahead',
+                               ('none', 'thaw', 'marinate', 'slow_cooker'), 'none'),
+        'holds_well': bool(res.get('holds_well')),
+        'portability': _choice('portability',
+                               ('none', 'handheld', 'utensils_ok'), 'none'),
+        'source': _choice('source', ('prep', 'ordered', 'hybrid'), 'prep'),
+        'effort': _choice('effort', ('easy', 'normal', 'project'), 'normal'),
+        'serves': _int('serves', 1, 20) or 4,
+        'tags': [str(t).strip().lower()[:24] for t in (res.get('tags') or [])[:8]
+                 if str(t).strip()],
+        'ingredients': ings,
+    }
+
+
+def create_meal(name: str, enrich: bool = True) -> dict:
+    """Add a repertoire entry from just a name."""
+    from models.schemas import Meal
+    data = {'name': (name or '').strip()}
+    if enrich:
+        data.update(suggest_meal_metadata(name))
+    meal = Meal(**data).model_dump()
+    storage.add_meal(meal)
+    return meal
+
+
+def ingredients_to_shopping(meal: dict, list_id: str = None,
+                            added_by: str = None) -> dict:
+    """Drain a meal's FRESH ingredients onto the shopping list.
+
+    Staples never go — that is the whole point of classifying them, and it is
+    how this recovers most of inventory's value while tracking item CLASS
+    rather than item STATE. An `ordered` meal contributes nothing at all; a
+    hybrid contributes only its prepped part.
+    """
+    from models.schemas import ShoppingItem
+    if str(meal.get('source') or 'prep') == 'ordered':
+        return {'added': [], 'skipped': [], 'reason': 'ordered — nothing to buy'}
+    lst_id = list_id or storage.ensure_default_shopping_list()['id']
+    added, skipped = [], []
+    for ing in meal.get('ingredients') or []:
+        name = (ing.get('name') or '').strip()
+        if not name:
+            continue
+        if (ing.get('kind') or 'fresh') == 'staple':
+            skipped.append(name)
+            continue
+        if storage.find_open_shopping_item(lst_id, name):
+            skipped.append(name)
+            continue
+        storage.add_shopping_item(ShoppingItem(
+            list_id=lst_id, name=name, added_via='meal',
+            source_meal_id=meal.get('id'), added_by=added_by).model_dump())
+        added.append(name)
+    return {'added': added, 'skipped': skipped, 'list_id': lst_id}
+
+
+def morning_prep_note(date_str: str = None) -> Optional[str]:
+    """The K5-launch-line touchpoint: if tonight is tight and the repertoire's
+    best fit wanted a head start, say so THIS MORNING while it is still
+    actionable. Returns None when there is nothing worth saying."""
+    import datetime as _dt
+    date_str = date_str or _dt.date.today().isoformat()
+    plan = eating_plan(date_str, 'dinner')
+    if not plan.get('people') or plan.get('nobody_can_eat'):
+        return None
+    res = meals_that_fit(plan, limit=3)
+    for meal in res.get('fits') or []:
+        need = meal.get('needs_ahead')
+        if need in (None, '', 'none'):
+            continue
+        verb = {'thaw': 'get out to thaw', 'marinate': 'get marinating',
+                'slow_cooker': 'get in the slow cooker'}.get(need, 'start')
+        window = plan.get('cook_window_mins') or 0
+        tight = f" Tonight's window is about {window} min." if window and window < 60 else ""
+        return f"🍽️ If it's {meal['name']} tonight, {verb} now.{tight}"
+    return None
+
+
 def plan_summary_lines(plan: dict) -> list:
     """The evening-digest / kiosk phrasing.
 

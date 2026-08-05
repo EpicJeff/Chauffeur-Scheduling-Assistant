@@ -122,6 +122,13 @@ class FamilyMember(BaseModel):
     # push and the morning launch line. Empty = no school-hour features.
     school_hours_start: Optional[str] = None  # HH:MM
     school_hours_end: Optional[str] = None    # HH:MM
+    # Dietary constraints (meals arc M3), mirroring the SOLVER's own hard/soft
+    # grammar: `dietary_avoid` is HARD — a meal tagged with one of these is
+    # filtered out entirely whenever this person is eating (allergies).
+    # `dietary_dislike` is SOFT — it demotes a meal in ranking and never
+    # removes it (picky eaters are a preference, not a constraint).
+    dietary_avoid: List[str] = Field(default_factory=list)
+    dietary_dislike: List[str] = Field(default_factory=list)
     # School bus (bus arc, children only — services/bus.py). bus_am_stop_time
     # is the opt-in switch; HCTB live data auto-discovers via first name.
     bus_am_stop_time: Optional[str] = None    # HH:MM — morning pickup at stop
@@ -704,6 +711,58 @@ class ShoppingItem(BaseModel):
     is_checked: bool = False
     checked_at: Optional[float] = None
     checked_by: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+
+class MealIngredient(BaseModel):
+    # Light structure only — quantity and unit are NEVER parsed. `kind` is the
+    # trick that recovers most of inventory's value with none of its
+    # maintenance: it is a property of the DISH ("tacos need fresh beef, and
+    # the spices are always here"), stable forever, so there is nothing to
+    # keep up to date and nothing to rot. Only `fresh` lines reach the
+    # shopping list or gate feasibility.
+    name: str
+    kind: str = 'fresh'                # staple | fresh
+
+class Meal(BaseModel):
+    # Meals & provisioning arc M3 — the REPERTOIRE, not a recipe box. A recipe
+    # answers "how do I make this"; an entry here answers "can we have this
+    # today", which is a scheduling question and the only kind Chauffeur has
+    # any business storing. Nobody in this family reads instructions to make
+    # tacos. THERE ARE NO STEPS, EVER — that is the line between this and a
+    # recipe box; `notes`/`link` cover the twice-a-year meal nobody remembers.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    name: str
+
+    # --- timing: four numbers, because one cannot express a real weeknight.
+    # A 90-minute roast with 8 minutes hands-on is IDEAL when a parent is home
+    # 4:30-6:00; a 25-minute stir-fry that is 25 minutes at the stove is
+    # impossible on that same night.
+    prep_ahead_mins: int = 0      # detachable work — schedulable into ANY earlier gap
+    finish_mins: int = 0          # must happen near eating
+    unattended_mins: int = 0      # oven/slow cooker; someone home at start + end
+    needs_ahead: str = 'none'     # none | thaw | marinate | slow_cooker (lead time, not work)
+
+    # --- place and persistence
+    holds_well: bool = False      # survives split service and reheats
+    portability: str = 'none'     # none | handheld | utensils_ok — matched to slot modality
+
+    # --- acquisition. Ordered food is ORDINARY, not an emergency: "Thursday is
+    # pizza from the usual place" is a planned meal that happens to need a stop.
+    source: str = 'prep'          # prep | ordered | hybrid
+    vendor: Optional[str] = None
+    vendor_location: Optional[str] = None
+    order_lead_mins: int = 0
+    fulfillment: str = 'pickup'   # pickup | delivery
+
+    effort: str = 'normal'        # easy | normal | project
+    serves: int = 4
+    tags: List[str] = Field(default_factory=list)
+    ingredients: List[MealIngredient] = Field(default_factory=list)
+    notes: Optional[str] = ""
+    link: Optional[str] = None
+    last_served_at: Optional[float] = None
+    is_active: bool = True
     created_at: float = Field(default_factory=time.time)
 
 class TripPOI(BaseModel):

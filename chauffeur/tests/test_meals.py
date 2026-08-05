@@ -17,6 +17,7 @@ Run from chauffeur/:  python tests/test_meals.py
 """
 import atexit
 import datetime
+from unittest import mock
 import os
 import shutil
 import sys
@@ -428,6 +429,235 @@ def scenario_settings_round_trip_through_the_model():
     check(meals.dining_setting('car', {}) == 'full', "and absent config reads as permissive")
     check(meals.dining_setting('venue', {'venue_dining': 'snack'}) == 'snack',
           "an explicit restriction is honored")
+
+
+# --- M3: the repertoire ------------------------------------------------------
+
+def _meal(name, **kw):
+    from models.schemas import Meal
+    m = Meal(name=name, **kw).model_dump()
+    storage.add_meal(m)
+    return m
+
+
+def _tight_evening():
+    """Addison eats in the car before practice; everyone else is home."""
+    return {
+        "events": [
+            _ev("school", "School", "08:00", "17:00", "School", ["add@cal"]),
+            _ev("practice", "Practice", "17:30", "19:30", "Field", ["add@cal"]),
+        ],
+        "assignments": {"practice": "d-mom"}, "matched_rules": {},
+    }
+
+
+def scenario_one_number_could_not_express_a_weeknight():
+    """The roast and the stir-fry have the same total time and opposite
+    verdicts — which is exactly why cook_mins was replaced by four numbers."""
+    reset_db(); _seed_people()
+    settings = _settings()
+    roast = _meal("Roast", finish_mins=8, unattended_mins=90,
+                  portability='none', holds_well=True)
+    stirfry = _meal("Stir-fry", finish_mins=25, portability='none')
+
+    # A 20-minute window at home.
+    ok, _ = meals.meal_fits_window(roast, 20, split=False)
+    check(ok, "a 90-minute roast with 8 min hands-on FITS a 20-minute window — "
+              "unattended time is not hands-on time")
+    ok, why = meals.meal_fits_window(stirfry, 20, split=False)
+    check(not ok, f"25 minutes at the stove does not fit 20 minutes ({why})")
+
+
+def scenario_portability_is_matched_against_the_family_setting():
+    reset_db(); _seed_people()
+    fork_food = _meal("Chili", portability='utensils_ok', holds_well=True)
+    handheld = _meal("Wraps", portability='handheld')
+    dinner_plate = _meal("Roast", portability='none')
+
+    full_car = {'modality': 'in_car', 'dining_level': 'full'}
+    check(meals.meal_fits_slot(fork_food, full_car)[0],
+          "this family eats full meals with forks in the car — chili travels")
+    check(meals.meal_fits_slot(handheld, full_car)[0], "so do wraps")
+    check(not meals.meal_fits_slot(dinner_plate, full_car)[0],
+          "a roast still doesn't travel — that IS physics")
+
+    handheld_car = {'modality': 'in_car', 'dining_level': 'handheld'}
+    check(not meals.meal_fits_slot(fork_food, handheld_car)[0],
+          "a handheld-only family doesn't get the fork food")
+    check(meals.meal_fits_slot(handheld, handheld_car)[0], "but wraps are fine")
+
+    home = {'modality': 'at_home', 'dining_level': 'full'}
+    check(all(meals.meal_fits_slot(m, home)[0]
+              for m in (fork_food, handheld, dinner_plate)),
+          "at home, portability is irrelevant")
+
+
+def scenario_fit_filter_respects_the_binding_slot_and_split():
+    reset_db(); _seed_people()
+    settings = _settings()
+    _meal("Chili", finish_mins=20, portability='utensils_ok', holds_well=True)
+    _meal("Roast", finish_mins=10, unattended_mins=90, portability='none',
+          holds_well=True)
+    plan = meals.eating_plan(DAY, 'dinner', _tight_evening(), settings)
+    res = meals.meals_that_fit(plan)
+    names = {m['name'] for m in res['fits']}
+    blocked = {m['name']: m['why'] for m in res['blocked']}
+    check("Chili" in names, f"chili travels and holds — it fits, got {names}")
+    check("Roast" in blocked, "the roast is blocked because someone eats in the car")
+    check("travel" in blocked["Roast"], f"and it says why: {blocked['Roast']}")
+
+
+def scenario_allergies_are_hard_dislikes_are_soft():
+    reset_db(); _seed_people()
+    settings = _settings()
+    add = _member("Addison")
+    storage.update_member(add['id'], {'dietary_avoid': ['peanut'],
+                                      'dietary_dislike': ['mushroom']})
+    _meal("Satay", portability='utensils_ok', finish_mins=10, holds_well=True, tags=['peanut'])
+    _meal("Mushroom pasta", portability='utensils_ok', finish_mins=10, holds_well=True, tags=['mushroom'])
+    _meal("Chili", portability='utensils_ok', finish_mins=10, holds_well=True, tags=['beef'])
+
+    plan = meals.eating_plan(DAY, 'dinner', _tight_evening(), settings)
+    res = meals.meals_that_fit(plan)
+    names = [m['name'] for m in res['fits']]
+    blocked = {m['name'] for m in res['blocked']}
+    check("Satay" in blocked, "an allergy REMOVES the meal entirely")
+    check("Mushroom pasta" in names,
+          f"a dislike must not remove it — soft means demote, got {names}")
+    check(names.index("Chili") < names.index("Mushroom pasta"),
+          f"but the disliked one ranks lower, got {names}")
+
+
+def scenario_rotation_prefers_what_was_not_just_eaten():
+    reset_db(); _seed_people()
+    settings = _settings()
+    import time as _t
+    a = _meal("Chili", portability='utensils_ok', finish_mins=10, holds_well=True)
+    b = _meal("Tacos", portability='utensils_ok', finish_mins=10, holds_well=True)
+    storage.mark_meal_served(a['id'], _t.time())          # had it tonight
+    storage.mark_meal_served(b['id'], _t.time() - 20 * 86400)
+
+    plan = meals.eating_plan(DAY, 'dinner', _tight_evening(), settings)
+    names = [m['name'] for m in meals.meals_that_fit(plan)['fits']]
+    check(names and names[0] == "Tacos",
+          f"the one not eaten in three weeks comes first, got {names}")
+
+
+def scenario_ingredients_drain_fresh_only_and_ordered_drains_nothing():
+    reset_db(); _seed_people()
+    _settings()
+    cooked = _meal("Tacos", ingredients=[
+        {'name': 'ground beef', 'kind': 'fresh'},
+        {'name': 'tortillas', 'kind': 'fresh'},
+        {'name': 'cumin', 'kind': 'staple'},
+        {'name': 'salt', 'kind': 'staple'}])
+    res = meals.ingredients_to_shopping(cooked)
+    check(res['added'] == ['ground beef', 'tortillas'],
+          f"only FRESH lines reach the list, got {res['added']}")
+    check(set(res['skipped']) == {'cumin', 'salt'},
+          "staples are skipped — item CLASS, not item state, so nothing rots")
+
+    lid = storage.ensure_default_shopping_list()['id']
+    items = storage.get_shopping_items(lid)
+    check(all(i['added_via'] == 'meal' and i['source_meal_id'] == cooked['id']
+              for i in items),
+          "and they carry their provenance back to the meal")
+
+    again = meals.ingredients_to_shopping(cooked)
+    check(again['added'] == [], "re-draining does not duplicate what's open")
+
+    pizza = _meal("Pizza night", source='ordered', vendor="Tony's",
+                  ingredients=[{'name': 'large pepperoni', 'kind': 'fresh'}])
+    res2 = meals.ingredients_to_shopping(pizza)
+    check(res2['added'] == [] and res2.get('reason'),
+          f"an ORDERED meal contributes nothing to groceries, got {res2}")
+
+
+def scenario_metadata_comes_from_the_name_alone():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",
+                                    "home_location": HOME}
+    payload = {"prep_ahead_mins": 10, "finish_mins": 15, "unattended_mins": 0,
+               "needs_ahead": "thaw", "holds_well": True,
+               "portability": "utensils_ok", "source": "prep", "effort": "easy",
+               "serves": 4, "tags": ["beef", "mexican"],
+               "ingredients": [{"name": "ground beef", "kind": "fresh"},
+                               {"name": "Ground Beef", "kind": "fresh"},
+                               {"name": "cumin", "kind": "staple"}]}
+    with mock.patch('services.model_pools.call_pool_json', return_value=payload):
+        meal = meals.create_meal("tacos")
+    check(meal['finish_mins'] == 15 and meal['needs_ahead'] == 'thaw',
+          "the human supplied only a name; the model supplied the rest")
+    check(len(meal['ingredients']) == 2, "duplicate ingredients collapse")
+    check('steps' not in meal and 'instructions' not in meal,
+          "NO STEPS, EVER — that's the line between this and a recipe box")
+
+
+def scenario_a_failed_enrichment_still_saves_the_meal():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key"}
+    with mock.patch('services.model_pools.call_pool_json',
+                    side_effect=RuntimeError("boom")):
+        meal = meals.create_meal("mystery casserole")
+    check(meal and meal['name'] == "mystery casserole",
+          "failing to save a meal someone just named is worse than a rough one")
+    check(storage.find_meal_by_name("mystery casserole"), "and it persisted")
+
+    storage.get_settings = lambda: {}
+    meal2 = meals.create_meal("no key meal")
+    check(meal2['name'] == "no key meal", "no API key still saves a plain entry")
+
+
+def scenario_morning_note_only_when_a_head_start_is_needed():
+    reset_db(); _seed_people()
+    settings = _settings()
+    storage.set_cached_schedule(_tight_evening())
+    _meal("Chili", portability='utensils_ok', finish_mins=15, needs_ahead='thaw',
+          holds_well=True)
+    note = meals.morning_prep_note(DAY)
+    check(note and "thaw" in note, f"the thaw becomes a MORNING action, got {note}")
+
+    reset_db(); _seed_people(); _settings()
+    storage.set_cached_schedule(_tight_evening())
+    _meal("Pasta", portability='utensils_ok', finish_mins=15, needs_ahead='none',
+          holds_well=True)
+    check(meals.morning_prep_note(DAY) is None,
+          "nothing needing a head start = nothing said")
+
+
+def scenario_empty_repertoire_and_nothing_fitting_are_different_answers():
+    reset_db(); _seed_people()
+    settings = _settings()
+    storage.set_cached_schedule(_tight_evening())
+    from services.agent_tools_v2 import suggest_dinner
+    msg = suggest_dinner(DAY)['message']
+    check("repertoire yet" in msg, f"empty repertoire asks to be filled: {msg}")
+
+    _meal("Roast", portability='none', finish_mins=10)
+    msg2 = suggest_dinner(DAY)['message']
+    check("Nothing in the repertoire fits" in msg2,
+          f"a full repertoire with no fit says so, with a reason: {msg2}")
+    check(msg2 != msg, "the two answers must not be the same")
+
+
+def scenario_m3_tools_in_both_stacks():
+    reset_db(); _seed_people()
+    _settings()
+    storage.set_cached_schedule(_tight_evening())
+    from services import agent_tools, agent_tools_v2
+    want = {"suggest_dinner", "add_meal_to_repertoire",
+            "add_meal_ingredients_to_list", "mark_meal_served"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+
+    storage.get_settings = lambda: {"home_location": HOME}   # no LLM key
+    agent_tools.execute_tool("add_meal_to_repertoire", {"name": "Chili"})
+    check(storage.find_meal_by_name("Chili"), "the v1 bridge writes through")
+    res = agent_tools.execute_tool("mark_meal_served", {"meal_name": "Chili"})
+    check(storage.find_meal_by_name("Chili")['last_served_at'],
+          f"and rotation is recorded, got {res}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

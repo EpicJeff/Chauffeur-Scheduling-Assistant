@@ -289,8 +289,10 @@ sending or claiming, and never pass from_member/member_name for them.
                              # the read's message IS the complete spoken answer.
                              "add_shopping_items", "get_shopping_list_items",
                              "check_off_shopping_item", "remove_shopping_item_by_name",
-                             # M2: the plan's message IS the spoken answer.
-                             "get_eating_plan"}
+                             # M2/M3: each message IS the complete spoken answer.
+                             "get_eating_plan", "suggest_dinner",
+                             "add_meal_to_repertoire", "add_meal_ingredients_to_list",
+                             "mark_meal_served"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -555,6 +557,27 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.complete_kid_task(args.get("task_title", "") or "",
                                                       member_name=args.get("member_name", "") or "",
                                                       acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("suggest_dinner", "add_meal_to_repertoire",
+                                   "add_meal_ingredients_to_list", "mark_meal_served"):
+                    from services import agent_tools_v2 as _atv2
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "suggest_dinner":
+                        res = _atv2.suggest_dinner(args.get("target_date", "today") or "today",
+                                                   acting_member=actor)
+                    elif func_name == "add_meal_to_repertoire":
+                        res = _atv2.add_meal_to_repertoire(args.get("name", "") or "",
+                                                           acting_member=actor)
+                    elif func_name == "add_meal_ingredients_to_list":
+                        res = _atv2.add_meal_ingredients_to_list(
+                            args.get("meal_name", "") or "",
+                            list_name=args.get("list_name", "") or "", acting_member=actor)
+                    else:
+                        res = _atv2.mark_meal_served(args.get("meal_name", "") or "",
+                                                     acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "get_eating_plan":
                     from services import agent_tools_v2 as _atv2

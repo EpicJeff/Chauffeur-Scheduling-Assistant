@@ -1213,6 +1213,111 @@ def get_eating_plan(target_date: str = "today", acting_member: dict = None) -> D
     return {"status": "success", "message": f"{when}: " + " ".join(lines)}
 
 
+def suggest_dinner(target_date: str = "today", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: which of the family's own meals actually fit today's schedule.
+    A filter over the repertoire, not a planning exercise (meals arc M3)."""
+    import datetime as _dt
+    from services import meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    plan = meals.eating_plan(day.isoformat(), 'dinner')
+    when = "tonight" if day == _dt.date.today() else day.strftime('%A')
+
+    if plan.get('nobody_can_eat'):
+        return {"status": "success",
+                "message": f"Nobody has a real gap to eat {when} — everyone's booked "
+                           "through dinner. Worth grabbing something on the way."}
+    res = meals.meals_that_fit(plan, limit=4)
+    if res.get('empty'):
+        return {"status": "success",
+                "message": "There's nothing in the repertoire yet. Tell me a few "
+                           "things you make on a weeknight and I'll add them."}
+    fits = res.get('fits') or []
+    if not fits:
+        blocked = res.get('blocked') or []
+        why = blocked[0].get('why') if blocked else "the window's too tight"
+        return {"status": "success",
+                "message": f"Nothing in the repertoire fits {when} — {why}. "
+                           "Might be a night to pick something up."}
+
+    window = plan.get('cook_window_mins') or 0
+    head = f"About {window} min at home {when}" if window else f"Not much time {when}"
+    if plan.get('packed_count'):
+        head += f", and {plan['packed_count']} eating out of the house"
+    lines = []
+    for m in fits:
+        hands = int(m.get('prep_ahead_mins') or 0) + int(m.get('finish_mins') or 0)
+        bits = [f"{hands} min hands-on" if hands else "nothing to make"]
+        if m.get('unattended_mins'):
+            bits.append(f"{m['unattended_mins']} min in the oven")
+        if m.get('needs_ahead') not in (None, '', 'none'):
+            bits.append(f"needs a {m['needs_ahead'].replace('_', ' ')} head start")
+        lines.append(f"• {m['name']} — {', '.join(bits)}")
+    return {"status": "success", "message": f"{head}. These fit:\n" + "\n".join(lines)}
+
+
+def add_meal_to_repertoire(name: str, acting_member: dict = None) -> Dict[str, Any]:
+    """Add one of the family's meals by NAME; the metadata is filled in
+    automatically and can be corrected later."""
+    from services import storage, meals
+    name = (name or '').strip()
+    if not name:
+        return {"status": "error", "message": "What's the meal called?"}
+    existing = storage.find_meal_by_name(name)
+    if existing:
+        return {"status": "success",
+                "message": f"{existing['name']} is already in the repertoire."}
+    meal = meals.create_meal(name)
+    hands = int(meal.get('prep_ahead_mins') or 0) + int(meal.get('finish_mins') or 0)
+    fresh = [i['name'] for i in meal.get('ingredients') or [] if i.get('kind') == 'fresh']
+    tail = f" I've got it at about {hands} min hands-on" if hands else ""
+    if fresh:
+        tail += (", and it needs " if tail else " It needs ") + ", ".join(fresh[:4])
+    return {"status": "success",
+            "message": f"Added {meal['name']} to the repertoire.{tail}. "
+                       "Tell me if any of that's off."}
+
+
+def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
+                                 acting_member: dict = None) -> Dict[str, Any]:
+    """Put a meal's fresh ingredients on the shopping list. Staples never go —
+    the family already has those."""
+    from services import storage, meals
+    meal = storage.find_meal_by_name(meal_name)
+    if not meal:
+        return {"status": "error",
+                "message": f"I don't have '{meal_name}' in the repertoire."}
+    lst, err = _resolve_shopping_list(list_name)
+    if err:
+        return {"status": "error", "message": err}
+    res = meals.ingredients_to_shopping(meal, lst['id'],
+                                        added_by=(acting_member or {}).get('id'))
+    _bump_stream()
+    if res.get('reason'):
+        return {"status": "success",
+                "message": f"{meal['name']} is takeout — nothing to buy for it."}
+    if not res['added']:
+        return {"status": "success",
+                "message": f"Everything {meal['name']} needs is either a staple "
+                           "or already on the list."}
+    return {"status": "success",
+            "message": f"Added for {meal['name']}: " + ", ".join(res['added']) + "."}
+
+
+def mark_meal_served(meal_name: str, acting_member: dict = None) -> Dict[str, Any]:
+    """'We had tacos' — keeps rotation honest without anyone maintaining it."""
+    from services import storage
+    meal = storage.find_meal_by_name(meal_name)
+    if not meal:
+        from services import meals as _meals
+        meal = _meals.create_meal(meal_name)
+        storage.mark_meal_served(meal['id'])
+        return {"status": "success",
+                "message": f"Noted — and I've added {meal['name']} to the "
+                           "repertoire while I'm at it."}
+    storage.mark_meal_served(meal['id'])
+    return {"status": "success", "message": f"Noted — {meal['name']} tonight. 👍"}
+
+
 def _bump_stream():
     """Nudge the SSE clock so an open list view on someone else's phone
     updates without a refresh."""
@@ -1603,6 +1708,51 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."}
                 },
                 "required": []
+            }
+        },
+        {
+            "name": "suggest_dinner",
+            "description": "Answers 'what's for dinner?', 'what can we make tonight?' by filtering the family's OWN meals against today's actual schedule — the time at home, whether anyone eats in the car, and who's allergic to what. Use whenever someone asks what to eat. Does NOT invent recipes and does NOT know what food is in the house.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "add_meal_to_repertoire",
+            "description": "Adds one of the family's regular meals by NAME ('we make tacos', 'add chicken and rice to our meals'). Cook times, portability and ingredients are filled in automatically — never ask for them. This is the family's short list of what they actually make, NOT a recipe collection.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "What the family calls the meal, e.g. 'tacos'."}
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "add_meal_ingredients_to_list",
+            "description": "Puts what a meal needs onto the shopping list ('add what we need for tacos', 'put spaghetti ingredients on the list'). Only fresh things are added — staples the family always has are skipped.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "meal_name": {"type": "string", "description": "Which meal from the repertoire."},
+                    "list_name": {"type": "string", "description": "Which list or store; omit for the default list."}
+                },
+                "required": ["meal_name"]
+            }
+        },
+        {
+            "name": "mark_meal_served",
+            "description": "Records that the family had a meal ('we had tacos tonight', 'we made chili'). Keeps the rotation from suggesting the same thing twice in a week. Adds the meal to the repertoire if it isn't there yet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "meal_name": {"type": "string", "description": "What they ate."}
+                },
+                "required": ["meal_name"]
             }
         },
         {
