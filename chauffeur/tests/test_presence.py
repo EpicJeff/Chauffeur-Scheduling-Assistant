@@ -860,6 +860,38 @@ def scenario_media_root_and_sharding():
                   "an unwritable media_root is refused, not adopted")
     shutil.rmtree(good, ignore_errors=True)
 
+    # Changing media_root must NOT orphan what is already stored. This is the
+    # renamed-share case: the old root leaves the config, and without history
+    # its files stop resolving AND stop being seen by the migration — the
+    # whole back catalogue vanishes while new uploads keep working.
+    stranded = tempfile.mkdtemp(prefix="chauffeur_old_root_")
+    orphan_id = "d" * 32 + ".mp4"
+    with open(os.path.join(stranded, orphan_id), "wb") as f:
+        f.write(b"stranded-clip")
+    check(storage.media_file_path(orphan_id) is None,
+          "a root the app has never heard of is invisible (the bug)")
+    check(storage.adopt_media_root(stranded), "adopting a lost root registers it")
+    check(storage.media_file_path(orphan_id), "its files resolve immediately once adopted")
+    storage.migrate_media_layout()
+    landed = storage.media_file_path(orphan_id)
+    check(landed and os.path.normpath(landed).startswith(os.path.normpath(storage.MEDIA_DIR)),
+          f"and are relocated into the active root, got {landed}")
+    check(not storage.adopt_media_root(stranded), "adopting twice is a no-op")
+
+    # A media root may be a share with other things in it. Relocating every
+    # file found would rearrange someone's documents into ab/cd buckets.
+    check(storage._is_media_filename("a" * 32 + ".mp4"), "our files match")
+    check(storage._is_media_filename("a" * 32 + ".tmp.mp4"), "transcode working files match")
+    check(storage._is_media_filename("a" * 32 + ".orig"), "pending originals match")
+    for junk in ("taxes2025.pdf", "notes.txt", "IMG_4021.jpg", "a" * 31 + ".mp4"):
+        check(not storage._is_media_filename(junk), f"foreign file left alone: {junk}")
+    bystander = os.path.join(stranded, "taxes2025.pdf")
+    with open(bystander, "wb") as f:
+        f.write(b"not ours")
+    storage.migrate_media_layout()
+    check(os.path.exists(bystander), "a foreign file in a media root is never moved")
+    shutil.rmtree(stranded, ignore_errors=True)
+
     # Scratch is always beside the DATABASE, never derived from the media
     # root — ffmpeg and uploads must not write onto a mount, whatever the
     # root is set to.

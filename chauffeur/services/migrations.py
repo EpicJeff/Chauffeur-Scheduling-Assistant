@@ -182,6 +182,9 @@ async def migrate_media_layout_v2660():
     walk with no moves once settled, and `media_read_path` serves from either
     location and either layout throughout — so a run interrupted by a mount
     dropping out leaves nothing broken, just partly moved."""
+    # Record where the archive lives BEFORE relocating, so the next time
+    # media_root changes the old location is still in the lookup.
+    storage.register_media_root()
     res = await asyncio.to_thread(storage.migrate_media_layout)
     logger.info(f"v2.66.0 media layout: moved {res['moved']}, "
                 f"failed {res['errors']}, scanned {res['scanned']} "

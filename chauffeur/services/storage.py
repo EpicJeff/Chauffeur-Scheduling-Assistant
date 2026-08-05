@@ -94,15 +94,60 @@ def _is_separate_filesystem(path: str) -> bool:
 MEDIA_DIR = _configured_media_root() or _LEGACY_MEDIA_DIR
 
 
+# Every root the archive has EVER lived in, oldest last. Populated at startup
+# by register_media_root(). Changing media_root used to orphan everything at
+# the old location — it dropped out of the lookup, so the files stopped
+# resolving AND the migration stopped seeing them, which on a renamed share
+# means the entire back catalogue silently disappears while new uploads work.
+_MEDIA_ROOT_HISTORY: List[str] = []
+
+
 def _media_roots() -> List[str]:
-    """Every root a file might be in, active first. The legacy root stays in
-    the lookup FOREVER, not just during a migration: it is two isfile() calls
-    on a miss, and it is what makes moving the archive safe to interrupt when
-    the destination is a network mount that can disappear mid-copy."""
+    """Every root a file might be in, active first. Historical roots and the
+    legacy location stay in the lookup FOREVER, not just during a migration:
+    each is a couple of isfile() calls on a miss, and it is what makes both
+    moving the archive and CHANGING WHERE IT LIVES safe to interrupt."""
     roots = [MEDIA_DIR]
-    if os.path.normpath(_LEGACY_MEDIA_DIR) != os.path.normpath(MEDIA_DIR):
-        roots.append(_LEGACY_MEDIA_DIR)
+    seen = {os.path.normpath(MEDIA_DIR)}
+    for r in list(_MEDIA_ROOT_HISTORY) + [_LEGACY_MEDIA_DIR]:
+        if r and os.path.normpath(r) not in seen:
+            seen.add(os.path.normpath(r))
+            roots.append(r)
     return roots
+
+
+def register_media_root():
+    """Persist the active root so a later change never orphans what is here
+    now. Called at startup, before the layout migration."""
+    global _MEDIA_ROOT_HISTORY
+    try:
+        seen = list(get_app_state('media_roots_seen') or [])
+        changed = False
+        for r in (MEDIA_DIR, _LEGACY_MEDIA_DIR):
+            if r and os.path.normpath(r) not in [os.path.normpath(s) for s in seen]:
+                seen.append(r)
+                changed = True
+        if changed:
+            set_app_state('media_roots_seen', seen)
+        _MEDIA_ROOT_HISTORY = seen
+    except Exception as e:
+        print(f"[media] could not record media root history: {e}")
+
+
+def adopt_media_root(path: str) -> bool:
+    """Teach the app about a directory it never recorded — the recovery for a
+    root that changed BEFORE history was kept (a renamed share). Returns True
+    if it was newly added. The files there resolve immediately; the layout
+    migration then relocates them into the active root."""
+    global _MEDIA_ROOT_HISTORY
+    seen = list(get_app_state('media_roots_seen') or [])
+    if os.path.normpath(path) in [os.path.normpath(s) for s in seen]:
+        _MEDIA_ROOT_HISTORY = seen
+        return False
+    seen.append(path)
+    set_app_state('media_roots_seen', seen)
+    _MEDIA_ROOT_HISTORY = seen
+    return True
 
 
 def _shard(name: str) -> str:
@@ -149,6 +194,20 @@ def media_scratch_dir() -> str:
     return d
 
 
+_MEDIA_FILE_RE = None
+
+
+def _is_media_filename(name: str) -> bool:
+    """A file this app owns: a 32-hex id plus a known extension, including the
+    .orig and .tmp working files a pending transcode leaves behind."""
+    global _MEDIA_FILE_RE
+    if _MEDIA_FILE_RE is None:
+        import re
+        _MEDIA_FILE_RE = re.compile(
+            r'^[a-f0-9]{32}(\.tmp)?\.(mp4|webm|mov|m4v|jpg|png|webp|orig)$')
+    return bool(_MEDIA_FILE_RE.match(name or ''))
+
+
 def migrate_media_layout(batch_limit: int = 0) -> dict:
     """Relocate media into the active root, sharded. Runs in the BACKGROUND
     and is safe to interrupt: `media_read_path` already finds files at either
@@ -162,7 +221,11 @@ def migrate_media_layout(batch_limit: int = 0) -> dict:
             continue
         for dirpath, _dirnames, filenames in os.walk(root):
             for name in filenames:
-                if name.startswith('.'):
+                # ONLY our own files. media_root can be a share with other
+                # things in it, and a migration that relocated every file it
+                # found would rearrange somebody's documents into ab/cd
+                # buckets — on their NAS.
+                if not _is_media_filename(name):
                     continue
                 scanned += 1
                 src = os.path.join(dirpath, name)

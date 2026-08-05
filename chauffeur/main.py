@@ -5775,6 +5775,25 @@ def debug_moment_media():
                  'until then.'),
     }
 
+class MediaAdoptRequest(BaseModel):
+    path: str
+
+@app.post("/api/debug/media/adopt")
+async def debug_media_adopt(req: MediaAdoptRequest):
+    """Recover media from a directory the app no longer knows about — the
+    case where media_root changed before that history was being recorded (a
+    renamed share strands the whole back catalogue while new uploads work).
+    Registers the path permanently, so its files resolve immediately, then
+    relocates them into the active root."""
+    path = (req.path or '').strip().rstrip('/')
+    if not path or not os.path.isdir(path):
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+    added = storage.adopt_media_root(path)
+    res = await asyncio.to_thread(storage.migrate_media_layout)
+    res.update({'adopted': path, 'newly_added': added,
+                'roots': storage._media_roots()})
+    return res
+
 @app.post("/api/debug/media/migrate")
 async def debug_media_migrate():
     """Re-run the media layout relocation now, without an add-on restart.
