@@ -3,7 +3,8 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-03 (v2.39.0 — intake arc complete).
+up cold. Last updated: 2026-08-05 (v2.69.1 — meals & provisioning arc
+designed; the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -193,6 +194,46 @@ never enters the solver.
   (fragile, credentialed — the HA integration boundary keeps that risk
   outside the app); bus in the solver; countdown spam.
 
+## The meals & provisioning arc (decided 2026-08-05)
+
+Feeding a family is one of the largest recurring mental loads in a household,
+and the app's previous answer was to declare it out of scope — on a reason
+that the codebase disproves (see the reversed cut below). Full design brief:
+`docs/meal_design.md`.
+
+The insight: **the load is in the constraints, not the recipes.** At 4pm the
+blocker is not a shortage of recipes, it is that practice ends at 7:15 and a
+parent is on pickup until 6:40 — so the window is 25 minutes and the family
+eats in two shifts. Chauffeur is the only app in the house that knows that.
+Own the constraint layer, bridge the content (Mealie/Tandoor/Grocy do recipes
+well). Nightly derivation, never a stored weekly plan — a Sunday plan is a
+static artifact fighting a schedule that mutates by Tuesday, which is the
+same reason this app re-solves rather than schedules once.
+
+- **M1 — the shopping list (provisioning).** Standing `ShoppingList` /
+  `ShoppingItem` entities bound to the recurring grocery errand by tag (NOT
+  by errand id — the list outlives any errand instance). Voice/text capture
+  in both agent stacks first (~80% of the value); photo capture aimed at
+  fridge/pantry/handwritten shots, not held items. First shared mutable
+  document in the app: per-item PATCHes, no whole-list PUT, SSE deltas.
+  Zero-cost adds land directly with attribution — no proposal gate, kids
+  included. Barcode deliberately deferred to the native wrapper (Open Food
+  Facts solves the lookup for free; `BarcodeDetector` exists in no iOS
+  browser, so today it means a WASM decoder — Capacitor gets ML Kit free).
+- **M2 — the bail-out (route-aware meal stops).** Cheapest high-value item:
+  C3's fuel-stop flow retargeted from `gas_station` to restaurants, gated on
+  `trip_scheduler.MEAL_ANCHOR` windows, reusing `dining_style='quick'`.
+  Complication to respect: a fuel stop is one driver on one route; a dinner
+  stop must know who is in the car vs. eating at home.
+- **M3 — the dinner window (the moat).** Read-only derivation over solver
+  output: cook window, eaters per sitting, split-service flag → a line on the
+  existing evening digest + kiosk. Valuable with no recipes attached.
+- **M4 — the repertoire.** 10–20 family meals (cook time, serves, tags,
+  free-text ingredients, `last_served_at` for rotation) filtered by M3's
+  window; ingredients drain into M1. Deliberately thin — a Mealie import is
+  the on-ramp if it ever wants to be a real recipe box. Dietary constraints
+  on FamilyMember, mirroring the solver's grammar: allergies hard, prefs soft.
+
 ## The native app track (Capacitor wrapper — the big unlock)
 
 Wrap the existing PWA (NOT a rewrite; days not months) and distribute via
@@ -267,8 +308,13 @@ App Store is the destination.**
 
 - **Movies/video**: Jellyfin/Plex territory; licensing swamp; bridge-not-build
   if ever.
-- **Meals**: no synergy with the solver/logistics DNA; at most a calendar
-  concern.
+- ~~**Meals**: no synergy with the solver/logistics DNA; at most a calendar
+  concern.~~ **REVERSED 2026-08-05 — the stated reason was false.**
+  `trip_scheduler.py` (MEAL_BLOCKS/MEAL_ANCHOR) and `cars.py` C3
+  (propose-a-stop-on-your-route) are both shipped proof of synergy. What is
+  actually cut is narrower — **pantry inventory, recipe-site ingestion, and
+  multi-week meal plans** — and now lives with real reasons in
+  `docs/meal_design.md`. See the meals & provisioning arc above.
 - **Money/allowance mapping for points**: rewards are parent-defined items;
   "$5" can be a reward item, but no currency integration.
 - **Solver-assigned chores**: choice drives kid buy-in; the pot won.
