@@ -5023,6 +5023,42 @@ def meal_to_list(meal_id: str, list_id: Optional[str] = None):
     _touch_stream()
     return res
 
+class LeftoverRequest(BaseModel):
+    date: Optional[str] = None
+    meal_id: Optional[str] = None
+    label: Optional[str] = None
+    parts: List[str] = []
+    reheat_mins: int = 10
+
+@app.get("/api/meals/leftovers")
+def list_leftovers(date: Optional[str] = None):
+    import datetime as _dt
+    return storage.get_leftovers(date or _dt.date.today().isoformat())
+
+@app.post("/api/meals/leftovers")
+def create_leftover(req: LeftoverRequest):
+    """Mark food as already made for a day, so the plan stops holding cook
+    time for it and its ingredients stay off the shopping list."""
+    import datetime as _dt
+    from models.schemas import Leftover
+    day = req.date or _dt.date.today().isoformat()
+    storage.prune_leftovers(day)
+    label = req.label
+    if req.meal_id and not label:
+        meal = storage.get_meal(req.meal_id)
+        if not meal:
+            raise HTTPException(status_code=404, detail="Meal not found")
+        label = meal.get('name')
+    rec = Leftover(date=day, meal_id=req.meal_id, label=label,
+                   parts=req.parts, reheat_mins=req.reheat_mins).model_dump()
+    storage.add_leftover(rec)
+    return rec
+
+@app.delete("/api/meals/leftovers/{leftover_id}")
+def remove_leftover(leftover_id: str):
+    storage.delete_leftover(leftover_id)
+    return {"status": "ok"}
+
 @app.get("/api/meals/suggestions")
 def meal_suggestions(date: Optional[str] = None, limit: int = 5):
     """The repertoire filtered by what the day allows — a query, not planning."""
@@ -5034,6 +5070,7 @@ def meal_suggestions(date: Optional[str] = None, limit: int = 5):
     return {'date': date_str, 'cook_window_mins': plan.get('cook_window_mins'),
             'split': plan.get('split'), 'packed_count': plan.get('packed_count'),
             'nobody_can_eat': plan.get('nobody_can_eat'),
+            'leftovers': storage.get_leftovers(date_str),
             'lines': _meals.plan_summary_lines(plan), **res}
 
 @app.post("/api/shopping/photo")

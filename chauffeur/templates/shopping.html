@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shopping</title>
+    <title>Shopping &amp; Meals</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         tailwind = {
@@ -34,77 +34,86 @@
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak>
         <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-3xl'">
 
-            <header class="mb-6" x-show="!hideTitle">
-                <h2 class="text-3xl font-bold text-white mb-2">Shopping</h2>
-                <p class="text-gray-400" x-show="!isKiosk">
-                    Anyone can add — say it to Argyle, snap the shelf, or type it here. Whoever the
-                    solver sends to the store gets the list.
-                </p>
+            <header class="mb-8" x-show="!hideTitle">
+                <h2 class="text-3xl font-bold text-white">Shopping &amp; Meals</h2>
             </header>
 
-            <!-- ===== 🍽️ Tonight — the repertoire as a FILTER RESULT =====
-                 Deliberately not a browsable meal library: if people start
-                 browsing this it has become a recipe box and failed. It shows
-                 what fits the day the solver actually produced, and nothing
-                 at all when the evening is unconstrained and nothing is due
-                 a head start. -->
-            <!-- Always present off-kiosk. Gating the whole card on "is there
-                 something to suggest" hid the editor that lives inside it, so
-                 a family with an empty repertoire had no way to add their
-                 first meal — the one state where the editor matters most. -->
-            <div x-show="!isKiosk"
-                class="mb-6 bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
+            <!-- ===== MEALS =====
+                 Meals come first because they GENERATE the shopping: what the
+                 family is eating decides what has to be bought. The page read
+                 as "shopping, with meals wedged in" when the list blurb sat
+                 above this. -->
+            <section class="mb-10" x-show="!isKiosk">
                 <div class="flex items-baseline justify-between mb-3">
-                    <h3 class="text-xs font-black uppercase tracking-widest text-pink-200">🍽️ Tonight</h3>
+                    <h3 class="text-lg font-bold text-white">Meals</h3>
                     <button @click="showRepertoire = !showRepertoire"
-                        class="text-xs text-gray-500 hover:text-white"
-                        x-text="showRepertoire ? 'Hide meals' : 'Our meals'"></button>
-                </div>
-                <template x-for="(line, i) in suggest.lines" :key="'sl-' + i">
-                    <div class="text-sm text-gray-300 mb-1.5" x-text="line"></div>
-                </template>
-                <div x-show="suggest.nobody_can_eat" class="text-sm text-gray-400">
-                    Nothing fits a gap tonight — worth picking something up on the way.
-                </div>
-                <!-- Seed state: the repertoire is empty and nothing can be
-                     filtered until it isn't. Entry cost is one sentence. -->
-                <div x-show="!repertoire.length" class="text-sm text-gray-400">
-                    Name a few things you make on a weeknight and I'll work out the
-                    times and ingredients — then this shows what actually fits the day.
-                    <button @click="showRepertoire = true"
-                        class="ml-1 font-bold text-pink-300 hover:text-pink-200">Add one →</button>
-                </div>
-                <!-- Populated, but the day rules everything out. Say why rather
-                     than rendering an empty box. -->
-                <div x-show="repertoire.length && !suggest.fits.length && !suggest.nobody_can_eat"
-                    class="text-sm text-gray-400">
-                    Nothing in your meals fits today — might be a night to pick
-                    something up.
-                </div>
-                <div class="space-y-2 mt-3">
-                    <template x-for="m in suggest.fits" :key="'sf-' + m.id">
-                        <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
-                            <div class="min-w-0 flex-1">
-                                <div class="font-semibold text-white truncate" x-text="m.name"></div>
-                                <div class="text-[11px] text-gray-500" x-text="mealBlurb(m)"></div>
-                            </div>
-                            <button @click="mealToList(m)"
-                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white shrink-0">
-                                + List
-                            </button>
-                            <button @click="mealServed(m)" title="Records it so the rotation stays honest"
-                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
-                                We had this
-                            </button>
-                        </div>
-                    </template>
+                        class="text-xs font-bold text-gray-500 hover:text-white"
+                        x-text="showRepertoire ? 'Hide our meals' : 'Our meals'"></button>
                 </div>
 
-                <!-- Editor: corrections only. Adding costs one sentence — the
-                     model fills the rest — because nobody fills in twelve
-                     fields and a repertoire that never reaches ~15 entries has
-                     nothing to filter. -->
-                <div x-show="showRepertoire" class="mt-4 pt-4 border-t border-gray-700">
+                <!-- 🍽️ Tonight — the repertoire as a FILTER RESULT. Deliberately
+                     not a browsable meal library: if people start browsing this it
+                     has become a recipe box and failed. Always present off-kiosk,
+                     because gating the card on "is there something to suggest" hid
+                     the editor inside it — leaving a family with an empty
+                     repertoire no way to add their first meal. -->
+                <div class="bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
+                    <div class="flex items-baseline justify-between mb-3">
+                        <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">🍽️ Tonight</h4>
+                    </div>
+                    <template x-for="(line, i) in suggest.lines" :key="'sl-' + i">
+                        <div class="text-sm text-gray-300 mb-1.5" x-text="line"></div>
+                    </template>
+                    <div x-show="suggest.nobody_can_eat" class="text-sm text-gray-400">
+                        Nothing fits a gap tonight — worth picking something up on the way.
+                    </div>
+                    <!-- Seed state: the repertoire is empty and nothing can be
+                         filtered until it isn't. Entry cost is one sentence. -->
+                    <div x-show="!repertoire.length" class="text-sm text-gray-400">
+                        Name a few things you make on a weeknight and I'll work out the
+                        times and ingredients — then this shows what actually fits the day.
+                        <button @click="showRepertoire = true"
+                            class="ml-1 font-bold text-pink-300 hover:text-pink-200">Add one →</button>
+                    </div>
+                    <!-- Populated, but the day rules everything out. Say why rather
+                         than rendering an empty box. -->
+                    <div x-show="repertoire.length && !suggest.fits.length && !suggest.nobody_can_eat"
+                        class="text-sm text-gray-400">
+                        Nothing in your meals fits today — might be a night to pick
+                        something up.
+                    </div>
+                    <div class="space-y-2 mt-3">
+                        <template x-for="m in suggest.fits" :key="'sf-' + m.id">
+                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="font-semibold text-white truncate" x-text="m.name"></div>
+                                    <div class="text-[11px] text-gray-500" x-text="mealBlurb(m)"></div>
+                                    <!-- A plate is one meal; showing its parts is
+                                         what makes that legible rather than opaque. -->
+                                    <div class="text-[11px] text-gray-600 truncate"
+                                        x-show="mealParts(m)" x-text="mealParts(m)"></div>
+                                </div>
+                                <button @click="mealToList(m)"
+                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white shrink-0">
+                                    + List
+                                </button>
+                                <button @click="mealServed(m)" title="Records it so the rotation stays honest"
+                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
+                                    We had this
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Our meals: corrections and additions, a sibling of Tonight
+                     rather than nested inside it — Tonight answers "what now",
+                     this is the standing list behind it. Adding costs ONE
+                     sentence (the model fills the rest), because nobody fills in
+                     twelve fields and a repertoire that never reaches ~15 entries
+                     has nothing to filter. -->
+                <div x-show="showRepertoire"
+                    class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
                     <div class="flex gap-2 mb-3">
                         <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
                             placeholder="Something you make — just the name"
@@ -125,7 +134,16 @@
                         </span>
                     </div>
                 </div>
-            </div>
+            </section>
+
+            <!-- ===== SHOPPING LISTS ===== -->
+            <section x-show="!isKiosk" class="mb-2">
+                <h3 class="text-lg font-bold text-white mb-1">Shopping Lists</h3>
+                <p class="text-gray-400 mb-4">
+                    Anyone can add — say it to Argyle, snap the shelf, or type it here. Whoever the
+                    solver sends to the store gets the list.
+                </p>
+            </section>
 
             <!-- ===== List switcher (stores) ===== -->
             <div class="flex items-center gap-2 mb-5 flex-wrap" x-show="lists.length > 1 || !isKiosk">
@@ -302,6 +320,17 @@
                         const r = await fetch(this.apiBase + 'api/meals/repertoire');
                         this.repertoire = r.ok ? await r.json() : [];
                     } catch (e) { this.repertoire = []; }
+                },
+
+                mealParts(m) {
+                    // A plate's components, with their alternatives collapsed:
+                    // "chicken · beans (black/red/pinto) · vegetable (…)".
+                    return (m.ingredients || [])
+                        .filter(i => i.role || (i.options || []).length)
+                        .map(i => i.name + ((i.options || []).length
+                            ? ' (' + i.options.slice(0, 3).join('/')
+                              + (i.options.length > 3 ? '…' : '') + ')' : ''))
+                        .join(' · ');
                 },
 
                 mealBlurb(m) {

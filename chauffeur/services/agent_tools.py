@@ -512,6 +512,20 @@ class MarkMealServedTool(BaseModel):
     """
     meal_name: str = Field(..., description="What they ate.")
 
+class MarkLeftoversTool(BaseModel):
+    """
+    Records that food is ALREADY MADE for a day ("we're having leftovers tonight", "the rice is already made"), so the app stops holding cook time for work nobody will do and keeps those ingredients off the shopping list.
+    """
+    what: Optional[str] = Field(None, description="What the leftovers are, e.g. 'chili'. Omit for plain 'we have leftovers'.")
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+    parts: Optional[str] = Field(None, description="Only if PART of a meal is left over, e.g. 'rice and beans'.")
+
+class ClearLeftoversTool(BaseModel):
+    """
+    Undoes a leftovers note for a day ("actually we're cooking tonight").
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
 class GetEatingPlanTool(BaseModel):
     """
     Answers "what's the plan for dinner?", "do we have time to cook tonight?", "who's eating when?" from the SCHEDULE: time at home to cook, whether the family eats in shifts, who eats in the car and by when their food must be ready, and whether anyone has no gap to eat. Does NOT know what food is in the house.
@@ -598,6 +612,8 @@ TOOL_SCHEMAS = {
     "add_meal_to_repertoire": AddMealToRepertoireTool.model_json_schema(),
     "add_meal_ingredients_to_list": AddMealIngredientsToListTool.model_json_schema(),
     "mark_meal_served": MarkMealServedTool.model_json_schema(),
+    "mark_leftovers": MarkLeftoversTool.model_json_schema(),
+    "clear_leftovers": ClearLeftoversTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1734,6 +1750,16 @@ def handle_mark_meal_served(args: dict) -> dict:
     from services.agent_tools_v2 import mark_meal_served
     return mark_meal_served(args.get("meal_name") or "")
 
+def handle_mark_leftovers(args: dict) -> dict:
+    from services.agent_tools_v2 import mark_leftovers
+    return mark_leftovers(args.get("what") or "",
+                          target_date=args.get("target_date") or "today",
+                          parts=args.get("parts") or "")
+
+def handle_clear_leftovers(args: dict) -> dict:
+    from services.agent_tools_v2 import clear_leftovers
+    return clear_leftovers(args.get("target_date") or "today")
+
 def handle_get_eating_plan(args: dict) -> dict:
     from services.agent_tools_v2 import get_eating_plan
     return get_eating_plan(args.get("target_date") or "today")
@@ -1821,6 +1847,8 @@ TOOL_HANDLERS = {
     "add_meal_to_repertoire": handle_add_meal_to_repertoire,
     "add_meal_ingredients_to_list": handle_add_meal_ingredients_to_list,
     "mark_meal_served": handle_mark_meal_served,
+    "mark_leftovers": handle_mark_leftovers,
+    "clear_leftovers": handle_clear_leftovers,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

@@ -1269,12 +1269,19 @@ def add_meal_to_repertoire(name: str, acting_member: dict = None) -> Dict[str, A
     meal = meals.create_meal(name)
     hands = int(meal.get('prep_ahead_mins') or 0) + int(meal.get('finish_mins') or 0)
     fresh = [i['name'] for i in meal.get('ingredients') or [] if i.get('kind') == 'fresh']
-    tail = f" I've got it at about {hands} min hands-on" if hands else ""
+    bits = []
+    if hands:
+        bits.append(f"about {hands} min hands-on")
     if fresh:
-        tail += (", and it needs " if tail else " It needs ") + ", ".join(fresh[:4])
+        bits.append("needs " + ", ".join(fresh[:4]))
+    if not bits:
+        # Enrichment was unavailable (no key / model down) — say so plainly
+        # rather than implying we worked something out.
+        return {"status": "success",
+                "message": f"Added {meal['name']} to the repertoire."}
     return {"status": "success",
-            "message": f"Added {meal['name']} to the repertoire.{tail}. "
-                       "Tell me if any of that's off."}
+            "message": f"Added {meal['name']} — I've got it at "
+                       + " and it ".join(bits) + ". Tell me if that's off."}
 
 
 def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
@@ -1301,6 +1308,44 @@ def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
                            "or already on the list."}
     return {"status": "success",
             "message": f"Added for {meal['name']}: " + ", ".join(res['added']) + "."}
+
+
+def mark_leftovers(what: str = "", target_date: str = "today", parts: str = "",
+                   acting_member: dict = None) -> Dict[str, Any]:
+    """'We're having leftovers tonight' / 'the rice is already made'. Stops the
+    app holding cook time for food that already exists."""
+    from models.schemas import Leftover
+    from services import storage
+    day = _parse_fuzzy_date(target_date or 'today')
+    storage.prune_leftovers(day.isoformat())
+
+    part_list = [p.strip() for p in (parts or '').replace(' and ', ',').split(',')
+                 if p.strip()]
+    meal = storage.find_meal_by_name(what) if what else None
+    rec = Leftover(date=day.isoformat(),
+                   meal_id=meal['id'] if meal else None,
+                   label=(meal['name'] if meal else (what or '').strip() or None),
+                   parts=part_list).model_dump()
+    storage.add_leftover(rec)
+
+    when = "tonight" if day == __import__('datetime').date.today() else day.strftime('%A')
+    if part_list:
+        return {"status": "success",
+                "message": f"Noted — {', '.join(part_list)} already made for {when}. "
+                           "I won't hold time for that."}
+    label = rec['label'] or 'leftovers'
+    return {"status": "success",
+            "message": f"Noted — {label} {when}. Nothing to cook."}
+
+
+def clear_leftovers(target_date: str = "today", acting_member: dict = None) -> Dict[str, Any]:
+    """Undo — plans change."""
+    from services import storage
+    day = _parse_fuzzy_date(target_date or 'today')
+    n = storage.clear_leftovers(day.isoformat())
+    if not n:
+        return {"status": "success", "message": "There were no leftovers marked."}
+    return {"status": "success", "message": "Cleared — back to cooking, then."}
 
 
 def mark_meal_served(meal_name: str, acting_member: dict = None) -> Dict[str, Any]:
@@ -1742,6 +1787,30 @@ def get_available_tools() -> List[Dict]:
                     "list_name": {"type": "string", "description": "Which list or store; omit for the default list."}
                 },
                 "required": ["meal_name"]
+            }
+        },
+        {
+            "name": "mark_leftovers",
+            "description": "Records that food is ALREADY MADE for a day ('we're having leftovers tonight', 'we're finishing Sunday's chili', 'the rice is already made'). This stops the app holding cook time for work nobody is going to do, and keeps those ingredients off the shopping list. Use `parts` when only some of a meal is left over.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "description": "What the leftovers are, e.g. 'chili'. Matches a meal in the repertoire when it can; free text otherwise. Omit for plain 'we have leftovers'."},
+                    "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."},
+                    "parts": {"type": "string", "description": "Only if PART of a meal is left over, e.g. 'rice' or 'rice and beans'. Omit when the whole meal is leftovers."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "clear_leftovers",
+            "description": "Undoes a leftovers note for a day ('actually we're cooking tonight', 'the leftovers are gone').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."}
+                },
+                "required": []
             }
         },
         {

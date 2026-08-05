@@ -53,6 +53,7 @@ INDEX_SPEC = {
     # indexed because per-item PATCH is the ONLY write path (design §M1).
     "shopping_items": [["id"], ["list_id"]],
     "meals": [["id"]],
+    "leftovers": [["id"], ["date"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

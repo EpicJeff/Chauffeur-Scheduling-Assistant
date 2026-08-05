@@ -573,6 +573,175 @@ def scenario_ingredients_drain_fresh_only_and_ordered_drains_nothing():
           f"an ORDERED meal contributes nothing to groceries, got {res2}")
 
 
+def scenario_a_component_plate_is_ONE_meal_with_substitutable_parts():
+    """"Chicken, rice, beans (black/red/pinto), veggies, salad" is one meal,
+    not six. Its parts substitute, which the first schema could not express —
+    separate lines are AND, options within a line are OR."""
+    reset_db(); _seed_people()
+    _settings()
+    plate = _meal("Chicken plate", ingredients=[
+        {'name': 'chicken', 'kind': 'fresh', 'role': 'protein'},
+        {'name': 'rice', 'kind': 'staple', 'role': 'starch'},
+        {'name': 'beans', 'kind': 'fresh', 'role': 'side',
+         'options': ['black', 'red', 'pinto']},
+        {'name': 'vegetable', 'kind': 'fresh', 'role': 'vegetable',
+         'options': ['carrots', 'green beans', 'broccoli', 'cauliflower', 'corn']},
+        {'name': 'salad', 'kind': 'fresh', 'role': 'side', 'optional': True},
+    ])
+    check(len(storage.get_meals()) == 1, "it is ONE repertoire entry")
+
+    res = meals.ingredients_to_shopping(plate)
+    check(res['added'] == ['chicken', 'beans', 'vegetable', 'salad'],
+          f"one list item per component, not one per option — got {res['added']}")
+    check('rice' in res['skipped'], "the staple starch is skipped as always")
+
+    lid = storage.ensure_default_shopping_list()['id']
+    items = {i['name']: i for i in storage.get_shopping_items(lid)}
+    check(items['beans']['note'] == "black, red, or pinto",
+          f"the alternatives ride along so the shopper picks, got {items['beans']['note']}")
+    check("optional" in (items['salad']['note'] or ''),
+          "a skippable part says so rather than being silently dropped")
+    check(items['vegetable']['note'].endswith("or corn"),
+          f"five veg options read as one choice, got {items['vegetable']['note']}")
+
+
+def scenario_an_open_option_satisfies_its_category():
+    """Someone already put 'black beans' on the list, so the plate must not
+    add a second 'beans' line on top of it."""
+    reset_db(); _seed_people()
+    _settings()
+    from services.agent_tools_v2 import add_shopping_items
+    add_shopping_items("black beans")
+    plate = _meal("Chicken plate", ingredients=[
+        {'name': 'beans', 'kind': 'fresh', 'options': ['black', 'red', 'pinto']},
+        {'name': 'chicken', 'kind': 'fresh'},
+    ])
+    res = meals.ingredients_to_shopping(plate)
+    check(res['added'] == ['chicken'],
+          f"the beans category is already satisfied, got {res['added']}")
+    check('beans' in res['skipped'], "and it says it skipped it")
+
+
+def _leftover(**kw):
+    from models.schemas import Leftover
+    rec = Leftover(date=kw.pop('date', DAY), **kw).model_dump()
+    storage.add_leftover(rec)
+    return rec
+
+
+def scenario_leftovers_free_the_cook_window():
+    """Chili that already exists needs reheating, not cooking — the app must
+    stop holding time for work nobody is going to do."""
+    reset_db(); _seed_people()
+    settings = _settings()
+    chili = _meal("Chili", prep_ahead_mins=20, finish_mins=40,
+                  portability='utensils_ok', holds_well=True, needs_ahead='thaw',
+                  ingredients=[{'name': 'ground beef', 'kind': 'fresh'},
+                               {'name': 'beans', 'kind': 'fresh'}])
+    # A 25-minute window: cooking it from scratch is impossible.
+    ok, why = meals.meal_fits_window(chili, 25, split=False)
+    check(not ok, f"60 min hands-on does not fit 25 ({why})")
+
+    _leftover(meal_id=chili['id'], label="Sunday's chili")
+    warmed = meals.apply_leftovers(chili, storage.get_leftovers(DAY)[0])
+    check(warmed['finish_mins'] == 10 and warmed['prep_ahead_mins'] == 0,
+          f"only the reheat is left, got {warmed['finish_mins']}")
+    check(warmed['needs_ahead'] == 'none', "nothing left to thaw — it's already made")
+    check(meals.meal_fits_window(warmed, 25, split=False)[0],
+          "and now it fits the same 25-minute window")
+
+    res = meals.ingredients_to_shopping(warmed)
+    check(res['added'] == [] and 'leftovers' in (res.get('reason') or ''),
+          f"already-made food is not shopping, got {res}")
+
+
+def scenario_partial_leftovers_only_free_their_own_share():
+    """"The rice is already made" — the rest still has to be cooked. The
+    schema has no per-component times on purpose, so the remainder is an
+    estimate, but the point is that time stops being held for the rice."""
+    reset_db(); _seed_people()
+    _settings()
+    plate = _meal("Chicken plate", prep_ahead_mins=20, finish_mins=20,
+                  portability='utensils_ok', holds_well=True,
+                  ingredients=[{'name': 'chicken', 'kind': 'fresh'},
+                               {'name': 'rice', 'kind': 'fresh'},
+                               {'name': 'vegetable', 'kind': 'fresh',
+                                'options': ['broccoli', 'corn']},
+                               {'name': 'salad', 'kind': 'fresh'}])
+    lo = _leftover(meal_id=plate['id'], parts=['rice'])
+    part = meals.apply_leftovers(plate, lo)
+    check(part['leftover'] and not part['leftover_exact'],
+          "a partial leftover is flagged as an ESTIMATE, not an exact number")
+    check(0 < part['prep_ahead_mins'] < 20,
+          f"some but not all prep time is freed, got {part['prep_ahead_mins']}")
+
+    res = meals.ingredients_to_shopping(part)
+    check('rice' not in res['added'] and 'rice' in res['skipped'],
+          f"the made part is not bought again, got {res}")
+    check('chicken' in res['added'], "but the rest still gets shopped for")
+
+
+def scenario_plain_leftovers_need_no_repertoire_entry():
+    reset_db(); _seed_people()
+    settings = _settings()
+    _leftover(label="Leftovers")
+    plan = meals.eating_plan(DAY, 'dinner', _tight_evening(), settings)
+    res = meals.meals_that_fit(plan)
+    check(not res['empty'], "'we just have leftovers' is a complete answer on its own")
+    check(res['fits'] and res['fits'][0]['leftover'],
+          f"and it outranks everything, got {[f['name'] for f in res['fits']]}")
+
+
+def scenario_leftovers_replace_cook_pressure_in_the_summary():
+    reset_db(); _seed_people()
+    settings = _settings()
+    # Genuinely squeezed: the only cooking adult is out from before dawn
+    # until 6pm, so there is no window at home ahead of dinner at all.
+    sched = {
+        "events": [_ev("work", "Long day", "06:20", "18:00", "Office", ["add@cal"])],
+        "assignments": {"work": "d-mom"}, "matched_rules": {},
+    }
+    plain = meals.plan_summary_lines(meals.eating_plan(DAY, 'dinner', sched, settings))
+    check(any("cook" in l for l in plain),
+          f"without leftovers the tight window is the headline, got {plain}")
+
+    _leftover(label="Sunday's chili")
+    withl = meals.plan_summary_lines(meals.eating_plan(DAY, 'dinner', sched, settings))
+    check(any("Leftovers tonight" in l for l in withl),
+          f"leftovers are stated, got {withl}")
+    check(not any("to cook" in l for l in withl),
+          f"and the cook-window pressure is DROPPED — manufacturing stress about "
+          f"work nobody is doing is the failure mode; got {withl}")
+
+
+def scenario_leftovers_expire_and_can_be_cleared():
+    reset_db(); _seed_people()
+    _settings()
+    from services.agent_tools_v2 import mark_leftovers, clear_leftovers
+    yesterday = (datetime.date.fromisoformat(DAY) - datetime.timedelta(days=1)).isoformat()
+    _leftover(date=yesterday, label="Old chili")
+    mark_leftovers("", target_date=DAY)
+    check(not storage.get_leftovers(yesterday),
+          "yesterday's leftovers are not tonight's dinner — they get pruned")
+    check(storage.get_leftovers(DAY), "today's stand")
+
+    clear_leftovers(DAY)
+    check(not storage.get_leftovers(DAY), "and plans change — clearing works")
+
+
+def scenario_leftovers_tools_in_both_stacks():
+    reset_db(); _seed_people()
+    _settings()
+    from services import agent_tools, agent_tools_v2
+    want = {"mark_leftovers", "clear_leftovers"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    agent_tools.execute_tool("mark_leftovers", {"what": "chili", "target_date": DAY})
+    check(storage.get_leftovers(DAY), "the v1 bridge writes through")
+
+
 def scenario_metadata_comes_from_the_name_alone():
     reset_db(); _seed_people()
     storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",

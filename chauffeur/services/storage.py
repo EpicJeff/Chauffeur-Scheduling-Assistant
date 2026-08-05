@@ -401,6 +401,7 @@ with db_lock:
     shopping_lists_table = db.table('shopping_lists')
     shopping_items_table = db.table('shopping_items')
     meals_table = db.table('meals')
+    leftovers_table = db.table('leftovers')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1741,6 +1742,42 @@ def mark_meal_served(meal_id: str, when: float = None) -> Optional[dict]:
     if not update_meal(meal_id, {'last_served_at': when or _time.time()}):
         return None
     return get_meal(meal_id)
+
+# --- Leftovers (meals arc M3) ---
+# Date-scoped so they expire on their own; nobody has to remember to clear a
+# flag. See models.schemas.Leftover.
+
+def get_leftovers(date_str: str = None) -> List[dict]:
+    with db_lock:
+        rows = [dict(l) for l in leftovers_table.all()]
+    if date_str:
+        rows = [l for l in rows if l.get('date') == date_str]
+    rows.sort(key=lambda l: l.get('created_at') or 0)
+    return rows
+
+def add_leftover(data: dict) -> str:
+    with db_lock:
+        leftovers_table.insert(data)
+        return data['id']
+
+def delete_leftover(leftover_id: str):
+    with db_lock:
+        leftovers_table.remove(Query().id == leftover_id)
+
+def clear_leftovers(date_str: str) -> int:
+    doomed = [l['id'] for l in get_leftovers(date_str)]
+    with db_lock:
+        for lid in doomed:
+            leftovers_table.remove(Query().id == lid)
+    return len(doomed)
+
+def prune_leftovers(before_date: str) -> int:
+    """Yesterday's leftovers are not tonight's dinner."""
+    doomed = [l['id'] for l in get_leftovers() if (l.get('date') or '') < before_date]
+    with db_lock:
+        for lid in doomed:
+            leftovers_table.remove(Query().id == lid)
+    return len(doomed)
 
 def add_routine(data: dict) -> str:
     with db_lock:

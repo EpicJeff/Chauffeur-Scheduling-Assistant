@@ -722,6 +722,19 @@ class MealIngredient(BaseModel):
     # shopping list or gate feasibility.
     name: str
     kind: str = 'fresh'                # staple | fresh
+    # A COMPONENT PLATE ("chicken, rice, beans, a veg, salad") is one meal, not
+    # six — but its parts substitute for each other, and the first cut of this
+    # schema could only express a fixed dish. `options` means "any ONE of
+    # these satisfies this line": name='beans', options=['black','red','pinto'].
+    # That single primitive covers both readings of a plate — separate lines
+    # are AND (rice *and* salad), options within a line are OR (rice *or*
+    # potatoes) — so nothing needs a component/ingredient split.
+    options: List[str] = Field(default_factory=list)
+    # 'protein' | 'starch' | 'vegetable' | 'side' | ... — free text, display
+    # only. Deliberately NOT a controlled vocabulary or a slot the app fills:
+    # that road ends at a meal-builder.
+    role: Optional[str] = None
+    optional: bool = False             # the salad nobody minds skipping
 
 class Meal(BaseModel):
     # Meals & provisioning arc M3 — the REPERTOIRE, not a recipe box. A recipe
@@ -763,6 +776,24 @@ class Meal(BaseModel):
     link: Optional[str] = None
     last_served_at: Optional[float] = None
     is_active: bool = True
+    created_at: float = Field(default_factory=time.time)
+
+class Leftover(BaseModel):
+    # "We're having Sunday's chili tonight" / "the rice is leftover".
+    # Deliberately NOT a field on Meal: leftovers are a property of the
+    # OCCASION, not the dish — chili is chili whether it is simmered fresh or
+    # reheated — so this is a dated override that expires on its own instead
+    # of a flag someone has to remember to turn off.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    date: str                            # YYYY-MM-DD
+    meal_id: Optional[str] = None        # a repertoire entry, or None for
+    label: Optional[str] = None          # free-form ("Sunday's chili")
+    # Component names that are already made. EMPTY means the WHOLE meal is
+    # leftovers — the common case, and the only one where the time saved is
+    # exactly known.
+    parts: List[str] = Field(default_factory=list)
+    reheat_mins: int = 10
     created_at: float = Field(default_factory=time.time)
 
 class TripPOI(BaseModel):

@@ -27,6 +27,7 @@ Slots are emitted as SPANS, never timestamps: "between drop-off and about
 See docs/meal_design.md §M2.
 """
 import datetime
+from typing import Optional
 
 from services import storage
 
@@ -496,6 +497,55 @@ def _eater_diet(plan: dict) -> tuple:
     return avoid, dislike
 
 
+def leftover_for(meal: dict, leftovers: list) -> Optional[dict]:
+    """The leftover record covering this meal, if any."""
+    for l in leftovers or []:
+        if l.get('meal_id') and l['meal_id'] == meal.get('id'):
+            return l
+    return None
+
+
+def apply_leftovers(meal: dict, leftover: dict) -> dict:
+    """A copy of `meal` with the work already done taken out.
+
+    Whole-meal leftovers are exact: the only cost left is reheating, and
+    nothing is bought. A PARTIAL leftover ("the rice is already made") cannot
+    be exact — the schema deliberately has no per-component times, and adding
+    them would be recipe-box drift — so the remaining hands-on is scaled by
+    the share of components still to make and flagged as an estimate. The
+    point is not an exact number; it is that the app stops holding time for
+    work nobody is going to do.
+    """
+    if not leftover:
+        return meal
+    out = dict(meal)
+    reheat = max(0, int(leftover.get('reheat_mins') or 0))
+    parts = [str(p).strip().lower() for p in (leftover.get('parts') or []) if str(p).strip()]
+    out['leftover'] = True
+    out['leftover_parts'] = parts
+
+    if not parts:                       # the whole thing is already made
+        out['prep_ahead_mins'] = 0
+        out['finish_mins'] = reheat
+        out['unattended_mins'] = 0
+        out['needs_ahead'] = 'none'
+        out['leftover_exact'] = True
+        return out
+
+    ings = meal.get('ingredients') or []
+    total = len(ings) or 1
+    covered = sum(1 for i in ings
+                  if (i.get('name') or '').strip().lower() in parts)
+    remaining = max(0.0, (total - covered) / total)
+    out['prep_ahead_mins'] = int(round((meal.get('prep_ahead_mins') or 0) * remaining))
+    out['finish_mins'] = int(round((meal.get('finish_mins') or 0) * remaining)) + reheat
+    out['leftover_exact'] = False
+    if covered:
+        # Nothing left to thaw if the thing needing the head start is made.
+        out['needs_ahead'] = 'none' if remaining == 0 else meal.get('needs_ahead')
+    return out
+
+
 def meals_that_fit(plan: dict, limit: int = 5) -> dict:
     """Repertoire entries that actually work for this plan, ranked.
 
@@ -506,7 +556,11 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
     their reason so nothing vanishes without explanation.
     """
     repertoire = storage.get_meals()
-    if not repertoire:
+    leftovers = storage.get_leftovers(plan.get('date'))
+    # "We just have leftovers tonight" with no repertoire entry attached is a
+    # complete answer on its own — it needs no meal and beats everything else.
+    loose = [l for l in leftovers if not l.get('meal_id')]
+    if not repertoire and not loose:
         return {'fits': [], 'blocked': [], 'empty': True}
 
     avoid, dislike = _eater_diet(plan)
@@ -520,11 +574,24 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
                    slots[0] if slots else None)
 
     fits, blocked = [], []
+    for l in loose:
+        # Ranked above everything by construction: there is nothing to make.
+        fits.append({'id': f"leftover:{l['id']}", 'name': l.get('label') or 'Leftovers',
+                     'prep_ahead_mins': 0, 'finish_mins': int(l.get('reheat_mins') or 0),
+                     'unattended_mins': 0, 'needs_ahead': 'none', 'holds_well': True,
+                     'portability': 'utensils_ok', 'source': 'prep', 'effort': 'easy',
+                     'ingredients': [], 'tags': [], 'leftover': True,
+                     'leftover_exact': True, 'score': 99.0})
+
     for meal in repertoire:
         tags = {str(t).strip().lower() for t in (meal.get('tags') or [])}
         if tags & avoid:
             blocked.append({**meal, 'why': "someone eating can't have it"})
             continue
+        # Leftovers are applied BEFORE the window check — the whole point is
+        # that the app stops holding time for work already done.
+        lo = leftover_for(meal, leftovers)
+        meal = apply_leftovers(meal, lo) if lo else meal
         if binding:
             ok, why = meal_fits_slot(meal, binding)
             if not ok:
@@ -534,7 +601,7 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
         if not ok:
             blocked.append({**meal, 'why': why})
             continue
-        score = 0.0
+        score = 3.0 if meal.get('leftover') else 0.0
         score -= 2.0 if tags & dislike else 0.0            # soft: demote, never remove
         score -= {'easy': 0.0, 'normal': 0.5, 'project': 2.0}.get(
             str(meal.get('effort') or 'normal'), 0.5)
@@ -567,7 +634,8 @@ _META_SYSTEM = (
     "\"holds_well\": bool, \"portability\": \"none|handheld|utensils_ok\", "
     "\"source\": \"prep|ordered|hybrid\", \"effort\": \"easy|normal|project\", "
     "\"serves\": int, \"tags\": [str], "
-    "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}]}\n\n"
+    "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\", "
+    "\"options\": [str], \"role\": str|null, \"optional\": bool}]}\n\n"
     "Definitions that matter:\n"
     "- prep_ahead_mins: hands-on work that can be done EARLIER in the day and "
     "set aside (chopping, browning, cooking rice).\n"
@@ -584,6 +652,19 @@ _META_SYSTEM = (
     "essentially always in a kitchen (salt, oil, common spices, rice, pasta, "
     "flour); kind='fresh' for anything bought for this dish. Do NOT include "
     "quantities.\n"
+    "- options: use this when the line is a CATEGORY the family fills with "
+    "any one of several things. A plate meal like 'chicken, rice, beans, "
+    "veggies, salad' is ONE meal whose parts substitute: emit "
+    "{\"name\": \"beans\", \"options\": [\"black\", \"red\", \"pinto\"]} and "
+    "{\"name\": \"vegetable\", \"options\": [\"carrots\", \"green beans\", "
+    "\"broccoli\"]}. Separate lines mean AND (rice AND salad); options inside "
+    "one line mean OR (rice OR potatoes). Leave options empty for a fixed "
+    "ingredient like 'ground beef'. NEVER split one substitutable category "
+    "into several lines — a shopper buys one bean, not three.\n"
+    "- role: a short label for a plate component ('protein', 'starch', "
+    "'vegetable', 'side'), or null for an ordinary ingredient.\n"
+    "- optional: true for a part the family would happily skip (a salad "
+    "alongside a full plate), false otherwise.\n"
     "- tags: short lowercase descriptors useful for dietary filtering and "
     "variety, e.g. ['chicken','mexican','gluten'].\n\n"
     "Be realistic about a home kitchen on a weeknight. If the name is too "
@@ -631,9 +712,19 @@ def suggest_meal_metadata(name: str) -> dict:
         if not nm or nm.lower() in seen:
             continue
         seen.add(nm.lower())
+        opts, opt_seen = [], set()
+        for o in (i.get('options') or [])[:12]:
+            ov = str(o).strip()[:40]
+            if ov and ov.lower() not in opt_seen:
+                opt_seen.add(ov.lower())
+                opts.append(ov)
+        role = str(i.get('role') or '').strip()[:24] or None
         ings.append({'name': nm,
                      'kind': 'staple' if str(i.get('kind') or '').lower() == 'staple'
-                             else 'fresh'})
+                             else 'fresh',
+                     'options': opts,
+                     'role': role,
+                     'optional': bool(i.get('optional'))})
     return {
         'prep_ahead_mins': _int('prep_ahead_mins'),
         'finish_mins': _int('finish_mins'),
@@ -663,6 +754,23 @@ def create_meal(name: str, enrich: bool = True) -> dict:
     return meal
 
 
+def _category_already_open(list_id: str, name: str, options: list) -> bool:
+    """Is this (possibly substitutable) ingredient line already covered by
+    something open on the list?
+
+    Checks the category itself, each bare option, and each option combined
+    with the category in both orders — 'black' + 'beans' is how the family
+    wrote it, but the list will say 'black beans'.
+    """
+    if storage.find_open_shopping_item(list_id, name):
+        return True
+    for o in options or []:
+        for candidate in (o, f"{o} {name}", f"{name} {o}"):
+            if storage.find_open_shopping_item(list_id, candidate):
+                return True
+    return False
+
+
 def ingredients_to_shopping(meal: dict, list_id: str = None,
                             added_by: str = None) -> dict:
     """Drain a meal's FRESH ingredients onto the shopping list.
@@ -675,20 +783,41 @@ def ingredients_to_shopping(meal: dict, list_id: str = None,
     from models.schemas import ShoppingItem
     if str(meal.get('source') or 'prep') == 'ordered':
         return {'added': [], 'skipped': [], 'reason': 'ordered — nothing to buy'}
+    # Already-made food is not shopping. A whole-meal leftover buys nothing;
+    # a partial one skips just the parts that are done.
+    if meal.get('leftover') and not (meal.get('leftover_parts') or []):
+        return {'added': [], 'skipped': [], 'reason': 'leftovers — nothing to buy'}
+    done_parts = {str(p).strip().lower() for p in (meal.get('leftover_parts') or [])}
     lst_id = list_id or storage.ensure_default_shopping_list()['id']
     added, skipped = [], []
     for ing in meal.get('ingredients') or []:
         name = (ing.get('name') or '').strip()
         if not name:
             continue
+        if name.lower() in done_parts:
+            skipped.append(name)
+            continue
         if (ing.get('kind') or 'fresh') == 'staple':
             skipped.append(name)
             continue
-        if storage.find_open_shopping_item(lst_id, name):
+        opts = [str(o).strip() for o in (ing.get('options') or []) if str(o).strip()]
+        # A substitutable line is satisfied by ANY of its options, so an open
+        # "black beans" means the family does not also need a "beans" line.
+        # Options are usually QUALIFIERS ('black') that only name a real
+        # product once combined with the category ('beans'), so match the
+        # combined forms too — matching the bare option alone misses every
+        # realistic case.
+        if _category_already_open(lst_id, name, opts):
             skipped.append(name)
             continue
+        note = None
+        if opts:
+            note = (", ".join(opts[:-1]) + f", or {opts[-1]}") if len(opts) > 1 \
+                else opts[0]
+        if ing.get('optional'):
+            note = (note + " · optional") if note else "optional"
         storage.add_shopping_item(ShoppingItem(
-            list_id=lst_id, name=name, added_via='meal',
+            list_id=lst_id, name=name, note=note, added_via='meal',
             source_meal_id=meal.get('id'), added_by=added_by).model_dump())
         added.append(name)
     return {'added': added, 'skipped': skipped, 'list_id': lst_id}
@@ -736,9 +865,21 @@ def plan_summary_lines(plan: dict) -> list:
                      "something on the way.")
         return lines
 
+    # Leftovers answer the cook question outright, so a tight window is no
+    # longer pressure — reporting it anyway would be manufacturing stress
+    # about work nobody is doing.
+    leftovers = storage.get_leftovers(plan.get('date'))
+    whole_night = [l for l in leftovers if not (l.get('parts') or [])]
+    if whole_night:
+        what = next((l.get('label') for l in whole_night if l.get('label')), None)
+        lines.append(f"🍲 Leftovers tonight{f' — {what}' if what else ''}. "
+                     "Nothing to make.")
+
     window = plan.get('cook_window_mins') or 0
     who = plan.get('cook_window_who')
-    if not window:
+    if whole_night:
+        pass                       # already answered — do not add cook pressure
+    elif not window:
         lines.append("🍽️ No real window at home to cook tonight.")
     elif window < COMFORTABLE_COOK_MINS:
         # Only a tight window is the headline; a comfortable one is not news,

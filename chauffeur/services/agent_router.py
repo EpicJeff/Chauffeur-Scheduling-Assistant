@@ -292,7 +292,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              # M2/M3: each message IS the complete spoken answer.
                              "get_eating_plan", "suggest_dinner",
                              "add_meal_to_repertoire", "add_meal_ingredients_to_list",
-                             "mark_meal_served"}
+                             "mark_meal_served", "mark_leftovers", "clear_leftovers"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -557,6 +557,15 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.complete_kid_task(args.get("task_title", "") or "",
                                                       member_name=args.get("member_name", "") or "",
                                                       acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("mark_leftovers", "clear_leftovers"):
+                    from services import agent_tools_v2 as _atv2
+                    if func_name == "mark_leftovers":
+                        res = _atv2.mark_leftovers(args.get("what", "") or "",
+                                                   target_date=args.get("target_date", "today") or "today",
+                                                   parts=args.get("parts", "") or "")
+                    else:
+                        res = _atv2.clear_leftovers(args.get("target_date", "today") or "today")
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("suggest_dinner", "add_meal_to_repertoire",
                                    "add_meal_ingredients_to_list", "mark_meal_served"):
