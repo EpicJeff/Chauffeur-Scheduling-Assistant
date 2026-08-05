@@ -2024,19 +2024,89 @@
             img.src = url;
         }
 
+        // Resumable, chunked video upload. A clip from a game goes up over
+        // cellular, and the old single POST restarted from zero on any drop —
+        // at 4K60 sizes that is minutes of upload lost to a few seconds of bad
+        // signal. Chunks are acknowledged individually, and a retry resyncs to
+        // the offset the SERVER actually has rather than guessing.
+        //
+        // Note on the wait BEFORE this runs: on iOS, picking a video that
+        // lives in iCloud makes the OS download (and often transcode) it
+        // first. That happens before the change event fires and before
+        // file.size exists, so no size check can pre-empt it. The cap is
+        // generous specifically so that wait rarely ends in a rejection.
+        const UPLOAD_MAX_RETRIES = 4;
+
+        function fmtBytes(n) {
+            return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)}GB`
+                                  : `${Math.round(n / 1024 / 1024)}MB`;
+        }
+
         async function uploadMomentVideo(file) {
-            if (file.size > 500 * 1024 * 1024) {
-                showGlobalAlert('That clip is over 500MB — try a shorter one');
+            const btn = document.getElementById('thread-attach-btn');
+            const setProgress = pct => { btn.textContent = pct === null ? '📷' : `${pct}%`; };
+            btn.textContent = '⏳';
+            let init;
+            try {
+                // Declare the size first: too big costs one round trip, not a
+                // whole transfer that fails at the very end.
+                const res = await fetch(`${apiBase}api/moments/upload/init`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ size: file.size, mime: file.type || '' })
+                });
+                init = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(init.detail || 'Upload refused');
+            } catch (err) {
+                setProgress(null);
+                showGlobalAlert(err.message || `Could not start upload (${fmtBytes(file.size)})`);
                 return;
             }
-            const btn = document.getElementById('thread-attach-btn');
-            btn.textContent = '⏳';
+
+            const id = init.upload_id, chunk = init.chunk_size || 5 * 1024 * 1024;
+            let offset = init.received || 0;
             try {
-                const fd = new FormData();
-                fd.append('media', file, file.name || 'moment');
-                const res = await fetch(`${apiBase}api/moments/upload`, { method: 'POST', body: fd });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.detail || 'upload failed');
+                while (offset < file.size) {
+                    const end = Math.min(offset + chunk, file.size);
+                    let sent = false;
+                    for (let attempt = 0; attempt < UPLOAD_MAX_RETRIES && !sent; attempt++) {
+                        try {
+                            const r = await fetch(
+                                `${apiBase}api/moments/upload/${id}?offset=${offset}`,
+                                { method: 'PUT', body: file.slice(offset, end) });
+                            if (r.status === 409) {
+                                // The server has a different amount than we
+                                // think. Believe the server and carry on.
+                                const d = await r.json().catch(() => ({}));
+                                let truth = null;
+                                try { truth = JSON.parse(d.detail || '{}').received; } catch (e) { }
+                                if (typeof truth === 'number') { offset = truth; break; }
+                                throw new Error('Upload out of sync');
+                            }
+                            if (!r.ok) {
+                                const d = await r.json().catch(() => ({}));
+                                throw new Error(d.detail || 'Chunk rejected');
+                            }
+                            const d = await r.json();
+                            offset = d.received;
+                            sent = true;
+                        } catch (err) {
+                            if (attempt === UPLOAD_MAX_RETRIES - 1) throw err;
+                            // Back off, then ask the server where it actually
+                            // got to — that is what makes this resumable
+                            // rather than merely retried.
+                            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+                            try {
+                                const s = await fetch(`${apiBase}api/moments/upload/${id}`);
+                                if (s.ok) offset = (await s.json()).received;
+                            } catch (e) { }
+                        }
+                    }
+                    setProgress(Math.floor((offset / file.size) * 100));
+                }
+                const fin = await fetch(`${apiBase}api/moments/upload/${id}/complete`,
+                                        { method: 'POST' });
+                const data = await fin.json().catch(() => ({}));
+                if (!fin.ok) throw new Error(data.detail || 'upload failed');
                 pendingAttachment = data;   // {kind:'video', url, mime}
                 showAttachPreview(`<video src="${apiBase}${data.url.replace(/^\//, '')}" muted playsinline
                     class="h-20 rounded-xl border border-gray-700 object-cover"></video>
@@ -2044,7 +2114,7 @@
             } catch (err) {
                 showGlobalAlert(err.message || 'Video upload failed');
             } finally {
-                btn.textContent = '📷';
+                setProgress(null);
             }
         }
 

@@ -899,7 +899,102 @@ def scenario_media_root_and_sharding():
           f"scratch lives beside the database, got {storage.media_scratch_dir()}")
 
 
+def scenario_resumable_upload():
+    """Chunked upload with offset resync. A clip goes up over cellular at a
+    game; the old single POST restarted from zero on any drop."""
+    import main
+    import asyncio
+    import json
+    from fastapi import HTTPException
+
+    class _FakeRequest:
+        """Minimal stand-in for Starlette's Request.stream()."""
+        def __init__(self, body, pieces=2):
+            n = max(1, len(body) // pieces or 1)
+            self._chunks = [body[i:i + n] for i in range(0, len(body), n)] or [b'']
+        async def stream(self):
+            for c in self._chunks:
+                yield c
+
+    def put(uid, offset, body):
+        return asyncio.run(main.put_upload_chunk(uid, offset, _FakeRequest(body)))
+
+    # Too big is refused BEFORE any bytes move — that is the whole point of
+    # declaring the size up front.
+    try:
+        main.init_resumable_upload(main.UploadInitRequest(
+            size=main._VIDEO_MAX_BYTES + 1, mime="video/mp4"))
+        check(False, "expected 413")
+    except HTTPException as e:
+        check(e.status_code == 413 and "limit" in e.detail,
+              f"oversize refused at init with a helpful message, got {e.detail}")
+    try:
+        main.init_resumable_upload(main.UploadInitRequest(size=0, mime="video/mp4"))
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "empty upload refused at init")
+
+    payload = b"fake-mp4-bytes-" * 400
+    init = main.init_resumable_upload(main.UploadInitRequest(
+        size=len(payload), mime="video/mp4"))
+    uid = init["upload_id"]
+    check(init["received"] == 0 and init["max_bytes"] == main._VIDEO_MAX_BYTES,
+          "init reports a starting offset and the cap")
+
+    half = len(payload) // 2
+    r = put(uid, 0, payload[:half])
+    check(r["received"] == half, "first chunk acknowledged by byte count")
+
+    # The drop: client thinks it is elsewhere. A 409 must carry the truth so
+    # it resyncs in one round trip instead of starting over.
+    try:
+        put(uid, 0, payload[:half])
+        check(False, "expected 409")
+    except HTTPException as e:
+        check(e.status_code == 409 and json.loads(e.detail)["received"] == half,
+              f"offset mismatch returns the server's true offset, got {e.detail}")
+    check(main.resumable_upload_status(uid)["received"] == half,
+          "status endpoint reports resume point")
+
+    # Completing early must fail rather than store a truncated clip.
+    try:
+        main.complete_resumable_upload(uid)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400 and "Incomplete" in e.detail,
+              "an incomplete upload cannot be completed")
+
+    r = put(uid, half, payload[half:])
+    check(r["received"] == len(payload), "resumed from the server's offset")
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        done = main.complete_resumable_upload(uid)
+    check(done["kind"] == "video" and done["url"].startswith("/api/media/"),
+          f"completed upload lands in the media store, got {done}")
+    check(storage.media_file_path(done["url"].rsplit("/", 1)[-1]), "and resolves")
+
+    # Overrunning the declared size is refused and the part discarded.
+    init2 = main.init_resumable_upload(main.UploadInitRequest(size=10, mime="video/mp4"))
+    try:
+        put(init2["upload_id"], 0, b"x" * 50)
+        check(False, "expected 413")
+    except HTTPException as e:
+        check(e.status_code == 413, "overrunning the declared size is refused")
+    try:
+        main.resumable_upload_status(init2["upload_id"])
+        check(False, "expected 404")
+    except HTTPException as e:
+        check(e.status_code == 404, "and the abandoned part is cleaned up")
+
+    for junk in ("../../etc/passwd", "nothex", "a" * 31):
+        try:
+            main.resumable_upload_status(junk)
+            check(False, "expected rejection")
+        except HTTPException as e:
+            check(e.status_code in (400, 404), f"junk upload id refused: {junk!r}")
+
+
 SCENARIOS = [
+    scenario_resumable_upload,
     scenario_media_root_and_sharding,
     scenario_attachment_send_and_validation,
     scenario_reaction_toggle_and_endpoint,

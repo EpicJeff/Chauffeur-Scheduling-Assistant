@@ -5829,8 +5829,133 @@ def serve_moment_media_by_message(message_id: str):
 # "Photos of sports does nothing. Videos are the thing." (family, 2026-08-04)
 # Clips upload as files on the family's box and transcode to H.264 720p in
 # the background (Dockerfile ships ffmpeg), so the raw upload cap can be
-# generous — the STORED clip ends up ~10x smaller.
-_VIDEO_MAX_BYTES = 500 * 1024 * 1024
+# generous — the STORED clip ends up ~20x smaller. Raised from 500 MB once
+# media_root could point at real storage and uploads became resumable: the
+# cap existed to bound a single-shot upload onto the add-on's own volume,
+# and both halves of that are gone. A phone's own 4K60 clip is the unit here.
+_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024
+_UPLOAD_STALE_SECS = 24 * 3600
+
+
+def _upload_paths(upload_id: str):
+    """Part file + its sidecar. The id regex is the traversal guard."""
+    import re
+    if not re.fullmatch(r'[a-f0-9]{32}', upload_id or ''):
+        raise HTTPException(status_code=400, detail="Bad upload id")
+    d = storage.media_scratch_dir()
+    return os.path.join(d, upload_id + '.part'), os.path.join(d, upload_id + '.meta')
+
+
+def _sweep_stale_uploads():
+    """Abandoned resumable uploads are real bytes on disk — a dropped 2 GB
+    clip nobody retried would otherwise sit in scratch forever."""
+    d = storage.media_scratch_dir()
+    cutoff = time.time() - _UPLOAD_STALE_SECS
+    try:
+        for name in os.listdir(d):
+            if not name.endswith(('.part', '.meta')):
+                continue
+            p = os.path.join(d, name)
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+class UploadInitRequest(BaseModel):
+    size: int
+    mime: str = ''
+
+
+@app.post("/api/moments/upload/init")
+def init_resumable_upload(req: UploadInitRequest):
+    """Reserve a resumable upload. Validates the size BEFORE a single byte
+    moves — the client already knows `file.size`, so a clip that is too big
+    should cost nothing but one round trip, not a full transfer that fails at
+    the end. (On iOS the slow part before this is the OS pulling the video out
+    of iCloud; nothing server-side can shorten that.)"""
+    import uuid as _uuid
+    if req.size <= 0:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if req.size > _VIDEO_MAX_BYTES:
+        gb = _VIDEO_MAX_BYTES / (1024 ** 3)
+        raise HTTPException(
+            status_code=413,
+            detail=f"That clip is {req.size / (1024**3):.1f}GB — the limit is {gb:.0f}GB")
+    _sweep_stale_uploads()
+    upload_id = _uuid.uuid4().hex
+    part, meta = _upload_paths(upload_id)
+    with open(part, 'wb'):
+        pass
+    with open(meta, 'w') as f:
+        json.dump({'size': req.size, 'mime': req.mime or '', 'created': time.time()}, f)
+    return {'upload_id': upload_id, 'received': 0,
+            'chunk_size': _UPLOAD_CHUNK_BYTES, 'max_bytes': _VIDEO_MAX_BYTES}
+
+
+@app.get("/api/moments/upload/{upload_id}")
+def resumable_upload_status(upload_id: str):
+    """How many bytes the server actually has — the client resyncs to this
+    after a dropped connection instead of starting over."""
+    part, meta = _upload_paths(upload_id)
+    if not os.path.isfile(part) or not os.path.isfile(meta):
+        raise HTTPException(status_code=404, detail="Upload not found")
+    with open(meta) as f:
+        info = json.load(f)
+    return {'upload_id': upload_id, 'received': os.path.getsize(part),
+            'size': info.get('size')}
+
+
+@app.put("/api/moments/upload/{upload_id}")
+async def put_upload_chunk(upload_id: str, offset: int, request: Request):
+    """Append one chunk at `offset`. A mismatched offset is a 409 carrying the
+    true `received`, so a client that lost track resyncs in one round trip
+    rather than restarting the transfer."""
+    part, meta = _upload_paths(upload_id)
+    if not os.path.isfile(part) or not os.path.isfile(meta):
+        raise HTTPException(status_code=404, detail="Upload not found")
+    with open(meta) as f:
+        info = json.load(f)
+    have = os.path.getsize(part)
+    if offset != have:
+        raise HTTPException(status_code=409,
+                            detail=json.dumps({'received': have}))
+    with open(part, 'ab') as f:
+        async for chunk in request.stream():
+            have += len(chunk)
+            if have > info['size'] or have > _VIDEO_MAX_BYTES:
+                f.close()
+                os.remove(part)
+                os.remove(meta)
+                raise HTTPException(status_code=413,
+                                    detail="Upload exceeded its declared size")
+            f.write(chunk)
+    return {'received': have, 'size': info['size']}
+
+
+@app.post("/api/moments/upload/{upload_id}/complete")
+def complete_resumable_upload(upload_id: str):
+    """Finalize: hand the assembled file to the media store exactly as the
+    one-shot path does (transcode kicks off in the background from there)."""
+    part, meta = _upload_paths(upload_id)
+    if not os.path.isfile(part) or not os.path.isfile(meta):
+        raise HTTPException(status_code=404, detail="Upload not found")
+    with open(meta) as f:
+        info = json.load(f)
+    have = os.path.getsize(part)
+    if have != info['size']:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incomplete upload — have {have} of {info['size']} bytes")
+    os.remove(meta)
+    saved = storage.finalize_media_upload(part, info.get('mime') or '')
+    if not saved:
+        raise HTTPException(status_code=400, detail="Unsupported video format")
+    return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}
 
 @app.post("/api/moments/upload")
 async def upload_moment_media(media: UploadFile = File(...)):

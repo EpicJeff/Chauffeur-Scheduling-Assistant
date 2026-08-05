@@ -2112,13 +2112,22 @@ def _transcode_media(stem: str):
     # ffmpeg encodes to LOCAL scratch, never straight onto the media root —
     # a multi-minute write onto a network mount is slow and fails badly.
     tmp = os.path.join(media_scratch_dir(), stem + '.tmp.mp4')
+    # Scale the budget with the input. A flat 600 s was fine for a 500 MB cap
+    # but silently fails a long 4K clip now that the cap is 2 GB — and a
+    # transcode timeout means the ORIGINAL is kept as-is, so the one file
+    # that most needed shrinking is the one stored at full size.
+    try:
+        mb = os.path.getsize(orig) / (1024 * 1024)
+    except OSError:
+        mb = 0
+    budget = int(min(3600, max(600, mb * 3)))
     try:
         subprocess.run(
             [_ffmpeg_path(), '-y', '-i', orig,
              '-vf', "scale='min(1280,iw)':-2",
              '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
              '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
-            check=True, capture_output=True, timeout=600)
+            check=True, capture_output=True, timeout=budget)
         media_move_into_place(tmp, final)
         os.remove(orig)
         generate_poster(stem)   # thumbnail, so tiles never show a black box
