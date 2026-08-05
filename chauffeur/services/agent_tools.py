@@ -460,6 +460,33 @@ class CompleteKidTaskTool(BaseModel):
     task_title: str = Field(..., description="The task to check off.")
     member_name: Optional[str] = Field(None, description="Which child.")
 
+class AddShoppingItemsTool(BaseModel):
+    """
+    Adds one or more things to a family shopping list ("we're out of milk", "add eggs and butter", "put paper towels on the Costco list"). Direct action for anyone including children — a list item costs nothing and never needs approval. Not for errands or calendar events.
+    """
+    items: str = Field(..., description="What to add; comma- or 'and'-separated values are split into separate items.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class GetShoppingListItemsTool(BaseModel):
+    """
+    Reads what is still needed on a shopping list ("what's on the grocery list?").
+    """
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class CheckOffShoppingItemTool(BaseModel):
+    """
+    Checks something off the shopping list because it is now in the cart ("got the milk"). Use while shopping; fuzzy match on open items.
+    """
+    item_name: str = Field(..., description="The item that was picked up.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class RemoveShoppingItemTool(BaseModel):
+    """
+    Removes something from the shopping list entirely because it is no longer wanted ("take cilantro off the list"). NOT for items that were bought — use CheckOffShoppingItemTool for those.
+    """
+    item_name: str = Field(..., description="The item to remove.")
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
 class SetHouseholdStatusTool(BaseModel):
     """
     Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created in Config, not here.
@@ -531,6 +558,10 @@ TOOL_SCHEMAS = {
     "complete_kid_task": CompleteKidTaskTool.model_json_schema(),
     "set_household_status": SetHouseholdStatusTool.model_json_schema(),
     "get_household_status": GetHouseholdStatusTool.model_json_schema(),
+    "add_shopping_items": AddShoppingItemsTool.model_json_schema(),
+    "get_shopping_list_items": GetShoppingListItemsTool.model_json_schema(),
+    "check_off_shopping_item": CheckOffShoppingItemTool.model_json_schema(),
+    "remove_shopping_item_by_name": RemoveShoppingItemTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1631,6 +1662,25 @@ def handle_complete_kid_task(args: dict) -> dict:
     return complete_kid_task(args.get("task_title") or "",
                              member_name=args.get("member_name") or "")
 
+def handle_add_shopping_items(args: dict) -> dict:
+    from services.agent_tools_v2 import add_shopping_items
+    return add_shopping_items(args.get("items") or "",
+                              list_name=args.get("list_name") or "")
+
+def handle_get_shopping_list_items(args: dict) -> dict:
+    from services.agent_tools_v2 import get_shopping_list_items
+    return get_shopping_list_items(args.get("list_name") or "")
+
+def handle_check_off_shopping_item(args: dict) -> dict:
+    from services.agent_tools_v2 import check_off_shopping_item
+    return check_off_shopping_item(args.get("item_name") or "",
+                                   list_name=args.get("list_name") or "")
+
+def handle_remove_shopping_item(args: dict) -> dict:
+    from services.agent_tools_v2 import remove_shopping_item_by_name
+    return remove_shopping_item_by_name(args.get("item_name") or "",
+                                        list_name=args.get("list_name") or "")
+
 def handle_get_drive_digest(args: dict) -> dict:
     from services.agent_tools_v2 import get_drive_digest
     return get_drive_digest(target_date=args.get("target_date") or "today",
@@ -1705,6 +1755,10 @@ TOOL_HANDLERS = {
     "complete_kid_task": handle_complete_kid_task,
     "set_household_status": handle_set_household_status,
     "get_household_status": handle_get_household_status,
+    "add_shopping_items": handle_add_shopping_items,
+    "get_shopping_list_items": handle_get_shopping_list_items,
+    "check_off_shopping_item": handle_check_off_shopping_item,
+    "remove_shopping_item_by_name": handle_remove_shopping_item,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

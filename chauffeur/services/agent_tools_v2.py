@@ -1055,6 +1055,148 @@ def complete_kid_task(task_title: str, member_name: str = "",
             "message": f"Checked off {emoji} '{hits[0].get('title')}' — nice work! ✅"}
 
 
+# --- Shopping list (meals & provisioning arc M1) ---------------------------
+# Voice/text is the primary capture path and ~80% of the value: the person who
+# notices is rarely the person who shops. Adds are DIRECT for everyone
+# including kids — an item costs the family nothing, so approval would be
+# friction with no gate (docs/meal_design.md principle 4).
+
+def _resolve_shopping_list(list_name: str = "") -> tuple:
+    """(list, error_message). Falls back to the default list, which is created
+    on first use so a fresh install never fails a voice add."""
+    from services import storage
+    low = (list_name or '').strip().lower()
+    if not low:
+        return storage.ensure_default_shopping_list(), None
+    lists = storage.get_shopping_lists()
+    hits = [l for l in lists if low == (l.get('name') or '').lower()
+            or low == (l.get('store') or '').lower()]
+    if not hits:
+        hits = [l for l in lists if low in (l.get('name') or '').lower()
+                or low in (l.get('store') or '').lower()]
+    if len(hits) == 1:
+        return hits[0], None
+    if not hits:
+        return None, (f"I don't have a list called '{list_name}'. "
+                      + ("Lists: " + ", ".join(l.get('name') or '?' for l in lists)
+                         if lists else "There aren't any lists yet."))
+    return None, "Which list? " + ", ".join(l.get('name') or '?' for l in hits)
+
+
+def add_shopping_items(items: str, list_name: str = "",
+                       acting_member: dict = None) -> Dict[str, Any]:
+    """Add one or more things to a shopping list. Direct action, never a
+    proposal — see module note."""
+    import re
+    from services import storage
+    from models.schemas import ShoppingItem
+    lst, err = _resolve_shopping_list(list_name)
+    if err:
+        return {"status": "error", "message": err}
+    raw = [p.strip() for p in re.split(r',|\band\b|\n', items or '') if p.strip()]
+    if not raw:
+        return {"status": "error", "message": "What should I add to the list?"}
+    added, already = [], []
+    for name in raw:
+        existing = storage.find_open_shopping_item(lst['id'], name)
+        if existing:
+            already.append(existing.get('name') or name)
+            continue
+        it = ShoppingItem(list_id=lst['id'], name=name, added_via='voice',
+                          added_by=(acting_member or {}).get('id')).model_dump()
+        storage.add_shopping_item(it)
+        added.append(name)
+    _bump_stream()
+    parts = []
+    if added:
+        parts.append(f"Added to {lst.get('name')}: " + ", ".join(added) + ".")
+    if already:
+        parts.append(("Already on there: " if not added else "Already there: ")
+                     + ", ".join(already) + ".")
+    return {"status": "success", "message": " ".join(parts)}
+
+
+def get_shopping_list_items(list_name: str = "",
+                            acting_member: dict = None) -> Dict[str, Any]:
+    """READ: what's still open on a shopping list."""
+    from services import storage
+    lst, err = _resolve_shopping_list(list_name)
+    if err:
+        return {"status": "error", "message": err}
+    items = storage.get_shopping_items(lst['id'], include_checked=False)
+    if not items:
+        return {"status": "success",
+                "message": f"{lst.get('name')} is empty — nothing needed."}
+    lines = []
+    for i in items:
+        qty = f" ({i['qty']})" if i.get('qty') else ""
+        lines.append(f"• {i.get('name')}{qty}")
+    return {"status": "success",
+            "message": f"{lst.get('name')} ({len(items)}):\n" + "\n".join(lines)}
+
+
+def check_off_shopping_item(item_name: str, list_name: str = "",
+                            acting_member: dict = None) -> Dict[str, Any]:
+    """Check something off — the in-the-aisle path. Fuzzy match on open items."""
+    from services import storage
+    lst, err = _resolve_shopping_list(list_name)
+    if err:
+        return {"status": "error", "message": err}
+    items = storage.get_shopping_items(lst['id'], include_checked=False)
+    if not items:
+        return {"status": "success", "message": f"{lst.get('name')} is already clear!"}
+    low = (item_name or '').strip().lower()
+    hits = [i for i in items if low == (i.get('name') or '').lower()] \
+        or [i for i in items if low and low in (i.get('name') or '').lower()]
+    if not hits:
+        return {"status": "error",
+                "message": f"I don't see '{item_name}' on {lst.get('name')}. Still open: "
+                           + ", ".join(i.get('name') or '?' for i in items[:6])}
+    if len(hits) > 1:
+        return {"status": "error",
+                "message": "Which one? " + ", ".join(i.get('name') or '?' for i in hits)}
+    storage.check_shopping_item(hits[0]['id'], True, (acting_member or {}).get('id'))
+    _bump_stream()
+    left = len(items) - 1
+    tail = " That's everything! 🎉" if left == 0 else f" {left} left."
+    return {"status": "success",
+            "message": f"Got {hits[0].get('name')}.{tail}"}
+
+
+def remove_shopping_item_by_name(item_name: str, list_name: str = "",
+                                 acting_member: dict = None) -> Dict[str, Any]:
+    """Take something off the list entirely (changed our mind, not bought)."""
+    from services import storage
+    lst, err = _resolve_shopping_list(list_name)
+    if err:
+        return {"status": "error", "message": err}
+    items = storage.get_shopping_items(lst['id'], include_checked=False)
+    low = (item_name or '').strip().lower()
+    hits = [i for i in items if low == (i.get('name') or '').lower()] \
+        or [i for i in items if low and low in (i.get('name') or '').lower()]
+    if not hits:
+        return {"status": "error",
+                "message": f"'{item_name}' isn't on {lst.get('name')}."}
+    if len(hits) > 1:
+        return {"status": "error",
+                "message": "Which one? " + ", ".join(i.get('name') or '?' for i in hits)}
+    storage.delete_shopping_item(hits[0]['id'])
+    _bump_stream()
+    return {"status": "success",
+            "message": f"Took {hits[0].get('name')} off {lst.get('name')}."}
+
+
+def _bump_stream():
+    """Nudge the SSE clock so an open list view on someone else's phone
+    updates without a refresh."""
+    try:
+        import time as _time
+        import main as _m
+        _m.LAST_UPDATE_TIME = _time.time()
+    except Exception:
+        pass
+
+
 def manage_trip_flights(trip_id: str, action: str, prompt: str = "", flight: Dict[str, Any] = None) -> Dict[str, Any]:
     """Flight management for the v2 router. Thin wrapper over the validated v1
     handlers (generation, dedup, trip-day ordinals, draft-safe messages) so both
@@ -1388,6 +1530,53 @@ def get_available_tools() -> List[Dict]:
                     "member_name": {"type": "string", "description": "Which child (parents only)."}
                 },
                 "required": ["task_title"]
+            }
+        },
+        {
+            "name": "add_shopping_items",
+            "description": "Adds one or more things to a shopping list ('we're out of milk', 'add eggs and butter to the list', 'put paper towels on the Costco list'). A DIRECT action for ANYONE including children — a list item costs nothing, so it never needs approval. NOT for errands or calendar events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {"type": "string", "description": "What to add. Multiple things may be comma- or 'and'-separated; they are split into separate items."},
+                    "list_name": {"type": "string", "description": "Which list or store (e.g. 'Costco'). Omit for the family's default list."}
+                },
+                "required": ["items"]
+            }
+        },
+        {
+            "name": "get_shopping_list_items",
+            "description": "Reads what is still needed on a shopping list ('what's on the grocery list?', 'what do we need at Costco?').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "list_name": {"type": "string", "description": "Which list or store. Omit for the default list."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "check_off_shopping_item",
+            "description": "Checks something off the shopping list because it is now in the cart ('got the milk', 'check off eggs'). Use this while shopping. Fuzzy match on open items.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_name": {"type": "string", "description": "The item that was picked up."},
+                    "list_name": {"type": "string", "description": "Which list or store. Omit for the default list."}
+                },
+                "required": ["item_name"]
+            }
+        },
+        {
+            "name": "remove_shopping_item_by_name",
+            "description": "Removes something from the shopping list entirely because it is no longer wanted ('take cilantro off the list', 'we don't need bread after all'). This is NOT for items that were bought — use check_off_shopping_item for those.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_name": {"type": "string", "description": "The item to remove."},
+                    "list_name": {"type": "string", "description": "Which list or store. Omit for the default list."}
+                },
+                "required": ["item_name"]
             }
         },
         {

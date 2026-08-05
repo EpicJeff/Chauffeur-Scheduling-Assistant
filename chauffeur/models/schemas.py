@@ -667,6 +667,36 @@ class ErrandRule(BaseModel):
     valid_days_of_week: List[int] = Field(default_factory=list)
     is_enabled: bool = True
 
+class ShoppingList(BaseModel):
+    # Meals & provisioning arc M1. A STANDING list, not an errand field: a
+    # recurring grocery errand regenerates every cycle while the list persists
+    # across all of them, so the binding is by TAG (matched against
+    # Errand.tags), never by errand id. See docs/meal_design.md.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    name: str = "Groceries"
+    store: Optional[str] = None        # display name; matches Errand.location
+    errand_tag: Optional[str] = None   # binds to whichever errand carries it
+    is_default: bool = False
+    created_at: float = Field(default_factory=time.time)
+
+class ShoppingItem(BaseModel):
+    # Individually addressable so two people at the store never clobber each
+    # other: there is no whole-list PUT, only per-item PATCH (design §M1).
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    list_id: str
+    name: str
+    qty: Optional[str] = None          # FREE TEXT ("2 lbs") — never parsed
+    note: Optional[str] = None
+    added_by: Optional[str] = None     # member id (attribution, not a gate)
+    added_via: str = 'manual'          # manual|voice|photo|meal|barcode
+    source_meal_id: Optional[str] = None   # M3 entries that drained here
+    is_checked: bool = False
+    checked_at: Optional[float] = None
+    checked_by: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+
 class TripPOI(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str

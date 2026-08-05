@@ -750,6 +750,12 @@ def chores_page(request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
+@app.get("/shopping")
+def shopping_page(request: Request):
+    response = templates.TemplateResponse(request=request, name="shopping.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 @app.get("/intake")
 def intake_page(request: Request):
     response = templates.TemplateResponse(request=request, name="intake.html")
@@ -4774,6 +4780,201 @@ def complete_kid_task_api(task_id: str, req: KidTaskCompleteRequest):
             raise HTTPException(status_code=403, detail="You can only check off your own tasks")
     return storage.complete_kid_task(task_id, req.done)
 
+# --- Shopping lists (meals & provisioning arc M1) -----------------------------
+# Design contract (docs/meal_design.md §M1): there is NO whole-list write
+# endpoint for items. Every item mutation is a per-item PATCH so two people at
+# the store — or one adding while another shops — cannot clobber each other.
+# Adds are direct and ungated regardless of who is asking: a list item costs
+# the family nothing, so the proposal queue would be friction with no gate.
+
+class ShoppingListRequest(BaseModel):
+    name: str = "Groceries"
+    store: Optional[str] = None
+    errand_tag: Optional[str] = None
+    is_default: bool = False
+
+class ShoppingItemRequest(BaseModel):
+    name: str
+    qty: Optional[str] = None
+    note: Optional[str] = None
+    list_id: Optional[str] = None      # omitted -> the default list
+    added_by: Optional[str] = None     # member id (attribution only)
+    added_via: str = 'manual'
+
+class ShoppingItemPatch(BaseModel):
+    # Every field optional: a PATCH carries only what this caller changed.
+    name: Optional[str] = None
+    qty: Optional[str] = None
+    note: Optional[str] = None
+    is_checked: Optional[bool] = None
+    member_id: Optional[str] = None    # who tapped (PWA per-action identity)
+
+_SHOPPING_VIA = {'manual', 'voice', 'photo', 'meal', 'barcode'}
+
+def _touch_stream():
+    """Bump the SSE clock so open list views pull the delta."""
+    global LAST_UPDATE_TIME
+    LAST_UPDATE_TIME = time.time()
+
+@app.get("/api/shopping/lists")
+def list_shopping_lists():
+    storage.ensure_default_shopping_list()
+    lists = storage.get_shopping_lists()
+    for l in lists:
+        items = storage.get_shopping_items(l['id'])
+        l['open_count'] = sum(1 for i in items if not i.get('is_checked'))
+        l['checked_count'] = len(items) - l['open_count']
+    return lists
+
+@app.post("/api/shopping/lists")
+def create_shopping_list(req: ShoppingListRequest):
+    from models.schemas import ShoppingList
+    if not (req.name or '').strip():
+        raise HTTPException(status_code=400, detail="A list needs a name")
+    lst = ShoppingList(name=req.name.strip(), store=(req.store or '').strip() or None,
+                       errand_tag=(req.errand_tag or '').strip().lower() or None,
+                       is_default=req.is_default).model_dump()
+    if req.is_default:
+        for other in storage.get_shopping_lists():
+            if other.get('is_default'):
+                storage.update_shopping_list(other['id'], {'is_default': False})
+    storage.add_shopping_list(lst)
+    _touch_stream()
+    return lst
+
+@app.put("/api/shopping/lists/{list_id}")
+def edit_shopping_list(list_id: str, req: ShoppingListRequest):
+    if req.is_default:
+        for other in storage.get_shopping_lists():
+            if other['id'] != list_id and other.get('is_default'):
+                storage.update_shopping_list(other['id'], {'is_default': False})
+    if not storage.update_shopping_list(list_id, {
+            'name': (req.name or '').strip() or 'Groceries',
+            'store': (req.store or '').strip() or None,
+            'errand_tag': (req.errand_tag or '').strip().lower() or None,
+            'is_default': req.is_default}):
+        raise HTTPException(status_code=404, detail="List not found")
+    _touch_stream()
+    return storage.get_shopping_list(list_id)
+
+@app.delete("/api/shopping/lists/{list_id}")
+def remove_shopping_list(list_id: str):
+    storage.delete_shopping_list(list_id)
+    _touch_stream()
+    return {"status": "ok"}
+
+@app.get("/api/shopping/items")
+def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = True):
+    if not list_id:
+        list_id = storage.ensure_default_shopping_list()['id']
+    return storage.get_shopping_items(list_id, include_checked)
+
+@app.post("/api/shopping/items")
+def create_shopping_item(req: ShoppingItemRequest):
+    from models.schemas import ShoppingItem
+    name = (req.name or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="What should go on the list?")
+    list_id = req.list_id or storage.ensure_default_shopping_list()['id']
+    if not storage.get_shopping_list(list_id):
+        raise HTTPException(status_code=404, detail="List not found")
+    # Saying "milk" twice must not put milk on the list twice. A re-add after
+    # checking off IS a new need, so only unchecked rows dedupe.
+    existing = storage.find_open_shopping_item(list_id, name)
+    if existing:
+        patch = {}
+        if req.qty and req.qty != existing.get('qty'):
+            patch['qty'] = req.qty
+        if req.note and req.note != existing.get('note'):
+            patch['note'] = req.note
+        if patch:
+            storage.update_shopping_item(existing['id'], patch)
+            existing.update(patch)
+        existing['deduped'] = True
+        _touch_stream()
+        return existing
+    item = ShoppingItem(list_id=list_id, name=name,
+                        qty=(req.qty or '').strip() or None,
+                        note=(req.note or '').strip() or None,
+                        added_by=req.added_by,
+                        added_via=req.added_via if req.added_via in _SHOPPING_VIA
+                        else 'manual').model_dump()
+    storage.add_shopping_item(item)
+    _touch_stream()
+    return item
+
+@app.patch("/api/shopping/items/{item_id}")
+def patch_shopping_item(item_id: str, req: ShoppingItemPatch):
+    """The only item write path. Sends only changed fields, so a check tap and
+    a qty edit on different items never race — and re-checking an already
+    checked item is an idempotent no-op rather than an error."""
+    item = storage.get_shopping_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    patch = {}
+    if req.name is not None and req.name.strip():
+        patch['name'] = req.name.strip()
+    if req.qty is not None:
+        patch['qty'] = req.qty.strip() or None
+    if req.note is not None:
+        patch['note'] = req.note.strip() or None
+    if patch:
+        storage.update_shopping_item(item_id, patch)
+    if req.is_checked is not None:
+        storage.check_shopping_item(item_id, req.is_checked, req.member_id)
+    _touch_stream()
+    return storage.get_shopping_item(item_id)
+
+@app.delete("/api/shopping/items/{item_id}")
+def remove_shopping_item(item_id: str):
+    storage.delete_shopping_item(item_id)
+    _touch_stream()
+    return {"status": "ok"}
+
+@app.post("/api/shopping/lists/{list_id}/clear-checked")
+def clear_checked_shopping(list_id: str):
+    n = storage.clear_checked_shopping_items(list_id)
+    _touch_stream()
+    return {"status": "ok", "cleared": n}
+
+@app.post("/api/shopping/photo")
+async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
+                         list_id: str = Form('')):
+    """Photo → staged shopping candidates (fridge shelf, empty packages, a
+    handwritten list). Candidates are RETURNED, not added: a shelf photo
+    yields a dozen guesses and the family picks. That is a picker, not an
+    approval gate — adds themselves stay ungated (design principle 4)."""
+    import base64
+    from services import shopping as _shopping
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > _PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (8MB max)")
+    mime = (photo.content_type or '').lower()
+    if not mime.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Only images are supported")
+    target = list_id or storage.ensure_default_shopping_list()['id']
+    res = _shopping.extract_items_from_photo(
+        base64.b64encode(data).decode('ascii'), mime, (caption or '').strip())
+    res['candidates'] = _shopping.already_on_list(target, res.get('candidates') or [])
+    res['list_id'] = target
+    return res
+
+@app.get("/api/shopping/for-errand/{errand_id}")
+def shopping_for_errand(errand_id: str):
+    """The binding that makes this Chauffeur and not a list app: whoever the
+    solver assigned the grocery errand gets the standing list. Matched by TAG,
+    so it survives the errand regenerating on its next recurrence."""
+    errand = next((e for e in storage.get_all_errands() if e.get('id') == errand_id), None)
+    if not errand:
+        raise HTTPException(status_code=404, detail="Errand not found")
+    out = []
+    for l in storage.find_shopping_lists_for_errand(errand):
+        items = storage.get_shopping_items(l['id'], include_checked=False)
+        out.append({**l, 'items': items, 'open_count': len(items)})
+    return {"errand_id": errand_id, "errand_title": errand.get('title'), "lists": out}
+
 # --- Kid pickup-clarity pushes (kid-support arc K2) ---
 
 def _kid_members_for_event(ev, ev_id, sched=None):
@@ -6211,11 +6412,22 @@ def get_errands():
     raw = storage.get_all_errands()
     errand_schedules = storage.get_all_scheduled_errands()
             
+    # M1: the standing shopping lists bound to each errand by tag, so the
+    # errand card shows what the trip is actually FOR. Computed once here
+    # rather than one request per card.
+    all_lists = storage.get_shopping_lists()
+    open_counts = {}
+    for l in all_lists:
+        open_counts[l['id']] = len(storage.get_shopping_items(l['id'], include_checked=False))
+
     res = []
     for e in raw:
         obj = Errand(**e).model_dump() if hasattr(Errand(**e), 'model_dump') else Errand(**e).dict()
         if obj['id'] in errand_schedules:
             obj['scheduled_start'] = errand_schedules[obj['id']]
+        obj['shopping_lists'] = [
+            {'id': l['id'], 'name': l['name'], 'open_count': open_counts.get(l['id'], 0)}
+            for l in storage.find_shopping_lists_for_errand(obj)]
         res.append(obj)
     return res
 

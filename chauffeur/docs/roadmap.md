@@ -220,7 +220,14 @@ emergency), and in-car dining rules are **per-family settings, not
 constants** (this family eats full meals with utensils in the car; others
 won't eat in the car at all).
 
-- **M1 — the shopping list (provisioning).** Standing `ShoppingList` /
+- **M1 — the shopping list (provisioning). SHIPPED v2.70.0 (2026-08-05).**
+  Details in system_capabilities.md. Built as designed; the only reshape was
+  photo capture returning STAGED candidates for a one-tap picker rather than
+  auto-adding (a shelf photo yields a dozen guesses — this is a picker, not
+  an approval gate, so adds stay ungated). Open questions from the brief that
+  the build answered: the list DOES get a kiosk surface (read-only, 60s
+  refresh), and multi-store shipped in v1 UI, not schema-only. Original
+  design text follows. Standing `ShoppingList` /
   `ShoppingItem` entities bound to the recurring grocery errand by tag (NOT
   by errand id — the list outlives any errand instance). Voice/text capture
   in both agent stacks first (~80% of the value); photo capture aimed at

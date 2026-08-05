@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: { sans: ['Inter', 'sans-serif'] },
+                        colors: { gray: { 900: '#111827', 800: '#1F2937', 700: '#374151', 600: '#4B5563' } }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak>
+        <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-3xl'">
+
+            <header class="mb-6" x-show="!hideTitle">
+                <h2 class="text-3xl font-bold text-white mb-2">Shopping</h2>
+                <p class="text-gray-400" x-show="!isKiosk">
+                    Anyone can add — say it to Argyle, snap the shelf, or type it here. Whoever the
+                    solver sends to the store gets the list.
+                </p>
+            </header>
+
+            <!-- ===== List switcher (stores) ===== -->
+            <div class="flex items-center gap-2 mb-5 flex-wrap" x-show="lists.length > 1 || !isKiosk">
+                <template x-for="l in lists" :key="l.id">
+                    <button @click="selectList(l.id)"
+                        class="px-3 py-1.5 rounded-full text-sm font-bold transition-colors border"
+                        :class="l.id === activeId
+                            ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'">
+                        <span x-text="l.name"></span>
+                        <span class="opacity-60" x-show="l.open_count" x-text="' · ' + l.open_count"></span>
+                    </button>
+                </template>
+                <button x-show="!isKiosk" @click="newList()"
+                    class="px-3 py-1.5 rounded-full text-sm font-bold bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
+                    + List
+                </button>
+            </div>
+
+            <!-- ===== Add row ===== -->
+            <div class="flex gap-2 mb-6" x-show="!isKiosk">
+                <input x-model="draft" @keydown.enter="addItem()" type="text"
+                    placeholder="Add an item — or several, separated by commas"
+                    class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+                <button @click="addItem()" :disabled="!draft.trim()"
+                    class="px-5 py-3 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40 disabled:cursor-not-allowed">
+                    Add
+                </button>
+                <button @click="$refs.photo.click()" title="Snap the fridge shelf, a pile of empty packages, or a handwritten list"
+                    class="px-4 py-3 rounded-xl font-bold bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">
+                    📸
+                </button>
+                <input x-ref="photo" type="file" accept="image/*" capture="environment" class="hidden"
+                    @change="uploadPhoto($event)">
+            </div>
+
+            <!-- ===== Photo candidate picker =====
+                 Staged, not auto-added: a shelf photo yields a dozen guesses and
+                 the family picks. Not an approval gate — adds are ungated. -->
+            <div x-show="photoBusy" class="mb-6 bg-gray-800 rounded-2xl border border-gray-700 p-5 text-gray-400">
+                Reading the photo…
+            </div>
+            <div x-show="candidates.length" class="mb-6 bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
+                <div class="flex items-baseline justify-between mb-3">
+                    <h3 class="text-xs font-black uppercase tracking-widest text-pink-200"
+                        x-text="candidateHeading()"></h3>
+                    <button @click="candidates = []" class="text-xs text-gray-500 hover:text-white">Dismiss</button>
+                </div>
+                <div class="flex flex-wrap gap-2 mb-4">
+                    <template x-for="(c, i) in candidates" :key="i">
+                        <button @click="if (!c.already) c.suggested = !c.suggested"
+                            :disabled="c.already"
+                            class="px-3 py-2 rounded-xl text-sm font-semibold border text-left transition-colors"
+                            :class="c.already
+                                ? 'bg-gray-900 border-gray-700 text-gray-600 cursor-not-allowed line-through'
+                                : (c.suggested
+                                    ? 'bg-pink-500/20 border-pink-400/60 text-pink-100'
+                                    : 'bg-gray-900 border-gray-700 text-gray-400')">
+                            <span x-text="c.name"></span>
+                            <span class="opacity-60" x-show="c.qty" x-text="' · ' + c.qty"></span>
+                            <span class="block text-[11px] font-normal opacity-60"
+                                x-text="c.already ? 'already on the list' : c.why"></span>
+                        </button>
+                    </template>
+                </div>
+                <button @click="addCandidates()" :disabled="!selectedCount()"
+                    class="px-4 py-2 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40">
+                    Add <span x-text="selectedCount()"></span>
+                </button>
+            </div>
+
+            <!-- ===== The list ===== -->
+            <div x-show="!open.length && !checked.length"
+                class="text-gray-500 bg-gray-800 rounded-2xl p-8 text-center">
+                Nothing on this list. Say "we're out of milk" to Argyle and it lands here.
+            </div>
+
+            <div class="space-y-2 mb-8">
+                <template x-for="it in open" :key="it.id">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700 flex items-center gap-3 px-4 py-3 group">
+                        <button @click="setChecked(it, true)"
+                            class="w-6 h-6 rounded-md border-2 border-gray-600 hover:border-pink-400 shrink-0"
+                            :aria-label="'Got ' + it.name"></button>
+                        <div class="min-w-0 flex-1">
+                            <div class="font-semibold text-white truncate">
+                                <span x-text="it.name"></span>
+                                <span class="text-gray-400 font-normal" x-show="it.qty" x-text="' · ' + it.qty"></span>
+                            </div>
+                            <div class="text-[11px] text-gray-500" x-show="it.note || byline(it)">
+                                <span x-show="it.note" x-text="it.note"></span>
+                                <span x-show="it.note && byline(it)"> · </span>
+                                <span x-show="byline(it)" x-text="byline(it)"></span>
+                            </div>
+                        </div>
+                        <button x-show="!isKiosk" @click="removeItem(it)"
+                            class="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                            title="Remove (not bought — just not wanted)">✕</button>
+                    </div>
+                </template>
+            </div>
+
+            <div x-show="checked.length" class="mb-10">
+                <div class="flex items-baseline justify-between mb-3">
+                    <h3 class="text-xs font-black uppercase tracking-widest text-gray-500">
+                        In the cart · <span x-text="checked.length"></span>
+                    </h3>
+                    <button x-show="!isKiosk" @click="clearChecked()"
+                        class="text-xs font-bold text-gray-500 hover:text-white">Clear</button>
+                </div>
+                <div class="space-y-2">
+                    <template x-for="it in checked" :key="it.id">
+                        <div class="bg-gray-800/50 rounded-xl border border-gray-700/50 flex items-center gap-3 px-4 py-2.5">
+                            <button @click="setChecked(it, false)"
+                                class="w-6 h-6 rounded-md bg-pink-500/30 border-2 border-pink-400/60 text-pink-200 text-sm font-bold shrink-0"
+                                :aria-label="'Put ' + it.name + ' back'">✓</button>
+                            <div class="min-w-0 flex-1 text-gray-500 line-through truncate" x-text="it.name"></div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% include 'components/moments_hearth.html' %}
+    {% include 'components/control_center.html' %}
+
+    <script>
+        function shoppingPage() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                isKiosk: ['true', '1', 'yes'].includes((params.get('kiosk') || '').toLowerCase()),
+                hideTitle: ['none', 'off', '0', 'false', 'hide'].includes(
+                    (params.get('title') || '').toLowerCase()),
+                lists: [], activeId: null, items: [], members: {},
+                draft: '', candidates: [], photoBusy: false, photoKind: 'other',
+                // trailing-slash URLs need to climb one level (HA ingress)
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+
+                get open() { return this.items.filter(i => !i.is_checked); },
+                get checked() { return this.items.filter(i => i.is_checked); },
+
+                async init() {
+                    await this.loadMembers();
+                    await this.loadLists();
+                    await this.loadItems();
+                    // Shared mutable document: two people at the store, or one
+                    // adding while another shops. The SSE clock is bumped by
+                    // every item write (REST and agent), so both views converge.
+                    try {
+                        const es = new EventSource(this.apiBase + 'api/stream');
+                        es.onmessage = () => this.loadItems(true);
+                    } catch (e) { /* stream is a nicety, not a requirement */ }
+                    if (this.isKiosk) setInterval(() => this.loadItems(true), 60000);
+                },
+
+                async loadMembers() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/members');
+                        if (!r.ok) return;
+                        (await r.json()).forEach(m => { this.members[m.id] = m.name; });
+                    } catch (e) { }
+                },
+
+                async loadLists() {
+                    const r = await fetch(this.apiBase + 'api/shopping/lists');
+                    this.lists = r.ok ? await r.json() : [];
+                    if (!this.activeId && this.lists.length) {
+                        const def = this.lists.find(l => l.is_default) || this.lists[0];
+                        this.activeId = def.id;
+                    }
+                },
+
+                async loadItems(quiet) {
+                    if (!this.activeId) return;
+                    const r = await fetch(this.apiBase + 'api/shopping/items?list_id=' + encodeURIComponent(this.activeId));
+                    if (r.ok) this.items = await r.json();
+                    if (!quiet) return;
+                    // keep the store chips' counts honest on remote updates
+                    const r2 = await fetch(this.apiBase + 'api/shopping/lists');
+                    if (r2.ok) this.lists = await r2.json();
+                },
+
+                selectList(id) { this.activeId = id; this.candidates = []; this.loadItems(); },
+
+                byline(it) {
+                    const who = this.members[it.added_by];
+                    if (!who) return '';
+                    return it.added_via === 'photo' ? who + ' · photo' : who;
+                },
+
+                async addItem() {
+                    const raw = this.draft.trim();
+                    if (!raw) return;
+                    this.draft = '';
+                    // commas split here too, so the typed path matches the spoken one
+                    for (const name of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+                        await fetch(this.apiBase + 'api/shopping/items', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name, list_id: this.activeId })
+                        });
+                    }
+                    this.loadItems(true);
+                },
+
+                async setChecked(it, checked) {
+                    it.is_checked = checked;   // optimistic; PATCH is idempotent
+                    await fetch(this.apiBase + 'api/shopping/items/' + it.id, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ is_checked: checked })
+                    });
+                    this.loadItems(true);
+                },
+
+                async removeItem(it) {
+                    if (!await promptConfirm('Take "' + it.name + '" off the list?')) return;
+                    await fetch(this.apiBase + 'api/shopping/items/' + it.id, { method: 'DELETE' });
+                    this.loadItems(true);
+                },
+
+                async clearChecked() {
+                    if (!await promptConfirm('Clear everything in the cart?')) return;
+                    await fetch(this.apiBase + 'api/shopping/lists/' + this.activeId + '/clear-checked', { method: 'POST' });
+                    this.loadItems(true);
+                },
+
+                async newList() {
+                    const name = await promptInput('Name the list (e.g. Costco)');
+                    if (!name || !name.trim()) return;
+                    const r = await fetch(this.apiBase + 'api/shopping/lists', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: name.trim(), store: name.trim() })
+                    });
+                    if (!r.ok) { showGlobalAlert('Could not create that list'); return; }
+                    const l = await r.json();
+                    await this.loadLists();
+                    this.selectList(l.id);
+                },
+
+                candidateHeading() {
+                    const k = this.photoKind;
+                    if (k === 'handwritten') return 'From the list you photographed';
+                    if (k === 'shelf') return 'Looks like these are running low';
+                    if (k === 'packages') return 'From the empties';
+                    if (k === 'receipt') return 'From the receipt — pick what to repeat';
+                    return 'From the photo';
+                },
+
+                selectedCount() { return this.candidates.filter(c => c.suggested && !c.already).length; },
+
+                async uploadPhoto(ev) {
+                    const file = ev.target.files && ev.target.files[0];
+                    ev.target.value = '';
+                    if (!file) return;
+                    this.candidates = [];
+                    this.photoBusy = true;
+                    try {
+                        const fd = new FormData();
+                        fd.append('photo', file);
+                        fd.append('list_id', this.activeId || '');
+                        const r = await fetch(this.apiBase + 'api/shopping/photo', { method: 'POST', body: fd });
+                        const data = await r.json();
+                        if (!r.ok || data.error) {
+                            showGlobalAlert(data.error || data.detail || 'Could not read that photo');
+                            return;
+                        }
+                        this.photoKind = data.kind;
+                        this.candidates = data.candidates || [];
+                        if (!this.candidates.length) showGlobalAlert('Nothing on the list to add from that one.');
+                    } catch (e) {
+                        showGlobalAlert('Could not read that photo');
+                    } finally {
+                        this.photoBusy = false;
+                    }
+                },
+
+                async addCandidates() {
+                    const picked = this.candidates.filter(c => c.suggested && !c.already);
+                    for (const c of picked) {
+                        await fetch(this.apiBase + 'api/shopping/items', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                name: c.name, qty: c.qty || null,
+                                list_id: this.activeId, added_via: 'photo'
+                            })
+                        });
+                    }
+                    this.candidates = [];
+                    this.loadItems(true);
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>

@@ -398,6 +398,8 @@ with db_lock:
     routines_table = db.table('routines')
     routine_checks_table = db.table('routine_checks')
     kid_tasks_table = db.table('kid_tasks')
+    shopping_lists_table = db.table('shopping_lists')
+    shopping_items_table = db.table('shopping_items')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1552,6 +1554,140 @@ def complete_kid_task(task_id: str, done: bool = True) -> Optional[dict]:
         out = dict(res[0])
         out['status'] = 'done' if done else 'open'
         return out
+
+# --- Shopping lists (meals & provisioning arc M1) ---
+# A STANDING list bound to a recurring errand by TAG, never by errand id: the
+# errand regenerates each cycle, the list outlives all of them. Items are
+# individually addressable — there is no whole-list write anywhere in this
+# module, which is what makes two people shopping at once safe.
+# See docs/meal_design.md §M1.
+
+def get_shopping_lists() -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in shopping_lists_table.all()]
+    rows.sort(key=lambda l: (not l.get('is_default'), (l.get('name') or '').lower()))
+    return rows
+
+def get_shopping_list(list_id: str) -> Optional[dict]:
+    with db_lock:
+        res = shopping_lists_table.search(Query().id == list_id)
+        return dict(res[0]) if res else None
+
+def add_shopping_list(data: dict) -> str:
+    with db_lock:
+        shopping_lists_table.insert(data)
+        return data['id']
+
+def update_shopping_list(list_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(shopping_lists_table.update(data, Query().id == list_id))
+
+def delete_shopping_list(list_id: str):
+    with db_lock:
+        shopping_lists_table.remove(Query().id == list_id)
+        shopping_items_table.remove(Query().list_id == list_id)
+
+def ensure_default_shopping_list() -> dict:
+    """The list every capture path falls back to when no list is named.
+    Created on first use so a fresh install never 404s a voice add."""
+    from models.schemas import ShoppingList
+    lists = get_shopping_lists()
+    for l in lists:
+        if l.get('is_default'):
+            return l
+    if lists:
+        update_shopping_list(lists[0]['id'], {'is_default': True})
+        lists[0]['is_default'] = True
+        return lists[0]
+    fresh = ShoppingList(name="Groceries", is_default=True,
+                         errand_tag="groceries").model_dump()
+    add_shopping_list(fresh)
+    return fresh
+
+def get_shopping_items(list_id: str = None, include_checked: bool = True) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in (
+            shopping_items_table.search(Query().list_id == list_id) if list_id
+            else shopping_items_table.all())]
+    if not include_checked:
+        rows = [i for i in rows if not i.get('is_checked')]
+    # unchecked first, then oldest-first within each group: the shopping order
+    # is the order things were remembered, and checked items sink out of the way.
+    rows.sort(key=lambda i: (bool(i.get('is_checked')), i.get('created_at') or 0))
+    return rows
+
+def get_shopping_item(item_id: str) -> Optional[dict]:
+    with db_lock:
+        res = shopping_items_table.search(Query().id == item_id)
+        return dict(res[0]) if res else None
+
+def find_open_shopping_item(list_id: str, name: str) -> Optional[dict]:
+    """Case-insensitive match against UNCHECKED items on a list. Saying 'milk'
+    twice should not put milk on the list twice; a re-add after checking off
+    is a genuinely new need, so checked rows never match."""
+    low = (name or '').strip().lower()
+    if not low:
+        return None
+    for it in get_shopping_items(list_id, include_checked=False):
+        if (it.get('name') or '').strip().lower() == low:
+            return it
+    return None
+
+def add_shopping_item(data: dict) -> str:
+    with db_lock:
+        shopping_items_table.insert(data)
+        return data['id']
+
+def update_shopping_item(item_id: str, data: dict) -> bool:
+    """The ONLY item write path. Per-item merge, so concurrent edits to
+    different items on the same list cannot clobber one another."""
+    with db_lock:
+        return bool(shopping_items_table.update(data, Query().id == item_id))
+
+def delete_shopping_item(item_id: str):
+    with db_lock:
+        shopping_items_table.remove(Query().id == item_id)
+
+def check_shopping_item(item_id: str, checked: bool = True,
+                        by_member_id: str = None) -> Optional[dict]:
+    """Idempotent: re-checking an already-checked item is a no-op success, so
+    two phones tapping the same row race harmlessly."""
+    import time as _time
+    with db_lock:
+        res = shopping_items_table.search(Query().id == item_id)
+        if not res:
+            return None
+        patch = {'is_checked': bool(checked),
+                 'checked_at': _time.time() if checked else None,
+                 'checked_by': by_member_id if checked else None}
+        shopping_items_table.update(patch, Query().id == item_id)
+        out = dict(res[0])
+        out.update(patch)
+        return out
+
+def clear_checked_shopping_items(list_id: str) -> int:
+    """Sweep after a shop. Returns how many went."""
+    doomed = [i['id'] for i in get_shopping_items(list_id) if i.get('is_checked')]
+    with db_lock:
+        for iid in doomed:
+            shopping_items_table.remove(Query().id == iid)
+    return len(doomed)
+
+def find_shopping_lists_for_errand(errand: dict) -> List[dict]:
+    """Lists bound to an errand. Tag match is the contract (errand_tag against
+    Errand.tags); store==location is a convenience fallback so a list still
+    finds its errand before anyone has thought about tags."""
+    if not errand:
+        return []
+    tags = {str(t).strip().lower() for t in (errand.get('tags') or []) if str(t).strip()}
+    loc = (errand.get('location') or '').strip().lower()
+    out = []
+    for l in get_shopping_lists():
+        tag = (l.get('errand_tag') or '').strip().lower()
+        store = (l.get('store') or '').strip().lower()
+        if (tag and tag in tags) or (store and loc and store == loc):
+            out.append(l)
+    return out
 
 def add_routine(data: dict) -> str:
     with db_lock:

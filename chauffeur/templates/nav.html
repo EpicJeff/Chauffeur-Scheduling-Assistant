@@ -41,6 +41,15 @@
                             </svg>
                             Errands
                         </a>
+                        <a href="shopping"
+                            class="{% if 'shopping' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">
+                                </path>
+                            </svg>
+                            Shopping
+                        </a>
                         <a href="chores"
                             class="{% if request.url.path.endswith('/chores') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -189,8 +198,8 @@
             // each card's own config channel (params propagate across links).
             //   ?tabs=none                -> no nav bar at all (pure card)
             //   ?tabs=schedule,chores     -> only those tabs visible
-            // Slugs: schedule, calendar, errands, chores, routines, intake,
-            // trips, map, moments. Unknown/empty values are ignored, not fatal.
+            // Slugs: schedule, calendar, errands, shopping, chores, routines,
+            // intake, trips, map, moments. Unknown/empty values are ignored.
             const tabsParam = urlParams.get('tabs');
             if (tabsParam !== null) {
                 const navEl = document.querySelector('nav');
@@ -201,7 +210,7 @@
                         .map(s => s.trim().toLowerCase()).filter(Boolean));
                     const SLUGS = {
                         'dashboard_v2': 'schedule', 'calendar': 'calendar',
-                        'errands': 'errands', 'chores': 'chores',
+                        'errands': 'errands', 'shopping': 'shopping', 'chores': 'chores',
                         'routines': 'routines', 'intake': 'intake',
                         'trips': 'trips', 'map': 'map', 'moments': 'moments'
                     };
@@ -248,6 +257,15 @@
                     </path>
                 </svg>
                 Errands
+            </a>
+            <a href="shopping"
+                class="{% if 'shopping' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">
+                    </path>
+                </svg>
+                Shopping
             </a>
             <a href="chores"
                 class="{% if request.url.path.endswith('/chores') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">

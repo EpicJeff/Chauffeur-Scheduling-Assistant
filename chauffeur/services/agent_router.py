@@ -165,7 +165,11 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                     "things to bring) — no approval needed, it's their list. For a big project weeks "
                     "away, OFFER to break it into a few smaller tasks with staggered due dates, and "
                     "add them only if they say yes. Never nag about overdue tasks — mention them only "
-                    "when asked.\n")
+                    "when asked.\n"
+                    "SHOPPING LIST: if they mention the family is out of something ('we're out of "
+                    "cereal', 'we need more shampoo'), add it with add_shopping_items right away and "
+                    "tell them it's on the list. No approval needed and no parent required — noticing "
+                    "is genuinely useful and it costs nothing.\n")
         else:
             system_prompt += ("\nFAMILY MESSAGING & CHORES: you can send family/direct messages and claim chores, "
                               "but you do NOT know who is speaking in this context. If the speaker has identified "
@@ -280,7 +284,11 @@ sending or claiming, and never pass from_member/member_name for them.
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
-                             "get_kid_tasks", "add_kid_task", "complete_kid_task"}
+                             "get_kid_tasks", "add_kid_task", "complete_kid_task",
+                             # Shopping list (M1): adds/checks are actions, and
+                             # the read's message IS the complete spoken answer.
+                             "add_shopping_items", "get_shopping_list_items",
+                             "check_off_shopping_item", "remove_shopping_item_by_name"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -545,6 +553,32 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.complete_kid_task(args.get("task_title", "") or "",
                                                       member_name=args.get("member_name", "") or "",
                                                       acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("add_shopping_items", "get_shopping_list_items",
+                                   "check_off_shopping_item", "remove_shopping_item_by_name"):
+                    from services import agent_tools_v2 as _atv2
+                    # Same actor resolution as the kid-task tools, but nothing
+                    # here is identity-GATED: anyone in the family may add to
+                    # the list (the actor is recorded as attribution only).
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "add_shopping_items":
+                        res = _atv2.add_shopping_items(args.get("items", "") or "",
+                                                       list_name=args.get("list_name", "") or "",
+                                                       acting_member=actor)
+                    elif func_name == "get_shopping_list_items":
+                        res = _atv2.get_shopping_list_items(args.get("list_name", "") or "",
+                                                            acting_member=actor)
+                    elif func_name == "check_off_shopping_item":
+                        res = _atv2.check_off_shopping_item(args.get("item_name", "") or "",
+                                                            list_name=args.get("list_name", "") or "",
+                                                            acting_member=actor)
+                    else:
+                        res = _atv2.remove_shopping_item_by_name(args.get("item_name", "") or "",
+                                                                 list_name=args.get("list_name", "") or "",
+                                                                 acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "propose_family_action":
                     # Post a confirmation card instead of mutating directly. The
