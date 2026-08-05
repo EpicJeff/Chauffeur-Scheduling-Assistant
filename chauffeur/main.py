@@ -300,9 +300,28 @@ def _send_tomorrow_digests(subs):
     digest = family_digest.build_drive_digests()
     weather_line = digest.get("weather")
     tomorrow_iso = digest.get("date")
+    label = digest.get("label") or "Tomorrow"
+
+    drivers = dict(digest.get("drivers") or {})
+    # Empty-state confirmation: a recently-active driver with nothing tomorrow
+    # still gets a "you're free" note, so silence never reads as a broken
+    # digest (a bare no-message evening is indistinguishable from a failed
+    # send). "Recently active" = drove on any of the last 7 settled days
+    # (from the durable daily_stats snapshots — today's isn't taken until
+    # 21:00, after this 20:00 send). Non-drivers stay silent.
+    recent_days = [(datetime.now().date() - timedelta(days=i)).isoformat()
+                   for i in range(1, 8)]
+    active = {a_id for row in storage.get_daily_stats(recent_days)
+              for a_id, s in (row.get("drivers") or {}).items()
+              if (s.get("drives") or 0) > 0}
+    for a_id in active:
+        if a_id not in drivers:
+            drivers[a_id] = {"title": f"{label}: no drives",
+                             "lines": ["🎉 You're free — nothing on the schedule."],
+                             "count": 0}
 
     subscribed = {s.get("driver_id") for s in subs}
-    for d_id, d in (digest.get("drivers") or {}).items():
+    for d_id, d in drivers.items():
         lines = list(d["lines"])
         if weather_line:
             lines.insert(0, weather_line)
