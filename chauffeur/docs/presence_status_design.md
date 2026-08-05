@@ -5,7 +5,10 @@
 > solver needs; the trip timeline (spans, call windows, coverage reports);
 > and the full relative beat grammar (anchor±offset × audience × words ×
 > need — the chemo recovery arc works now, not just trips).
-> Slice 4 (Presence) remains design. It is
+> Slice 4 (Presence) now has a full design spec (2026-08-04) — not yet
+> built. Its shape: schedule-triggered capture prompt, family-wide access
+> with differentiated push to the kept-away, home + distant kiosk as the
+> shared hearth, reference-and-render media. It is
 > **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
 > it's us. Build to lived detail, not to guesses.
@@ -233,7 +236,7 @@ can be built *well* rather than fast:
 
 ## Open forks (decide before spec)
 
-- Media: store vs. reference-and-render.
+- Media: store vs. reference-and-render. **RESOLVED (Slice 4 design): reference-and-render** — Chauffeur owns anchor + routing, media lives where the family already keeps it.
 - Status authoring UX: incremental casual capture vs. explicit builder.
 - Correction path when an advance message goes wrong.
 - Exact `when` grammar for beats (offsets from start/end + recurring-during).
@@ -328,5 +331,80 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    beat-less protocols behave byte-identically to P3. Helpers as a beat
    audience: deferred. Tests: 4 new scenarios incl. the full chemo
    recovery arc (21 total).
-4. **Presence** — light activity-tied capture → route-to-kept-away → kiosk
-   render, starting from the messaging layer.
+4. **Presence** — light activity-tied capture → schedule-triggered → family-wide
+   access with differentiated push → kiosk-as-shared-hearth, on the existing
+   Discuss chat.
+
+   **DESIGN (2026-08-04, not yet built).** The container is the existing
+   event Discuss chat, anchored to the event forever and reachable from the
+   event chip and the chats tab — a small marginal build, not a new platform.
+   Everything below is what makes it Chauffeur instead of WhatsApp-with-tags;
+   none of it is the chat itself.
+
+   - **The capture prompt IS the feature — schedule-triggered, not
+     human-started.** Chauffeur knows Emma's game is live *now*, so it taps the
+     present parent: "You're at the game — send the family a moment?" The push
+     itself is the capture affordance (tap → burst / 10-sec clip / a bare "🏐
+     she got a kill!" → sent), never "navigate into a chat and compose." A
+     manually-started chat is the thing a group chat already does and the
+     reason the moment passes; the nudge is the defensible core. The Discuss
+     chat pre-exists / auto-opens on the anchored event — nobody has to start
+     it.
+   - **Access is family-wide; push is differentiated.** These are two different
+     axes and collapsing them was the early error. *Access:* the whole family
+     network minus helpers/temporary members (an existing, clean boundary) can
+     open the moment, and it lives on the event forever. There is no per-event
+     roster wall — the doc's "not a broadcast wall" is an argument against
+     indiscriminate *notification*, not against who may *see* it. *Push:* the
+     kept-away (solver-proven absent from *this* instance — the co-parent who
+     drew soccer, distant Grandma) get the active "you couldn't be there —
+     here's the kill" delivery and framing; everyone else can see it but is not
+     interrupted. Identical pixels, framing differs by recipient — preserved as
+     a delivery difference, not an access wall.
+   - **Family-wide is the SAFER privacy story, not a looser one.** Kid video is
+     the most sensitive data in the app; routing by a solver-derived roster
+     could leak it to a helper who happened to sit on the driver chat.
+     Family-network-minus-helpers is the tighter wall for exactly this media.
+   - **Two guardrails so family-wide isn't a dumb broadcast.** (1) Delivery
+     still rides the existing gates — quiet-hours, kid lens, dual-delivery; a
+     late clip is simply *there* in the morning, it doesn't buzz a kid at 10pm.
+     (2) Suppress push to whoever the schedule places AT the event — don't ping
+     the parent standing next to the sender. Access-yes, push-no; the schedule
+     already knows who was there, so it's free.
+   - **Lead with live-during; the forever-thread is the byproduct.** The
+     headline experience is a real-time trickle to the kept-away ("she's up to
+     serve") that makes the absent parent feel *with* them — the version only
+     Chauffeur can do because it knows the game is happening now. The moment
+     accreting on the event chip into a browsable season scrapbook is the
+     lovely emergent byproduct (principle: don't *build for* the scrapbook or
+     you're in Google Photos' lane), not the pitch.
+   - **Kiosk is the shared surface, both ends.** The *home* kiosk lights up
+     unbidden so whoever's on the couch gets a "Emma's game — live" viewing
+     party; the *distant* kiosk (Grandma three states away) lights up with the
+     same clip. The warmest, purest-Chauffeur render — the family hearth
+     showing you the moment you couldn't be at. Design toward it.
+   - **Reactions in, threaded replies out (v1).** Reactions are load-bearing,
+     not decoration: Grandma taps ❤️, the present parent sees it at halftime,
+     and *that reward is what sustains the next capture* — the answer to the
+     capture-burden problem. It's also the right-sized engagement for the
+     passive kiosk audience (she'll glance and smile, not thread a reply).
+     Threaded replies pulls straight into the WhatsApp-rebuild the moat
+     forbids and aims at the wrong user; deferred.
+   - **Protect the SENDER, not just the present kid.** The present parent's
+     side is fire-and-forget: drop the moment, pocket the phone. Reactions and
+     replies accumulate silently for them to see at a break — never a
+     per-❤️ ping mid-game, or the reward loop turns them back into a phone-glued
+     spectator watching their own kid through a screen.
+   - **Media: reference-and-render, not store (resolves the open fork).**
+     Chauffeur owns the *anchor + routing + framing*; the media lives where the
+     family already keeps it. Delivers 100% of the moat without Chauffeur
+     becoming the custodian of the most sensitive data there is, and dodges the
+     storage/transcoding weight. Revisit only if a concrete capture flow proves
+     reference can't carry the live-during trickle.
+
+   Reuses: family messaging (channel + attach point), the event/Rule matcher
+   (trigger + anchor), the solver assignment (who-was-kept-away), Kid Support
+   delivery (dual-delivery + quiet-hours gate), kid lens & kiosk (the shared
+   hearth). Open sub-forks for spec: the exact "is the event live" trigger
+   window; whether the present parent is asked once at start or lightly
+   re-nudged; the reference-media handle format.
