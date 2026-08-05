@@ -3,8 +3,8 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-05 (v2.69.2 — meals & provisioning arc
-designed and revised; the old "meals" cut reversed).
+up cold. Last updated: 2026-08-05 (v2.71.0 — meals arc M1 + M2 shipped;
+the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -237,7 +237,14 @@ won't eat in the car at all).
   included. Barcode deliberately deferred to the native wrapper (Open Food
   Facts solves the lookup for free; `BarcodeDetector` exists in no iOS
   browser, so today it means a WASM decoder — Capacitor gets ML Kit free).
-- **M2 — the day's eating plan (the moat).** Read-only derivation over solver
+- **M2 — the day's eating plan (the moat). SHIPPED v2.71.0 (2026-08-05).**
+  Details in system_capabilities.md. Two corrections the build forced: a long
+  gap between two places is a trip HOME, not time in the car (calling it
+  in-car tells a family to pack food they could cook), and sittings must group
+  by PLACE before time — clipping to the meal window makes start times
+  useless as a discriminator. The cook window is computed from raw un-clipped
+  spans, since prep happens before people eat. Original design text follows.
+  Read-only derivation over solver
   output: per-person **eating slots** with a modality (`at_home` / `in_car` /
   `at_venue`), spans not timestamps. Passengers can eat during a leg, the
   driver cannot — which is the structural reason the driving parent doesn't

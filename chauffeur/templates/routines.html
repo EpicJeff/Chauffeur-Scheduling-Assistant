@@ -76,6 +76,19 @@
                         No routines set up yet.
                     </div>
 
+                    <!-- 🍽️ Tonight's eating plan (M2). Renders ONLY when the day is
+                         actually constrained — the server returns no lines on an
+                         ordinary evening (design principle 6), so the wall panel
+                         stays quiet instead of issuing orders every night. -->
+                    <div x-show="mealLines.length" class="mb-8">
+                        <h3 class="text-lg font-black text-pink-300 mb-2">🍽️ Tonight</h3>
+                        <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4">
+                            <template x-for="(line, i) in mealLines" :key="'ml-' + i">
+                                <div class="text-sm text-gray-200 mb-1.5" x-text="line"></div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- 🌙 Kid digest strip FIRST (family request 2026-08-06): the day
                          preview is what kids should see before the checklist. Today
                          until the cutover time, then tomorrow (server decides). -->
@@ -529,6 +542,7 @@
                 streaks: [],
                 dayItems: {},   // memberId -> today's checklist items (kiosk lanes)
                 kidDigests: { kids: {}, label: '', weather: '' },   // 🌙 strip (K1)
+                mealLines: [],                                     // 🍽️ strip (M2)
                 newRoutineMemberId: '',
                 // Members with an empty just-started block (no items saved yet):
                 // purely client-side; the block materializes once the first
@@ -552,6 +566,7 @@
                         this._celebrateSweep();   // first call seeds localStorage silently
                         await this.loadAllDayItems();
                         this.loadKidDigests();    // digest content moves slowly: own 5-min cadence
+                        this.loadMealPlan();      // same cadence — derived from the same schedule
                         setInterval(() => this.reloadKiosk(), 30000);
                         setInterval(() => this.loadKidDigests(), 300000);
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
@@ -592,6 +607,14 @@
                         const res = await fetch(`${this.apiBase}api/kids/digests`);
                         this.kidDigests = res.ok ? await res.json() : { kids: {} };
                     } catch (e) { this.kidDigests = { kids: {} }; }
+                },
+                async loadMealPlan() {
+                    // Empty `lines` is the normal case — the server stays silent
+                    // unless the evening is genuinely constrained.
+                    try {
+                        const res = await fetch(`${this.apiBase}api/meals/plan`);
+                        this.mealLines = res.ok ? ((await res.json()).lines || []) : [];
+                    } catch (e) { this.mealLines = []; }
                 },
                 digestCards() {
                     return Object.entries(this.kidDigests.kids || {})

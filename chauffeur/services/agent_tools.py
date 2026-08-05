@@ -487,6 +487,12 @@ class RemoveShoppingItemTool(BaseModel):
     item_name: str = Field(..., description="The item to remove.")
     list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
 
+class GetEatingPlanTool(BaseModel):
+    """
+    Answers "what's the plan for dinner?", "do we have time to cook tonight?", "who's eating when?" from the SCHEDULE: time at home to cook, whether the family eats in shifts, who eats in the car and by when their food must be ready, and whether anyone has no gap to eat. Does NOT know what food is in the house.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD.")
+
 class SetHouseholdStatusTool(BaseModel):
     """
     Sets (or clears) a family status day — a pre-authored day type like 'Chemo Day' or 'Trip Day' ("today is a chemo day", "set rest day for tomorrow", "clear tomorrow's chemo day"). Setting it tells the kids in the family's own words and notifies the other adults. Day types are created in Config, not here.
@@ -562,6 +568,7 @@ TOOL_SCHEMAS = {
     "get_shopping_list_items": GetShoppingListItemsTool.model_json_schema(),
     "check_off_shopping_item": CheckOffShoppingItemTool.model_json_schema(),
     "remove_shopping_item_by_name": RemoveShoppingItemTool.model_json_schema(),
+    "get_eating_plan": GetEatingPlanTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1681,6 +1688,10 @@ def handle_remove_shopping_item(args: dict) -> dict:
     return remove_shopping_item_by_name(args.get("item_name") or "",
                                         list_name=args.get("list_name") or "")
 
+def handle_get_eating_plan(args: dict) -> dict:
+    from services.agent_tools_v2 import get_eating_plan
+    return get_eating_plan(args.get("target_date") or "today")
+
 def handle_get_drive_digest(args: dict) -> dict:
     from services.agent_tools_v2 import get_drive_digest
     return get_drive_digest(target_date=args.get("target_date") or "today",
@@ -1759,6 +1770,7 @@ TOOL_HANDLERS = {
     "get_shopping_list_items": handle_get_shopping_list_items,
     "check_off_shopping_item": handle_check_off_shopping_item,
     "remove_shopping_item_by_name": handle_remove_shopping_item,
+    "get_eating_plan": handle_get_eating_plan,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

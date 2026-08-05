@@ -361,6 +361,18 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
         fuel_notes = _cars.digest_fuel_notes(tomorrow.isoformat())
     except Exception as e:
         print(f"[family_digest] car fuel notes failed: {e}")
+    # M2: tomorrow's eating plan — the cook window, split service, what has to
+    # be packed and by when, or nobody-can-eat. Returns [] on an ordinary day
+    # (design principle 6: silence when the day isn't actually constrained),
+    # so this adds nothing to most digests.
+    meal_lines = []
+    try:
+        from services import meals as _meals
+        plan = _meals.eating_plan(tomorrow.isoformat(), 'dinner')
+        meal_lines = _meals.plan_summary_lines(plan)
+    except Exception as e:
+        print(f"[family_digest] eating plan failed: {e}")
+
     drivers = {}
     for d_id, items in per_driver.items():
         items.sort(key=lambda x: x[0])
@@ -370,11 +382,13 @@ def build_drive_digests(target_date: datetime.date = None) -> dict:
             lines.append(f"...and {len(items) - 6} more")
         if fuel_notes.get(d_id):
             lines.append(fuel_notes[d_id])
+        lines.extend(meal_lines)
         n = len(items)
         drivers[d_id] = {"title": f"{label}: {n} drive{'s' if n != 1 else ''}",
                          "lines": lines, "count": n}
     return {"date": tomorrow.isoformat(), "label": label,
             "weather": weather_line(tomorrow),
+            "meal_lines": meal_lines,
             "drivers": drivers}
 
 

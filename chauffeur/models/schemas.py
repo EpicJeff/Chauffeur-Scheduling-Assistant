@@ -481,6 +481,15 @@ class Settings(BaseModel):
     # disables the window.
     kid_quiet_start: str = "20:30"
     kid_quiet_end: str = "07:00"
+    # Where this family is willing to eat (meals arc M2). NOT physics — some
+    # families eat full meals with utensils in the car, others won't eat in
+    # the car at all. Default is PERMISSIVE: a wrong permission produces a
+    # visible suggestion someone corrects in seconds, while a wrong
+    # restriction hides eating slots invisibly and the feature just looks
+    # useless. 'none' disables that modality's slots wholesale.
+    # none | snack | handheld | full
+    car_dining: str = "full"
+    venue_dining: str = "full"
     # School calendar (services/school.py): what a "school day" is. All
     # empty = plain weekday behavior. The designated calendar's all-day
     # events matching a no-school keyword mark school out; the year bounds

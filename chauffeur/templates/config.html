@@ -697,6 +697,39 @@
                             </p>
                         </div>
                         <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <span class="font-bold text-gray-300">🍽️ Where this family eats</span>
+                            <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">In the car</label>
+                                    <select x-model="carDining" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                        <option value="full">Full meals, utensils fine</option>
+                                        <option value="handheld">Handheld only</option>
+                                        <option value="snack">Snacks only</option>
+                                        <option value="none">Never</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">At a venue</label>
+                                    <select x-model="venueDining" @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
+                                        <option value="full">Full meals, utensils fine</option>
+                                        <option value="handheld">Handheld only</option>
+                                        <option value="snack">Snacks only</option>
+                                        <option value="none">Never</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                How a family eats is a house rule, not a fact about cars — some families
+                                eat full meals with forks between activities, others never eat in the car
+                                at all. This decides which gaps in the day count as chances to eat.
+                                "Never" removes them entirely. Left permissive on purpose: a suggestion
+                                you don't want takes a second to ignore, while a hidden one never explains
+                                itself.
+                            </p>
+                        </div>
+                        <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <span class="font-bold text-gray-300">🏫 School Calendar</span>
                             <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
                                 <div class="flex items-center gap-2 shrink-0">
@@ -3423,6 +3456,8 @@
                 schoolStatus: null,
                 kidQuietStart: '20:30',
                 kidQuietEnd: '07:00',
+                carDining: 'full',
+                venueDining: 'full',
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -3817,6 +3852,8 @@
                     this.loadSchoolStatus();  // non-blocking; may take a moment (gcal fetch)
                     this.kidQuietStart = data.kid_quiet_start || '20:30';
                     this.kidQuietEnd = data.kid_quiet_end || '07:00';
+                    this.carDining = data.car_dining || 'full';
+                    this.venueDining = data.venue_dining || 'full';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -3945,7 +3982,9 @@
                             school_year_end: this.schoolYearEnd || '',
                             school_closed_keywords: this.schoolClosedKeywords || '',
                             kid_quiet_start: this.kidQuietStart || '20:30',
-                            kid_quiet_end: this.kidQuietEnd || '07:00'
+                            kid_quiet_end: this.kidQuietEnd || '07:00',
+                            car_dining: this.carDining || 'full',
+                            venue_dining: this.venueDining || 'full'
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {

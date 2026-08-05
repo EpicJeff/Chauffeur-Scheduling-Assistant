@@ -4937,6 +4937,18 @@ def clear_checked_shopping(list_id: str):
     _touch_stream()
     return {"status": "ok", "cleared": n}
 
+@app.get("/api/meals/plan")
+def meals_plan(date: Optional[str] = None, meal: str = 'dinner'):
+    """The day's eating plan (M2): per-person slots with a modality, the
+    household's sittings, the cook window, and — first-class — who has no gap
+    to eat at all. Read-only over solver output; writes nothing."""
+    import datetime as _dt
+    from services import meals as _meals
+    date_str = date or _dt.date.today().isoformat()
+    plan = _meals.eating_plan(date_str, meal if meal in _meals.MEAL_WINDOWS else 'dinner')
+    plan['lines'] = _meals.plan_summary_lines(plan)
+    return plan
+
 @app.post("/api/shopping/photo")
 async def shopping_photo(photo: UploadFile = File(...), caption: str = Form(''),
                          list_id: str = Form('')):

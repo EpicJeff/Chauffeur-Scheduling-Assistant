@@ -288,7 +288,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              # Shopping list (M1): adds/checks are actions, and
                              # the read's message IS the complete spoken answer.
                              "add_shopping_items", "get_shopping_list_items",
-                             "check_off_shopping_item", "remove_shopping_item_by_name"}
+                             "check_off_shopping_item", "remove_shopping_item_by_name",
+                             # M2: the plan's message IS the spoken answer.
+                             "get_eating_plan"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -553,6 +555,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.complete_kid_task(args.get("task_title", "") or "",
                                                       member_name=args.get("member_name", "") or "",
                                                       acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "get_eating_plan":
+                    from services import agent_tools_v2 as _atv2
+                    res = _atv2.get_eating_plan(args.get("target_date", "today") or "today")
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("add_shopping_items", "get_shopping_list_items",
                                    "check_off_shopping_item", "remove_shopping_item_by_name"):

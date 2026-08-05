@@ -1186,6 +1186,33 @@ def remove_shopping_item_by_name(item_name: str, list_name: str = "",
             "message": f"Took {hits[0].get('name')} off {lst.get('name')}."}
 
 
+def get_eating_plan(target_date: str = "today", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: what tonight's eating actually looks like given the schedule —
+    the cook window, who eats where and when, what has to be packed, and
+    whether anyone has no gap at all (meals arc M2)."""
+    import datetime as _dt
+    from services import meals, storage
+    day = _parse_fuzzy_date(target_date or 'today')
+    plan = meals.eating_plan(day.isoformat(), 'dinner')
+    when = "Tonight" if day == _dt.date.today() else day.strftime('%A')
+
+    if not plan.get('people'):
+        return {"status": "success", "message": "I don't have anyone to plan around yet."}
+    if plan.get('nobody_can_eat'):
+        return {"status": "success",
+                "message": f"{when} nobody has a real gap to eat — everyone's booked "
+                           "straight through dinner. Worth grabbing something on the way."}
+
+    lines = meals.plan_summary_lines(plan)
+    if not lines:
+        window = plan.get('cook_window_mins') or 0
+        return {"status": "success",
+                "message": f"{when} is an easy one — everyone's home for dinner"
+                           + (f" and there's about {window} min to cook." if window
+                              else ".")}
+    return {"status": "success", "message": f"{when}: " + " ".join(lines)}
+
+
 def _bump_stream():
     """Nudge the SSE clock so an open list view on someone else's phone
     updates without a refresh."""
@@ -1565,6 +1592,17 @@ def get_available_tools() -> List[Dict]:
                     "list_name": {"type": "string", "description": "Which list or store. Omit for the default list."}
                 },
                 "required": ["item_name"]
+            }
+        },
+        {
+            "name": "get_eating_plan",
+            "description": "Answers 'what's the plan for dinner?', 'do we have time to cook tonight?', 'who's eating when?' by reading the SCHEDULE — how long there is at home to cook, whether the family eats in shifts, who eats in the car and by when their food has to be ready, and whether anyone has no gap to eat at all. Use this for any question about fitting a meal into the day. It does NOT know what food is in the house.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."}
+                },
+                "required": []
             }
         },
         {
