@@ -368,25 +368,43 @@ def scenario_moment_fanout_differentiated():
     _schedule(now)
     ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
 
-    moment = {"sender_member_id": "mom", "body": "match point!",
+    moment = {"id": "mm1", "sender_member_id": "mom", "body": "match point!",
               "attachment": {"kind": "photo", "data_url": _TINY_JPEG}}
     with mock.patch.object(main, "send_push_to_member") as push, \
-         mock.patch.object(ha_api, "call_service"):
+         mock.patch.object(ha_api, "call_service"), \
+         mock.patch.object(ha_api, "fire_event") as fire:
         main._fanout_message_notifications(ch, moment)
         pushed = sorted(c.args[0] for c in push.call_args_list)
         check(pushed == ["dad", "gramps"],
               f"moment push: kept-away adults only (no kids, no present, no helper), got {pushed}")
         title = push.call_args_list[0].args[1]
         check(title.startswith("📸"), f"moment framing on the push title, got {title!r}")
+        # HA bus ping: bare "a moment happened" — no payload rides the bus.
+        check(fire.call_count == 1 and fire.call_args.args == ("chauffeur_moment", {}),
+              f"moment fires a payload-free HA event, got {fire.call_args}")
 
     # A plain text message in the same event channel keeps the old
-    # household-wide fan-out (kids included) — differentiation is moment-only.
+    # household-wide fan-out (kids included) — differentiation is moment-only,
+    # and text never pings the HA bus.
     with mock.patch.object(main, "send_push_to_member") as push, \
-         mock.patch.object(ha_api, "call_service"):
+         mock.patch.object(ha_api, "call_service"), \
+         mock.patch.object(ha_api, "fire_event") as fire:
         main._fanout_message_notifications(ch, {"sender_member_id": "mom", "body": "bring snacks"})
         pushed = sorted(c.args[0] for c in push.call_args_list)
         check(pushed == ["dad", "emma", "gramps", "kid2"],
               f"text fan-out unchanged, got {pushed}")
+        check(fire.call_count == 0, "text messages never fire the HA moment event")
+
+    # A moment in a private DM (thinking-of-you) must NOT hit the shared bus.
+    dm = storage.get_or_create_dm("dad", "mom")
+    with mock.patch.object(main, "send_push_to_member"), \
+         mock.patch.object(ha_api, "call_service"), \
+         mock.patch.object(ha_api, "fire_event") as fire:
+        main._fanout_message_notifications(dm, {"id": "mm2", "sender_member_id": "dad",
+                                                "body": "thinking of you",
+                                                "attachment": {"kind": "photo", "data_url": _TINY_JPEG}})
+        check(fire.call_count == 0,
+              "a DM moment never fires the HA event (nothing private on a wall panel)")
 
 
 def scenario_recent_moments_feed():

@@ -725,6 +725,15 @@ def config(request: Request):
 def calendar_view(request: Request):
     return templates.TemplateResponse(request=request, name="calendar.html")
 
+@app.get("/moment", response_class=HTMLResponse)
+def moment_popup(request: Request):
+    """Standalone one-moment page in the hearth style — built to be iframed
+    by an HA browser_mod popup on the `chauffeur_moment` event (it renders
+    the newest moment; ?message_id= pins a specific one)."""
+    response = templates.TemplateResponse(request=request, name="moment.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 @app.get("/errands")
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
@@ -3428,6 +3437,17 @@ def _fanout_message_notifications(channel, message):
                         + (f": {caption[:140]}" if caption else " — you couldn't be there 💙"))
             except Exception as pe:
                 print(f"Moment audience resolution failed (falling back): {pe}")
+            # HA event bus: a bare "a moment just happened" ping so the
+            # family's automations can react — e.g. browser_mod popping an
+            # iframe of /moment (which always renders the newest moment) on
+            # the wall panel. Deliberately payload-free: the popup page
+            # fetches the moment itself, so nothing sensitive rides the bus.
+            # EVENT channels only — a private thinking-of-you DM must never
+            # pop on a shared panel.
+            try:
+                ha_api.fire_event('chauffeur_moment', {})
+            except Exception as fe:
+                print(f"Moment HA event failed: {fe}")
         for m in recipients:
             if m['id'] == message['sender_member_id']:
                 continue

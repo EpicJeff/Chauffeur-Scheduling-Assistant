@@ -168,6 +168,14 @@ def get_config_entry_id(domain: str):
     return None
 
 
+def fire_event(event_type: str, data: dict = None):
+    """POST /api/events/{event_type} — put an event on the HA bus so the
+    family's automations can react (e.g. `chauffeur_moment` → browser_mod
+    popup on the wall panel). Payloads must stay small: URLs, never media
+    bytes. Returns None when HA is unreachable, like everything here."""
+    return _request('POST', f'/events/{event_type}', json_body=data or {})
+
+
 def call_service(domain: str, service: str, data: dict = None,
                  return_response: bool = False):
     """POST /api/services/{domain}/{service}. With return_response=True the

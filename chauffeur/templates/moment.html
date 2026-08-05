@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- Standalone Moment popup page (Presence slice): renders ONE moment in the
+     kiosk-hearth style, full-bleed, zero dependencies — built to be iframed
+     by a Home Assistant browser_mod popup fired from the `chauffeur_moment`
+     event (?message_id=... from the event payload; newest moment if omitted).
+     Also works as a plain browser/kiosk URL. -->
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moment</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            background: #030712;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            display: flex; align-items: center; justify-content: center;
+            padding: 24px;
+        }
+        .card {
+            text-align: center;
+            background: #111827;
+            border: 1px solid rgba(236, 72, 153, 0.4);
+            border-radius: 24px;
+            padding: 24px;
+            max-width: min(760px, 94vw);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+            animation: pop .5s ease-out forwards;
+        }
+        @keyframes pop {
+            0% { transform: scale(.5); opacity: 0; }
+            60% { transform: scale(1.06); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .kicker {
+            font-size: 12px; font-weight: 900; text-transform: uppercase;
+            letter-spacing: .18em; color: #f9a8d4; margin-bottom: 10px;
+        }
+        .media img, .media video {
+            max-width: 100%; max-height: 62vh;
+            border-radius: 16px; object-fit: contain;
+        }
+        .caption { font-size: 20px; font-weight: 700; color: #fff; margin-top: 14px; }
+        .from { font-size: 14px; color: #9ca3af; margin-top: 8px; }
+        .empty { color: #6b7280; font-size: 16px; }
+    </style>
+</head>
+
+<body>
+    <div id="root" class="card"><div class="empty">Loading…</div></div>
+    <script>
+        (function () {
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            const wantedId = new URLSearchParams(window.location.search).get('message_id');
+
+            function esc(s) {
+                const d = document.createElement('div');
+                d.textContent = s == null ? '' : String(s);
+                return d.innerHTML;
+            }
+
+            async function load() {
+                const root = document.getElementById('root');
+                try {
+                    const res = await fetch(`${apiBase}api/presence/moments?hours=168&limit=30`);
+                    const moments = res.ok ? await res.json() : [];
+                    const m = wantedId
+                        ? moments.find(x => x.id === wantedId)
+                        : moments.find(x => x.attachment && (x.attachment.data_url || x.attachment.url));
+                    if (!m || !m.attachment) {
+                        root.innerHTML = '<div class="empty">No moment to show 💤</div>';
+                        return;
+                    }
+                    const att = m.attachment;
+                    const media = att.kind === 'video' && att.url
+                        ? `<video src="${apiBase.replace(/\/$/, '')}${att.url}" autoplay muted loop playsinline controls></video>`
+                        : `<img src="${att.data_url || ''}">`;
+                    root.innerHTML = `
+                        <div class="kicker">📸 ${esc(m.event_title)}</div>
+                        <div class="media">${media}</div>
+                        ${m.body ? `<div class="caption">${esc(m.body)}</div>` : ''}
+                        <div class="from">from ${esc(m.sender_name)}</div>`;
+                } catch (e) {
+                    root.innerHTML = '<div class="empty">Could not load the moment</div>';
+                }
+            }
+            load();
+        })();
+    </script>
+</body>
+
+</html>
