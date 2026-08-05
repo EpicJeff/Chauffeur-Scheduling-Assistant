@@ -73,10 +73,10 @@
                         root.innerHTML = '<div class="empty">No moment to show 💤</div>';
                         return;
                     }
-                    const att = m.attachment;
-                    const media = att.kind === 'video' && att.url
-                        ? `<video src="${apiBase}${att.url.replace(/^\//, '')}" autoplay muted loop playsinline controls></video>`
-                        : `<img src="${att.data_url || ''}">`;
+                    const src = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
+                    const media = m.kind === 'video'
+                        ? `<video src="${src}" autoplay muted loop playsinline controls></video>`
+                        : `<img src="${src}">`;
                     root.innerHTML = `
                         <div class="kicker">📸 ${esc(m.event_title)}</div>
                         <div class="media">${media}</div>

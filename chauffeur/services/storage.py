@@ -1919,13 +1919,18 @@ def _delete_media_for_messages(msgs):
 def add_chat_message(message: dict) -> dict:
     with db_lock:
         chat_messages_table.insert(message)
-        # Retention cap per channel: household chat, not an archive.
+        # Retention cap per channel: household chat, not an archive — EXCEPT
+        # moments. A photo/clip is the one thing in a family chat nobody wants
+        # aged out ("all moments available forever"), so attachment-bearing
+        # messages are exempt and only ordinary chatter is pruned.
         msgs = chat_messages_table.search(Query().channel_id == message['channel_id'])
-        if len(msgs) > _MESSAGES_PER_CHANNEL_CAP:
+        overflow = len(msgs) - _MESSAGES_PER_CHANNEL_CAP
+        if overflow > 0:
             msgs.sort(key=lambda m: m.get('ts', 0))
-            stale = msgs[:len(msgs) - _MESSAGES_PER_CHANNEL_CAP]
-            _delete_media_for_messages(stale)
-            chat_messages_table.remove(doc_ids=[m.doc_id for m in stale])
+            stale = [m for m in msgs if not m.get('attachment')][:overflow]
+            if stale:
+                _delete_media_for_messages(stale)   # defensive; moments never here
+                chat_messages_table.remove(doc_ids=[m.doc_id for m in stale])
         return message
 
 def toggle_message_reaction(message_id: str, member_id: str, emoji: str) -> Optional[dict]:
@@ -1950,6 +1955,51 @@ def toggle_message_reaction(message_id: str, member_id: str, emoji: str) -> Opti
         chat_messages_table.update({'reactions': reactions}, Query().id == message_id)
         msg['reactions'] = reactions
         return msg
+
+def get_chat_message(message_id: str) -> Optional[dict]:
+    with db_lock:
+        res = chat_messages_table.search(Query().id == message_id)
+        return dict(res[0]) if res else None
+
+
+def get_event_moment_index() -> List[dict]:
+    """One entry per EVENT that has moments — the gallery's top level. No time
+    limit by design: moments are exempt from the chat retention cap, so this
+    is the family's whole history. Newest event first; cover = newest moment.
+    Archived event channels are included (a season is worth keeping)."""
+    with db_lock:
+        channels = {c['id']: dict(c) for c in chat_channels_table.search(Query().kind == 'event')}
+        if not channels:
+            return []
+        buckets = {}
+        for m in chat_messages_table.all():
+            ch = channels.get(m.get('channel_id'))
+            if not ch or not m.get('attachment'):
+                continue
+            b = buckets.get(ch['id'])
+            if b is None:
+                b = buckets[ch['id']] = {
+                    'channel_id': ch['id'], 'event_id': ch.get('event_id'),
+                    'event_title': ch.get('title') or 'Family moment',
+                    'count': 0, 'latest_ts': 0.0, 'cover': None,
+                    'sender_ids': set(),
+                }
+            b['count'] += 1
+            b['sender_ids'].add(m.get('sender_member_id'))
+            if (m.get('ts') or 0) >= b['latest_ts']:
+                b['latest_ts'] = m.get('ts') or 0
+                b['cover'] = dict(m)
+    return sorted(buckets.values(), key=lambda b: b['latest_ts'], reverse=True)
+
+
+def get_channel_moments(channel_id: str) -> List[dict]:
+    """Every moment in one event's thread, newest first (no time limit)."""
+    with db_lock:
+        msgs = [dict(m) for m in chat_messages_table.search(Query().channel_id == channel_id)]
+    msgs = [m for m in msgs if m.get('attachment')]
+    msgs.sort(key=lambda m: m.get('ts', 0), reverse=True)
+    return msgs
+
 
 def get_recent_event_moments(since_ts: float, limit: int = 20) -> List[dict]:
     """Photo moments (messages with an attachment) from event channels, newest

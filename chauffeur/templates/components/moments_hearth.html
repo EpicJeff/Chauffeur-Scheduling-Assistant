@@ -21,13 +21,22 @@
             return d.innerHTML;
         }
 
-        function mediaHtml(m, cls) {
+        // Media always loads by URL (never the inline photo data URL) and
+        // relative (like the api fetches) so HA ingress paths work. Tiles
+        // stay cheap: only the full-screen overlay autoplays.
+        function mediaHtml(m, cls, opts) {
             const att = m.attachment || {};
-            if (att.kind === 'video' && att.url) {
-                // Relative (like the api fetches) so HA ingress paths work.
-                return `<video src="${apiBase}${att.url.replace(/^\//, '')}" autoplay muted loop playsinline class="${cls}"></video>`;
+            const src = m.media_url
+                ? `${apiBase}${m.media_url.replace(/^\//, '')}`
+                : (att.url ? `${apiBase}${att.url.replace(/^\//, '')}` : (att.data_url || ''));
+            const kind = m.kind || att.kind;
+            if (kind === 'video') {
+                const attrs = (opts && opts.full)
+                    ? 'autoplay muted loop playsinline'
+                    : 'muted playsinline preload="metadata"';
+                return `<video src="${src}" ${attrs} class="${cls}"></video>`;
             }
-            return `<img src="${att.data_url || ''}" class="${cls}">`;
+            return `<img src="${src}" ${(opts && opts.full) ? '' : 'loading="lazy"'} class="${cls}">`;
         }
 
         function momentAgo(ts) {
@@ -47,7 +56,7 @@
                 <div style="animation:kioskMomentPop .5s ease-out forwards"
                     class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
                     <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
-                    ${mediaHtml(m, 'max-h-[62vh] rounded-2xl mx-auto object-contain')}
+                    ${mediaHtml(m, 'max-h-[62vh] rounded-2xl mx-auto object-contain', { full: true })}
                     ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
                     <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
                 </div>`;
@@ -75,8 +84,10 @@
             if (!mount) return;
             rail = moments;
             if (!moments.length) { mount.innerHTML = ''; return; }
-            const m = moments[0];
-            const rest = moments.slice(1, 7);
+            // Uniform tiles, newest first — a hero card plus a stray thumbnail
+            // read as broken when there were only two moments. Every tile is
+            // the same size and carries its own event label; the row scrolls
+            // sideways rather than reflowing.
             mount.innerHTML = `
                 <div class="mb-8">
                     <div class="flex items-center gap-3 mb-2">
@@ -84,23 +95,20 @@
                         <div class="flex-1 h-px bg-gray-700/60"></div>
                         <a href="${galleryHref()}" class="text-[11px] font-bold text-pink-300 hover:text-pink-200">See all →</a>
                     </div>
-                    <div class="flex items-stretch gap-3 flex-wrap">
-                        <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4 flex items-center gap-4 cursor-pointer flex-1 min-w-[320px] max-w-2xl"
-                            onclick="openHearthMoment(0)">
-                            <div class="w-28 h-28 rounded-xl overflow-hidden shrink-0 bg-black">${mediaHtml(m, 'w-full h-full object-cover')}</div>
-                            <div class="min-w-0">
-                                <div class="font-bold text-white truncate">${esc(m.event_title)}</div>
-                                ${m.body ? `<div class="text-sm text-gray-300 mt-1">${esc(m.body)}</div>` : ''}
-                                <div class="text-xs text-gray-500 mt-2">from ${esc(m.sender_name)} · ${momentAgo(m.ts)}</div>
-                            </div>
-                        </div>
-                        ${rest.length ? `<div class="flex gap-2 flex-wrap items-center">` + rest.map((x, i) => `
-                            <button onclick="openHearthMoment(${i + 1})"
-                                class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/50 bg-black shrink-0">
-                                ${mediaHtml(x, 'w-full h-full object-cover')}
-                                ${(x.attachment || {}).kind === 'video'
-                                    ? '<span class="absolute inset-0 flex items-center justify-center text-xl pointer-events-none">▶️</span>' : ''}
-                            </button>`).join('') + `</div>` : ''}
+                    <div class="flex gap-3 overflow-x-auto pb-2">
+                        ${moments.slice(0, 8).map((x, i) => `
+                            <button onclick="openHearthMoment(${i})"
+                                class="group relative w-40 shrink-0 rounded-2xl overflow-hidden border border-pink-900/50 bg-gray-800/60 text-left hover:border-pink-500/60 transition-colors">
+                                <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
+                                    ${mediaHtml(x, 'w-full h-full object-cover')}
+                                    ${(x.kind || (x.attachment || {}).kind) === 'video'
+                                        ? '<span class="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none">▶️</span>' : ''}
+                                </div>
+                                <div class="p-2">
+                                    <div class="text-[12px] font-bold text-white truncate">${esc(x.event_title)}</div>
+                                    <div class="text-[10px] text-gray-500 truncate">${esc(x.sender_name)} · ${momentAgo(x.ts)}</div>
+                                </div>
+                            </button>`).join('')}
                     </div>
                 </div>`;
         }

@@ -1481,11 +1481,14 @@
                 const row = document.getElementById('moments-strip-row');
                 if (!moments.length) { strip.style.display = 'none'; return; }
                 row.innerHTML = moments.map(m => {
-                    const media = m.attachment && m.attachment.kind === 'video'
-                        ? `<video src="${apiBase}${m.attachment.url.replace(/^\//, '')}" muted playsinline preload="metadata"
+                    // By-URL + lazy: the strip must stay cheap however many
+                    // moments exist (thread bubbles keep their inline photo).
+                    const src = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
+                    const media = m.kind === 'video'
+                        ? `<video src="${src}" muted playsinline preload="metadata"
                               class="w-full h-full object-cover"></video>
                            <span class="absolute inset-0 flex items-center justify-center text-xl pointer-events-none">▶️</span>`
-                        : `<img src="${(m.attachment || {}).data_url || ''}" class="w-full h-full object-cover">`;
+                        : `<img src="${src}" loading="lazy" class="w-full h-full object-cover">`;
                     return `<button onclick="openChannel('${m.channel_id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}

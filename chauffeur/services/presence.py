@@ -276,25 +276,69 @@ def run_thinking_of_you_prompts(send, now=None):
     return delivered
 
 
+def _moment_row(m, members, event_title=None):
+    """One moment shaped for display. `media_url` is the stable by-message
+    URL — galleries use it instead of the inline photo data URL so a page of
+    thumbnails is a few KB of JSON with lazy-loaded, cacheable images."""
+    sender = members.get(m.get('sender_member_id')) or {}
+    att = m.get('attachment') or {}
+    return {
+        'id': m.get('id'),
+        'channel_id': m.get('channel_id'),
+        'ts': m.get('ts'),
+        'body': m.get('body') or '',
+        'kind': att.get('kind') or 'photo',
+        'media_url': f"/api/moments/{m.get('id')}/media",
+        'attachment': att,
+        'reactions': m.get('reactions') or {},
+        'event_id': m.get('event_id'),
+        'event_title': event_title or m.get('event_title') or 'Family moment',
+        'sender_name': sender.get('name') or '?',
+        'sender_color': sender.get('color_code') or '#3b82f6',
+        'sender_avatar': sender.get('avatar'),
+    }
+
+
 def recent_moments(hours: float = 12, limit: int = 12):
-    """The kiosk hearth feed: recent photo moments with sender + event
-    context resolved for display."""
+    """The kiosk hearth feed: recent moments with sender + event context."""
     since = time.time() - hours * 3600
     members = {m['id']: m for m in storage.get_all_members()}
-    out = []
-    for m in storage.get_recent_event_moments(since, limit=limit):
-        sender = members.get(m.get('sender_member_id')) or {}
-        out.append({
-            'id': m.get('id'),
-            'channel_id': m.get('channel_id'),
-            'ts': m.get('ts'),
-            'body': m.get('body') or '',
-            'attachment': m.get('attachment'),
-            'reactions': m.get('reactions') or {},
-            'event_id': m.get('event_id'),
-            'event_title': m.get('event_title') or 'Family moment',
-            'sender_name': sender.get('name') or '?',
-            'sender_color': sender.get('color_code') or '#3b82f6',
-            'sender_avatar': sender.get('avatar'),
+    return [_moment_row(m, members)
+            for m in storage.get_recent_event_moments(since, limit=limit)]
+
+
+def moment_events(offset: int = 0, limit: int = 24):
+    """Gallery top level: one card per EVENT, newest first, PAGED — the whole
+    history, so it must never be loaded in one shot."""
+    members = {m['id']: m for m in storage.get_all_members()}
+    index = storage.get_event_moment_index()
+    page = index[offset:offset + limit]
+    items = []
+    for b in page:
+        cover = b.get('cover') or {}
+        names = [(members.get(sid) or {}).get('name') for sid in b.get('sender_ids') or []]
+        items.append({
+            'channel_id': b['channel_id'],
+            'event_id': b.get('event_id'),
+            'event_title': b.get('event_title'),
+            'count': b.get('count', 0),
+            'latest_ts': b.get('latest_ts'),
+            'cover_url': f"/api/moments/{cover.get('id')}/media" if cover.get('id') else '',
+            'cover_kind': (cover.get('attachment') or {}).get('kind') or 'photo',
+            'sender_names': sorted(n for n in names if n),
         })
-    return out
+    return {'items': items, 'total': len(index),
+            'offset': offset, 'has_more': offset + limit < len(index)}
+
+
+def event_moments(channel_id: str, offset: int = 0, limit: int = 30):
+    """Every moment for ONE event, newest first, paged."""
+    members = {m['id']: m for m in storage.get_all_members()}
+    channel = storage.get_channel(channel_id) or {}
+    title = channel.get('title') or 'Family moment'
+    all_moments = storage.get_channel_moments(channel_id)
+    page = all_moments[offset:offset + limit]
+    return {'items': [_moment_row(m, members, event_title=title) for m in page],
+            'total': len(all_moments), 'offset': offset,
+            'has_more': offset + limit < len(all_moments),
+            'event_title': title, 'channel_id': channel_id}

@@ -5606,10 +5606,44 @@ def react_to_message(message_id: str, req: ReactRequest):
 @app.get("/api/presence/moments")
 def get_presence_moments(hours: float = 12, limit: int = 12):
     """Recent moments (photos + clips) from event chats — the hearth feed.
-    Caps are generous enough for the /moments gallery (30 days) while the
-    default stays the small freshness window the hearth pop wants."""
+    Time-windowed on purpose; the gallery uses the paged endpoints below."""
     from services import presence
     return presence.recent_moments(hours=min(hours, 720), limit=min(limit, 200))
+
+@app.get("/api/presence/moment-events")
+def get_moment_events(offset: int = 0, limit: int = 24):
+    """Gallery top level: one card per event with moments, newest first."""
+    from services import presence
+    return presence.moment_events(offset=max(0, offset), limit=min(max(1, limit), 60))
+
+@app.get("/api/presence/event-moments")
+def get_event_moments(channel_id: str, offset: int = 0, limit: int = 30):
+    """Every moment for one event, newest first, paged."""
+    from services import presence
+    return presence.event_moments(channel_id, offset=max(0, offset),
+                                  limit=min(max(1, limit), 100))
+
+@app.get("/api/moments/{message_id}/media")
+def serve_moment_media_by_message(message_id: str):
+    """Stable per-moment media URL. Photos are stored as inline data URLs
+    (great in a thread, ruinous in a 200-thumbnail gallery payload), so they
+    are decoded to real image bytes here; clips defer to the media store.
+    This is what lets the gallery page lazily and cache."""
+    import base64
+    msg = storage.get_chat_message(message_id) or {}
+    att = msg.get('attachment') or {}
+    if att.get('kind') == 'video' and str(att.get('url', '')).startswith('/api/media/'):
+        return RedirectResponse(att['url'])
+    data_url = str(att.get('data_url') or '')
+    if att.get('kind') == 'photo' and data_url.startswith('data:image/'):
+        try:
+            head, _, b64 = data_url.partition(',')
+            mime = head.split(':', 1)[1].split(';', 1)[0]
+            return Response(base64.b64decode(b64), media_type=mime,
+                            headers={'Cache-Control': 'private, max-age=86400'})
+        except Exception:
+            pass
+    raise HTTPException(status_code=404, detail="Moment media not found")
 
 # "Photos of sports does nothing. Videos are the thing." (family, 2026-08-04)
 # Clips upload as files on the family's box and transcode to H.264 720p in
@@ -5645,7 +5679,7 @@ async def upload_moment_media(media: UploadFile = File(...)):
     return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}
 
 @app.get("/api/media/{media_id}")
-def serve_moment_media(media_id: str, request: Request):
+def serve_media_file(media_id: str, request: Request):
     """Range-aware media serving — iOS Safari refuses to play video without
     byte-range support, and Starlette's FileResponse can't be relied on for
     it across versions, so the 206 path is explicit."""

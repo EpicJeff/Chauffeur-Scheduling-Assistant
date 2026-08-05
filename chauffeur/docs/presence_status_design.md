@@ -407,6 +407,18 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    for the season.* That season-scrapbook byproduct the doc warned not to
    BUILD for is now visible without ever having been aimed at.
 
+   **v2.61.0 — event-grouped and endless.** Family feedback on the first
+   gallery: group an event's moments into ONE card that opens into that
+   event, and keep everything forever with paging rather than a time
+   window ("there is no reason to not allow viewing of old moments"). The
+   30-day window is gone; what makes "forever" true is that **moments are
+   now exempt from the chat retention cap** — the cap prunes ordinary
+   chatter only, so a photo/clip is never aged out from under the gallery.
+   Both levels page on scroll, and thumbnails load by URL
+   (`/api/moments/{id}/media`) instead of inline data URLs so cost is flat
+   in history size. The hearth rail also went to uniform tiles — the
+   hero-plus-orphan-thumbnail layout looked broken with two moments.
+
    The design (kept for the record): the container is the existing
    event Discuss chat, anchored to the event forever and reachable from the
    event chip and the chats tab — a small marginal build, not a new platform.

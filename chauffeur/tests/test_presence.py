@@ -352,15 +352,20 @@ def scenario_video_media_store_and_attachment():
     except HTTPException as e:
         check(e.status_code == 400, "nonexistent media url refused")
 
-    # Retention: a moment rolling off the 500-cap deletes its clip from disk.
+    # Retention: moments are FOREVER. Ordinary chatter still rolls off the
+    # per-channel cap, but the moment and its clip must survive the flood.
     path = storage.media_file_path(saved["id"])
-    for i in range(storage._MESSAGES_PER_CHANNEL_CAP):
+    for i in range(storage._MESSAGES_PER_CHANNEL_CAP + 50):
         storage.add_chat_message({"id": f"fill{i}", "channel_id": ch["id"],
                                   "sender_member_id": "mom", "ts": time.time() + i + 1,
                                   "type": "text", "body": f"m{i}", "attachment": None,
                                   "reactions": {}})
-    check(storage.media_file_path(saved["id"]) is None and not os.path.exists(path),
-          "pruned moment's clip removed from disk")
+    kept = [x["id"] for x in storage.get_channel_messages(ch["id"], limit=0)]
+    check(m["id"] in kept, "the moment survives the retention cap (forever)")
+    check(storage.media_file_path(saved["id"]) and os.path.exists(path),
+          "the moment's clip is never deleted from disk")
+    check(len([x for x in kept if x.startswith("fill")]) < storage._MESSAGES_PER_CHANNEL_CAP + 50,
+          "ordinary chatter still prunes")
 
 
 def scenario_video_transcode_pipeline():
@@ -507,6 +512,71 @@ def scenario_gallery_window_and_route():
           "gallery page and single-moment popup routes both registered")
 
 
+def scenario_gallery_event_grouping_and_paging():
+    """The gallery groups by EVENT and pages both levels — no time limit."""
+    import main
+    _family()
+    t0 = time.time()
+    # Two events; the volleyball thread has several moments, plus one very old
+    # moment that must still be reachable (forever, not 30 days).
+    vb = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    pi = storage.get_or_create_event_channel("pi1", "Piano Recital")
+    for i in range(5):
+        storage.add_chat_message({"id": f"vb{i}", "channel_id": vb["id"], "sender_member_id": "mom",
+                                  "ts": t0 - i * 60, "type": "text", "body": f"point {i}",
+                                  "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                                  "reactions": {}})
+    storage.add_chat_message({"id": "vb_ancient", "channel_id": vb["id"], "sender_member_id": "dad",
+                              "ts": t0 - 400 * 86400, "type": "text", "body": "last season",
+                              "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                              "reactions": {}})
+    storage.add_chat_message({"id": "pi0", "channel_id": pi["id"], "sender_member_id": "dad",
+                              "ts": t0 - 3600, "type": "text", "body": "she nailed it",
+                              "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                              "reactions": {}})
+    # A text-only message must not create an event card.
+    storage.add_chat_message({"id": "chat1", "channel_id": pi["id"], "sender_member_id": "mom",
+                              "ts": t0, "type": "text", "body": "parking is rough",
+                              "attachment": None, "reactions": {}})
+
+    idx = main.get_moment_events()
+    titles = [e["event_title"] for e in idx["items"]]
+    check(titles == ["Emma's Volleyball", "Piano Recital"],
+          f"one card per event, newest event first, got {titles}")
+    vb_card = idx["items"][0]
+    check(vb_card["count"] == 6, f"card counts ALL the event's moments, got {vb_card['count']}")
+    check(vb_card["cover_url"].endswith("/media") and vb_card["cover_url"].startswith("/api/moments/"),
+          f"cover is a URL, not an inline data URL, got {vb_card['cover_url'][:40]}")
+    check(sorted(vb_card["sender_names"]) == ["Dad", "Mom"], "card credits everyone who posted")
+    check(idx["total"] == 2 and not idx["has_more"], "index reports total + has_more")
+
+    # Event-level paging, and the 400-day-old moment is still there.
+    p1 = main.get_event_moments(channel_id=vb["id"], offset=0, limit=4)
+    check(len(p1["items"]) == 4 and p1["has_more"] and p1["total"] == 6,
+          f"first page of an event's moments, got {len(p1['items'])}/{p1['total']}")
+    p2 = main.get_event_moments(channel_id=vb["id"], offset=4, limit=4)
+    ids = [m["id"] for m in p2["items"]]
+    check(not p2["has_more"] and "vb_ancient" in ids,
+          f"last page completes the set incl. the ancient moment, got {ids}")
+    check(all(m["media_url"] == f"/api/moments/{m['id']}/media" for m in p2["items"]),
+          "every moment carries its stable media URL")
+
+    # Index paging.
+    page = main.get_moment_events(offset=0, limit=1)
+    check(len(page["items"]) == 1 and page["has_more"], "index pages")
+
+    # Media endpoint: photo decodes to real bytes, junk 404s.
+    from fastapi import HTTPException
+    resp = main.serve_moment_media_by_message("pi0")
+    check(getattr(resp, "media_type", "").startswith("image/") and len(resp.body) > 0,
+          "photo moment serves decoded image bytes")
+    try:
+        main.serve_moment_media_by_message("chat1")
+        check(False, "expected 404")
+    except HTTPException as e:
+        check(e.status_code == 404, "a text message has no media")
+
+
 SCENARIOS = [
     scenario_attachment_send_and_validation,
     scenario_reaction_toggle_and_endpoint,
@@ -520,6 +590,7 @@ SCENARIOS = [
     scenario_moment_fanout_differentiated,
     scenario_recent_moments_feed,
     scenario_gallery_window_and_route,
+    scenario_gallery_event_grouping_and_paging,
 ]
 
 if __name__ == "__main__":

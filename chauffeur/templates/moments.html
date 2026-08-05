@@ -2,9 +2,11 @@
 <html lang="en" class="dark">
 
 <!-- The Moments gallery — the wall-panel surface for looking BACK (the hearth
-     overlay and rail only ever show the newest). Day-grouped grid of every
-     photo/clip the family shared, tap for full-screen. Plain JS, same
-     rendering conventions as components/moments_hearth.html. -->
+     rail only ever shows the last few). Two levels: a card per EVENT, then
+     that event's moments. No time limit — moments are exempt from the chat
+     retention cap, so this is the family's whole history; both levels page
+     on scroll and load media by URL (never inline data URLs) so opening it
+     is cheap no matter how many seasons pile up. -->
 
 <head>
     <meta charset="UTF-8">
@@ -28,21 +30,31 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #111827; color: #e5e7eb; }
+        .tile-media { width: 100%; height: 100%; object-fit: cover; background: #000; }
     </style>
 </head>
 
 <body class="flex flex-col h-screen overflow-hidden">
     {% include 'nav.html' %}
 
-    <div class="flex-1 overflow-y-auto bg-gray-900/50">
-        <div id="moments-page" class="mx-auto p-6 lg:p-10 w-full max-w-7xl">
-            <header id="moments-header" class="mb-8">
-                <h2 class="text-3xl font-bold text-white mb-2">📸 Moments</h2>
-                <p class="text-gray-400" id="moments-sub">The moments the family shared from everyone's activities.</p>
+    <div class="flex-1 overflow-y-auto bg-gray-900/50" id="moments-scroll">
+        <div class="mx-auto p-6 lg:p-10 w-full max-w-7xl">
+            <header id="moments-header" class="mb-6">
+                <div id="events-header">
+                    <h2 class="text-3xl font-bold text-white mb-2">📸 Moments</h2>
+                    <p class="text-gray-400" id="moments-sub">Every moment the family has shared, by activity.</p>
+                </div>
+                <div id="event-header" style="display:none">
+                    <button onclick="showEvents()"
+                        class="text-sm text-pink-300 hover:text-pink-200 font-bold mb-2">← All moments</button>
+                    <h2 class="text-3xl font-bold text-white" id="event-title"></h2>
+                    <p class="text-gray-400 text-sm mt-1" id="event-sub"></p>
+                </div>
             </header>
-            <div id="moments-body">
-                <div class="text-gray-500">Loading…</div>
-            </div>
+
+            <div id="moments-body"><div class="text-gray-500">Loading…</div></div>
+            <div id="scroll-sentinel" class="h-12"></div>
+            <div id="loading-more" class="text-center text-gray-600 text-sm pb-6" style="display:none">Loading more…</div>
         </div>
     </div>
 
@@ -55,18 +67,20 @@
             const hideTitle = ['none', 'off', '0', 'false', 'hide'].includes(
                 (params.get('title') || '').toLowerCase());
             const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
-            // 30 days is the practical whole history: moments roll off with
-            // their message at the per-channel retention cap anyway.
-            const HOURS = 24 * 30;
+            const EVENTS_PAGE = 24, MOMENTS_PAGE = 30;
+
+            let view = 'events';
+            let evOffset = 0, evMore = true, evItems = [];
+            let mOffset = 0, mMore = true, mItems = [], mChannel = null;
+            let loading = false;
 
             function esc(s) {
                 const d = document.createElement('div');
                 d.textContent = s == null ? '' : String(s);
                 return d.innerHTML;
             }
+            function url(u) { return `${apiBase}${String(u || '').replace(/^\//, '')}`; }
 
-            // Same day labels the chat dividers use, so "Yesterday" means the
-            // same thing everywhere in Chauffeur.
             function dayLabel(ts) {
                 const d = new Date(ts * 1000), now = new Date();
                 const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
@@ -78,20 +92,17 @@
                     return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
                 return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
             }
-
             function timeLabel(ts) {
                 return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }
 
-            function mediaEl(m, cls, opts) {
-                const att = m.attachment || {};
-                if (att.kind === 'video' && att.url) {
-                    const attrs = opts && opts.full
-                        ? 'autoplay muted loop playsinline controls'
-                        : 'muted playsinline preload="metadata"';
-                    return `<video src="${apiBase}${att.url.replace(/^\//, '')}" ${attrs} class="${cls}"></video>`;
-                }
-                return `<img src="${att.data_url || ''}" class="${cls}">`;
+            // Thumbnails always load by URL + lazily: an event with 200 clips
+            // must cost the same to open as one with two.
+            function thumb(mediaUrl, kind) {
+                return kind === 'video'
+                    ? `<video src="${url(mediaUrl)}" muted playsinline preload="metadata" class="tile-media"></video>
+                       <span class="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none">▶️</span>`
+                    : `<img src="${url(mediaUrl)}" loading="lazy" class="tile-media">`;
             }
 
             function reactionPills(m) {
@@ -105,29 +116,34 @@
                 ).join('') + `</div>`;
             }
 
-            let cache = [];
-
-            function openLightbox(id) {
-                const m = cache.find(x => x.id === id);
+            window.openMomentLightbox = function (id) {
+                const m = mItems.find(x => x.id === id);
                 if (!m) return;
+                const media = m.kind === 'video'
+                    ? `<video src="${url(m.media_url)}" autoplay muted loop playsinline controls class="max-h-[68vh] rounded-2xl mx-auto"></video>`
+                    : `<img src="${url(m.media_url)}" class="max-h-[68vh] rounded-2xl mx-auto object-contain">`;
                 const overlay = document.createElement('div');
                 overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
                 overlay.style.background = 'rgba(0,0,0,0.88)';
                 overlay.innerHTML = `
                     <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
                         <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
-                        ${mediaEl(m, 'max-h-[68vh] rounded-2xl mx-auto object-contain', { full: true })}
+                        ${media}
                         ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
                         <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
                     </div>`;
                 overlay.addEventListener('click', () => overlay.remove());
                 document.body.appendChild(overlay);
-            }
-            window.openMomentFromGallery = openLightbox;
+            };
 
-            function render(moments) {
+            const tileMin = isKiosk ? '300px' : '220px';
+            function gridOpen() {
+                return `<div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(${tileMin}, 1fr))">`;
+            }
+
+            function renderEvents() {
                 const body = document.getElementById('moments-body');
-                if (!moments.length) {
+                if (!evItems.length) {
                     body.innerHTML = `<div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-8 text-center">
                         <div class="text-4xl mb-3">📸</div>
                         <div class="text-white font-bold mb-1">No moments yet</div>
@@ -136,63 +152,115 @@
                     </div>`;
                     return;
                 }
-                const groups = [];
-                for (const m of moments) {
-                    const label = dayLabel(m.ts);
-                    if (!groups.length || groups[groups.length - 1].label !== label) {
-                        groups.push({ label: label, items: [] });
-                    }
-                    groups[groups.length - 1].items.push(m);
-                }
-                const minTile = isKiosk ? '300px' : '220px';
-                body.innerHTML = groups.map(g => `
-                    <section class="mb-8">
-                        <div class="flex items-center gap-3 mb-3">
-                            <span class="text-[11px] font-black uppercase tracking-widest text-gray-500">${esc(g.label)}</span>
-                            <div class="flex-1 h-px bg-gray-700/60"></div>
-                            <span class="text-[11px] text-gray-600">${g.items.length}</span>
+                body.innerHTML = gridOpen() + evItems.map(e => `
+                    <button onclick="showEvent('${e.channel_id}')"
+                        class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
+                        <div class="relative w-full" style="aspect-ratio: 4/3">
+                            ${thumb(e.cover_url, e.cover_kind)}
+                            <span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">
+                                ${e.count} moment${e.count !== 1 ? 's' : ''}</span>
                         </div>
-                        <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(${minTile}, 1fr))">
-                            ${g.items.map(m => `
-                                <button onclick="openMomentFromGallery('${m.id}')"
-                                    class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
-                                    <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
-                                        ${mediaEl(m, 'w-full h-full object-cover')}
-                                        ${(m.attachment || {}).kind === 'video'
-                                            ? '<span class="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none">▶️</span>' : ''}
-                                    </div>
-                                    <div class="p-3">
-                                        <div class="font-bold text-white text-sm truncate">${esc(m.event_title)}</div>
-                                        ${m.body ? `<div class="text-[13px] text-gray-300 mt-0.5 line-clamp-2">${esc(m.body)}</div>` : ''}
-                                        <div class="text-[11px] text-gray-500 mt-1">from ${esc(m.sender_name)} · ${timeLabel(m.ts)}</div>
-                                        ${reactionPills(m)}
-                                    </div>
-                                </button>`).join('')}
+                        <div class="p-3">
+                            <div class="font-bold text-white text-sm truncate">${esc(e.event_title)}</div>
+                            <div class="text-[11px] text-gray-500 mt-1">${dayLabel(e.latest_ts)}${e.sender_names.length ? ' · ' + esc(e.sender_names.join(', ')) : ''}</div>
                         </div>
-                    </section>`).join('');
+                    </button>`).join('') + `</div>`;
             }
 
-            async function load() {
-                try {
-                    const res = await fetch(`${apiBase}api/presence/moments?hours=${HOURS}&limit=200`);
-                    if (!res.ok) return;
-                    cache = (await res.json()).filter(m => m.attachment
-                        && (m.attachment.data_url || m.attachment.url));
-                    render(cache);
-                    const sub = document.getElementById('moments-sub');
-                    if (sub && cache.length) {
-                        sub.textContent = `${cache.length} moment${cache.length !== 1 ? 's' : ''} from the last 30 days.`;
-                    }
-                } catch (e) {
-                    document.getElementById('moments-body').innerHTML =
-                        '<div class="text-gray-500">Could not load moments.</div>';
-                }
+            function renderMoments() {
+                const body = document.getElementById('moments-body');
+                body.innerHTML = gridOpen() + mItems.map(m => `
+                    <button onclick="openMomentLightbox('${m.id}')"
+                        class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
+                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.media_url, m.kind)}</div>
+                        <div class="p-3">
+                            ${m.body ? `<div class="text-[13px] text-gray-200">${esc(m.body)}</div>` : ''}
+                            <div class="text-[11px] text-gray-500 mt-1">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
+                            ${reactionPills(m)}
+                        </div>
+                    </button>`).join('') + `</div>`;
             }
+
+            async function loadEventsPage() {
+                if (loading || !evMore) return;
+                loading = true;
+                document.getElementById('loading-more').style.display = evOffset ? 'block' : 'none';
+                try {
+                    const res = await fetch(`${apiBase}api/presence/moment-events?offset=${evOffset}&limit=${EVENTS_PAGE}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        evItems = evItems.concat(data.items || []);
+                        evMore = !!data.has_more;
+                        evOffset += EVENTS_PAGE;
+                        if (view === 'events') renderEvents();
+                        const sub = document.getElementById('moments-sub');
+                        if (sub && data.total) {
+                            sub.textContent = `${data.total} activit${data.total !== 1 ? 'ies' : 'y'} with moments — everything, all the way back.`;
+                        }
+                    }
+                } catch (e) { }
+                document.getElementById('loading-more').style.display = 'none';
+                loading = false;
+            }
+
+            async function loadMomentsPage() {
+                if (loading || !mMore || !mChannel) return;
+                loading = true;
+                document.getElementById('loading-more').style.display = mOffset ? 'block' : 'none';
+                try {
+                    const res = await fetch(`${apiBase}api/presence/event-moments?channel_id=${encodeURIComponent(mChannel)}&offset=${mOffset}&limit=${MOMENTS_PAGE}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        mItems = mItems.concat(data.items || []);
+                        mMore = !!data.has_more;
+                        mOffset += MOMENTS_PAGE;
+                        document.getElementById('event-title').textContent = data.event_title || 'Moments';
+                        document.getElementById('event-sub').textContent =
+                            `${data.total} moment${data.total !== 1 ? 's' : ''}`;
+                        if (view === 'event') renderMoments();
+                    }
+                } catch (e) { }
+                document.getElementById('loading-more').style.display = 'none';
+                loading = false;
+            }
+
+            window.showEvent = function (channelId) {
+                view = 'event';
+                mChannel = channelId; mItems = []; mOffset = 0; mMore = true;
+                document.getElementById('events-header').style.display = 'none';
+                document.getElementById('event-header').style.display = hideTitle ? 'none' : 'block';
+                document.getElementById('moments-body').innerHTML = '<div class="text-gray-500">Loading…</div>';
+                document.getElementById('moments-scroll').scrollTop = 0;
+                loadMomentsPage();
+            };
+
+            window.showEvents = function () {
+                view = 'events';
+                mChannel = null; mItems = [];
+                document.getElementById('event-header').style.display = 'none';
+                document.getElementById('events-header').style.display = hideTitle ? 'none' : 'block';
+                renderEvents();
+                document.getElementById('moments-scroll').scrollTop = 0;
+            };
+
+            // Infinite scroll for whichever level is showing.
+            new IntersectionObserver(entries => {
+                if (!entries.some(e => e.isIntersecting)) return;
+                if (view === 'events') loadEventsPage(); else loadMomentsPage();
+            }, { root: document.getElementById('moments-scroll'), rootMargin: '400px' })
+                .observe(document.getElementById('scroll-sentinel'));
 
             if (hideTitle) document.getElementById('moments-header').style.display = 'none';
-            load();
-            // Kiosk panels are unattended: keep the wall current on its own.
-            if (isKiosk) setInterval(load, 60000);
+            loadEventsPage();
+            // Kiosk panels are unattended: keep the top level current, but
+            // never yank the view out from under someone browsing an event.
+            if (isKiosk) {
+                setInterval(() => {
+                    if (view !== 'events' || loading) return;
+                    evItems = []; evOffset = 0; evMore = true;
+                    loadEventsPage();
+                }, 60000);
+            }
         })();
     </script>
 </body>
