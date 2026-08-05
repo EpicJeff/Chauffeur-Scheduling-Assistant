@@ -1796,6 +1796,49 @@ def add_chat_message(message: dict) -> dict:
             chat_messages_table.remove(doc_ids=stale_ids)
         return message
 
+def toggle_message_reaction(message_id: str, member_id: str, emoji: str) -> Optional[dict]:
+    """Toggle one member's reaction emoji on a message. Returns the updated
+    message dict, or None if the message doesn't exist. Reactions are
+    {emoji: [member_id, ...]}; empty lists are pruned."""
+    with db_lock:
+        res = chat_messages_table.search(Query().id == message_id)
+        if not res:
+            return None
+        msg = dict(res[0])
+        reactions = dict(msg.get('reactions') or {})
+        ids = list(reactions.get(emoji) or [])
+        if member_id in ids:
+            ids.remove(member_id)
+        else:
+            ids.append(member_id)
+        if ids:
+            reactions[emoji] = ids
+        else:
+            reactions.pop(emoji, None)
+        chat_messages_table.update({'reactions': reactions}, Query().id == message_id)
+        msg['reactions'] = reactions
+        return msg
+
+def get_recent_event_moments(since_ts: float, limit: int = 20) -> List[dict]:
+    """Photo moments (messages with an attachment) from event channels, newest
+    first — the kiosk hearth feed. Each row is the message plus its channel's
+    event_id/title."""
+    with db_lock:
+        channels = {c['id']: dict(c) for c in chat_channels_table.search(Query().kind == 'event')}
+        if not channels:
+            return []
+        out = []
+        for m in chat_messages_table.all():
+            m = dict(m)
+            ch = channels.get(m.get('channel_id'))
+            if not ch or not m.get('attachment') or m.get('ts', 0) < since_ts:
+                continue
+            m['event_id'] = ch.get('event_id')
+            m['event_title'] = ch.get('title')
+            out.append(m)
+    out.sort(key=lambda m: m.get('ts', 0), reverse=True)
+    return out[:limit]
+
 def get_channel_messages(channel_id: str, after_ts: float = None,
                          limit: int = 50) -> List[dict]:
     """Ascending by ts; the LAST `limit` messages (optionally after after_ts)."""

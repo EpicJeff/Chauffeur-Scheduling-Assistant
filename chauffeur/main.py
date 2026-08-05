@@ -282,6 +282,28 @@ async def push_notification_loop():
             except Exception as spe:
                 print(f"Status sweep error: {spe}")
 
+            # --- Presence capture prompt (Presence & Status Slice 4) ---
+            # "You're at the game — send the family a moment?" The schedule
+            # knows the event is live NOW; the prompt is the feature. 5-min
+            # cadence (the per-event marker inside makes re-runs inert);
+            # marker set FIRST. Prompts go to present ADULTS only, so the
+            # kid quiet-hours gate doesn't apply.
+            try:
+                last = float(storage.get_app_state("presence_prompt_last_run") or 0)
+                if time.time() - last >= 300:
+                    storage.set_app_state("presence_prompt_last_run", time.time())
+                    from services import presence
+
+                    def _presence_push(member, title, body, path):
+                        _notify_member_lanes(member, title, body, path)
+
+                    prompted = await asyncio.to_thread(
+                        presence.run_capture_prompts, _presence_push)
+                    if prompted:
+                        print(f"Presence: sent capture prompt(s) for {len(prompted)} event(s)")
+            except Exception as ppe:
+                print(f"Presence prompt error: {ppe}")
+
         except Exception as e:
             print(f"Error in push loop: {e}")
 
@@ -3383,7 +3405,23 @@ def _fanout_message_notifications(channel, message):
         # Relative for web push (sw navigates on the PWA's own origin —
         # immune to public_base_url mismatch), absolute for HA companion.
         path = f"/app?open_channel={channel['id']}"
-        for m in _channel_recipient_members(channel):
+        recipients = _channel_recipient_members(channel)
+        if kind == 'event' and message.get('attachment'):
+            # Presence moment: access stays family-wide (the thread), but the
+            # PUSH routes only to the kept-away adults — never to whoever the
+            # schedule places AT the event (don't ping the parent standing
+            # next to the sender), never to kids (moments ride their existing
+            # surfaces, no new pings).
+            try:
+                from services import presence
+                recipients = presence.moment_push_audience(channel)
+                title = f"📸 {channel.get('title') or 'A family moment'}"
+                caption = (message.get('body') or '').strip()
+                body = (f"{sender_name} shared a moment"
+                        + (f": {caption[:140]}" if caption else " — you couldn't be there 💙"))
+            except Exception as pe:
+                print(f"Moment audience resolution failed (falling back): {pe}")
+        for m in recipients:
             if m['id'] == message['sender_member_id']:
                 continue
             send_push_to_member(m['id'], title, body, path)
@@ -5360,7 +5398,29 @@ def get_messages(channel_id: str, after_ts: Optional[float] = None, limit: int =
 
 class SendMessageRequest(BaseModel):
     sender_member_id: str
-    body: str
+    body: str = ''
+    # Photo moment (Presence slice): {kind:'photo', data_url, w?, h?}. The
+    # PWA downscales client-side (~1280px JPEG); the server just bounds it.
+    attachment: Optional[dict] = None
+
+# ~1.4M base64 chars ≈ 1 MB of JPEG — well above the PWA's ~1280px q0.8
+# renditions, well below anything that would bloat the channel cap.
+_ATTACHMENT_MAX_CHARS = 1_400_000
+
+def _validate_moment_attachment(att: dict) -> dict:
+    """Normalize/validate a photo attachment; raises HTTPException on junk."""
+    if not isinstance(att, dict) or att.get('kind') != 'photo':
+        raise HTTPException(status_code=400, detail="Unsupported attachment kind")
+    data_url = str(att.get('data_url') or '')
+    if not data_url.startswith('data:image/'):
+        raise HTTPException(status_code=400, detail="Attachment must be an image data URL")
+    if len(data_url) > _ATTACHMENT_MAX_CHARS:
+        raise HTTPException(status_code=413, detail="Photo too large — try again")
+    out = {'kind': 'photo', 'data_url': data_url}
+    for k in ('w', 'h'):
+        if isinstance(att.get(k), (int, float)):
+            out[k] = int(att[k])
+    return out
 
 import re as _re
 # Matches an @argyle mention anywhere in a message (case-insensitive).
@@ -5429,7 +5489,8 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     if channel.get('archived'):
         raise HTTPException(status_code=409, detail="Channel is archived")
     body = (req.body or '').strip()
-    if not body:
+    attachment = _validate_moment_attachment(req.attachment) if req.attachment else None
+    if not body and not attachment:
         raise HTTPException(status_code=400, detail="Empty message")
     sender = storage.get_member(req.sender_member_id)
     if not sender:
@@ -5443,7 +5504,7 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     from models.schemas import ChatMessage
     message = ChatMessage(channel_id=channel_id,
                           sender_member_id=req.sender_member_id,
-                          body=body).model_dump()
+                          body=body, attachment=attachment).model_dump()
     storage.add_chat_message(message)
     # Sender has obviously read their own message.
     storage.set_last_read(channel_id, req.sender_member_id, message['ts'])
@@ -5475,6 +5536,34 @@ class ChannelReadRequest(BaseModel):
 def mark_channel_read(channel_id: str, req: ChannelReadRequest):
     storage.set_last_read(channel_id, req.member_id, req.ts or time.time())
     return {"status": "ok"}
+
+class ReactRequest(BaseModel):
+    member_id: str
+    emoji: str
+
+@app.post("/api/messages/{message_id}/react")
+def react_to_message(message_id: str, req: ReactRequest):
+    """Toggle a reaction. Deliberately NEVER pushes — the parent at the game
+    is fire-and-forget; reactions accumulate silently and show at a break
+    (Presence design). Open threads refresh via the SSE ring only."""
+    emoji = (req.emoji or '').strip()
+    if not emoji or len(emoji) > 8:
+        raise HTTPException(status_code=400, detail="Invalid reaction")
+    if not storage.get_member(req.member_id):
+        raise HTTPException(status_code=404, detail="Member not found")
+    msg = storage.toggle_message_reaction(message_id, req.member_id, emoji)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    channel = storage.get_channel(msg['channel_id']) or {}
+    recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
+    _push_message_event(msg['channel_id'], recipients)
+    return msg
+
+@app.get("/api/presence/moments")
+def get_presence_moments(hours: float = 12, limit: int = 12):
+    """Recent photo moments from event chats — the kiosk hearth feed."""
+    from services import presence
+    return presence.recent_moments(hours=min(hours, 168), limit=min(limit, 30))
 
 @app.get("/api/messages/stream")
 async def stream_messages(member_id: str):

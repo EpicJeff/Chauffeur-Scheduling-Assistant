@@ -187,13 +187,25 @@
                     <div id="thread-title" class="font-bold text-white text-lg truncate">Chat</div>
                 </div>
                 <div id="thread-messages" class="flex-1 overflow-y-auto p-4 flex flex-col gap-2"></div>
+                <div id="thread-attach-preview" class="px-3 pt-2 bg-gray-900 border-t border-gray-800" style="display:none">
+                    <div class="relative inline-block">
+                        <img id="thread-attach-img" class="h-20 rounded-xl border border-gray-700 object-cover">
+                        <button onclick="clearPendingAttachment()" type="button"
+                            class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gray-700 text-white text-xs font-bold flex items-center justify-center">✕</button>
+                    </div>
+                </div>
                 <form id="thread-form" onsubmit="submitThreadMessage(event)"
-                    class="p-3 bg-gray-900 border-t border-gray-800 flex gap-2 shrink-0"
+                    class="p-3 bg-gray-900 border-t border-gray-800 flex gap-2 items-center shrink-0"
                     style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))">
+                    <input id="thread-photo-input" type="file" accept="image/*" class="hidden"
+                        onchange="handlePhotoPick(this)">
+                    <button type="button" id="thread-attach-btn" onclick="document.getElementById('thread-photo-input').click()"
+                        title="Add a photo"
+                        class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-lg flex items-center justify-center shrink-0 active:bg-gray-700">📷</button>
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
-                        class="flex-1 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
+                        class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
                     <button type="submit"
-                        class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 rounded-full shrink-0">Send</button>
+                        class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0">Send</button>
                 </form>
             </div>
         </div>
@@ -1208,7 +1220,10 @@
             const openChannelParam = params.get('open_channel');
             if (openChannelParam && selectedMemberId) {
                 setView('messages');
-                openChannel(openChannelParam);
+                openChannel(openChannelParam).then(() => {
+                    // Capture-prompt deeplink: arm the camera affordance.
+                    if (params.get('compose') === 'moment') armMomentCapture();
+                });
             } else if (['messages', 'chores', 'family'].includes(params.get('view')) && selectedMemberId) {
                 setView(params.get('view'));
             } else if (currentView === 'chores') {
@@ -1470,7 +1485,7 @@
                 const last = c.last_message;
                 const sender = last ? (membersData.find(m => m.id === last.sender_member_id) || {}) : {};
                 const preview = last
-                    ? `${last.sender_member_id === selectedMemberId ? 'You' : (sender.name || '?')}: ${last.body}`
+                    ? `${last.sender_member_id === selectedMemberId ? 'You' : (sender.name || '?')}: ${last.attachment ? '📷 ' + (last.body || 'Photo') : last.body}`
                     : 'No messages yet';
                 const t = last ? new Date(last.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
                 return `
@@ -1549,14 +1564,65 @@
                 const divider = dayKey !== lastDay ? dayDivider(m.ts) : '';
                 lastDay = dayKey;
                 const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const att = m.attachment && m.attachment.kind === 'photo' && m.attachment.data_url
+                    ? `<img src="${m.attachment.data_url}" onclick="openMomentLightbox(this.src)"
+                          class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full object-cover cursor-pointer ${m.body ? 'mb-1' : ''}">`
+                    : '';
+                const bubble = m.body
+                    ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
+                    : '';
                 return `${divider}<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
                     ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
-                    <div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>
+                    ${att}${bubble}
                     ${m.card ? renderCard(m.card) : ''}
-                    <div class="text-[10px] text-gray-600 mt-0.5 ${mine ? 'text-right' : ''}">${t}</div>
+                    <div class="flex items-center gap-1.5 mt-0.5 ${mine ? 'justify-end' : ''}">
+                        ${renderReactions(m)}
+                        <button onclick="toggleQuickReact('${m.id}')" type="button"
+                            class="text-[13px] text-gray-600 active:text-gray-400 leading-none px-0.5">☺+</button>
+                        <span class="text-[10px] text-gray-600">${t}</span>
+                    </div>
+                    <div id="qr-${m.id}" class="mt-1 ${mine ? 'text-right' : ''}" style="display:none">
+                        ${['❤️', '😂', '👏', '🎉', '💪'].map(e =>
+                            `<button onclick="reactTo('${m.id}','${e}')" type="button"
+                                class="text-xl px-1.5 py-0.5 rounded-full bg-gray-800 border border-gray-700 active:bg-gray-700">${e}</button>`).join('')}
+                    </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
             wrap.scrollTop = wrap.scrollHeight;
+        }
+
+        function renderReactions(m) {
+            const r = m.reactions || {};
+            return Object.keys(r).filter(e => (r[e] || []).length).map(e => {
+                const mine = (r[e] || []).includes(selectedMemberId);
+                return `<button onclick="reactTo('${m.id}','${e}')" type="button"
+                    class="text-[12px] leading-none px-1.5 py-0.5 rounded-full border ${mine ? 'bg-blue-900/60 border-blue-500' : 'bg-gray-800 border-gray-700'}">${e}${r[e].length > 1 ? `<span class="text-[10px] text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</button>`;
+            }).join('');
+        }
+
+        function toggleQuickReact(msgId) {
+            const row = document.getElementById(`qr-${msgId}`);
+            if (row) row.style.display = row.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function reactTo(msgId, emoji) {
+            if (!selectedMemberId) return;
+            try {
+                await fetch(`${apiBase}api/messages/${msgId}/react`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, emoji: emoji })
+                });
+                await refreshThread();
+            } catch (e) { }
+        }
+
+        function openMomentLightbox(src) {
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
+            overlay.innerHTML = `<img src="${src}" class="max-w-full max-h-full rounded-xl object-contain">`;
+            overlay.addEventListener('click', () => overlay.remove());
+            document.body.appendChild(overlay);
         }
 
         function renderCard(card) {
@@ -1596,23 +1662,75 @@
             }
         }
 
+        // --- Photo moments (Presence slice): pick -> client downscale ->
+        // inline data-URL attachment. ~1280px JPEG keeps a moment at a few
+        // hundred KB on the family's own box (avatar precedent, bigger).
+        let pendingAttachment = null;
+
+        function handlePhotoPick(inputEl) {
+            const file = inputEl.files && inputEl.files[0];
+            inputEl.value = '';
+            if (!file || !file.type.startsWith('image/')) return;
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                const MAX = 1280;
+                const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+                const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                pendingAttachment = { kind: 'photo', data_url: dataUrl, w: w, h: h };
+                document.getElementById('thread-attach-img').src = dataUrl;
+                document.getElementById('thread-attach-preview').style.display = 'block';
+                document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
+                document.getElementById('thread-input').placeholder = 'Add a caption…';
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); showGlobalAlert('Could not read that photo'); };
+            img.src = url;
+        }
+
+        function clearPendingAttachment() {
+            pendingAttachment = null;
+            document.getElementById('thread-attach-preview').style.display = 'none';
+            document.getElementById('thread-input').placeholder = 'Message...';
+        }
+
+        // The capture-prompt deeplink lands with the camera armed: browsers
+        // won't open a file picker without a user gesture, so the attach
+        // button pulses instead — still one tap to the camera.
+        function armMomentCapture() {
+            const btn = document.getElementById('thread-attach-btn');
+            if (btn) btn.classList.add('animate-pulse');
+        }
+
         async function submitThreadMessage(e) {
             e.preventDefault();
             const input = document.getElementById('thread-input');
             const body = input.value.trim();
-            if (!body || !activeChannelId || !selectedMemberId) return;
+            const attachment = pendingAttachment;
+            if ((!body && !attachment) || !activeChannelId || !selectedMemberId) return;
             input.value = '';
+            clearPendingAttachment();
             try {
                 const res = await fetch(`${apiBase}api/channels/${activeChannelId}/messages`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sender_member_id: selectedMemberId, body: body })
+                    body: JSON.stringify({ sender_member_id: selectedMemberId, body: body,
+                                           attachment: attachment || undefined })
                 });
                 if (!res.ok) throw new Error('send failed');
                 await refreshThread();
             } catch (err) {
                 showGlobalAlert('Failed to send message');
                 input.value = body;
+                if (attachment) {
+                    pendingAttachment = attachment;
+                    document.getElementById('thread-attach-img').src = attachment.data_url;
+                    document.getElementById('thread-attach-preview').style.display = 'block';
+                }
             }
         }
 
@@ -1630,6 +1748,8 @@
 
         function closeThread() {
             activeChannelId = null;
+            clearPendingAttachment();
+            document.getElementById('thread-attach-btn').classList.remove('animate-pulse');
             document.getElementById('thread-view').style.display = 'none';
             applyViewVisibility();  // FAB returns on the channel list
             fetchChannels();

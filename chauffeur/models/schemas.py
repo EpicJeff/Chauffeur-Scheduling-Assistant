@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 import uuid
 import time
@@ -160,8 +160,14 @@ class ChatMessage(BaseModel):
     ts: float = Field(default_factory=time.time)
     type: str = 'text'  # 'text' | 'audio' | 'system' (audio reserved for voice memos)
     body: str
-    attachment: Optional[dict] = None  # reserved: {kind, url, duration_s, mime}
+    # Photo moments (Presence slice): {kind:'photo', data_url, w, h} — a
+    # client-downscaled JPEG rendition stored inline on the family's own box
+    # (avatar precedent, bigger). Video stays out of v1.
+    attachment: Optional[dict] = None
     card: Optional[dict] = None  # interactive card (e.g. action_proposal) rendered in chat
+    # {emoji: [member_id, ...]} — toggled via /api/messages/{id}/react.
+    # Reactions never push (the sender at the game is fire-and-forget).
+    reactions: Dict[str, List[str]] = Field(default_factory=dict)
 
 class ChannelRead(BaseModel):
     channel_id: str

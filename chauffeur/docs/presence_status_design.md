@@ -5,10 +5,12 @@
 > solver needs; the trip timeline (spans, call windows, coverage reports);
 > and the full relative beat grammar (anchor±offset × audience × words ×
 > need — the chemo recovery arc works now, not just trips).
-> Slice 4 (Presence) now has a full design spec (2026-08-04) — not yet
-> built. Its shape: schedule-triggered capture prompt, family-wide access
-> with differentiated push to the kept-away, home + distant kiosk as the
-> shared hearth, reference-and-render media. It is
+> Slice 4 (Presence) **SHIPPED v2.57.0 (2026-08-04)** — schedule-triggered
+> capture prompt, family-wide access with differentiated push to the
+> kept-away, reactions, the kiosk hearth. Media shipped as inline
+> downscaled photo renditions on the family's own box (the
+> reference-and-render fork's own escape clause invoked — see the slice
+> entry). It is
 > **personal** — this is an affected
 > family (a member with serious illness). Co-design is not a step to schedule;
 > it's us. Build to lived detail, not to guesses.
@@ -236,7 +238,7 @@ can be built *well* rather than fast:
 
 ## Open forks (decide before spec)
 
-- Media: store vs. reference-and-render. **RESOLVED (Slice 4 design): reference-and-render** — Chauffeur owns anchor + routing, media lives where the family already keeps it.
+- Media: store vs. reference-and-render. **RESOLVED (Slice 4 design): reference-and-render** — then **REVISED at build (v2.57.0)** via the fork's own escape clause: no external store existed to reference, so v1 stores downscaled inline renditions on the family's own box (custody preserved by self-hosting); true reference stays the door for video.
 - Status authoring UX: incremental casual capture vs. explicit builder.
 - Correction path when an advance message goes wrong.
 - Exact `when` grammar for beats (offsets from start/end + recurring-during).
@@ -335,7 +337,37 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    access with differentiated push → kiosk-as-shared-hearth, on the existing
    Discuss chat.
 
-   **DESIGN (2026-08-04, not yet built).** The container is the existing
+   **SHIPPED v2.57.0 (2026-08-04).** Decisions made during build:
+   **media is inline, not referenced** — the reference-and-render fork's own
+   escape clause fired on day one ("revisit only if a concrete capture flow
+   proves reference can't carry the live-during trickle"): there is no
+   external media store to reference and a share-link flow kills one-tap, so
+   moments ship as client-downscaled photo renditions (~1280px JPEG data-URL
+   in `ChatMessage.attachment`, server-capped ~1 MB — the avatar precedent,
+   bigger) stored on the family's own self-hosted box, which is what the
+   custody concern was actually guarding. Video stays out of v1.
+   **The capture prompt** (`services/presence.py.run_capture_prompts`, 5-min
+   cadence in the push loop): fires once per event per day within the first
+   20 min of a ≥30-min non-errand event, only when a present ADULT and a
+   kept-away adult both exist (no audience → no ask; never nag), and
+   deeplinks `open_channel=…&compose=moment` — browsers refuse a programmatic
+   file-picker without a gesture, so the deeplink lands with the 📷 button
+   pulsing: still one tap to the camera. Present = assigned driver + every
+   passenger-bound member (the My Day four-way binding, adults included).
+   **Differentiated push shipped as designed**: a moment in an event channel
+   pushes only to kept-away adults with 📸 framing (present suppressed, kids
+   never pinged — their surfaces carry it); plain text in the same channel
+   keeps the household-wide fan-out untouched. **Reactions**: ❤️ 😂 👏 🎉 💪
+   quick-react + toggle pills on every bubble, `/api/messages/{id}/react`,
+   and they NEVER push — the sender pockets the phone, reactions accumulate
+   silently (fire-and-forget shipped as designed). **Kiosk hearth v1** is the
+   routines wall panel: 60-s poll of `/api/presence/moments`, a fresh moment
+   pops a 20-s full-screen overlay (celebration-precedent seed-silently
+   dedupe) and stays browsable as a "Latest moment" card; the distant-kiosk
+   render rides the same endpoint whenever a second panel exists. Tests:
+   `tests/test_presence.py` (7 scenarios, both storage backends).
+
+   The design (kept for the record): the container is the existing
    event Discuss chat, anchored to the event forever and reachable from the
    event chip and the chats tab — a small marginal build, not a new platform.
    Everything below is what makes it Chauffeur instead of WhatsApp-with-tags;

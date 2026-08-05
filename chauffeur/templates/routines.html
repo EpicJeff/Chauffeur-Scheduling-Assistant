@@ -76,6 +76,24 @@
                         No routines set up yet.
                     </div>
 
+                    <!-- 📸 Presence hearth card: the newest moment (last 12h) stays
+                         browsable after the unbidden overlay has passed. -->
+                    <div x-show="latestMoment" class="mb-8">
+                        <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4 flex items-center gap-4 max-w-2xl cursor-pointer"
+                            @click="latestMoment && showMomentOverlay(latestMoment)">
+                            <img :src="latestMoment ? latestMoment.attachment.data_url : ''"
+                                class="w-28 h-28 rounded-xl object-cover shrink-0">
+                            <div class="min-w-0">
+                                <div class="text-[11px] font-black uppercase tracking-widest text-pink-300 mb-1">📸 Latest moment</div>
+                                <div class="font-bold text-white truncate" x-text="latestMoment ? latestMoment.event_title : ''"></div>
+                                <div x-show="latestMoment && latestMoment.body" class="text-sm text-gray-300 mt-1"
+                                    x-text="latestMoment ? latestMoment.body : ''"></div>
+                                <div class="text-xs text-gray-500 mt-2"
+                                    x-text="latestMoment ? ('from ' + latestMoment.sender_name + ' · ' + momentAgo(latestMoment.ts)) : ''"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 🌙 Kid digest strip FIRST (family request 2026-08-06): the day
                          preview is what kids should see before the checklist. Today
                          until the cutover time, then tomorrow (server decides). -->
@@ -529,6 +547,7 @@
                 streaks: [],
                 dayItems: {},   // memberId -> today's checklist items (kiosk lanes)
                 kidDigests: { kids: {}, label: '', weather: '' },   // 🌙 strip (K1)
+                latestMoment: null,   // 📸 Presence hearth: newest photo moment (12h)
                 newRoutineMemberId: '',
                 // Members with an empty just-started block (no items saved yet):
                 // purely client-side; the block materializes once the first
@@ -552,8 +571,10 @@
                         this._celebrateSweep();   // first call seeds localStorage silently
                         await this.loadAllDayItems();
                         this.loadKidDigests();    // digest content moves slowly: own 5-min cadence
+                        this.loadMoments();       // first call seeds seen-marker silently
                         setInterval(() => this.reloadKiosk(), 30000);
                         setInterval(() => this.loadKidDigests(), 300000);
+                        setInterval(() => this.loadMoments(), 60000);
                         window.addEventListener('resize', () => { this.winW = window.innerWidth; });
                         return;
                     }
@@ -587,6 +608,55 @@
                     await this.loadAllDayItems();
                 },
                 dayItemsFor(memberId) { return this.dayItems[memberId] || []; },
+
+                // --- 📸 Presence hearth (Slice 4): the kiosk lights up,
+                // unbidden, with a fresh moment from an activity — the family
+                // hearth showing you the moment you couldn't be at. Dedupe is
+                // the celebration precedent: seed localStorage silently on
+                // first sight so a fresh panel never replays old moments. ---
+                async loadMoments() {
+                    try {
+                        const res = await fetch(`${this.apiBase}api/presence/moments?hours=12`);
+                        if (!res.ok) return;
+                        const moments = await res.json();
+                        this.latestMoment = (moments || []).find(m => m.attachment && m.attachment.data_url) || null;
+                        const KEY = 'chauffeur_moments_seen_ts';
+                        const prev = localStorage.getItem(KEY);
+                        const newest = moments.length ? (moments[0].ts || 0) : 0;
+                        localStorage.setItem(KEY, String(Math.max(newest, parseFloat(prev || '0') || 0)));
+                        if (prev === null) return;   // first sighting: seed silently
+                        const seenTs = parseFloat(prev) || 0;
+                        const fresh = (moments || []).filter(m =>
+                            (m.ts || 0) > seenTs && m.attachment && m.attachment.data_url);
+                        if (fresh.length) this.showMomentOverlay(fresh[0]);
+                    } catch (e) { }
+                },
+                momentAgo(ts) {
+                    const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+                    if (mins < 1) return 'just now';
+                    if (mins < 60) return `${mins} min ago`;
+                    const h = Math.round(mins / 60);
+                    return `${h} hour${h !== 1 ? 's' : ''} ago`;
+                },
+                showMomentOverlay(m) {
+                    const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+                    const overlay = document.createElement('div');
+                    overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center p-8';
+                    overlay.style.background = 'rgba(0,0,0,0.82)';
+                    overlay.innerHTML = `
+                        <style>@keyframes kioskMomentPop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.06); } 100% { transform: scale(1); opacity: 1; } }</style>
+                        <div style="animation:kioskMomentPop .5s ease-out forwards"
+                            class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
+                            <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
+                            <img src="${m.attachment.data_url}" class="max-h-[62vh] rounded-2xl mx-auto object-contain">
+                            ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
+                            <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
+                        </div>`;
+                    overlay.addEventListener('click', () => overlay.remove());
+                    document.body.appendChild(overlay);
+                    setTimeout(() => overlay.remove(), 20000);
+                },
+
                 async loadKidDigests() {
                     try {
                         const res = await fetch(`${this.apiBase}api/kids/digests`);

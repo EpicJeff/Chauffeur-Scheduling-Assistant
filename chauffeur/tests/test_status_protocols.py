@@ -409,7 +409,11 @@ def scenario_span_announce_and_agent_span():
     _mk_protocol(name="Work Trip", emoji="🧳", member_id="dadm", need="cover",
                  call_time="19:30", kid_message="Dad's away for work.")
     fri = TODAY + datetime.timedelta(days=2)
-    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post:
+    # The agent tool announces with wall-clock now — pin the kid quiet-hours
+    # gate open so an evening test run doesn't skip the kid DM (real flake).
+    with mock.patch.object(agent_tools_v2, '_post_chat_message') as post, \
+         mock.patch('services.family_digest.in_kid_quiet_hours',
+                    return_value=False):
         r = agent_tools_v2.set_household_status(
             "work trip", "today", end_date=fri.isoformat(),
             acting_member=storage.get_member("momm"))

@@ -1,0 +1,182 @@
+"""Presence (Presence & Status arc, Slice 4 — docs/presence_status_design.md).
+
+Whoever IS at the activity posts a photo moment into the event's Discuss chat;
+it reaches everyone the schedule kept away. Three jobs live here:
+
+1. The capture prompt — the feature itself. Chauffeur knows the game is live
+   NOW, so shortly after start it taps the present adult(s): "You're at the
+   game — send the family a moment?" The push deeplinks into the event thread
+   with the camera affordance armed. A group chat never asks; this does.
+2. Present / kept-away resolution from the solved schedule — the assigned
+   driver plus every passenger-bound member is "at" the event; the kept-away
+   adults are the differentiated-push audience. Access stays family-wide
+   (the event channel is already household-minus-helpers); only the PUSH is
+   routed. Kids never get moment pings — moments ride their existing surfaces.
+3. The kiosk hearth feed — recent moments for the home/distant kiosk to light
+   up with, unbidden.
+
+Never nag: one prompt per event per day, only within the opening minutes,
+only when someone is actually kept away.
+"""
+import datetime
+import time
+
+from services import storage, family_digest
+
+# Prompt fires when now is within [start, start + PROMPT_WINDOW_MINS].
+PROMPT_WINDOW_MINS = 20
+# Skip blips — a 15-minute drop-off isn't a moment-worthy activity.
+MIN_EVENT_MINS = 30
+_MARKER = 'presence_prompt_sent'
+
+
+def _base_event_id(ev_id: str) -> str:
+    s = str(ev_id)
+    for suffix in ('_dropoff', '_pickup'):
+        if s.endswith(suffix):
+            s = s[:-len(suffix)]
+    return s.split('_slice_')[0]
+
+
+def _parse_iso(val):
+    try:
+        dt = datetime.datetime.fromisoformat(str(val))
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
+def members_at_event(ev, ev_id, sched=None):
+    """Members the schedule places AT this event: the assigned driver plus
+    every passenger-bound member (any role — the same four-way binding My Day
+    uses, so adults with passenger profiles count as present too)."""
+    sched = sched or storage.get_cached_schedule() or {}
+    matched_rules = sched.get('matched_rules', {}) or {}
+    passengers = {p.get('id'): p for p in storage.get_all_passengers()}
+    assignments = dict(sched.get('assignments', {}) or {})
+    assignments.update(sched.get('ghost_assignments', {}) or {})
+
+    present, seen = [], set()
+    # Driver: check the base event and both split legs.
+    base = _base_event_id(ev_id)
+    for eid in (str(ev_id), base, f"{base}_dropoff", f"{base}_pickup"):
+        d_id = assignments.get(eid)
+        if d_id and not str(d_id).startswith('ghost_'):
+            m = storage.get_member_by_driver_id(d_id)
+            if m and not m.get('system') and m['id'] not in seen:
+                seen.add(m['id'])
+                present.append(m)
+    # Passengers (kids AND adults with a passenger profile).
+    for m in storage.get_all_members():
+        if m.get('system') or not m.get('passenger_id') or m['id'] in seen:
+            continue
+        p = passengers.get(m['passenger_id']) or {}
+        p_cals = set(p.get('calendar_ids') or [])
+        p_tags = {t.lower() for t in (p.get('hashtags') or [])}
+        if family_digest._kid_event_match(ev, str(ev_id), m['passenger_id'],
+                                          p_cals, p_tags, matched_rules):
+            seen.add(m['id'])
+            present.append(m)
+    return present
+
+
+def moment_push_audience(channel, sched=None):
+    """Kept-away ADULTS for a moment posted into an event channel: household
+    minus helpers, minus kids (their surfaces carry moments — no new pings),
+    minus everyone the schedule proves was at the event. Falls back to all
+    non-helper adults when the event isn't in the cache (old thread)."""
+    sched = sched or storage.get_cached_schedule() or {}
+    ev_id = str(channel.get('event_id') or '')
+    ev = next((e for e in sched.get('events', [])
+               if _base_event_id(e.get('id')) == _base_event_id(ev_id)), None)
+    present_ids = {m['id'] for m in members_at_event(ev, ev_id, sched)} if ev else set()
+    return [m for m in storage.get_all_members()
+            if m.get('role') in ('parent', 'adult') and not m.get('system')
+            and m['id'] not in present_ids]
+
+
+def run_capture_prompts(send, now=None):
+    """Sweep today's live events and prompt the present adult(s) to share a
+    moment. `send(member, title, body, path)` is injected (cars.run_sweep
+    convention). Returns the base event ids prompted."""
+    now = now or datetime.datetime.now()
+    sched = storage.get_cached_schedule() or {}
+    events = sched.get('events', []) or []
+    today = now.date().isoformat()
+
+    sent = dict(storage.get_app_state(_MARKER) or {})
+    cutoff = (now - datetime.timedelta(days=2)).timestamp()
+    sent = {k: v for k, v in sent.items() if v >= cutoff}
+    prompted = []
+
+    for ev in events:
+        ev_id = str(ev.get('id') or '')
+        # Base events only — split legs and trip slices ride with their base.
+        if ev_id != _base_event_id(ev_id):
+            continue
+        if ev.get('event_type') in ('errand', 'background_trip') or ev.get('trip_suppressed'):
+            continue
+        start = _parse_iso(ev.get('start'))
+        end = _parse_iso(ev.get('end'))
+        if not start or not end or start.date().isoformat() != today:
+            continue
+        if (end - start).total_seconds() < MIN_EVENT_MINS * 60:
+            continue
+        if not (start <= now <= start + datetime.timedelta(minutes=PROMPT_WINDOW_MINS)):
+            continue
+        key = f"{ev_id}:{today}"
+        if key in sent:
+            continue
+
+        present = members_at_event(ev, ev_id, sched)
+        present_adults = [m for m in present if m.get('role') in ('parent', 'adult')]
+        if not present_adults:
+            continue
+        present_ids = {m['id'] for m in present}
+        kept_away = [m for m in storage.get_all_members()
+                     if m.get('role') in ('parent', 'adult') and not m.get('system')
+                     and m['id'] not in present_ids]
+        if not kept_away:
+            continue  # everyone's there — no audience, no ask
+
+        # Marker FIRST (house convention): a half-failing send must not
+        # re-prompt every sweep.
+        sent[key] = now.timestamp()
+        storage.set_app_state(_MARKER, sent)
+
+        title = (ev.get('title') or 'the activity').strip()
+        channel = storage.get_or_create_event_channel(
+            ev_id, title=title, event_end=str(ev.get('end') or '') or None)
+        away_names = ', '.join(m.get('name', '?') for m in kept_away[:3])
+        for m in present_adults:
+            send(m, f"📸 You're at {title}",
+                 f"Send the family a moment — {away_names} couldn't be there.",
+                 f"/app?open_channel={channel['id']}&compose=moment")
+        prompted.append(ev_id)
+
+    if prompted:
+        storage.set_app_state(_MARKER, sent)
+    return prompted
+
+
+def recent_moments(hours: float = 12, limit: int = 12):
+    """The kiosk hearth feed: recent photo moments with sender + event
+    context resolved for display."""
+    since = time.time() - hours * 3600
+    members = {m['id']: m for m in storage.get_all_members()}
+    out = []
+    for m in storage.get_recent_event_moments(since, limit=limit):
+        sender = members.get(m.get('sender_member_id')) or {}
+        out.append({
+            'id': m.get('id'),
+            'ts': m.get('ts'),
+            'body': m.get('body') or '',
+            'attachment': m.get('attachment'),
+            'reactions': m.get('reactions') or {},
+            'event_id': m.get('event_id'),
+            'event_title': m.get('event_title') or 'Family moment',
+            'sender_name': sender.get('name') or '?',
+            'sender_color': sender.get('color_code') or '#3b82f6',
+            'sender_avatar': sender.get('avatar'),
+        })
+    return out
