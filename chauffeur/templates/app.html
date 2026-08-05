@@ -1404,6 +1404,8 @@
         let channelsData = [];
         let activeChannelId = null;
         let messagesStream = null;
+        let threadMessages = [];      // last rendered thread, for the lightbox
+        let momentsStripData = [];    // 📸 strip rows, for moments not in-thread
 
         function connectMessagesStream() {
             if (!selectedMemberId) return;
@@ -1489,6 +1491,7 @@
                 const res = await fetch(`${apiBase}api/presence/moments?hours=48&limit=10`);
                 if (!res.ok) return;
                 const moments = await res.json();
+                momentsStripData = moments;
                 const strip = document.getElementById('moments-strip');
                 const row = document.getElementById('moments-strip-row');
                 if (!moments.length) { strip.style.display = 'none'; return; }
@@ -1507,7 +1510,7 @@
                                    </svg>
                                </span>
                            </span>` : '');
-                    return `<button onclick="openChannel('${m.channel_id}')"
+                    return `<button onclick="openMomentFromStrip('${m.channel_id}','${m.id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}
                         <span class="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white truncate px-1">${mfEscape(m.event_title)}</span>
@@ -1557,7 +1560,10 @@
             }).join('');
         }
 
-        async function openChannel(channelId, channelObj = null) {
+        // focusMessageId: land in the thread AND open that moment full-screen
+        // (tapping a thumbnail should show the moment, not just the room it
+        // lives in) — dismissing drops you into the conversation around it.
+        async function openChannel(channelId, channelObj = null, focusMessageId = null) {
             activeChannelId = channelId;
             document.getElementById('thread-view').style.display = 'flex';
             applyViewVisibility();  // hides the Argyle FAB over the composer
@@ -1573,6 +1579,11 @@
             document.getElementById('thread-messages').innerHTML =
                 '<div class="text-center text-gray-500 text-sm mt-4">Loading…</div>';
             await refreshThread();
+            if (focusMessageId) {
+                const el = document.getElementById(`msg-${focusMessageId}`);
+                if (el) el.scrollIntoView({ block: 'center' });
+                openMomentById(focusMessageId);
+            }
         }
 
         async function refreshThread() {
@@ -1606,6 +1617,7 @@
 
         function renderThread(msgs) {
             const wrap = document.getElementById('thread-messages');
+            threadMessages = msgs;   // lets the lightbox resolve a moment by id
             let lastDay = null;
             wrap.innerHTML = msgs.map(m => {
                 const mine = m.sender_member_id === selectedMemberId;
@@ -1622,7 +1634,7 @@
                     const psrc = m.attachment.url
                         ? `${apiBase}${m.attachment.url.replace(/^\//, '')}`
                         : (m.attachment.data_url || '');
-                    att = `<img src="${psrc}" loading="lazy" onclick="openMomentLightbox(this.src)"
+                    att = `<img src="${psrc}" loading="lazy" onclick="openMomentById('${m.id}')"
                           class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full object-cover cursor-pointer ${m.body ? 'mb-1' : ''}">`;
                 } else if (m.attachment && m.attachment.kind === 'video' && m.attachment.url) {
                     // Relative (like every api fetch) so HA ingress paths work;
@@ -1636,7 +1648,7 @@
                 const bubble = m.body
                     ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
                     : '';
-                return `${divider}<div class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
+                return `${divider}<div id="msg-${m.id}" class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
                     ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
                     ${att}${bubble}
                     ${m.card ? renderCard(m.card) : ''}
@@ -1682,12 +1694,69 @@
             } catch (e) { }
         }
 
-        function openMomentLightbox(src) {
+        function momentMediaSrc(att) {
+            if (!att) return '';
+            return att.url ? `${apiBase}${att.url.replace(/^\//, '')}` : (att.data_url || '');
+        }
+
+        function momentPosterSrc(att) {
+            const u = String((att || {}).url || '');
+            if (!u.startsWith('/api/media/')) return '';
+            return `${apiBase}api/media/${u.split('/').pop().split('.')[0]}.jpg`;
+        }
+
+        function showMomentOverlay(opts) {
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[210] bg-black/90 flex items-center justify-center p-3';
-            overlay.innerHTML = `<img src="${src}" class="max-w-full max-h-full rounded-xl object-contain">`;
-            overlay.addEventListener('click', () => overlay.remove());
+            // Video keeps its controls usable, so only the backdrop and the
+            // explicit ✕ dismiss; a photo closes on tap like before.
+            const media = opts.kind === 'video'
+                ? `<video src="${opts.src}" ${opts.poster ? `poster="${opts.poster}"` : ''} controls autoplay playsinline
+                       class="max-w-full max-h-[78vh] rounded-xl"></video>`
+                : `<img src="${opts.src}" onclick="this.closest('.moment-overlay').remove()"
+                       class="max-w-full max-h-[78vh] rounded-xl object-contain">`;
+            overlay.classList.add('moment-overlay');
+            overlay.innerHTML = `
+                <button onclick="this.closest('.moment-overlay').remove()"
+                    class="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
+                <div class="max-w-full text-center">
+                    ${media}
+                    ${opts.body ? `<div class="text-white font-bold mt-3 px-4">${mfEscape(opts.body)}</div>` : ''}
+                    ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
+                </div>`;
+            overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
             document.body.appendChild(overlay);
+        }
+
+        // Resolve a moment from the open thread, falling back to the strip's
+        // own data (the thread only loads the last 100 messages, so an older
+        // moment tapped in the strip may not be in it).
+        function openMomentById(id) {
+            const m = (threadMessages || []).find(x => x.id === id);
+            if (m && m.attachment) {
+                const sender = membersData.find(x => x.id === m.sender_member_id) || {};
+                return showMomentOverlay({
+                    kind: m.attachment.kind,
+                    src: momentMediaSrc(m.attachment),
+                    poster: momentPosterSrc(m.attachment),
+                    body: m.body,
+                    senderName: m.sender_member_id === selectedMemberId ? null : sender.name
+                });
+            }
+            const row = (momentsStripData || []).find(x => x.id === id);
+            if (row) {
+                return showMomentOverlay({
+                    kind: row.kind,
+                    src: `${apiBase}${String(row.media_url || '').replace(/^\//, '')}`,
+                    poster: `${apiBase}${String(row.poster_url || '').replace(/^\//, '')}`,
+                    body: row.body, senderName: row.sender_name
+                });
+            }
+        }
+
+        // Strip tap: open the conversation AND the moment on top of it.
+        async function openMomentFromStrip(channelId, messageId) {
+            await openChannel(channelId, null, messageId);
         }
 
         function renderCard(card) {
