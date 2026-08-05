@@ -1734,6 +1734,10 @@
                     </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
+            // Re-attach uploads in flight: this render just replaced the list
+            // wholesale, and an SSE tick mid-upload would otherwise make the
+            // clip you are watching upload vanish from the thread.
+            uploadingBubbles.forEach(el => wrap.appendChild(el));
             wrap.scrollTop = wrap.scrollHeight;
         }
 
@@ -1989,6 +1993,8 @@
         // the thing, for sports — upload as files to the family's box and
         // the attachment carries the /api/media URL.
         let pendingAttachment = null;
+        let pendingFile = null;          // staged video, uploaded on Send
+        const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
         function showAttachPreview(html) {
             document.getElementById('thread-attach-slot').innerHTML = html;
@@ -2001,7 +2007,7 @@
             const file = inputEl.files && inputEl.files[0];
             inputEl.value = '';
             if (!file) return;
-            if (file.type.startsWith('video/')) return uploadMomentVideo(file);
+            if (file.type.startsWith('video/')) return stagePendingVideo(file);
             if (!file.type.startsWith('image/')) return;
             const img = new Image();
             const url = URL.createObjectURL(file);
@@ -2042,10 +2048,84 @@
                                   : `${Math.round(n / 1024 / 1024)}MB`;
         }
 
-        async function uploadMomentVideo(file) {
-            const btn = document.getElementById('thread-attach-btn');
-            const setProgress = pct => { btn.textContent = pct === null ? '📷' : `${pct}%`; };
-            btn.textContent = '⏳';
+        // Uploads run AFTER send, not before: the clip drops into the thread
+        // immediately and fills its ring as it goes, so you are never staring
+        // at a composer waiting for permission to type a caption. Optimistic
+        // bubbles are held here because renderThread() rebuilds the list from
+        // the server and would otherwise wipe an upload in flight.
+        let uploadingBubbles = [];
+        const RING_C = 2 * Math.PI * 20;   // r=20 in the 48-box viewBox
+
+        function uploadOverlay(determinate) {
+            return `<div class="upload-overlay absolute inset-0 rounded-2xl bg-black/50 flex items-center justify-center">
+                    <svg class="w-16 h-16 -rotate-90 ${determinate ? '' : 'animate-spin'}" viewBox="0 0 48 48">
+                        <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="4"></circle>
+                        <circle class="upload-ring" cx="24" cy="24" r="20" fill="none" stroke="white" stroke-width="4"
+                            stroke-linecap="round" stroke-dasharray="${RING_C.toFixed(2)}"
+                            stroke-dashoffset="${determinate ? RING_C.toFixed(2) : (RING_C * 0.75).toFixed(2)}"></circle>
+                    </svg>
+                    ${determinate ? `<span class="upload-pct absolute text-white text-xs font-black">0%</span>` : ''}
+                </div>`;
+        }
+
+        // A bubble that looks like the message it is about to become, so the
+        // thread never jumps when the real one replaces it.
+        function addUploadingBubble(file, body, kind) {
+            const wrap = document.getElementById('thread-messages');
+            const objUrl = URL.createObjectURL(file);
+            const el = document.createElement('div');
+            el.className = 'max-w-[80%] self-end';
+            el.dataset.uploading = '1';
+            const media = kind === 'video'
+                ? `<video src="${objUrl}" muted playsinline preload="metadata"
+                       class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover"></video>`
+                : `<img src="${objUrl}" class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover">`;
+            el.innerHTML = `
+                <div class="relative ${body ? 'mb-1' : ''}">${media}${uploadOverlay(kind === 'video')}</div>
+                ${body ? `<div class="px-3.5 py-2 rounded-2xl bg-blue-600 text-white rounded-br-sm text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(body)}</div>` : ''}
+                <div class="flex items-center gap-1.5 mt-0.5 justify-end">
+                    <span class="upload-status text-[10px] text-gray-500">Sending…</span>
+                </div>`;
+            el._objUrl = objUrl;
+            uploadingBubbles.push(el);
+            wrap.appendChild(el);
+            wrap.scrollTop = wrap.scrollHeight;
+            return el;
+        }
+
+        function setBubbleProgress(el, pct) {
+            const ring = el.querySelector('.upload-ring');
+            const label = el.querySelector('.upload-pct');
+            if (ring) ring.style.strokeDashoffset = (RING_C * (1 - pct / 100)).toFixed(2);
+            if (label) label.textContent = `${pct}%`;
+        }
+
+        function dropUploadingBubble(el) {
+            uploadingBubbles = uploadingBubbles.filter(x => x !== el);
+            if (el._objUrl) URL.revokeObjectURL(el._objUrl);
+            el.remove();
+        }
+
+        // Failure keeps the bubble AND the file, so retry costs one tap
+        // rather than finding the clip in the camera roll again.
+        function markBubbleFailed(el, file, body, kind, msg) {
+            const overlay = el.querySelector('.upload-overlay');
+            if (overlay) {
+                overlay.innerHTML = `<button class="px-3 py-1.5 rounded-full bg-white/15 border border-white/30 text-white text-xs font-bold">↻ Retry</button>`;
+                overlay.querySelector('button').onclick = () => {
+                    dropUploadingBubble(el);
+                    sendWithUpload(file, body, kind);
+                };
+            }
+            const status = el.querySelector('.upload-status');
+            if (status) {
+                status.textContent = msg || 'Upload failed';
+                status.className = 'upload-status text-[10px] text-red-400 font-bold';
+            }
+        }
+
+        async function uploadMomentVideo(file, onProgress) {
+            const setProgress = pct => { if (onProgress) onProgress(pct); };
             let init;
             try {
                 // Declare the size first: too big costs one round trip, not a
@@ -2057,69 +2137,73 @@
                 init = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(init.detail || 'Upload refused');
             } catch (err) {
-                setProgress(null);
-                showGlobalAlert(err.message || `Could not start upload (${fmtBytes(file.size)})`);
-                return;
+                throw new Error(err.message || `Could not start upload (${fmtBytes(file.size)})`);
             }
 
             const id = init.upload_id, chunk = init.chunk_size || 5 * 1024 * 1024;
             let offset = init.received || 0;
-            try {
-                while (offset < file.size) {
-                    const end = Math.min(offset + chunk, file.size);
-                    let sent = false;
-                    for (let attempt = 0; attempt < UPLOAD_MAX_RETRIES && !sent; attempt++) {
-                        try {
-                            const r = await fetch(
-                                `${apiBase}api/moments/upload/${id}?offset=${offset}`,
-                                { method: 'PUT', body: file.slice(offset, end) });
-                            if (r.status === 409) {
-                                // The server has a different amount than we
-                                // think. Believe the server and carry on.
-                                const d = await r.json().catch(() => ({}));
-                                let truth = null;
-                                try { truth = JSON.parse(d.detail || '{}').received; } catch (e) { }
-                                if (typeof truth === 'number') { offset = truth; break; }
-                                throw new Error('Upload out of sync');
-                            }
-                            if (!r.ok) {
-                                const d = await r.json().catch(() => ({}));
-                                throw new Error(d.detail || 'Chunk rejected');
-                            }
-                            const d = await r.json();
-                            offset = d.received;
-                            sent = true;
-                        } catch (err) {
-                            if (attempt === UPLOAD_MAX_RETRIES - 1) throw err;
-                            // Back off, then ask the server where it actually
-                            // got to — that is what makes this resumable
-                            // rather than merely retried.
-                            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
-                            try {
-                                const s = await fetch(`${apiBase}api/moments/upload/${id}`);
-                                if (s.ok) offset = (await s.json()).received;
-                            } catch (e) { }
+            while (offset < file.size) {
+                const end = Math.min(offset + chunk, file.size);
+                let sent = false;
+                for (let attempt = 0; attempt < UPLOAD_MAX_RETRIES && !sent; attempt++) {
+                    try {
+                        const r = await fetch(
+                            `${apiBase}api/moments/upload/${id}?offset=${offset}`,
+                            { method: 'PUT', body: file.slice(offset, end) });
+                        if (r.status === 409) {
+                            // The server has a different amount than we think.
+                            // Believe the server and carry on.
+                            const d = await r.json().catch(() => ({}));
+                            let truth = null;
+                            try { truth = JSON.parse(d.detail || '{}').received; } catch (e) { }
+                            if (typeof truth === 'number') { offset = truth; break; }
+                            throw new Error('Upload out of sync');
                         }
+                        if (!r.ok) {
+                            const d = await r.json().catch(() => ({}));
+                            throw new Error(d.detail || 'Chunk rejected');
+                        }
+                        offset = (await r.json()).received;
+                        sent = true;
+                    } catch (err) {
+                        if (attempt === UPLOAD_MAX_RETRIES - 1) throw err;
+                        // Back off, then ask the server where it actually got
+                        // to — that is what makes this resumable rather than
+                        // merely retried.
+                        await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+                        try {
+                            const s = await fetch(`${apiBase}api/moments/upload/${id}`);
+                            if (s.ok) offset = (await s.json()).received;
+                        } catch (e) { }
                     }
-                    setProgress(Math.floor((offset / file.size) * 100));
                 }
-                const fin = await fetch(`${apiBase}api/moments/upload/${id}/complete`,
-                                        { method: 'POST' });
-                const data = await fin.json().catch(() => ({}));
-                if (!fin.ok) throw new Error(data.detail || 'upload failed');
-                pendingAttachment = data;   // {kind:'video', url, mime}
-                showAttachPreview(`<video src="${apiBase}${data.url.replace(/^\//, '')}" muted playsinline
-                    class="h-20 rounded-xl border border-gray-700 object-cover"></video>
-                    <span class="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none">▶️</span>`);
-            } catch (err) {
-                showGlobalAlert(err.message || 'Video upload failed');
-            } finally {
-                setProgress(null);
+                setProgress(Math.floor((offset / file.size) * 100));
             }
+            const fin = await fetch(`${apiBase}api/moments/upload/${id}/complete`,
+                                    { method: 'POST' });
+            const data = await fin.json().catch(() => ({}));
+            if (!fin.ok) throw new Error(data.detail || 'Upload failed');
+            return data;   // {kind:'video', url, mime}
+        }
+
+        // Staged, NOT uploaded. Nothing leaves the phone until you hit Send —
+        // which is also what lets the clip appear in the thread the instant
+        // you do, instead of after the transfer.
+        function stagePendingVideo(file) {
+            if (file.size > MAX_UPLOAD_BYTES) {
+                showGlobalAlert(`That clip is ${fmtBytes(file.size)} — the limit is ${fmtBytes(MAX_UPLOAD_BYTES)}`);
+                return;
+            }
+            pendingFile = file;
+            const url = URL.createObjectURL(file);
+            showAttachPreview(`<video src="${url}" muted playsinline preload="metadata"
+                class="h-20 rounded-xl border border-gray-700 object-cover"></video>
+                <span class="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none">▶️</span>`);
         }
 
         function clearPendingAttachment() {
             pendingAttachment = null;
+            pendingFile = null;
             document.getElementById('thread-attach-preview').style.display = 'none';
             document.getElementById('thread-input').placeholder = 'Message...';
         }
@@ -2132,12 +2216,44 @@
             if (btn) btn.classList.add('animate-pulse');
         }
 
+        // Send-then-upload: the bubble appears now, the bytes follow. Returns
+        // immediately so the composer is usable again while a 2 GB clip goes
+        // up in the background.
+        async function sendWithUpload(file, body, kind) {
+            const channelId = activeChannelId;
+            const el = addUploadingBubble(file, body, kind);
+            try {
+                const attachment = await uploadMomentVideo(file, pct => {
+                    if (uploadingBubbles.includes(el)) setBubbleProgress(el, pct);
+                });
+                const res = await fetch(`${apiBase}api/channels/${channelId}/messages`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender_member_id: selectedMemberId,
+                                           body: body, attachment: attachment })
+                });
+                if (!res.ok) throw new Error('Could not post the moment');
+                dropUploadingBubble(el);
+                // Only refresh if we're still looking at the thread it went to.
+                if (activeChannelId === channelId) await refreshThread();
+                else loadMomentsStrip();
+            } catch (err) {
+                markBubbleFailed(el, file, body, kind, err.message);
+            }
+        }
+
         async function submitThreadMessage(e) {
             e.preventDefault();
             const input = document.getElementById('thread-input');
             const body = input.value.trim();
             const attachment = pendingAttachment;
-            if ((!body && !attachment) || !activeChannelId || !selectedMemberId) return;
+            const file = pendingFile;
+            if ((!body && !attachment && !file) || !activeChannelId || !selectedMemberId) return;
+            if (file) {
+                input.value = '';
+                clearPendingAttachment();
+                sendWithUpload(file, body, 'video');   // deliberately not awaited
+                return;
+            }
             input.value = '';
             clearPendingAttachment();
             try {
