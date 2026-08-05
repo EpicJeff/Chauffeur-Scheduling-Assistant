@@ -2322,12 +2322,42 @@
         // Send-then-upload: the bubble appears now, the bytes follow. Returns
         // immediately so the composer is usable again while a 2 GB clip goes
         // up in the background.
+        // Two at a time. Everything shares one link to the box, so firing five
+        // at once just divides the same pipe five ways and every bubble crawls;
+        // the set finishes no sooner. Two rather than one because chunks are
+        // sequential per upload, so a second transfer fills the round-trip gaps
+        // of the first.
+        const MAX_CONCURRENT_UPLOADS = 2;
+        let activeUploads = 0;
+        const uploadQueue = [];
+
+        function pumpUploadQueue() {
+            while (activeUploads < MAX_CONCURRENT_UPLOADS && uploadQueue.length) {
+                const job = uploadQueue.shift();
+                activeUploads++;
+                job.run().then(job.resolve, job.reject)
+                    .finally(() => { activeUploads--; pumpUploadQueue(); });
+            }
+        }
+
+        function enqueueUpload(run) {
+            return new Promise((resolve, reject) => {
+                uploadQueue.push({ run, resolve, reject });
+                pumpUploadQueue();
+            });
+        }
+
         async function sendWithUpload(file, body, kind, poster) {
             const channelId = activeChannelId;
             const el = addUploadingBubble(file, body, kind, poster);
+            const status = el.querySelector('.upload-status');
+            if (activeUploads >= MAX_CONCURRENT_UPLOADS && status) status.textContent = 'Queued…';
             try {
-                const attachment = await uploadMomentVideo(file, pct => {
-                    if (uploadingBubbles.includes(el)) setBubbleProgress(el, pct);
+                const attachment = await enqueueUpload(async () => {
+                    if (status) status.textContent = 'Sending…';
+                    return uploadMomentVideo(file, pct => {
+                        if (uploadingBubbles.includes(el)) setBubbleProgress(el, pct);
+                    });
                 });
                 const res = await fetch(`${apiBase}api/channels/${channelId}/messages`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -5924,16 +5924,29 @@ async def put_upload_chunk(upload_id: str, offset: int, request: Request):
     if offset != have:
         raise HTTPException(status_code=409,
                             detail=json.dumps({'received': have}))
-    with open(part, 'ab') as f:
-        async for chunk in request.stream():
-            have += len(chunk)
-            if have > info['size'] or have > _VIDEO_MAX_BYTES:
-                f.close()
-                os.remove(part)
-                os.remove(meta)
-                raise HTTPException(status_code=413,
-                                    detail="Upload exceeded its declared size")
-            f.write(chunk)
+    # Buffer the chunk, then write it OFF the event loop. A synchronous
+    # f.write() inside an async handler blocks EVERY other request for its
+    # duration — with a few uploads in flight that serializes them against
+    # each other and stalls the SSE stream and thread refreshes besides.
+    # One chunk (5 MB) per in-flight request is the memory cost.
+    limit = min(info['size'], _VIDEO_MAX_BYTES)
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if have + len(buf) > limit:
+            for p in (part, meta):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            raise HTTPException(status_code=413,
+                                detail="Upload exceeded its declared size")
+    if buf:
+        def _append(data=bytes(buf)):
+            with open(part, 'ab') as f:
+                f.write(data)
+        await asyncio.to_thread(_append)
+        have += len(buf)
     return {'received': have, 'size': info['size']}
 
 

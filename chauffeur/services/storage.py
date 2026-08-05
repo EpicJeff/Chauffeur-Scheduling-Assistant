@@ -181,7 +181,12 @@ def media_read_path(name: str) -> Optional[str]:
             p = os.path.join(d, name)
             if os.path.isfile(p):
                 return p
-    return None
+    # Local scratch last: a just-uploaded clip lives here as {stem}.orig until
+    # its transcode lands, and the serving path falls back to it so a moment
+    # sent seconds ago is never a 404. Deliberately NOT a media root — the
+    # layout migration must never walk working files.
+    p = os.path.join(media_scratch_dir(), name)
+    return p if os.path.isfile(p) else None
 
 
 def media_scratch_dir() -> str:
@@ -2049,6 +2054,16 @@ def _ffmpeg_path() -> Optional[str]:
     return shutil.which('ffmpeg')
 
 
+# finalize_media_upload starts a thread per clip, so three moments landing
+# together launched three ffmpeg processes, each happy to take every core on a
+# box that is also serving the uploads still in flight. Queueing costs latency
+# on the last clip and protects everything else. Posters are single-frame
+# extracts (cheap, but a gallery can ask for dozens at once), so they get their
+# own, looser gate rather than competing with a full transcode.
+_TRANSCODE_GATE = threading.Semaphore(1)
+_POSTER_GATE = threading.Semaphore(2)
+
+
 def poster_available(stem: str) -> bool:
     """Can a poster for this clip actually be served? Either it already
     exists, or ffmpeg is here to make one on request. Callers must not
@@ -2081,10 +2096,11 @@ def generate_poster(stem: str) -> bool:
     import subprocess
     for seek in ('1', '0'):
         try:
-            subprocess.run(
-                [_ffmpeg_path(), '-y', '-ss', seek, '-i', src, '-frames:v', '1',
-                 '-vf', "scale='min(640,iw)':-2", '-q:v', '4', tmp],
-                check=True, capture_output=True, timeout=120)
+            with _POSTER_GATE:
+                subprocess.run(
+                    [_ffmpeg_path(), '-y', '-ss', seek, '-i', src, '-frames:v', '1',
+                     '-vf', "scale='min(640,iw)':-2", '-q:v', '4', tmp],
+                    check=True, capture_output=True, timeout=120)
             if os.path.getsize(tmp) > 0:
                 os.replace(tmp, out)
                 return True
@@ -2122,12 +2138,15 @@ def _transcode_media(stem: str):
         mb = 0
     budget = int(min(3600, max(600, mb * 3)))
     try:
-        subprocess.run(
-            [_ffmpeg_path(), '-y', '-i', orig,
-             '-vf', "scale='min(1280,iw)':-2",
-             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
-             '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
-            check=True, capture_output=True, timeout=budget)
+        # The gate is held only around ffmpeg, so queued clips do not burn
+        # their own timeout budget waiting for a slot.
+        with _TRANSCODE_GATE:
+            subprocess.run(
+                [_ffmpeg_path(), '-y', '-i', orig,
+                 '-vf', "scale='min(1280,iw)':-2",
+                 '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+                 '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
+                check=True, capture_output=True, timeout=budget)
         media_move_into_place(tmp, final)
         os.remove(orig)
         generate_poster(stem)   # thumbnail, so tiles never show a black box
@@ -2162,7 +2181,13 @@ def finalize_media_upload(src_path: str, mime: str) -> Optional[dict]:
         return None
     stem = _uuid.uuid4().hex
     if _ffmpeg_path():
-        media_move_into_place(src_path, media_write_path(stem + '.orig'))
+        # The raw upload stays LOCAL. It used to be moved onto the media root
+        # first, which meant a 200 MB original crossed the network mount, was
+        # read back across it to transcode, and only then produced a ~15 MB
+        # keeper — three trips over SMB for a file that is about to be
+        # deleted. Now only the finished clip and its poster ever cross.
+        media_move_into_place(src_path,
+                              os.path.join(media_scratch_dir(), stem + '.orig'))
         threading.Thread(target=_transcode_media, args=(stem,), daemon=True).start()
         media_id = stem + '.mp4'
         return {'id': media_id, 'url': f'/api/media/{media_id}', 'mime': 'video/mp4'}
