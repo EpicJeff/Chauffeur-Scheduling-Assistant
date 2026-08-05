@@ -1481,14 +1481,18 @@
                 const row = document.getElementById('moments-strip-row');
                 if (!moments.length) { strip.style.display = 'none'; return; }
                 row.innerHTML = moments.map(m => {
-                    // By-URL + lazy: the strip must stay cheap however many
-                    // moments exist (thread bubbles keep their inline photo).
-                    const src = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
-                    const media = m.kind === 'video'
-                        ? `<video src="${src}" muted playsinline preload="metadata"
-                              class="w-full h-full object-cover"></video>
-                           <span class="absolute inset-0 flex items-center justify-center text-xl pointer-events-none">▶️</span>`
-                        : `<img src="${src}" loading="lazy" class="w-full h-full object-cover">`;
+                    // By-URL + lazy, and always a still (clips carry a poster
+                    // frame) so the strip stays cheap however many exist.
+                    const poster = `${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`;
+                    const media = `<img src="${poster}" loading="lazy" class="w-full h-full object-cover">`
+                        + (m.kind === 'video' ? `
+                           <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                               <span class="flex items-center justify-center w-8 h-8 rounded-full bg-black/55 ring-1 ring-white/25">
+                                   <svg viewBox="0 0 24 24" class="w-4 h-4 translate-x-[1px]" fill="white" opacity="0.95">
+                                       <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
+                                   </svg>
+                               </span>
+                           </span>` : '');
                     return `<button onclick="openChannel('${m.channel_id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}
@@ -1599,12 +1603,20 @@
                 lastDay = dayKey;
                 const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let att = '';
-                if (m.attachment && m.attachment.kind === 'photo' && m.attachment.data_url) {
-                    att = `<img src="${m.attachment.data_url}" onclick="openMomentLightbox(this.src)"
+                if (m.attachment && m.attachment.kind === 'photo') {
+                    // Stored photos come by URL; legacy ones are still inline.
+                    const psrc = m.attachment.url
+                        ? `${apiBase}${m.attachment.url.replace(/^\//, '')}`
+                        : (m.attachment.data_url || '');
+                    att = `<img src="${psrc}" loading="lazy" onclick="openMomentLightbox(this.src)"
                           class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full object-cover cursor-pointer ${m.body ? 'mb-1' : ''}">`;
                 } else if (m.attachment && m.attachment.kind === 'video' && m.attachment.url) {
-                    // Relative (like every api fetch) so HA ingress paths work.
-                    att = `<video src="${apiBase}${m.attachment.url.replace(/^\//, '')}" controls playsinline preload="metadata"
+                    // Relative (like every api fetch) so HA ingress paths work;
+                    // poster derived from the clip id so the bubble shows a
+                    // frame instead of a black box before you hit play.
+                    const vsrc = `${apiBase}${m.attachment.url.replace(/^\//, '')}`;
+                    const vposter = `${apiBase}api/media/${m.attachment.url.split('/').pop().split('.')[0]}.jpg`;
+                    att = `<video src="${vsrc}" poster="${vposter}" controls playsinline preload="metadata"
                           class="rounded-2xl ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'} max-h-64 w-full ${m.body ? 'mb-1' : ''}"></video>`;
                 }
                 const bubble = m.body
@@ -1724,13 +1736,16 @@
             const url = URL.createObjectURL(file);
             img.onload = () => {
                 URL.revokeObjectURL(url);
-                const MAX = 1280;
+                // 2048px: photos are stored as FILES now, so the old 1280
+                // squeeze (which existed to keep base64 out of the database)
+                // isn't needed — send something worth looking at on a TV.
+                const MAX = 2048;
                 const scale = Math.min(1, MAX / Math.max(img.width, img.height));
                 const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
                 const canvas = document.createElement('canvas');
                 canvas.width = w; canvas.height = h;
                 canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
                 pendingAttachment = { kind: 'photo', data_url: dataUrl, w: w, h: h };
                 showAttachPreview(`<img src="${dataUrl}" class="h-20 rounded-xl border border-gray-700 object-cover">`);
             };

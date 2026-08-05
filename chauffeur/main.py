@@ -5436,9 +5436,10 @@ class SendMessageRequest(BaseModel):
     # PWA downscales client-side (~1280px JPEG); the server just bounds it.
     attachment: Optional[dict] = None
 
-# ~1.4M base64 chars ≈ 1 MB of JPEG — well above the PWA's ~1280px q0.8
-# renditions, well below anything that would bloat the channel cap.
-_ATTACHMENT_MAX_CHARS = 1_400_000
+# Photos are persisted as FILES (like clips), so the wire cap only has to be
+# generous enough for the PWA's ~2048px q0.85 rendition — not tight enough to
+# protect the database, which is what the old 1 MB limit was really doing.
+_ATTACHMENT_MAX_CHARS = 16_000_000
 
 def _validate_moment_attachment(att: dict) -> dict:
     """Normalize/validate a moment attachment; raises HTTPException on junk.
@@ -5447,12 +5448,22 @@ def _validate_moment_attachment(att: dict) -> dict:
     if not isinstance(att, dict):
         raise HTTPException(status_code=400, detail="Unsupported attachment")
     if att.get('kind') == 'photo':
-        data_url = str(att.get('data_url') or '')
-        if not data_url.startswith('data:image/'):
-            raise HTTPException(status_code=400, detail="Attachment must be an image data URL")
-        if len(data_url) > _ATTACHMENT_MAX_CHARS:
-            raise HTTPException(status_code=413, detail="Photo too large — try again")
-        out = {'kind': 'photo', 'data_url': data_url}
+        # Already-stored photo (re-post / migration passthrough).
+        url = str(att.get('url') or '')
+        if url.startswith('/api/media/') and storage.media_file_path(url.rsplit('/', 1)[-1]):
+            out = {'kind': 'photo', 'url': url}
+        else:
+            data_url = str(att.get('data_url') or '')
+            if not data_url.startswith('data:image/'):
+                raise HTTPException(status_code=400, detail="Attachment must be an image data URL")
+            if len(data_url) > _ATTACHMENT_MAX_CHARS:
+                raise HTTPException(status_code=413, detail="Photo too large — try again")
+            # Persist to the media store rather than inline on the message:
+            # the database stays small and the photo streams like a clip.
+            saved = storage.save_photo_data_url(data_url)
+            if not saved:
+                raise HTTPException(status_code=400, detail="Unsupported image format")
+            out = {'kind': 'photo', 'url': saved['url'], 'mime': saved['mime']}
         for k in ('w', 'h'):
             if isinstance(att.get(k), (int, float)):
                 out[k] = int(att[k])
@@ -5632,7 +5643,7 @@ def serve_moment_media_by_message(message_id: str):
     import base64
     msg = storage.get_chat_message(message_id) or {}
     att = msg.get('attachment') or {}
-    if att.get('kind') == 'video' and str(att.get('url', '')).startswith('/api/media/'):
+    if str(att.get('url', '')).startswith('/api/media/'):
         return RedirectResponse(att['url'])
     data_url = str(att.get('data_url') or '')
     if att.get('kind') == 'photo' and data_url.startswith('data:image/'):

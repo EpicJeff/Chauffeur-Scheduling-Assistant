@@ -1794,12 +1794,57 @@ def get_channels_for_member(member_id: str) -> List[dict]:
 _MEDIA_EXT_BY_MIME = {'video/mp4': '.mp4', 'video/webm': '.webm',
                       'video/quicktime': '.mov', 'video/x-m4v': '.m4v'}
 _MEDIA_MIME_BY_EXT = {v: k for k, v in _MEDIA_EXT_BY_MIME.items()}
+# Serving also covers poster frames, which are never an upload target.
+_MEDIA_SERVE_MIME = dict(_MEDIA_MIME_BY_EXT, **{'.jpg': 'image/jpeg',
+                                                '.png': 'image/png',
+                                                '.webp': 'image/webp'})
+_VIDEO_EXTS = tuple(_MEDIA_MIME_BY_EXT)
 _MEDIA_ID_RE = None  # compiled lazily
 
 
 def _ffmpeg_path() -> Optional[str]:
     import shutil
     return shutil.which('ffmpeg')
+
+
+def generate_poster(stem: str) -> bool:
+    """Extract a still frame from a clip as {stem}.jpg — the thumbnail every
+    video tile shows. Without it a <video> tile is just a black box (browsers
+    don't reliably paint a frame for preload=metadata), and tiles would have
+    to download video bytes to show anything. Seeks 1s in (the very first
+    frame is often a blur or a black lead-in) and falls back to frame 0 for
+    clips shorter than that. Cheap and idempotent; safe to call on demand."""
+    if not _ffmpeg_path():
+        return False
+    src = None
+    for name in [stem + e for e in _VIDEO_EXTS] + [stem + '.orig']:
+        p = os.path.join(MEDIA_DIR, name)
+        if os.path.isfile(p):
+            src = p
+            break
+    if not src:
+        return False
+    out = os.path.join(MEDIA_DIR, stem + '.jpg')
+    tmp = os.path.join(MEDIA_DIR, stem + '.tmp.jpg')
+    import subprocess
+    for seek in ('1', '0'):
+        try:
+            subprocess.run(
+                [_ffmpeg_path(), '-y', '-ss', seek, '-i', src, '-frames:v', '1',
+                 '-vf', "scale='min(640,iw)':-2", '-q:v', '4', tmp],
+                check=True, capture_output=True, timeout=120)
+            if os.path.getsize(tmp) > 0:
+                os.replace(tmp, out)
+                return True
+        except Exception:
+            continue
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+    return False
 
 
 def _transcode_media(stem: str):
@@ -1822,6 +1867,7 @@ def _transcode_media(stem: str):
             check=True, capture_output=True, timeout=600)
         os.replace(tmp, final)
         os.remove(orig)
+        generate_poster(stem)   # thumbnail, so tiles never show a black box
         print(f"[media] transcoded {stem}.mp4")
     except Exception as e:
         print(f"[media] transcode failed for {stem} (storing as-is): {e}")
@@ -1864,6 +1910,39 @@ def finalize_media_upload(src_path: str, mime: str) -> Optional[dict]:
             'mime': _MEDIA_MIME_BY_EXT[ext]}
 
 
+_PHOTO_EXT_BY_MIME = {'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                      'image/png': '.png', 'image/webp': '.webp'}
+
+
+def save_photo_data_url(data_url: str) -> Optional[dict]:
+    """Persist an inline photo data URL as a FILE in the media store, the way
+    clips already are. Photos used to live base64-inline on the message,
+    which bloated the database and dragged megabytes through every message
+    scan — that, not disk space, was what forced hard downscaling. Returns
+    {'id','url','mime'} or None if the data URL is unusable."""
+    import base64
+    import uuid as _uuid
+    try:
+        head, _, b64 = str(data_url or '').partition(',')
+        if not head.startswith('data:image/') or not b64:
+            return None
+        mime = head.split(':', 1)[1].split(';', 1)[0].lower()
+        ext = _PHOTO_EXT_BY_MIME.get(mime)
+        if not ext:
+            return None
+        raw = base64.b64decode(b64)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    media_id = _uuid.uuid4().hex + ext
+    with open(os.path.join(MEDIA_DIR, media_id), 'wb') as f:
+        f.write(raw)
+    return {'id': media_id, 'url': f'/api/media/{media_id}',
+            'mime': _MEDIA_SERVE_MIME.get(ext, 'image/jpeg')}
+
+
 def save_media_file(data: bytes, mime: str) -> Optional[dict]:
     """Bytes convenience wrapper over finalize_media_upload (tests, small
     clips). Large uploads should stream to a temp file instead."""
@@ -1883,18 +1962,24 @@ def media_file_path(media_id: str) -> Optional[str]:
     global _MEDIA_ID_RE
     if _MEDIA_ID_RE is None:
         import re
-        _MEDIA_ID_RE = re.compile(r'^[a-f0-9]{32}\.(mp4|webm|mov|m4v)$')
+        _MEDIA_ID_RE = re.compile(r'^[a-f0-9]{32}\.(mp4|webm|mov|m4v|jpg|png|webp)$')
     if not _MEDIA_ID_RE.match(media_id or ''):
         return None
+    stem, ext = os.path.splitext(media_id)
     path = os.path.join(MEDIA_DIR, media_id)
     if os.path.isfile(path):
         return path
-    orig = os.path.join(MEDIA_DIR, media_id.split('.')[0] + '.orig')
+    if ext == '.jpg':
+        # Poster frames are derived, so a miss is repairable rather than a
+        # 404: generate it now (heals clips that predate posters). Never
+        # fall through to .orig — that would serve video bytes as an image.
+        return path if generate_poster(stem) else None
+    orig = os.path.join(MEDIA_DIR, stem + '.orig')
     return orig if os.path.isfile(orig) else None
 
 
 def media_mime(media_id: str) -> str:
-    return _MEDIA_MIME_BY_EXT.get(os.path.splitext(media_id)[1], 'application/octet-stream')
+    return _MEDIA_SERVE_MIME.get(os.path.splitext(media_id)[1], 'application/octet-stream')
 
 
 def _delete_media_for_messages(msgs):
@@ -1909,7 +1994,7 @@ def _delete_media_for_messages(msgs):
             stem = media_id.split('.')[0]
             if not (len(stem) == 32 and all(c in '0123456789abcdef' for c in stem)):
                 continue
-            for name in (media_id, stem + '.orig', stem + '.tmp.mp4'):
+            for name in (media_id, stem + '.orig', stem + '.tmp.mp4', stem + '.jpg'):
                 try:
                     os.remove(os.path.join(MEDIA_DIR, name))
                 except OSError:

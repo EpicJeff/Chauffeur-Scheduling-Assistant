@@ -276,6 +276,20 @@ def run_thinking_of_you_prompts(send, now=None):
     return delivered
 
 
+def poster_url_for(att) -> str:
+    """Thumbnail URL for a clip: the ffmpeg-extracted {stem}.jpg beside it
+    (generated on demand if missing). Derived rather than stored, so clips
+    that predate posters get one too. '' for photos — they are their own
+    thumbnail."""
+    if (att or {}).get('kind') != 'video':
+        return ''
+    url = str((att or {}).get('url') or '')
+    if not url.startswith('/api/media/'):
+        return ''
+    stem = url.rsplit('/', 1)[-1].split('.')[0]
+    return f'/api/media/{stem}.jpg' if stem else ''
+
+
 def _moment_row(m, members, event_title=None):
     """One moment shaped for display. `media_url` is the stable by-message
     URL — galleries use it instead of the inline photo data URL so a page of
@@ -288,7 +302,13 @@ def _moment_row(m, members, event_title=None):
         'ts': m.get('ts'),
         'body': m.get('body') or '',
         'kind': att.get('kind') or 'photo',
-        'media_url': f"/api/moments/{m.get('id')}/media",
+        # Direct media-store URL when there is one (photos and clips both live
+        # there now); the by-message URL stays the fallback that decodes
+        # legacy inline photos.
+        'media_url': str(att.get('url') or '') or f"/api/moments/{m.get('id')}/media",
+        # Videos show their poster frame in tiles; photos are their own.
+        'poster_url': (poster_url_for(att) or str(att.get('url') or '')
+                       or f"/api/moments/{m.get('id')}/media"),
         'attachment': att,
         'reactions': m.get('reactions') or {},
         'event_id': m.get('event_id'),
@@ -316,15 +336,18 @@ def moment_events(offset: int = 0, limit: int = 24):
     items = []
     for b in page:
         cover = b.get('cover') or {}
+        cover_att = cover.get('attachment') or {}
         names = [(members.get(sid) or {}).get('name') for sid in b.get('sender_ids') or []]
+        by_message = f"/api/moments/{cover.get('id')}/media" if cover.get('id') else ''
         items.append({
             'channel_id': b['channel_id'],
             'event_id': b.get('event_id'),
             'event_title': b.get('event_title'),
             'count': b.get('count', 0),
             'latest_ts': b.get('latest_ts'),
-            'cover_url': f"/api/moments/{cover.get('id')}/media" if cover.get('id') else '',
-            'cover_kind': (cover.get('attachment') or {}).get('kind') or 'photo',
+            'cover_url': (poster_url_for(cover_att) or str(cover_att.get('url') or '')
+                          or by_message),
+            'cover_kind': cover_att.get('kind') or 'photo',
             'sender_names': sorted(n for n in names if n),
         })
     return {'items': items, 'total': len(index),

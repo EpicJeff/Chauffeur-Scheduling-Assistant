@@ -84,6 +84,12 @@ def scenario_attachment_send_and_validation():
     check(m["attachment"]["kind"] == "photo" and m["attachment"]["w"] == 4,
           "photo attachment persisted, empty body allowed")
     check(m["body"] == "", "caption-less moment keeps empty body")
+    # Photos are FILES now, not base64 inline on the message.
+    check(m["attachment"]["url"].startswith("/api/media/")
+          and "data_url" not in m["attachment"],
+          f"photo stored in the media store, not inline, got {m['attachment']}")
+    check(storage.media_file_path(m["attachment"]["url"].rsplit("/", 1)[-1]),
+          "the photo file exists on disk")
 
     for att, code in [
         ({"kind": "video", "data_url": _TINY_JPEG}, 400),
@@ -512,6 +518,70 @@ def scenario_gallery_window_and_route():
           "gallery page and single-moment popup routes both registered")
 
 
+def scenario_video_posters_and_photo_files():
+    """Clips get an ffmpeg poster frame so tiles are never a black box, and
+    photos live in the media store like clips do."""
+    import main
+    from services import presence
+    _member("mom", "Mom", role="parent")
+
+    # Poster URL is DERIVED from the clip id, so clips predating posters get
+    # one too; a miss self-heals by generating the frame on request.
+    att = {"kind": "video", "url": "/api/media/" + "b" * 32 + ".mp4"}
+    check(presence.poster_url_for(att) == "/api/media/" + "b" * 32 + ".jpg",
+          f"poster derived beside the clip, got {presence.poster_url_for(att)}")
+    check(presence.poster_url_for({"kind": "photo", "url": "/api/media/x.jpg"}) == "",
+          "photos have no separate poster — they are their own thumbnail")
+
+    # A poster request for a clip with no .jpg must NEVER fall through to the
+    # raw video bytes (that used to be the .orig fallback's blast radius).
+    os.makedirs(storage.MEDIA_DIR, exist_ok=True)
+    stem = "c" * 32
+    with open(os.path.join(storage.MEDIA_DIR, stem + ".orig"), "wb") as f:
+        f.write(b"raw-video-bytes")
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        check(storage.media_file_path(stem + ".jpg") is None,
+              "no poster + no ffmpeg -> 404, never the video bytes")
+        check(storage.media_file_path(stem + ".mp4").endswith(".orig"),
+              "the clip itself still falls back to the original")
+    # With a poster present it serves as an image.
+    with open(os.path.join(storage.MEDIA_DIR, stem + ".jpg"), "wb") as f:
+        f.write(b"\xff\xd8jpeg")
+    check(storage.media_mime(stem + ".jpg") == "image/jpeg", "poster serves as an image")
+
+    # Photos: data URL in, file out.
+    saved = storage.save_photo_data_url(_TINY_JPEG)
+    check(saved and saved["url"].startswith("/api/media/") and saved["mime"] == "image/jpeg",
+          f"photo filed into the media store, got {saved}")
+    check(storage.media_file_path(saved["id"]), "photo file resolves")
+    check(storage.save_photo_data_url("data:application/pdf;base64,AAA") is None,
+          "non-image data URL refused")
+    check(storage.save_photo_data_url("") is None, "empty data URL refused")
+
+    # Legacy inline photos still render (by-message URL decodes them).
+    ch = storage.get_or_create_event_channel("evL", "Old Game")
+    storage.add_chat_message({"id": "legacy1", "channel_id": ch["id"], "sender_member_id": "mom",
+                              "ts": time.time(), "type": "text", "body": "old",
+                              "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                              "reactions": {}})
+    resp = main.serve_moment_media_by_message("legacy1")
+    check(getattr(resp, "media_type", "").startswith("image/"),
+          "legacy inline photo still serves")
+    row = presence.recent_moments(hours=1)[0]
+    check(row["media_url"] == "/api/moments/legacy1/media",
+          f"legacy photo falls back to the by-message URL, got {row['media_url']}")
+
+    # The migration files legacy photos away and repoints the message.
+    import asyncio as _asyncio
+    from services import migrations
+    _asyncio.run(migrations.migrate_inline_photos_v2620())
+    moved = storage.get_chat_message("legacy1")["attachment"]
+    check(moved.get("url", "").startswith("/api/media/") and "data_url" not in moved,
+          f"migration filed the inline photo, got {moved}")
+    check(storage.media_file_path(moved["url"].rsplit("/", 1)[-1]),
+          "migrated photo's file exists")
+
+
 def scenario_gallery_event_grouping_and_paging():
     """The gallery groups by EVENT and pages both levels — no time limit."""
     import main
@@ -590,6 +660,7 @@ SCENARIOS = [
     scenario_moment_fanout_differentiated,
     scenario_recent_moments_feed,
     scenario_gallery_window_and_route,
+    scenario_video_posters_and_photo_files,
     scenario_gallery_event_grouping_and_paging,
 ]
 

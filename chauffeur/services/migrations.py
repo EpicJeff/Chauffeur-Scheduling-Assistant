@@ -135,6 +135,45 @@ async def migrate_moment_clips_v2590():
         logger.info(f"v2.59.0 moment clips: retranscoded {migrated} pre-pipeline clip(s)")
 
 
+async def migrate_inline_photos_v2620():
+    """One-time move of inline photo moments into the media store (v2.62.0).
+    Photos used to be stored base64-inline on the message, which bloated the
+    database and made every message scan drag megabytes around — the real
+    cost behind the old aggressive downscaling. Rewrites each attachment to
+    a media-store URL; the file keeps the exact bytes already sent, so
+    nothing is re-encoded or lost. Video posters need no migration (they
+    generate on first request)."""
+    if storage.get_app_state('inline_photos_filed'):
+        return
+    storage.set_app_state('inline_photos_filed', time.time())
+
+    def _work():
+        from tinydb import Query
+        migrated = 0
+        with storage.db_lock:
+            msgs = [dict(m) for m in storage.chat_messages_table.all()]
+        for m in msgs:
+            att = m.get('attachment') or {}
+            if att.get('kind') != 'photo' or not att.get('data_url'):
+                continue
+            saved = storage.save_photo_data_url(att['data_url'])
+            if not saved:
+                continue
+            new_att = {'kind': 'photo', 'url': saved['url'], 'mime': saved['mime']}
+            for k in ('w', 'h'):
+                if att.get(k) is not None:
+                    new_att[k] = att[k]
+            with storage.db_lock:
+                storage.chat_messages_table.update({'attachment': new_att},
+                                                   Query().id == m['id'])
+            migrated += 1
+        return migrated
+
+    migrated = await asyncio.to_thread(_work)
+    if migrated:
+        logger.info(f"v2.62.0 moments: filed {migrated} inline photo(s) into the media store")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -150,3 +189,7 @@ async def run_all_migrations():
         await migrate_moment_clips_v2590()
     except Exception as e:
         logger.error(f"Error running moment clip migration: {e}")
+    try:
+        await migrate_inline_photos_v2620()
+    except Exception as e:
+        logger.error(f"Error running inline photo migration: {e}")

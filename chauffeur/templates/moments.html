@@ -96,13 +96,24 @@
                 return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }
 
-            // Thumbnails always load by URL + lazily: an event with 200 clips
-            // must cost the same to open as one with two.
-            function thumb(mediaUrl, kind) {
-                return kind === 'video'
-                    ? `<video src="${url(mediaUrl)}" muted playsinline preload="metadata" class="tile-media"></video>
-                       <span class="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none">▶️</span>`
-                    : `<img src="${url(mediaUrl)}" loading="lazy" class="tile-media">`;
+            // A soft play glyph, not the OS emoji (which renders differently
+            // on every panel and looks like a sticker).
+            const PLAY_BADGE = `
+                <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <span class="flex items-center justify-center w-12 h-12 rounded-full bg-black/55 backdrop-blur-sm ring-1 ring-white/25">
+                        <svg viewBox="0 0 24 24" class="w-6 h-6 translate-x-[1px]" fill="white" opacity="0.95">
+                            <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
+                        </svg>
+                    </span>
+                </span>`;
+
+            // Tiles ALWAYS render a still image — never a <video> element.
+            // Clips carry an ffmpeg-extracted poster frame, so a grid of 200
+            // clips costs 200 thumbnails, not 200 video streams (and never
+            // shows the black box browsers paint for preload=metadata).
+            function thumb(posterUrl, kind) {
+                return `<img src="${url(posterUrl)}" loading="lazy" class="tile-media">`
+                    + (kind === 'video' ? PLAY_BADGE : '');
             }
 
             function reactionPills(m) {
@@ -120,7 +131,7 @@
                 const m = mItems.find(x => x.id === id);
                 if (!m) return;
                 const media = m.kind === 'video'
-                    ? `<video src="${url(m.media_url)}" autoplay muted loop playsinline controls class="max-h-[68vh] rounded-2xl mx-auto"></video>`
+                    ? `<video src="${url(m.media_url)}" poster="${url(m.poster_url)}" autoplay muted loop playsinline controls class="max-h-[68vh] rounded-2xl mx-auto"></video>`
                     : `<img src="${url(m.media_url)}" class="max-h-[68vh] rounded-2xl mx-auto object-contain">`;
                 const overlay = document.createElement('div');
                 overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
@@ -172,7 +183,7 @@
                 body.innerHTML = gridOpen() + mItems.map(m => `
                     <button onclick="openMomentLightbox('${m.id}')"
                         class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
-                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.media_url, m.kind)}</div>
+                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind)}</div>
                         <div class="p-3">
                             ${m.body ? `<div class="text-[13px] text-gray-200">${esc(m.body)}</div>` : ''}
                             <div class="text-[11px] text-gray-500 mt-1">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>

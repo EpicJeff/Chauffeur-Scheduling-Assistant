@@ -74,8 +74,9 @@
                         return;
                     }
                     const src = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
+                    const poster = `${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`;
                     const media = m.kind === 'video'
-                        ? `<video src="${src}" autoplay muted loop playsinline controls></video>`
+                        ? `<video src="${src}" poster="${poster}" autoplay muted loop playsinline controls></video>`
                         : `<img src="${src}">`;
                     root.innerHTML = `
                         <div class="kicker">📸 ${esc(m.event_title)}</div>

@@ -21,22 +21,35 @@
             return d.innerHTML;
         }
 
-        // Media always loads by URL (never the inline photo data URL) and
-        // relative (like the api fetches) so HA ingress paths work. Tiles
-        // stay cheap: only the full-screen overlay autoplays.
-        function mediaHtml(m, cls, opts) {
+        const PLAY_BADGE = `
+            <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span class="flex items-center justify-center w-10 h-10 rounded-full bg-black/55 backdrop-blur-sm ring-1 ring-white/25">
+                    <svg viewBox="0 0 24 24" class="w-5 h-5 translate-x-[1px]" fill="white" opacity="0.95">
+                        <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
+                    </svg>
+                </span>
+            </span>`;
+
+        function mediaUrl(m, which) {
             const att = m.attachment || {};
-            const src = m.media_url
-                ? `${apiBase}${m.media_url.replace(/^\//, '')}`
-                : (att.url ? `${apiBase}${att.url.replace(/^\//, '')}` : (att.data_url || ''));
-            const kind = m.kind || att.kind;
-            if (kind === 'video') {
-                const attrs = (opts && opts.full)
-                    ? 'autoplay muted loop playsinline'
-                    : 'muted playsinline preload="metadata"';
-                return `<video src="${src}" ${attrs} class="${cls}"></video>`;
+            const u = (which === 'poster' ? m.poster_url : m.media_url)
+                || m.media_url || att.url || '';
+            return u ? `${apiBase}${String(u).replace(/^\//, '')}` : (att.data_url || '');
+        }
+
+        // Media always loads by URL (never the inline photo data URL) and
+        // relative (like the api fetches) so HA ingress paths work. TILES are
+        // always a still image — clips carry an ffmpeg poster frame, so the
+        // rail never shows the black box a <video> paints for preload=metadata
+        // and never streams video just to draw a thumbnail.
+        function mediaHtml(m, cls, opts) {
+            const kind = m.kind || (m.attachment || {}).kind;
+            if (opts && opts.full) {
+                return kind === 'video'
+                    ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline class="${cls}"></video>`
+                    : `<img src="${mediaUrl(m)}" class="${cls}">`;
             }
-            return `<img src="${src}" ${(opts && opts.full) ? '' : 'loading="lazy"'} class="${cls}">`;
+            return `<img src="${mediaUrl(m, 'poster')}" loading="lazy" class="${cls}">`;
         }
 
         function momentAgo(ts) {
@@ -101,8 +114,7 @@
                                 class="group relative w-40 shrink-0 rounded-2xl overflow-hidden border border-pink-900/50 bg-gray-800/60 text-left hover:border-pink-500/60 transition-colors">
                                 <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
                                     ${mediaHtml(x, 'w-full h-full object-cover')}
-                                    ${(x.kind || (x.attachment || {}).kind) === 'video'
-                                        ? '<span class="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none">▶️</span>' : ''}
+                                    ${(x.kind || (x.attachment || {}).kind) === 'video' ? PLAY_BADGE : ''}
                                 </div>
                                 <div class="p-2">
                                     <div class="text-[12px] font-bold text-white truncate">${esc(x.event_title)}</div>
