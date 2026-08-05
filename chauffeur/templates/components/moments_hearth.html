@@ -4,11 +4,17 @@
      Plain JS, no Alpine dependency (status_celebration precedent). Active only
      with ?kiosk=true. Polls /api/presence/moments every 60s; dedupe is the
      celebration convention — localStorage seeded silently on first sight so a
-     freshly mounted panel never replays old moments. If the page provides a
-     <div id="moments-hearth-card"></div> mount, a rail (newest + recent
-     thumbnails + "See all →" to /moments) renders there; without a mount the
-     overlay still works. Looking further back than the rail is the /moments
-     gallery page. -->
+     freshly mounted panel never replays old moments. The rail is a FLOATING
+     shell this component injects itself (no page mount required, so it is on
+     every kiosk page): a 📸 FAB top-right, badged with the count of moments
+     newer than you last opened it, toggling a vertical rail down the right
+     edge. Open/closed persists per panel across pages. It costs the page no
+     layout — the old inline rail pushed the actual content of whatever tab you
+     were on down the screen, and only existed on the two pages that happened
+     to carry a mount div. No moments at all in the window means no FAB.
+     Deliberately never auto-opens: a fresh moment already takes the whole
+     screen via the overlay, and a rail that reopens itself would make the
+     remembered open/closed state a lie. Looking further back is /moments. -->
 <script>
     (function () {
         if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
@@ -106,37 +112,137 @@
             return `${pageBase}moments${window.location.search}`;
         }
 
+        // The rail used to need a #moments-hearth-card mount, which only
+        // chores and routines ever had — so despite this component being
+        // included on eleven pages, the rail existed on two, arbitrarily. It
+        // now injects its own floating shell, so it is on EVERY kiosk page and
+        // costs no layout: the old inline rail pushed the actual content of
+        // whatever tab you were looking at down the screen.
+        const OPEN_KEY = 'chauffeur_moments_rail_open';
+        const RAIL_SEEN_KEY = 'chauffeur_moments_rail_seen_ts';
+        let lastBadge = 0;
+
+        // Deliberately NOT the overlay's SEEN_KEY. That one seeds to the newest
+        // moment on first sight so a rebooted panel never replays old moments
+        // as full-screen pops — reusing it would mean a panel that polled at
+        // 3am shows a zero badge over breakfast for moments nobody saw. This
+        // seeds to 24h ago instead: a fresh panel badges today, not the week.
+        function railSeenTs() {
+            const v = parseFloat(localStorage.getItem(RAIL_SEEN_KEY) || '');
+            if (!isNaN(v) && v > 0) return v;
+            const seed = (Date.now() / 1000) - 24 * 3600;
+            localStorage.setItem(RAIL_SEEN_KEY, String(seed));
+            return seed;
+        }
+
+        function railIsOpen() { return localStorage.getItem(OPEN_KEY) === 'true'; }
+
+        function ensureShell() {
+            if (document.getElementById('moments-rail-root')) return;
+            // Sit clear of the nav when there is one; ?tabs=none removes the
+            // nav entirely and the FAB takes the corner itself. Measured, not
+            // assumed, because nav height differs across breakpoints.
+            const nav = document.querySelector('nav');
+            const navH = (nav && nav.offsetParent !== null)
+                ? Math.round(nav.getBoundingClientRect().height) : 0;
+            const top = navH + 16;
+            const root = document.createElement('div');
+            root.id = 'moments-rail-root';
+            // Below the unbidden pop (z-200) — a fresh moment still owns the
+            // screen — and above ordinary page content.
+            root.style.cssText =
+                `position:fixed; top:${top}px; right:16px; z-index:60;
+                 display:none; flex-direction:column; align-items:flex-end; gap:8px;`;
+            root.innerHTML = `
+                <style>
+                    @keyframes momentsFabPulse {
+                        0%,100% { box-shadow: 0 0 0 0 rgba(236,72,153,.55); }
+                        50%     { box-shadow: 0 0 0 12px rgba(236,72,153,0); }
+                    }
+                    #moments-fab.pulsing { animation: momentsFabPulse 1.6s ease-out 3; }
+                    #moments-rail::-webkit-scrollbar { width: 6px; }
+                    #moments-rail::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+                </style>
+                <button id="moments-fab" onclick="toggleMomentsRail()" title="Moments"
+                    class="relative w-12 h-12 rounded-full bg-gray-900/90 border border-pink-500/50
+                           backdrop-blur-sm shadow-lg flex items-center justify-center text-xl
+                           hover:border-pink-400 transition-colors">
+                    📸
+                    <span id="moments-fab-badge"
+                        class="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-pink-600
+                               text-white text-[11px] font-black flex items-center justify-center
+                               border-2 border-gray-900" style="display:none"></span>
+                </button>
+                <div id="moments-rail" style="display:none; max-height:calc(100vh - ${top + 80}px)"
+                    class="w-44 overflow-y-auto rounded-2xl bg-gray-900/92 backdrop-blur-sm
+                           border border-pink-900/50 shadow-2xl p-2 flex flex-col gap-2"></div>`;
+            document.body.appendChild(root);
+        }
+
+        window.toggleMomentsRail = function (force) {
+            const open = typeof force === 'boolean' ? force : !railIsOpen();
+            localStorage.setItem(OPEN_KEY, String(open));
+            const panel = document.getElementById('moments-rail');
+            if (panel) panel.style.display = open ? 'flex' : 'none';
+            if (open) {
+                // Opening IS the acknowledgement — clear the badge.
+                const newest = rail.length ? (rail[0].ts || 0) : 0;
+                if (newest) localStorage.setItem(RAIL_SEEN_KEY, String(newest));
+                lastBadge = 0;
+                applyBadge(0);
+            }
+        };
+
+        function applyBadge(count) {
+            const badge = document.getElementById('moments-fab-badge');
+            const fab = document.getElementById('moments-fab');
+            if (!badge || !fab) return;
+            badge.style.display = count > 0 ? 'flex' : 'none';
+            badge.textContent = count > 99 ? '99+' : String(count);
+            // Pulse only when the count GROWS — a standing badge that pulses
+            // every 60 s poll is just a flashing light on the wall.
+            if (count > lastBadge) {
+                fab.classList.remove('pulsing');
+                void fab.offsetWidth;
+                fab.classList.add('pulsing');
+            }
+            lastBadge = count;
+        }
+
         function renderRail(moments) {
-            const mount = document.getElementById('moments-hearth-card');
-            if (!mount) return;
             rail = moments;
-            if (!moments.length) { mount.innerHTML = ''; return; }
+            ensureShell();
+            const root = document.getElementById('moments-rail-root');
+            const panel = document.getElementById('moments-rail');
+            // No moments in the whole window: no FAB at all, nothing to browse.
+            if (!moments.length) { root.style.display = 'none'; return; }
+            root.style.display = 'flex';
+            const open = railIsOpen();
+            panel.style.display = open ? 'flex' : 'none';
             // Uniform tiles, newest first — a hero card plus a stray thumbnail
-            // read as broken when there were only two moments. Every tile is
-            // the same size and carries its own event label; the row scrolls
-            // sideways rather than reflowing.
-            mount.innerHTML = `
-                <div class="mb-8">
-                    <div class="flex items-center gap-3 mb-2">
-                        <span class="text-[11px] font-black uppercase tracking-widest text-pink-300">📸 Moments</span>
-                        <div class="flex-1 h-px bg-gray-700/60"></div>
-                        <a href="${galleryHref()}" class="text-[11px] font-bold text-pink-300 hover:text-pink-200">See all →</a>
+            // read as broken when there were only two moments. Vertical now
+            // that the rail floats down the right edge instead of across.
+            panel.innerHTML = moments.slice(0, 8).map((x, i) => `
+                <button onclick="openHearthMoment(${i})"
+                    class="relative w-full shrink-0 rounded-xl overflow-hidden border border-pink-900/50
+                           bg-gray-800/60 text-left hover:border-pink-500/60 transition-colors">
+                    <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
+                        ${mediaHtml(x, 'w-full h-full object-cover')}
+                        ${(x.kind || (x.attachment || {}).kind) === 'video' ? PLAY_BADGE : ''}
                     </div>
-                    <div class="flex gap-3 overflow-x-auto pb-2">
-                        ${moments.slice(0, 8).map((x, i) => `
-                            <button onclick="openHearthMoment(${i})"
-                                class="group relative w-40 shrink-0 rounded-2xl overflow-hidden border border-pink-900/50 bg-gray-800/60 text-left hover:border-pink-500/60 transition-colors">
-                                <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
-                                    ${mediaHtml(x, 'w-full h-full object-cover')}
-                                    ${(x.kind || (x.attachment || {}).kind) === 'video' ? PLAY_BADGE : ''}
-                                </div>
-                                <div class="p-2">
-                                    <div class="text-[12px] font-bold text-white truncate">${esc(x.event_title)}</div>
-                                    <div class="text-[10px] text-gray-500 truncate">${esc(x.sender_name)} · ${momentAgo(x.ts)}</div>
-                                </div>
-                            </button>`).join('')}
+                    <div class="p-1.5">
+                        <div class="text-[11px] font-bold text-white truncate">${esc(x.event_title)}</div>
+                        <div class="text-[10px] text-gray-500 truncate">${esc(x.sender_name)} · ${momentAgo(x.ts)}</div>
                     </div>
-                </div>`;
+                </button>`).join('')
+                + `<a href="${galleryHref()}"
+                       class="text-center text-[11px] font-bold text-pink-300 hover:text-pink-200 py-1.5">See all →</a>`;
+            // An open rail is already acknowledged; only a closed one accrues.
+            applyBadge(open ? 0 : moments.filter(m => (m.ts || 0) > railSeenTs()).length);
+            if (open) {
+                const newest = moments[0].ts || 0;
+                if (newest) localStorage.setItem(RAIL_SEEN_KEY, String(newest));
+            }
         }
 
         async function poll() {
