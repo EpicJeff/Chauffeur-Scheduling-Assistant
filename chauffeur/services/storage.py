@@ -44,17 +44,51 @@ def _configured_media_root() -> Optional[str]:
         root = (os.environ.get('CHAUFFEUR_MEDIA_ROOT') or '').strip()
     if not root:
         return None
+    # NEVER mkdir the root itself. A media root is a MOUNT, and creating it
+    # turns a typo'd mount name into a plain directory on the VM's own disk
+    # that then passes every other check — the archive quietly goes to the one
+    # place this option exists to avoid, with no error anywhere. Creating one
+    # level is allowed only when the parent is itself a mount (a subfolder of
+    # a real share), which is the only legitimate not-yet-there case.
+    if not os.path.isdir(root):
+        parent = os.path.dirname(root.rstrip('/')) or '/'
+        if not (os.path.isdir(parent) and _is_separate_filesystem(parent)):
+            print(f"[media] media_root {root!r} does not exist and its parent is "
+                  f"not a mount — check the share name is spelled exactly as it "
+                  f"appears in Home Assistant. Staying on {_LEGACY_MEDIA_DIR}")
+            return None
+        try:
+            os.makedirs(root, exist_ok=True)
+        except OSError as e:
+            print(f"[media] media_root {root!r} could not be created ({e}) — "
+                  f"staying on {_LEGACY_MEDIA_DIR}")
+            return None
     try:
-        os.makedirs(root, exist_ok=True)
         probe = os.path.join(root, '.chauffeur_write_test')
         with open(probe, 'w') as f:
             f.write('ok')
         os.remove(probe)
-        return root
     except OSError as e:
-        print(f"[media] media_root {root!r} unusable ({e}) — "
+        print(f"[media] media_root {root!r} not writable ({e}) — "
               f"staying on {_LEGACY_MEDIA_DIR}")
         return None
+    if not _is_separate_filesystem(root):
+        # Exists and writable, but on the SAME filesystem as /data — so it is
+        # a local folder, not a mount. Works, but buys nothing: the archive is
+        # still on the volume you were trying to get it off.
+        print(f"[media] WARNING: media_root {root!r} is on the same filesystem "
+              f"as the database — it is a local folder, not a mounted share. "
+              f"Media will still consume the add-on's data volume.")
+    return root
+
+
+def _is_separate_filesystem(path: str) -> bool:
+    """Is this path on a different device than the database? A real network
+    mount is; a directory that merely lives under /share or /media is not."""
+    try:
+        return os.stat(path).st_dev != os.stat(os.path.dirname(DB_PATH)).st_dev
+    except OSError:
+        return False
 
 
 MEDIA_DIR = _configured_media_root() or _LEGACY_MEDIA_DIR
@@ -147,9 +181,12 @@ def migrate_media_layout(batch_limit: int = 0) -> dict:
                 if batch_limit and moved >= batch_limit:
                     return {'scanned': scanned, 'moved': moved, 'errors': errors,
                             'complete': False}
-    if moved or errors:
-        print(f"[media] layout migration: {moved} moved, {errors} failed, "
-              f"{scanned} scanned -> {MEDIA_DIR}")
+    # ALWAYS log, even a no-op. Gating this on moved-or-errors made "the
+    # migration found nothing to do" and "the migration never ran" look
+    # identical from the log, which is exactly the question you have after
+    # pointing media_root somewhere new.
+    print(f"[media] layout migration: {moved} moved, {errors} failed, "
+          f"{scanned} scanned -> {MEDIA_DIR}")
     return {'scanned': scanned, 'moved': moved, 'errors': errors, 'complete': True}
 
 

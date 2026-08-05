@@ -836,18 +836,28 @@ def scenario_media_root_and_sharding():
         [{"attachment": {"url": f"/api/media/{legacy_id}"}}])
     check(storage.media_file_path(legacy_id) is None, "delete follows the shard")
 
-    # A configured root that cannot be written must NEVER take the archive
-    # down — it stays on the legacy location, where the older files are.
-    bad = os.path.join(tempfile.gettempdir(), "chauffeur_nonexistent_mount", "x")
-    with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": bad}):
-        with mock.patch.object(os, "makedirs", side_effect=OSError("no mount")):
-            check(storage._configured_media_root() is None,
-                  "an unwritable media_root is refused, not adopted")
+    # A media_root that does not exist must be REFUSED, never created. This is
+    # the typo case: a mount named LOCAL_STOARGE with media_root pointing at
+    # LOCAL_STORAGE used to have the app mkdir a plain folder beside the real
+    # mount, adopt it, pass every other check, and quietly write the archive
+    # onto the very volume the option exists to escape.
+    missing = os.path.join(tempfile.gettempdir(), "chauffeur_typo_mount_xyz")
+    shutil.rmtree(missing, ignore_errors=True)
+    with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": missing}):
+        check(storage._configured_media_root() is None,
+              "a media_root that does not exist is refused")
+    check(not os.path.exists(missing), "and is NOT created behind your back")
 
-    # And a usable one is adopted.
+    # An existing, writable one is adopted (with a same-filesystem warning,
+    # which is advisory only — it still works).
     good = tempfile.mkdtemp(prefix="chauffeur_media_root_")
     with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": good}):
-        check(storage._configured_media_root() == good, "a writable media_root is adopted")
+        check(storage._configured_media_root() == good, "an existing media_root is adopted")
+    # Unwritable is refused too.
+    with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": good}):
+        with mock.patch("builtins.open", side_effect=OSError("read-only")):
+            check(storage._configured_media_root() is None,
+                  "an unwritable media_root is refused, not adopted")
     shutil.rmtree(good, ignore_errors=True)
 
     # Scratch is always beside the DATABASE, never derived from the media

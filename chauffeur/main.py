@@ -5720,13 +5720,25 @@ def debug_moment_media():
     ffmpeg = storage._ffmpeg_path()
     files = []
     # Walk, not listdir: media is sharded into ab/cd buckets, and files may
-    # still be sitting in the legacy root mid-migration.
+    # still be sitting in the legacy root mid-migration. Counted PER ROOT and
+    # split flat-vs-sharded, because "is my media actually on the share yet"
+    # is the whole question after pointing media_root somewhere new — and a
+    # migration that moved nothing logs nothing, so the log cannot answer it.
+    by_root = {}
     for root in storage._media_roots():
+        flat = sharded = 0
         try:
-            for _dirpath, _dirnames, names in os.walk(root):
-                files.extend(n for n in names if not n.startswith('.'))
-        except OSError:
-            pass
+            for dirpath, _dirnames, names in os.walk(root):
+                keep = [n for n in names if not n.startswith('.')]
+                files.extend(keep)
+                if os.path.normpath(dirpath) == os.path.normpath(root):
+                    flat += len(keep)
+                else:
+                    sharded += len(keep)
+        except OSError as e:
+            by_root[root] = {'error': str(e)}
+            continue
+        by_root[root] = {'total': flat + sharded, 'flat': flat, 'sharded': sharded}
     clips = [f for f in files if os.path.splitext(f)[1] in ('.mp4', '.webm', '.mov', '.m4v')]
     posters = {os.path.splitext(f)[0] for f in files if f.endswith('.jpg')}
     missing = [c for c in clips if os.path.splitext(c)[0] not in posters]
@@ -5745,6 +5757,14 @@ def debug_moment_media():
         'media_root_configured': storage._configured_media_root() or None,
         'media_root_active': storage.MEDIA_DIR != storage._LEGACY_MEDIA_DIR,
         'legacy_media_dir': storage._LEGACY_MEDIA_DIR,
+        # Where the bytes ACTUALLY are. Anything left under the legacy root
+        # has not been relocated yet; 'flat' under the active root means it
+        # has not been sharded yet. POST /api/debug/media/migrate to re-run.
+        'files_by_root': by_root,
+        # False means media_dir is a plain folder on the add-on's own volume,
+        # not a mounted share — the usual cause is a media_root whose spelling
+        # does not match the mount name in HA.
+        'media_root_is_mount': storage._is_separate_filesystem(storage.MEDIA_DIR),
         'clips': len(clips),
         'posters': len(posters),
         'clips_missing_posters': missing[:20],
@@ -5754,6 +5774,16 @@ def debug_moment_media():
                  'the Dockerfile change). Clip thumbnails fall back to video tiles '
                  'until then.'),
     }
+
+@app.post("/api/debug/media/migrate")
+async def debug_media_migrate():
+    """Re-run the media layout relocation now, without an add-on restart.
+    Safe to call repeatedly: on a settled archive it is a directory walk with
+    no moves, and files are served from wherever they are throughout."""
+    res = await asyncio.to_thread(storage.migrate_media_layout)
+    res['media_dir'] = storage.MEDIA_DIR
+    res['media_root_is_mount'] = storage._is_separate_filesystem(storage.MEDIA_DIR)
+    return res
 
 @app.get("/api/moments/{message_id}/media")
 def serve_moment_media_by_message(message_id: str):

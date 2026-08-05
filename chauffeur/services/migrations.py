@@ -183,10 +183,9 @@ async def migrate_media_layout_v2660():
     location and either layout throughout — so a run interrupted by a mount
     dropping out leaves nothing broken, just partly moved."""
     res = await asyncio.to_thread(storage.migrate_media_layout)
-    if res.get('moved') or res.get('errors'):
-        logger.info(f"v2.66.0 media layout: moved {res['moved']}, "
-                    f"failed {res['errors']}, scanned {res['scanned']} "
-                    f"-> {storage.MEDIA_DIR}")
+    logger.info(f"v2.66.0 media layout: moved {res['moved']}, "
+                f"failed {res['errors']}, scanned {res['scanned']} "
+                f"-> {storage.MEDIA_DIR}")
 
 
 async def run_all_migrations():
