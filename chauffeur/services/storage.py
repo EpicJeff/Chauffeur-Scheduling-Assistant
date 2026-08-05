@@ -17,6 +17,10 @@ else:
     DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'db.json')
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+# Moment media (Presence slice): video clips live as FILES on the family's
+# box — a 15 MB clip can't ride the inline data-URL path photos use.
+MEDIA_DIR = os.path.join(os.path.dirname(DB_PATH), 'media')
+
 from tinydb.storages import Storage, touch
 class AtomicJSONStorage(Storage):
     def __init__(self, path: str, create_dirs=False, encoding=None, **kwargs):
@@ -1785,6 +1789,62 @@ def get_channels_for_member(member_id: str) -> List[dict]:
             out.append(c)
         return out
 
+# --- Moment media files (Presence: video clips; served by /api/media/{id}) ---
+
+_MEDIA_EXT_BY_MIME = {'video/mp4': '.mp4', 'video/webm': '.webm',
+                      'video/quicktime': '.mov', 'video/x-m4v': '.m4v'}
+_MEDIA_MIME_BY_EXT = {v: k for k, v in _MEDIA_EXT_BY_MIME.items()}
+_MEDIA_ID_RE = None  # compiled lazily
+
+
+def save_media_file(data: bytes, mime: str) -> Optional[dict]:
+    """Persist a moment clip; returns {'id', 'url', 'mime'} or None for an
+    unsupported mime. The id is uuid hex + a mime-derived extension, so the
+    serving endpoint can trust it without a lookup table."""
+    import uuid as _uuid
+    ext = _MEDIA_EXT_BY_MIME.get((mime or '').lower().split(';')[0])
+    if not ext:
+        return None
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    media_id = _uuid.uuid4().hex + ext
+    with open(os.path.join(MEDIA_DIR, media_id), 'wb') as f:
+        f.write(data)
+    return {'id': media_id, 'url': f'/api/media/{media_id}',
+            'mime': _MEDIA_MIME_BY_EXT[ext]}
+
+
+def media_file_path(media_id: str) -> Optional[str]:
+    """Validated absolute path for a media id, or None (bad id / missing).
+    The id regex doubles as the traversal guard."""
+    global _MEDIA_ID_RE
+    if _MEDIA_ID_RE is None:
+        import re
+        _MEDIA_ID_RE = re.compile(r'^[a-f0-9]{32}\.(mp4|webm|mov|m4v)$')
+    if not _MEDIA_ID_RE.match(media_id or ''):
+        return None
+    path = os.path.join(MEDIA_DIR, media_id)
+    return path if os.path.isfile(path) else None
+
+
+def media_mime(media_id: str) -> str:
+    return _MEDIA_MIME_BY_EXT.get(os.path.splitext(media_id)[1], 'application/octet-stream')
+
+
+def _delete_media_for_messages(msgs):
+    """Best-effort file cleanup when messages roll off the retention cap —
+    a pruned moment must not orphan its clip on disk."""
+    for m in msgs:
+        att = (m.get('attachment') or {}) if isinstance(m, dict) else {}
+        url = str(att.get('url') or '')
+        if url.startswith('/api/media/'):
+            path = media_file_path(url.rsplit('/', 1)[-1])
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
 def add_chat_message(message: dict) -> dict:
     with db_lock:
         chat_messages_table.insert(message)
@@ -1792,8 +1852,9 @@ def add_chat_message(message: dict) -> dict:
         msgs = chat_messages_table.search(Query().channel_id == message['channel_id'])
         if len(msgs) > _MESSAGES_PER_CHANNEL_CAP:
             msgs.sort(key=lambda m: m.get('ts', 0))
-            stale_ids = [m.doc_id for m in msgs[:len(msgs) - _MESSAGES_PER_CHANNEL_CAP]]
-            chat_messages_table.remove(doc_ids=stale_ids)
+            stale = msgs[:len(msgs) - _MESSAGES_PER_CHANNEL_CAP]
+            _delete_media_for_messages(stale)
+            chat_messages_table.remove(doc_ids=[m.doc_id for m in stale])
         return message
 
 def toggle_message_reaction(message_id: str, member_id: str, emoji: str) -> Optional[dict]:

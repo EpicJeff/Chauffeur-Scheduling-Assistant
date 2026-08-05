@@ -215,6 +215,151 @@ def scenario_capture_prompt_gates():
           "everyone there -> no kept-away adult -> no prompt")
 
 
+def scenario_prompt_worthiness_gates():
+    """Family feedback: no blind nudge on every 30-min event — a doctor's
+    appointment must never get 'send the family a moment'."""
+    _family()
+    now = datetime.datetime(2126, 3, 14, 17, 30)
+    today = now.date().isoformat()
+
+    check(presence.prompt_worthiness({"title": "Emma's Volleyball"}, set(), today) == 'moment',
+          "sport events are moment-worthy")
+    check(presence.prompt_worthiness({"title": "School concert"}, set(), today) == 'moment',
+          "performances are moment-worthy")
+    check(presence.prompt_worthiness({"title": "Dr. Smith appointment"}, set(), today) == 'blocked',
+          "medical events are hard-blocked")
+    check(presence.prompt_worthiness({"title": "Study group"}, set(), today) == 'quiet',
+          "unknown events stay organic — no ask, thread still open")
+
+    # A status protocol's keyword marks the event as a status matter — the
+    # INVERSION owns those days, never the outward capture ask.
+    storage.add_status_protocol({"name": "Chemo Day", "emoji": "💙", "member_id": "mom",
+                                 "need": "cover", "kid_message": "x", "adult_message": "y",
+                                 "keywords": ["chemo"], "enabled": True})
+    check(presence.prompt_worthiness({"title": "Chemo infusion"}, set(), today) == 'blocked',
+          "medical wording hard-blocks before anything else")
+    check(presence.prompt_worthiness({"title": "Mom chemo day — the big game plan"}, set(), today) == 'status',
+          "protocol-keyword events are status-suppressed even with allowlist words")
+
+    # The affected member being present suppresses too (their soccer sideline
+    # day is not a performance moment).
+    pid2 = storage.add_status_protocol({"name": "Rest Day", "emoji": "💤", "member_id": "gramps",
+                                        "need": "help", "kid_message": "x", "adult_message": "y",
+                                        "keywords": [], "enabled": True})
+    storage.add_status_day({"date": today, "protocol_id": pid2, "set_by": "mom"})
+    check(presence.prompt_worthiness({"title": "Emma's Volleyball"}, {"gramps"}, today) == 'status',
+          "affected-member-present suppresses the outward ask")
+    check(presence.prompt_worthiness({"title": "Emma's Volleyball"}, {"mom"}, today) == 'moment',
+          "an unrelated present set keeps the moment prompt")
+
+    # End-to-end: a live doctor's appointment never prompts.
+    ev = {"id": "doc1", "title": "Emma's doctor appointment",
+          "start": (now - datetime.timedelta(minutes=5)).isoformat(),
+          "end": (now + datetime.timedelta(minutes=55)).isoformat(),
+          "event_type": "standard", "calendar_ids": ["p_emma"]}
+    storage.set_cached_schedule({"events": [ev], "assignments": {"doc1": "d_mom"},
+                                 "ghost_assignments": {}, "matched_rules": {}})
+    check(presence.run_capture_prompts(lambda *a: check(False, "sent"), now=now) == [],
+          "live medical event -> no capture prompt")
+
+
+def scenario_thinking_of_you_inversion():
+    """The chemo example runs the other way: 'Mom is at chemo — send her
+    something to let her know you're thinking of her.'"""
+    _family()
+    now = datetime.datetime(2126, 3, 14, 10, 0)
+    today = now.date().isoformat()
+    pid = storage.add_status_protocol({"name": "Chemo Day", "emoji": "💙", "member_id": "mom",
+                                       "need": "cover", "kid_message": "x", "adult_message": "y",
+                                       "keywords": ["chemo"], "enabled": True})
+    storage.add_status_day({"date": today, "protocol_id": pid, "set_by": "dad"})
+    sent = []
+
+    def send(member, title, body, path):
+        sent.append((member["id"], title, body, path))
+
+    delivered = presence.run_thinking_of_you_prompts(send, now=now)
+    got = sorted(s[0] for s in sent)
+    check(got == ["dad", "emma", "gramps", "kid2"],
+          f"everyone but the affected member and the helper is prompted, got {got}")
+    check(all("Mom" in s[1] and "Chemo Day" in s[1] for s in sent),
+          "prompt names the person and the family's own day label")
+    check(all("compose=moment" in s[3] and "open_channel=" in s[3] for s in sent),
+          "deeplinks arm the camera on each member's DM")
+    dm_id = sent[0][3].split("open_channel=")[1].split("&")[0]
+    dm = storage.get_channel(dm_id)
+    check(dm and dm["kind"] == "dm" and "mom" in dm["member_ids"],
+          "target is the sender's own DM WITH the affected member")
+
+    sent.clear()
+    check(presence.run_thinking_of_you_prompts(send, now=now) == [] and not sent,
+          "second sweep is inert (once per member per day)")
+
+    # Before 9am: nothing (it should land in the day, not at dawn).
+    storage.set_app_state(presence._TOY_MARKER, {})
+    check(presence.run_thinking_of_you_prompts(send, now=now.replace(hour=7)) == [],
+          "too early -> no prompts")
+
+    # Kid quiet hours: kids skip THIS sweep but a later one still delivers.
+    storage.set_app_state(presence._TOY_MARKER, {})
+    storage.patch_settings({"kid_quiet_start": "20:30", "kid_quiet_end": "07:00"})
+    sent.clear()
+    late = now.replace(hour=21, minute=0)
+    presence.run_thinking_of_you_prompts(send, now=late)
+    got = sorted(s[0] for s in sent)
+    check(got == ["dad", "gramps"], f"quiet hours: adults only, got {got}")
+    # give_space protocols never generate the prompt — the family said space.
+    storage.patch_settings({"kid_quiet_start": "00:00", "kid_quiet_end": "00:00"})
+    pid2 = storage.add_status_protocol({"name": "Space Day", "emoji": "🤫", "member_id": "dad",
+                                        "need": "give_space", "kid_message": "x",
+                                        "adult_message": "y", "keywords": [], "enabled": True})
+    storage.add_status_day({"date": today, "protocol_id": pid2, "set_by": "mom"})
+    sent.clear()
+    presence.run_thinking_of_you_prompts(send, now=now)
+    check(all("Space Day" not in s[1] for s in sent),
+          "give_space day generates no thinking-of-you prompts")
+
+
+def scenario_video_media_store_and_attachment():
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    _member("mom", "Mom", role="parent")
+    ch = storage.get_or_create_event_channel("evV", "Big Game")
+    bt = BackgroundTasks()
+
+    saved = storage.save_media_file(b"\x00\x00fake-mp4-bytes", "video/mp4")
+    check(saved and saved["url"].startswith("/api/media/") and saved["mime"] == "video/mp4",
+          f"media file saved with mime-derived id, got {saved}")
+    check(storage.media_file_path(saved["id"]), "saved file resolves")
+    check(storage.save_media_file(b"x", "application/pdf") is None,
+          "unsupported mime refused")
+    for junk in ("../../etc/passwd", "abc.mp4", "a" * 32 + ".exe", ""):
+        check(storage.media_file_path(junk) is None, f"junk id refused: {junk!r}")
+
+    m = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="what a play!",
+        attachment={"kind": "video", "url": saved["url"]}), bt)
+    check(m["attachment"] == {"kind": "video", "url": saved["url"], "mime": "video/mp4"},
+          "video attachment validated + normalized")
+    try:
+        main.send_message(ch["id"], main.SendMessageRequest(
+            sender_member_id="mom", body="",
+            attachment={"kind": "video", "url": "/api/media/deadbeef.mp4"}), bt)
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "nonexistent media url refused")
+
+    # Retention: a moment rolling off the 500-cap deletes its clip from disk.
+    path = storage.media_file_path(saved["id"])
+    for i in range(storage._MESSAGES_PER_CHANNEL_CAP):
+        storage.add_chat_message({"id": f"fill{i}", "channel_id": ch["id"],
+                                  "sender_member_id": "mom", "ts": time.time() + i + 1,
+                                  "type": "text", "body": f"m{i}", "attachment": None,
+                                  "reactions": {}})
+    check(storage.media_file_path(saved["id"]) is None and not os.path.exists(path),
+          "pruned moment's clip removed from disk")
+
+
 def scenario_moment_fanout_differentiated():
     import main
     from services import ha_api
@@ -281,6 +426,9 @@ SCENARIOS = [
     scenario_present_and_kept_away,
     scenario_capture_prompt_sweep,
     scenario_capture_prompt_gates,
+    scenario_prompt_worthiness_gates,
+    scenario_thinking_of_you_inversion,
+    scenario_video_media_store_and_attachment,
     scenario_moment_fanout_differentiated,
     scenario_recent_moments_feed,
 ]

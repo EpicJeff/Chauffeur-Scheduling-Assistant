@@ -23,11 +23,74 @@ import time
 
 from services import storage, family_digest
 
-# Prompt fires when now is within [start, start + PROMPT_WINDOW_MINS].
+# Prompt fires when now is within [start, start + PROMPT_WINDOW_MINS] — i.e.
+# during the OPENING minutes, not after them (with the 2-min sweep cadence a
+# prompt typically lands 0-2 min after start).
 PROMPT_WINDOW_MINS = 20
 # Skip blips — a 15-minute drop-off isn't a moment-worthy activity.
 MIN_EVENT_MINS = 30
 _MARKER = 'presence_prompt_sent'
+_TOY_MARKER = 'presence_thinking_of_you_sent'
+
+# --- Prompt-worthiness (family feedback 2026-08-04): a blind nudge on every
+# 30-minute event would ask for a moment at a doctor's appointment. Three
+# gates, checked in order:
+#   1) PRIVATE_KEYWORDS hard-block — medical/solemn events never prompt.
+#   2) Status suppression — an event matching a StatusProtocol keyword, or
+#      one where the affected member of an active status is present, never
+#      gets the outward "send a moment" ask (the INVERSION handles those
+#      days: run_thinking_of_you_prompts sends love TOWARD the affected).
+#   3) MOMENT_KEYWORDS allowlist — games/performances/celebrations prompt;
+#      everything else stays organic (the thread still accepts moments,
+#      Chauffeur just doesn't ask).
+PRIVATE_KEYWORDS = [
+    'appointment', 'appt', 'doctor', 'dr.', 'dentist', 'orthodont', 'therapy',
+    'therapist', 'clinic', 'hospital', 'checkup', 'check-up', 'check up',
+    'physical', 'surgery', 'infusion', 'treatment', 'counsel', 'funeral',
+    'memorial', 'visitation', 'urgent care',
+]
+MOMENT_KEYWORDS = [
+    # event shapes
+    'game', 'match', 'meet', 'tournament', 'tourney', 'scrimmage', 'race',
+    'recital', 'concert', 'performance', 'showcase', 'musical', 'ceremony',
+    'graduation', 'party', 'birthday', 'celebration', 'competition',
+    'invitational', 'championship', 'finals', 'playoff', 'field day',
+    'talent show', 'science fair', 'spelling bee',
+    # common kid activities that read as moment-worthy on their own
+    'soccer', 'volleyball', 'basketball', 'baseball', 'softball', 'football',
+    'hockey', 'lacrosse', 'tennis', 'swim', 'dive', 'gymnastics', 'dance',
+    'cheer', 'track', 'cross country', 'wrestling', 'karate', 'taekwondo',
+    'martial arts', 'golf', 'skate', 'ski', 'archery', 'bowling', 'crew',
+    'rowing', 'rugby', 'theater', 'theatre', 'choir', 'band', 'orchestra',
+]
+
+
+def _event_text(ev) -> str:
+    return f"{ev.get('title') or ''} {ev.get('description') or ''}".lower()
+
+
+def prompt_worthiness(ev, present_ids, date_str):
+    """'blocked' | 'status' | 'moment' | 'quiet'. Only 'moment' events get the
+    outward capture prompt; 'status' days are handled by the inversion."""
+    text = _event_text(ev)
+    if any(k in text for k in PRIVATE_KEYWORDS):
+        return 'blocked'
+    try:
+        from services import status_protocols
+        for p in storage.get_all_status_protocols():
+            if not p.get('enabled', True):
+                continue
+            if any((k or '').strip().lower() in text
+                   for k in (p.get('keywords') or []) if (k or '').strip()):
+                return 'status'
+        for st in status_protocols.active_statuses(date_str):
+            if st.get('member_id') and st['member_id'] in present_ids:
+                return 'status'
+    except Exception:
+        pass  # status layer unavailable -> fall through to the allowlist
+    if any(k in text for k in MOMENT_KEYWORDS):
+        return 'moment'
+    return 'quiet'
 
 
 def _base_event_id(ev_id: str) -> str:
@@ -133,6 +196,8 @@ def run_capture_prompts(send, now=None):
         if not present_adults:
             continue
         present_ids = {m['id'] for m in present}
+        if prompt_worthiness(ev, present_ids, today) != 'moment':
+            continue  # not moment-worthy (or a status/private event): no ask
         kept_away = [m for m in storage.get_all_members()
                      if m.get('role') in ('parent', 'adult') and not m.get('system')
                      and m['id'] not in present_ids]
@@ -159,6 +224,58 @@ def run_capture_prompts(send, now=None):
     return prompted
 
 
+def run_thinking_of_you_prompts(send, now=None):
+    """The INVERSION (family feedback 2026-08-04): on a status day the arrow
+    flips — the schedule knows Mom is at chemo, so instead of an outward
+    "send a moment" ask, the FAMILY gets prompted to send love TOWARD her:
+    "Mom — Chemo Day today. Send a little something to let them know you're
+    thinking of them", deeplinked into each member's own DM with the affected
+    member (private, personal, no new container). cover/help days only —
+    give_space means the family said space, and clear_deck isn't absence.
+    Once per (instance, date, member); kids gated by quiet hours (skip to a
+    later sweep the same day, never lost); after 9am so it lands in the day,
+    not at dawn. `send(member, title, body, path)` injected as usual."""
+    from services import status_protocols, family_digest
+    now = now or datetime.datetime.now()
+    if now.hour < 9:
+        return []
+    today = now.date().isoformat()
+    kid_quiet = family_digest.in_kid_quiet_hours(now, storage.get_settings() or {})
+
+    sent = dict(storage.get_app_state(_TOY_MARKER) or {})
+    cutoff = (now - datetime.timedelta(days=2)).timestamp()
+    sent = {k: v for k, v in sent.items() if v >= cutoff}
+    delivered = []
+
+    for st in status_protocols.active_statuses(today):
+        if st.get('need') not in ('cover', 'help'):
+            continue
+        affected = storage.get_member(st.get('member_id') or '')
+        if not affected or affected.get('role') == 'helper':
+            continue
+        label = f"{st.get('emoji') or '💙'} {st.get('name') or 'a hard day'}"
+        for m in storage.get_all_members():
+            if m['id'] == affected['id'] or m.get('system') \
+                    or m.get('role') == 'helper':
+                continue
+            if m.get('role') == 'child' and kid_quiet:
+                continue  # skip this sweep; a later one today still delivers
+            key = f"{st['id']}:{today}:{m['id']}"
+            if key in sent:
+                continue
+            sent[key] = now.timestamp()
+            dm = storage.get_or_create_dm(m['id'], affected['id'])
+            send(m, f"{label} — {affected.get('name', '?')} today",
+                 f"Send a little something to let them know you're thinking "
+                 f"of them 💙",
+                 f"/app?open_channel={dm['id']}&compose=moment")
+            delivered.append(key)
+
+    if delivered:
+        storage.set_app_state(_TOY_MARKER, sent)
+    return delivered
+
+
 def recent_moments(hours: float = 12, limit: int = 12):
     """The kiosk hearth feed: recent photo moments with sender + event
     context resolved for display."""
@@ -169,6 +286,7 @@ def recent_moments(hours: float = 12, limit: int = 12):
         sender = members.get(m.get('sender_member_id')) or {}
         out.append({
             'id': m.get('id'),
+            'channel_id': m.get('channel_id'),
             'ts': m.get('ts'),
             'body': m.get('body') or '',
             'attachment': m.get('attachment'),

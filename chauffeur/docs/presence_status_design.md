@@ -367,6 +367,28 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    render rides the same endpoint whenever a second panel exists. Tests:
    `tests/test_presence.py` (7 scenarios, both storage backends).
 
+   **v2.58.0 (same day) — family feedback round, five corrections:**
+   (1) **Video is the thing** ("Photos of sports does nothing") — the v1
+   photo-only call reversed immediately: clips upload as files to the
+   family's box (60 MB cap), served with explicit byte-range support, pruned
+   with their message; photos stay inline. (2) **No blind nudge** — the
+   capture prompt now runs a worthiness gate: medical/solemn keywords
+   hard-block, status-protocol matches divert to the inversion, and only a
+   moment-worthy allowlist (games, meets, recitals, concerts, parties, kid
+   sports/arts) actually prompts; everything else stays organic. (3) **The
+   chemo example runs the OTHER way** — the thinking-of-you inversion: on a
+   cover/help status day the family is prompted to send love TOWARD the
+   affected member, deeplinked into each member's own DM with them (private,
+   personal, no new container); give_space days stay silent. This flips the
+   presence arrow and is the arc's thesis in one push. (4) **"Moments" is
+   the name** — the event-modal button, the PWA Messages-tab strip, the 📸
+   event-channel avatar. (5) **The hearth rides EVERY kiosk page** — shared
+   component, self-gated on ?kiosk=true, included on all eleven
+   kiosk-capable templates so the wall panel lights up no matter which view
+   it shows. Plus 👍 joined the quick reactions (the baseline reaction), and
+   the prompt cadence tightened to 2 min so it lands in an event's opening
+   minutes. Tests: 10 scenarios.
+
    The design (kept for the record): the container is the existing
    event Discuss chat, anchored to the event forever and reachable from the
    event chip and the chats tab — a small marginal build, not a new platform.

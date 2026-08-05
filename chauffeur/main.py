@@ -284,13 +284,16 @@ async def push_notification_loop():
 
             # --- Presence capture prompt (Presence & Status Slice 4) ---
             # "You're at the game — send the family a moment?" The schedule
-            # knows the event is live NOW; the prompt is the feature. 5-min
-            # cadence (the per-event marker inside makes re-runs inert);
-            # marker set FIRST. Prompts go to present ADULTS only, so the
-            # kid quiet-hours gate doesn't apply.
+            # knows the event is live NOW; the prompt is the feature. 2-min
+            # cadence so it lands in the event's opening minutes (per-event
+            # marker inside makes re-runs inert); marker set FIRST. Outward
+            # prompts go to present ADULTS only (no kid quiet gate needed);
+            # the thinking-of-you INVERSION prompts the whole family toward
+            # the affected member on cover/help status days and gates kids
+            # itself (skip-to-later-sweep, never lost).
             try:
                 last = float(storage.get_app_state("presence_prompt_last_run") or 0)
-                if time.time() - last >= 300:
+                if time.time() - last >= 120:
                     storage.set_app_state("presence_prompt_last_run", time.time())
                     from services import presence
 
@@ -301,6 +304,10 @@ async def push_notification_loop():
                         presence.run_capture_prompts, _presence_push)
                     if prompted:
                         print(f"Presence: sent capture prompt(s) for {len(prompted)} event(s)")
+                    toy = await asyncio.to_thread(
+                        presence.run_thinking_of_you_prompts, _presence_push)
+                    if toy:
+                        print(f"Presence: sent {len(toy)} thinking-of-you prompt(s)")
             except Exception as ppe:
                 print(f"Presence prompt error: {ppe}")
 
@@ -5408,19 +5415,30 @@ class SendMessageRequest(BaseModel):
 _ATTACHMENT_MAX_CHARS = 1_400_000
 
 def _validate_moment_attachment(att: dict) -> dict:
-    """Normalize/validate a photo attachment; raises HTTPException on junk."""
-    if not isinstance(att, dict) or att.get('kind') != 'photo':
-        raise HTTPException(status_code=400, detail="Unsupported attachment kind")
-    data_url = str(att.get('data_url') or '')
-    if not data_url.startswith('data:image/'):
-        raise HTTPException(status_code=400, detail="Attachment must be an image data URL")
-    if len(data_url) > _ATTACHMENT_MAX_CHARS:
-        raise HTTPException(status_code=413, detail="Photo too large — try again")
-    out = {'kind': 'photo', 'data_url': data_url}
-    for k in ('w', 'h'):
-        if isinstance(att.get(k), (int, float)):
-            out[k] = int(att[k])
-    return out
+    """Normalize/validate a moment attachment; raises HTTPException on junk.
+    Photos are inline data URLs; videos reference an uploaded media file
+    (/api/moments/upload -> /api/media/{id})."""
+    if not isinstance(att, dict):
+        raise HTTPException(status_code=400, detail="Unsupported attachment")
+    if att.get('kind') == 'photo':
+        data_url = str(att.get('data_url') or '')
+        if not data_url.startswith('data:image/'):
+            raise HTTPException(status_code=400, detail="Attachment must be an image data URL")
+        if len(data_url) > _ATTACHMENT_MAX_CHARS:
+            raise HTTPException(status_code=413, detail="Photo too large — try again")
+        out = {'kind': 'photo', 'data_url': data_url}
+        for k in ('w', 'h'):
+            if isinstance(att.get(k), (int, float)):
+                out[k] = int(att[k])
+        return out
+    if att.get('kind') == 'video':
+        url = str(att.get('url') or '')
+        media_id = url.rsplit('/', 1)[-1] if url.startswith('/api/media/') else ''
+        if not media_id or not storage.media_file_path(media_id):
+            raise HTTPException(status_code=400, detail="Video upload not found — try again")
+        return {'kind': 'video', 'url': f'/api/media/{media_id}',
+                'mime': storage.media_mime(media_id)}
+    raise HTTPException(status_code=400, detail="Unsupported attachment kind")
 
 import re as _re
 # Matches an @argyle mention anywhere in a message (case-insensitive).
@@ -5561,9 +5579,65 @@ def react_to_message(message_id: str, req: ReactRequest):
 
 @app.get("/api/presence/moments")
 def get_presence_moments(hours: float = 12, limit: int = 12):
-    """Recent photo moments from event chats — the kiosk hearth feed."""
+    """Recent moments (photos + clips) from event chats — the hearth feed."""
     from services import presence
     return presence.recent_moments(hours=min(hours, 168), limit=min(limit, 30))
+
+# "Photos of sports does nothing. Videos are the thing." (family, 2026-08-04)
+# Clips upload as files on the family's box; the attachment holds the URL.
+_VIDEO_MAX_BYTES = 60 * 1024 * 1024
+
+@app.post("/api/moments/upload")
+async def upload_moment_media(media: UploadFile = File(...)):
+    data = await media.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > _VIDEO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Clip too large (60MB max) — try a shorter one")
+    saved = storage.save_media_file(data, media.content_type or '')
+    if not saved:
+        raise HTTPException(status_code=400, detail="Unsupported video format")
+    return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}
+
+@app.get("/api/media/{media_id}")
+def serve_moment_media(media_id: str, request: Request):
+    """Range-aware media serving — iOS Safari refuses to play video without
+    byte-range support, and Starlette's FileResponse can't be relied on for
+    it across versions, so the 206 path is explicit."""
+    path = storage.media_file_path(media_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Media not found")
+    size = os.path.getsize(path)
+    mime = storage.media_mime(media_id)
+    range_header = request.headers.get('range', '')
+    if range_header.startswith('bytes='):
+        try:
+            start_s, _, end_s = range_header[6:].partition('-')
+            start = int(start_s) if start_s else 0
+            end = min(int(end_s), size - 1) if end_s else size - 1
+        except ValueError:
+            raise HTTPException(status_code=416, detail="Bad range")
+        if start > end or start >= size:
+            raise HTTPException(status_code=416, detail="Bad range")
+        def _chunked(p, s, e, chunk=1024 * 512):
+            with open(p, 'rb') as f:
+                f.seek(s)
+                remaining = e - s + 1
+                while remaining > 0:
+                    block = f.read(min(chunk, remaining))
+                    if not block:
+                        break
+                    remaining -= len(block)
+                    yield block
+        return StreamingResponse(
+            _chunked(path, start, end), status_code=206, media_type=mime,
+            headers={'Content-Range': f'bytes {start}-{end}/{size}',
+                     'Accept-Ranges': 'bytes',
+                     'Content-Length': str(end - start + 1),
+                     'Cache-Control': 'private, max-age=86400'})
+    return FileResponse(path, media_type=mime,
+                        headers={'Accept-Ranges': 'bytes',
+                                 'Cache-Control': 'private, max-age=86400'})
 
 @app.get("/api/messages/stream")
 async def stream_messages(member_id: str):
