@@ -320,15 +320,65 @@
             }, { root: document.getElementById('moments-scroll'), rootMargin: '400px' })
                 .observe(document.getElementById('scroll-sentinel'));
 
+            // Prune deletions from an OPEN event grid without disturbing it.
+            // The top level can afford to rebuild from scratch; this level
+            // cannot — a panel someone is reading must keep its scroll
+            // position and its paging state. So: re-fetch exactly the range
+            // already on screen, swap it in, restore the scroll. Without this
+            // a panel left sitting inside an event was the one surface where a
+            // deleted moment stayed up indefinitely rather than for a minute.
+            async function refreshEventInPlace() {
+                if (loading || !mChannel || !mOffset) return;
+                const channelAtStart = mChannel;
+                // One request, so the refreshed window is the endpoint's cap.
+                // A panel parked more than 100 moments deep keeps its tail
+                // until it navigates — not worth paging the whole way back.
+                const span = Math.min(mOffset, 100);
+                const scroller = document.getElementById('moments-scroll');
+                const keepScroll = scroller.scrollTop;
+                loading = true;
+                try {
+                    const res = await fetch(`${apiBase}api/presence/event-moments?channel_id=${encodeURIComponent(mChannel)}&offset=0&limit=${span}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        // The view may have moved on while we were waiting.
+                        if (view === 'event' && mChannel === channelAtStart) {
+                            if (!data.total) {
+                                showEvents();       // last moment deleted
+                            } else {
+                                const items = data.items || [];
+                                // Deletions shift later moments INTO the
+                                // refreshed window, so dedupe by id before
+                                // re-attaching the un-refreshed tail.
+                                const seen = new Set(items.map(x => x.id));
+                                mItems = items.concat(
+                                    mItems.slice(span).filter(x => !seen.has(x.id)));
+                                document.getElementById('event-sub').textContent =
+                                    `${data.total} moment${data.total !== 1 ? 's' : ''}`;
+                                renderMoments();
+                                scroller.scrollTop = keepScroll;
+                            }
+                        }
+                    }
+                } catch (e) { }
+                loading = false;
+            }
+
             if (hideTitle) document.getElementById('moments-header').style.display = 'none';
             loadEventsPage();
-            // Kiosk panels are unattended: keep the top level current, but
-            // never yank the view out from under someone browsing an event.
+            // Kiosk panels are unattended, so both levels stay current on their
+            // own: the top level rebuilds outright, an open event prunes in
+            // place (see above) rather than being yanked out from under a
+            // reader.
             if (isKiosk) {
                 setInterval(() => {
-                    if (view !== 'events' || loading) return;
-                    evItems = []; evOffset = 0; evMore = true;
-                    loadEventsPage();
+                    if (loading) return;
+                    if (view === 'events') {
+                        evItems = []; evOffset = 0; evMore = true;
+                        loadEventsPage();
+                    } else {
+                        refreshEventInPlace();
+                    }
                 }, 60000);
             }
         })();
