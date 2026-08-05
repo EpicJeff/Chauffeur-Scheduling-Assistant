@@ -395,20 +395,20 @@ def scenario_video_transcode_pipeline():
     check(path and path.endswith(".orig"), f"original serves while pending, got {path}")
 
     # Simulate ffmpeg success: swap in the mp4, original removed.
-    final = os.path.join(storage.MEDIA_DIR, saved["id"])
+    final = storage.media_write_path(saved["id"])
     with open(final, "wb") as f:
         f.write(b"transcoded-h264")
-    os.remove(os.path.join(storage.MEDIA_DIR, stem + ".orig"))
+    os.remove(storage.media_read_path(stem + ".orig"))
     path = storage.media_file_path(saved["id"])
     check(path == final, "after the swap the mp4 serves on the same id/url")
 
     # Failure path: _transcode_media with a broken ffmpeg renames orig into place.
     with mock.patch.object(storage, "_ffmpeg_path", return_value="/nonexistent/ffmpeg"):
-        orig2 = os.path.join(storage.MEDIA_DIR, "a" * 32 + ".orig")
+        orig2 = storage.media_write_path("a" * 32 + ".orig")
         with open(orig2, "wb") as f:
             f.write(b"clip-bytes")
         storage._transcode_media("a" * 32)
-    kept = os.path.join(storage.MEDIA_DIR, "a" * 32 + ".mp4")
+    kept = storage.media_write_path("a" * 32 + ".mp4")
     check(os.path.exists(kept) and not os.path.exists(orig2),
           "failed transcode stores the original as-is — the moment is never lost")
 
@@ -544,9 +544,8 @@ def scenario_video_posters_and_photo_files():
 
     # A poster request for a clip with no .jpg must NEVER fall through to the
     # raw video bytes (that used to be the .orig fallback's blast radius).
-    os.makedirs(storage.MEDIA_DIR, exist_ok=True)
     stem = "c" * 32
-    with open(os.path.join(storage.MEDIA_DIR, stem + ".orig"), "wb") as f:
+    with open(storage.media_write_path(stem + ".orig"), "wb") as f:
         f.write(b"raw-video-bytes")
     with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
         check(storage.media_file_path(stem + ".jpg") is None,
@@ -554,7 +553,7 @@ def scenario_video_posters_and_photo_files():
         check(storage.media_file_path(stem + ".mp4").endswith(".orig"),
               "the clip itself still falls back to the original")
     # With a poster present it serves as an image.
-    with open(os.path.join(storage.MEDIA_DIR, stem + ".jpg"), "wb") as f:
+    with open(storage.media_write_path(stem + ".jpg"), "wb") as f:
         f.write(b"\xff\xd8jpeg")
     check(storage.media_mime(stem + ".jpg") == "image/jpeg", "poster serves as an image")
 
@@ -796,7 +795,70 @@ def scenario_message_delete_and_edit():
     check(upd["body"] == "" and upd["attachment"], "a caption may be cleared off a moment")
 
 
+def scenario_media_root_and_sharding():
+    """The archive can live off /data, and finds its files either way. The
+    legacy flat location stays in the lookup forever — that is what makes
+    relocating onto a network mount safe to interrupt."""
+    # Sharding is derived from the id itself, which is why no stored
+    # attachment URL and nothing in the database has to change.
+    check(storage._shard("abcd" + "0" * 28 + ".mp4") == os.path.join("ab", "cd"),
+          "shard comes from the id's own leading hex")
+    check(storage._shard("abcd" + "0" * 28 + ".jpg") == os.path.join("ab", "cd"),
+          "siblings share the stem, so they share the bucket")
+    check(storage._shard("notahexname.mp4") == "", "non-hex names stay flat")
+
+    _member("mom", "Mom", role="parent")
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        saved = storage.save_media_file(b"\x00\x00clip", "video/mp4")
+    path = storage.media_file_path(saved["id"])
+    check(path and os.path.exists(path), "new upload resolves")
+    check(os.path.dirname(path).endswith(storage._shard(saved["id"])),
+          f"new upload landed in its shard, got {path}")
+
+    # A file sitting FLAT in the legacy root (pre-migration, or a half-moved
+    # archive) must still resolve — nothing 404s while a migration runs.
+    legacy_id = "b" * 32 + ".mp4"
+    os.makedirs(storage._LEGACY_MEDIA_DIR, exist_ok=True)
+    with open(os.path.join(storage._LEGACY_MEDIA_DIR, legacy_id), "wb") as f:
+        f.write(b"legacy")
+    check(storage.media_file_path(legacy_id), "flat legacy file still resolves")
+
+    res = storage.migrate_media_layout()
+    check(res["complete"], "migration reports completion")
+    moved = storage.media_file_path(legacy_id)
+    check(moved and os.path.dirname(moved).endswith(storage._shard(legacy_id)),
+          f"migration relocated the flat file into its shard, got {moved}")
+    again = storage.migrate_media_layout()
+    check(again["moved"] == 0, "migration is idempotent — a second run moves nothing")
+
+    # Deleting must find files wherever they are, sharded or not.
+    storage._delete_media_for_messages(
+        [{"attachment": {"url": f"/api/media/{legacy_id}"}}])
+    check(storage.media_file_path(legacy_id) is None, "delete follows the shard")
+
+    # A configured root that cannot be written must NEVER take the archive
+    # down — it stays on the legacy location, where the older files are.
+    bad = os.path.join(tempfile.gettempdir(), "chauffeur_nonexistent_mount", "x")
+    with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": bad}):
+        with mock.patch.object(os, "makedirs", side_effect=OSError("no mount")):
+            check(storage._configured_media_root() is None,
+                  "an unwritable media_root is refused, not adopted")
+
+    # And a usable one is adopted.
+    good = tempfile.mkdtemp(prefix="chauffeur_media_root_")
+    with mock.patch.dict(os.environ, {"CHAUFFEUR_MEDIA_ROOT": good}):
+        check(storage._configured_media_root() == good, "a writable media_root is adopted")
+    shutil.rmtree(good, ignore_errors=True)
+
+    # Scratch is always beside the DATABASE, never derived from the media
+    # root — ffmpeg and uploads must not write onto a mount, whatever the
+    # root is set to.
+    check(os.path.dirname(storage.media_scratch_dir()) == os.path.dirname(storage.DB_PATH),
+          f"scratch lives beside the database, got {storage.media_scratch_dir()}")
+
+
 SCENARIOS = [
+    scenario_media_root_and_sharding,
     scenario_attachment_send_and_validation,
     scenario_reaction_toggle_and_endpoint,
     scenario_message_delete_and_edit,

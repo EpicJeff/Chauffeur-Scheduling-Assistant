@@ -19,7 +19,149 @@ else:
 
 # Moment media (Presence slice): video clips live as FILES on the family's
 # box — a 15 MB clip can't ride the inline data-URL path photos use.
-MEDIA_DIR = os.path.join(os.path.dirname(DB_PATH), 'media')
+#
+# The archive defaults beside the database, on the add-on's /data volume. That
+# is the WRONG disk for a family shooting 4K60 at two games a week: /data is a
+# VM's virtual disk, and growing it means touching the VM. `media_root` in the
+# add-on options points the archive somewhere else — HA's network storage
+# mounts land under /media/<name> or /share/<name>, both of which this add-on
+# now maps rw — so the bytes land on whatever big disk the house already has
+# and the VM never changes size. Empty (the default) keeps the old location.
+_LEGACY_MEDIA_DIR = os.path.join(os.path.dirname(DB_PATH), 'media')
+MEDIA_DIR = _LEGACY_MEDIA_DIR
+
+
+def _configured_media_root() -> Optional[str]:
+    """`media_root` from the add-on options, if it names a usable directory.
+    A root that is missing or unwritable (a NAS that did not come back after a
+    reboot) must NEVER take the archive down: we log it and stay on the legacy
+    location, where the older files still are, rather than writing into a path
+    that will vanish when the mount reappears underneath us."""
+    try:
+        with open('/data/options.json') as f:
+            root = (json.load(f).get('media_root') or '').strip()
+    except Exception:
+        root = (os.environ.get('CHAUFFEUR_MEDIA_ROOT') or '').strip()
+    if not root:
+        return None
+    try:
+        os.makedirs(root, exist_ok=True)
+        probe = os.path.join(root, '.chauffeur_write_test')
+        with open(probe, 'w') as f:
+            f.write('ok')
+        os.remove(probe)
+        return root
+    except OSError as e:
+        print(f"[media] media_root {root!r} unusable ({e}) — "
+              f"staying on {_LEGACY_MEDIA_DIR}")
+        return None
+
+
+MEDIA_DIR = _configured_media_root() or _LEGACY_MEDIA_DIR
+
+
+def _media_roots() -> List[str]:
+    """Every root a file might be in, active first. The legacy root stays in
+    the lookup FOREVER, not just during a migration: it is two isfile() calls
+    on a miss, and it is what makes moving the archive safe to interrupt when
+    the destination is a network mount that can disappear mid-copy."""
+    roots = [MEDIA_DIR]
+    if os.path.normpath(_LEGACY_MEDIA_DIR) != os.path.normpath(MEDIA_DIR):
+        roots.append(_LEGACY_MEDIA_DIR)
+    return roots
+
+
+def _shard(name: str) -> str:
+    """'ab/cd' from the id's own leading hex. Sharding by HASH rather than by
+    date is what keeps this free: the id is already in every stored
+    attachment URL, so a file's bucket is derivable and nothing in the
+    database has to be rewritten. Siblings (.orig/.jpg/.tmp.mp4) share the
+    stem and therefore land in the same bucket. ~27k files across 256
+    directories instead of one, which is the difference between a directory
+    listing being instant and being a problem after ten seasons."""
+    stem = os.path.splitext(name)[0].split('.')[0]
+    if len(stem) >= 4 and all(c in '0123456789abcdef' for c in stem[:4].lower()):
+        return os.path.join(stem[:2], stem[2:4])
+    return ''
+
+
+def media_write_path(name: str) -> str:
+    """Where a NEW media file goes: active root, sharded, parents created."""
+    d = os.path.join(MEDIA_DIR, _shard(name))
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, name)
+
+
+def media_read_path(name: str) -> Optional[str]:
+    """Find an existing media file wherever it actually is — sharded or flat,
+    new root or legacy. Ordered so the common case (migrated, active root)
+    hits first."""
+    for root in _media_roots():
+        shard = _shard(name)
+        for d in ((os.path.join(root, shard), root) if shard else (root,)):
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def media_scratch_dir() -> str:
+    """Local working space, ALWAYS beside the database and never on the media
+    root. ffmpeg writing its output straight onto a CIFS mount is slow and
+    fails badly; uploads streaming there hold the mount open for minutes. Both
+    write here and move the finished file across."""
+    d = os.path.join(os.path.dirname(DB_PATH), 'media_scratch')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def migrate_media_layout(batch_limit: int = 0) -> dict:
+    """Relocate media into the active root, sharded. Runs in the BACKGROUND
+    and is safe to interrupt: `media_read_path` already finds files at either
+    location and either layout, so nothing 404s while this walks — and if the
+    destination is a mount that drops halfway, the files it has not reached
+    are still being served from where they are. Idempotent; a second run over
+    a migrated archive is a directory walk and no moves."""
+    moved = errors = scanned = 0
+    for root in _media_roots():
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                if name.startswith('.'):
+                    continue
+                scanned += 1
+                src = os.path.join(dirpath, name)
+                dst = os.path.join(MEDIA_DIR, _shard(name), name)
+                if os.path.normpath(src) == os.path.normpath(dst):
+                    continue
+                if os.path.exists(dst):
+                    continue     # already there; leave the stray alone
+                try:
+                    media_move_into_place(src, dst)
+                    moved += 1
+                except OSError as e:
+                    errors += 1
+                    if errors < 5:
+                        print(f"[media] could not relocate {name}: {e}")
+                if batch_limit and moved >= batch_limit:
+                    return {'scanned': scanned, 'moved': moved, 'errors': errors,
+                            'complete': False}
+    if moved or errors:
+        print(f"[media] layout migration: {moved} moved, {errors} failed, "
+              f"{scanned} scanned -> {MEDIA_DIR}")
+    return {'scanned': scanned, 'moved': moved, 'errors': errors, 'complete': True}
+
+
+def media_move_into_place(src: str, dst: str):
+    """os.replace is atomic but same-filesystem only, and the media root may
+    be a mount. Fall back to a cross-device move."""
+    os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
+    try:
+        os.replace(src, dst)
+    except OSError:
+        import shutil
+        shutil.move(src, dst)
 
 from tinydb.storages import Storage, touch
 class AtomicJSONStorage(Storage):
@@ -1811,7 +1953,7 @@ def poster_available(stem: str) -> bool:
     """Can a poster for this clip actually be served? Either it already
     exists, or ffmpeg is here to make one on request. Callers must not
     advertise a poster URL otherwise — a 404 renders as an empty tile."""
-    if os.path.isfile(os.path.join(MEDIA_DIR, stem + '.jpg')):
+    if media_read_path(stem + '.jpg'):
         return True
     return bool(_ffmpeg_path())
 
@@ -1827,14 +1969,15 @@ def generate_poster(stem: str) -> bool:
         return False
     src = None
     for name in [stem + e for e in _VIDEO_EXTS] + [stem + '.orig']:
-        p = os.path.join(MEDIA_DIR, name)
-        if os.path.isfile(p):
+        p = media_read_path(name)
+        if p:
             src = p
             break
     if not src:
         return False
-    out = os.path.join(MEDIA_DIR, stem + '.jpg')
-    tmp = os.path.join(MEDIA_DIR, stem + '.tmp.jpg')
+    out = media_write_path(stem + '.jpg')
+    # Beside the destination, so the os.replace below stays atomic.
+    tmp = os.path.join(os.path.dirname(out), stem + '.tmp.jpg')
     import subprocess
     for seek in ('1', '0'):
         try:
@@ -1864,9 +2007,11 @@ def _transcode_media(stem: str):
     endpoint falls back to the original bytes. On any failure the original
     is renamed into place (store-as-is — never lose the moment)."""
     import subprocess
-    orig = os.path.join(MEDIA_DIR, stem + '.orig')
-    final = os.path.join(MEDIA_DIR, stem + '.mp4')
-    tmp = os.path.join(MEDIA_DIR, stem + '.tmp.mp4')
+    orig = media_read_path(stem + '.orig') or media_write_path(stem + '.orig')
+    final = media_write_path(stem + '.mp4')
+    # ffmpeg encodes to LOCAL scratch, never straight onto the media root —
+    # a multi-minute write onto a network mount is slow and fails badly.
+    tmp = os.path.join(media_scratch_dir(), stem + '.tmp.mp4')
     try:
         subprocess.run(
             [_ffmpeg_path(), '-y', '-i', orig,
@@ -1874,7 +2019,7 @@ def _transcode_media(stem: str):
              '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
              '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
             check=True, capture_output=True, timeout=600)
-        os.replace(tmp, final)
+        media_move_into_place(tmp, final)
         os.remove(orig)
         generate_poster(stem)   # thumbnail, so tiles never show a black box
         print(f"[media] transcoded {stem}.mp4")
@@ -1884,7 +2029,7 @@ def _transcode_media(stem: str):
             if os.path.exists(tmp):
                 os.remove(tmp)
             if os.path.exists(orig):
-                os.replace(orig, final)
+                media_move_into_place(orig, final)
         except OSError:
             pass
 
@@ -1906,15 +2051,14 @@ def finalize_media_upload(src_path: str, mime: str) -> Optional[dict]:
         except OSError:
             pass
         return None
-    os.makedirs(MEDIA_DIR, exist_ok=True)
     stem = _uuid.uuid4().hex
     if _ffmpeg_path():
-        os.replace(src_path, os.path.join(MEDIA_DIR, stem + '.orig'))
+        media_move_into_place(src_path, media_write_path(stem + '.orig'))
         threading.Thread(target=_transcode_media, args=(stem,), daemon=True).start()
         media_id = stem + '.mp4'
         return {'id': media_id, 'url': f'/api/media/{media_id}', 'mime': 'video/mp4'}
     media_id = stem + ext
-    os.replace(src_path, os.path.join(MEDIA_DIR, media_id))
+    media_move_into_place(src_path, media_write_path(media_id))
     return {'id': media_id, 'url': f'/api/media/{media_id}',
             'mime': _MEDIA_MIME_BY_EXT[ext]}
 
@@ -1944,9 +2088,8 @@ def save_photo_data_url(data_url: str) -> Optional[dict]:
         return None
     if not raw:
         return None
-    os.makedirs(MEDIA_DIR, exist_ok=True)
     media_id = _uuid.uuid4().hex + ext
-    with open(os.path.join(MEDIA_DIR, media_id), 'wb') as f:
+    with open(media_write_path(media_id), 'wb') as f:
         f.write(raw)
     return {'id': media_id, 'url': f'/api/media/{media_id}',
             'mime': _MEDIA_SERVE_MIME.get(ext, 'image/jpeg')}
@@ -1956,8 +2099,7 @@ def save_media_file(data: bytes, mime: str) -> Optional[dict]:
     """Bytes convenience wrapper over finalize_media_upload (tests, small
     clips). Large uploads should stream to a temp file instead."""
     import uuid as _uuid
-    os.makedirs(MEDIA_DIR, exist_ok=True)
-    tmp = os.path.join(MEDIA_DIR, _uuid.uuid4().hex + '.part')
+    tmp = os.path.join(media_scratch_dir(), _uuid.uuid4().hex + '.part')
     with open(tmp, 'wb') as f:
         f.write(data)
     return finalize_media_upload(tmp, mime)
@@ -1975,16 +2117,15 @@ def media_file_path(media_id: str) -> Optional[str]:
     if not _MEDIA_ID_RE.match(media_id or ''):
         return None
     stem, ext = os.path.splitext(media_id)
-    path = os.path.join(MEDIA_DIR, media_id)
-    if os.path.isfile(path):
+    path = media_read_path(media_id)
+    if path:
         return path
     if ext == '.jpg':
         # Poster frames are derived, so a miss is repairable rather than a
         # 404: generate it now (heals clips that predate posters). Never
         # fall through to .orig — that would serve video bytes as an image.
-        return path if generate_poster(stem) else None
-    orig = os.path.join(MEDIA_DIR, stem + '.orig')
-    return orig if os.path.isfile(orig) else None
+        return media_read_path(media_id) if generate_poster(stem) else None
+    return media_read_path(stem + '.orig')
 
 
 def media_mime(media_id: str) -> str:
@@ -2004,8 +2145,13 @@ def _delete_media_for_messages(msgs):
             if not (len(stem) == 32 and all(c in '0123456789abcdef' for c in stem)):
                 continue
             for name in (media_id, stem + '.orig', stem + '.tmp.mp4', stem + '.jpg'):
+                # Wherever it actually is — sharded or flat, new root or the
+                # legacy one a half-finished migration left it in.
+                p = media_read_path(name)
+                if not p:
+                    continue
                 try:
-                    os.remove(os.path.join(MEDIA_DIR, name))
+                    os.remove(p)
                 except OSError:
                     pass
 

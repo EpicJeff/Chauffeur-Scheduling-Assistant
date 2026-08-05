@@ -5719,10 +5719,14 @@ def debug_moment_media():
     and a Dockerfile change only lands on a REBUILD, not a restart)."""
     ffmpeg = storage._ffmpeg_path()
     files = []
-    try:
-        files = os.listdir(storage.MEDIA_DIR)
-    except OSError:
-        pass
+    # Walk, not listdir: media is sharded into ab/cd buckets, and files may
+    # still be sitting in the legacy root mid-migration.
+    for root in storage._media_roots():
+        try:
+            for _dirpath, _dirnames, names in os.walk(root):
+                files.extend(n for n in names if not n.startswith('.'))
+        except OSError:
+            pass
     clips = [f for f in files if os.path.splitext(f)[1] in ('.mp4', '.webm', '.mov', '.m4v')]
     posters = {os.path.splitext(f)[0] for f in files if f.endswith('.jpg')}
     missing = [c for c in clips if os.path.splitext(c)[0] not in posters]
@@ -5736,6 +5740,11 @@ def debug_moment_media():
         'ffmpeg': ffmpeg or None,
         'ffmpeg_ok': bool(ffmpeg),
         'media_dir': storage.MEDIA_DIR,
+        # Loud when a configured media_root was REFUSED (missing mount, no
+        # write permission) and the archive quietly stayed on /data.
+        'media_root_configured': storage._configured_media_root() or None,
+        'media_root_active': storage.MEDIA_DIR != storage._LEGACY_MEDIA_DIR,
+        'legacy_media_dir': storage._LEGACY_MEDIA_DIR,
         'clips': len(clips),
         'posters': len(posters),
         'clips_missing_posters': missing[:20],
@@ -5777,8 +5786,10 @@ _VIDEO_MAX_BYTES = 500 * 1024 * 1024
 @app.post("/api/moments/upload")
 async def upload_moment_media(media: UploadFile = File(...)):
     import uuid as _uuid
-    os.makedirs(storage.MEDIA_DIR, exist_ok=True)
-    part = os.path.join(storage.MEDIA_DIR, _uuid.uuid4().hex + '.part')
+    # Stream to LOCAL scratch, not the media root: a several-hundred-MB
+    # upload should not hold a network mount open for the whole transfer.
+    # finalize_media_upload moves the finished file across.
+    part = os.path.join(storage.media_scratch_dir(), _uuid.uuid4().hex + '.part')
     size = 0
     # Stream to disk — a phone clip must never sit in RAM whole.
     with open(part, 'wb') as f:

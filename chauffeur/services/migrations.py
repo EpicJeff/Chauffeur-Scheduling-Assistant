@@ -117,7 +117,8 @@ async def migrate_moment_clips_v2590():
             if not old_path or old_path.endswith('.orig'):
                 continue
             stem = old_id.split('.')[0]
-            os.replace(old_path, os.path.join(storage.MEDIA_DIR, stem + '.orig'))
+            storage.media_move_into_place(
+                old_path, storage.media_write_path(stem + '.orig'))
             storage._transcode_media(stem)   # synchronous here — startup task
             new_id = stem + '.mp4'
             if storage.media_file_path(new_id):
@@ -174,6 +175,20 @@ async def migrate_inline_photos_v2620():
         logger.info(f"v2.62.0 moments: filed {migrated} inline photo(s) into the media store")
 
 
+async def migrate_media_layout_v2660():
+    """Relocate the media archive into the active root, hash-sharded (v2.66.0).
+    Deliberately NOT app-state gated like the others: the media root is a
+    SETTING, so this has to run again whenever it changes. It is a directory
+    walk with no moves once settled, and `media_read_path` serves from either
+    location and either layout throughout — so a run interrupted by a mount
+    dropping out leaves nothing broken, just partly moved."""
+    res = await asyncio.to_thread(storage.migrate_media_layout)
+    if res.get('moved') or res.get('errors'):
+        logger.info(f"v2.66.0 media layout: moved {res['moved']}, "
+                    f"failed {res['errors']}, scanned {res['scanned']} "
+                    f"-> {storage.MEDIA_DIR}")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -193,3 +208,8 @@ async def run_all_migrations():
         await migrate_inline_photos_v2620()
     except Exception as e:
         logger.error(f"Error running inline photo migration: {e}")
+    # LAST: the two above write media, so let them settle before relocating.
+    try:
+        await migrate_media_layout_v2660()
+    except Exception as e:
+        logger.error(f"Error running media layout migration: {e}")
