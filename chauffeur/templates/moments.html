@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<!-- The Moments gallery — the wall-panel surface for looking BACK (the hearth
+     overlay and rail only ever show the newest). Day-grouped grid of every
+     photo/clip the family shared, tap for full-screen. Plain JS, same
+     rendering conventions as components/moments_hearth.html. -->
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moments</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: { sans: ['Inter', 'sans-serif'] },
+                        colors: { gray: { 900: '#111827', 800: '#1F2937', 700: '#374151', 600: '#4B5563' } }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <div id="moments-page" class="mx-auto p-6 lg:p-10 w-full max-w-7xl">
+            <header id="moments-header" class="mb-8">
+                <h2 class="text-3xl font-bold text-white mb-2">📸 Moments</h2>
+                <p class="text-gray-400" id="moments-sub">The moments the family shared from everyone's activities.</p>
+            </header>
+            <div id="moments-body">
+                <div class="text-gray-500">Loading…</div>
+            </div>
+        </div>
+    </div>
+
+    {% include 'components/control_center.html' %}
+
+    <script>
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const isKiosk = params.get('kiosk') === 'true';
+            const hideTitle = ['none', 'off', '0', 'false', 'hide'].includes(
+                (params.get('title') || '').toLowerCase());
+            const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+            // 30 days is the practical whole history: moments roll off with
+            // their message at the per-channel retention cap anyway.
+            const HOURS = 24 * 30;
+
+            function esc(s) {
+                const d = document.createElement('div');
+                d.textContent = s == null ? '' : String(s);
+                return d.innerHTML;
+            }
+
+            // Same day labels the chat dividers use, so "Yesterday" means the
+            // same thing everywhere in Chauffeur.
+            function dayLabel(ts) {
+                const d = new Date(ts * 1000), now = new Date();
+                const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+                const diff = Math.round((startOf(now) - startOf(d)) / 86400000);
+                if (diff === 0) return 'Today';
+                if (diff === 1) return 'Yesterday';
+                if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: 'long' });
+                if (d.getFullYear() === now.getFullYear())
+                    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+            }
+
+            function timeLabel(ts) {
+                return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+
+            function mediaEl(m, cls, opts) {
+                const att = m.attachment || {};
+                if (att.kind === 'video' && att.url) {
+                    const attrs = opts && opts.full
+                        ? 'autoplay muted loop playsinline controls'
+                        : 'muted playsinline preload="metadata"';
+                    return `<video src="${apiBase}${att.url.replace(/^\//, '')}" ${attrs} class="${cls}"></video>`;
+                }
+                return `<img src="${att.data_url || ''}" class="${cls}">`;
+            }
+
+            function reactionPills(m) {
+                const r = m.reactions || {};
+                const keys = Object.keys(r).filter(e => (r[e] || []).length);
+                if (!keys.length) return '';
+                // Display-only: a wall panel has no signed-in identity to
+                // attribute a tap to (reacting lives in the PWA).
+                return `<div class="flex gap-1 flex-wrap mt-1">` + keys.map(e =>
+                    `<span class="text-[11px] leading-none px-1.5 py-0.5 rounded-full bg-gray-800 border border-gray-700">${e}${r[e].length > 1 ? `<span class="text-[10px] text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</span>`
+                ).join('') + `</div>`;
+            }
+
+            let cache = [];
+
+            function openLightbox(id) {
+                const m = cache.find(x => x.id === id);
+                if (!m) return;
+                const overlay = document.createElement('div');
+                overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
+                overlay.style.background = 'rgba(0,0,0,0.88)';
+                overlay.innerHTML = `
+                    <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
+                        <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
+                        ${mediaEl(m, 'max-h-[68vh] rounded-2xl mx-auto object-contain', { full: true })}
+                        ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
+                        <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
+                    </div>`;
+                overlay.addEventListener('click', () => overlay.remove());
+                document.body.appendChild(overlay);
+            }
+            window.openMomentFromGallery = openLightbox;
+
+            function render(moments) {
+                const body = document.getElementById('moments-body');
+                if (!moments.length) {
+                    body.innerHTML = `<div class="bg-gray-800/60 rounded-2xl border border-gray-700 p-8 text-center">
+                        <div class="text-4xl mb-3">📸</div>
+                        <div class="text-white font-bold mb-1">No moments yet</div>
+                        <div class="text-gray-400 text-sm">When someone's at a game or a recital, Chauffeur asks them
+                            to share a moment — it'll show up here for everyone who couldn't be there.</div>
+                    </div>`;
+                    return;
+                }
+                const groups = [];
+                for (const m of moments) {
+                    const label = dayLabel(m.ts);
+                    if (!groups.length || groups[groups.length - 1].label !== label) {
+                        groups.push({ label: label, items: [] });
+                    }
+                    groups[groups.length - 1].items.push(m);
+                }
+                const minTile = isKiosk ? '300px' : '220px';
+                body.innerHTML = groups.map(g => `
+                    <section class="mb-8">
+                        <div class="flex items-center gap-3 mb-3">
+                            <span class="text-[11px] font-black uppercase tracking-widest text-gray-500">${esc(g.label)}</span>
+                            <div class="flex-1 h-px bg-gray-700/60"></div>
+                            <span class="text-[11px] text-gray-600">${g.items.length}</span>
+                        </div>
+                        <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(${minTile}, 1fr))">
+                            ${g.items.map(m => `
+                                <button onclick="openMomentFromGallery('${m.id}')"
+                                    class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
+                                    <div class="relative w-full bg-black" style="aspect-ratio: 4/3">
+                                        ${mediaEl(m, 'w-full h-full object-cover')}
+                                        ${(m.attachment || {}).kind === 'video'
+                                            ? '<span class="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none">▶️</span>' : ''}
+                                    </div>
+                                    <div class="p-3">
+                                        <div class="font-bold text-white text-sm truncate">${esc(m.event_title)}</div>
+                                        ${m.body ? `<div class="text-[13px] text-gray-300 mt-0.5 line-clamp-2">${esc(m.body)}</div>` : ''}
+                                        <div class="text-[11px] text-gray-500 mt-1">from ${esc(m.sender_name)} · ${timeLabel(m.ts)}</div>
+                                        ${reactionPills(m)}
+                                    </div>
+                                </button>`).join('')}
+                        </div>
+                    </section>`).join('');
+            }
+
+            async function load() {
+                try {
+                    const res = await fetch(`${apiBase}api/presence/moments?hours=${HOURS}&limit=200`);
+                    if (!res.ok) return;
+                    cache = (await res.json()).filter(m => m.attachment
+                        && (m.attachment.data_url || m.attachment.url));
+                    render(cache);
+                    const sub = document.getElementById('moments-sub');
+                    if (sub && cache.length) {
+                        sub.textContent = `${cache.length} moment${cache.length !== 1 ? 's' : ''} from the last 30 days.`;
+                    }
+                } catch (e) {
+                    document.getElementById('moments-body').innerHTML =
+                        '<div class="text-gray-500">Could not load moments.</div>';
+                }
+            }
+
+            if (hideTitle) document.getElementById('moments-header').style.display = 'none';
+            load();
+            // Kiosk panels are unattended: keep the wall current on its own.
+            if (isKiosk) setInterval(load, 60000);
+        })();
+    </script>
+</body>
+
+</html>

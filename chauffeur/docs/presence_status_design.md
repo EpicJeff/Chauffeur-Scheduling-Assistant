@@ -389,6 +389,24 @@ distinct idea with a distinct trap, tracked separately so it isn't swallowed.
    the prompt cadence tightened to 2 min so it lands in an event's opening
    minutes. Tests: 10 scenarios.
 
+   **v2.60.0 — the Moments gallery (the missing surface).** Family
+   framing: *"I wanted a moments page all along — it's basically the wall
+   panel version of Messages, which we got rid of."* Correct, and the gap
+   was real: the hearth only ever showed the NEWEST moment, on two of
+   eleven kiosk pages, within 12 h — the surface built to be the family
+   hearth was the one place you couldn't look back at the fire. Shipped:
+   **`/moments`**, a first-class nav tab (desktop + mobile + `?tabs=`
+   slug), day-grouped grid of the last 30 days reusing the chat's own
+   Today/Yesterday/weekday labels, photos + clips, lightbox on tap,
+   read-only reaction pills (no signed-in identity on a wall panel), 60-s
+   self-refresh in kiosk. The hearth card became a **rail** (newest +
+   recent thumbnails + "See all →"), and the pop/browse windows were
+   **split**: the rail browses a week, the unbidden overlay still only
+   fires under 12 h — one window was doing both jobs badly. Principle
+   worth keeping: *the hearth is for what just happened; the gallery is
+   for the season.* That season-scrapbook byproduct the doc warned not to
+   BUILD for is now visible without ever having been aimed at.
+
    The design (kept for the record): the container is the existing
    event Discuss chat, anchored to the event forever and reachable from the
    event chip and the chats tab — a small marginal build, not a new platform.

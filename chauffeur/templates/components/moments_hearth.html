@@ -5,8 +5,10 @@
      with ?kiosk=true. Polls /api/presence/moments every 60s; dedupe is the
      celebration convention — localStorage seeded silently on first sight so a
      freshly mounted panel never replays old moments. If the page provides a
-     <div id="moments-hearth-card"></div> mount, the newest moment also stays
-     browsable as a card there; without a mount the overlay still works. -->
+     <div id="moments-hearth-card"></div> mount, a rail (newest + recent
+     thumbnails + "See all →" to /moments) renders there; without a mount the
+     overlay still works. Looking further back than the rail is the /moments
+     gallery page. -->
 <script>
     (function () {
         if (new URLSearchParams(window.location.search).get('kiosk') !== 'true') return;
@@ -55,37 +57,74 @@
             setTimeout(() => overlay.remove(), (m.attachment || {}).kind === 'video' ? 30000 : 20000);
         };
 
-        function renderCard(m) {
+        // Rail state — index-addressed so tile handlers never inline JSON.
+        let rail = [];
+        window.openHearthMoment = function (i) {
+            if (rail[i]) window.showMomentOverlayKiosk(rail[i]);
+        };
+
+        function galleryHref() {
+            const pageBase = window.location.pathname.endsWith('/') ? '../' : '';
+            // nav.html's param propagation runs at DOMContentLoaded and can't
+            // see this link (rendered on poll), so carry the params here.
+            return `${pageBase}moments${window.location.search}`;
+        }
+
+        function renderRail(moments) {
             const mount = document.getElementById('moments-hearth-card');
             if (!mount) return;
-            if (!m) { mount.innerHTML = ''; return; }
+            rail = moments;
+            if (!moments.length) { mount.innerHTML = ''; return; }
+            const m = moments[0];
+            const rest = moments.slice(1, 7);
             mount.innerHTML = `
                 <div class="mb-8">
-                    <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4 flex items-center gap-4 max-w-2xl cursor-pointer"
-                        onclick='showMomentOverlayKiosk(${JSON.stringify(m).replace(/[<'&]/g, c => ({"<": "\\u003c", "'": "\\u0027", "&": "\\u0026"}[c]))})'>
-                        <div class="w-28 h-28 rounded-xl overflow-hidden shrink-0">${mediaHtml(m, 'w-full h-full object-cover')}</div>
-                        <div class="min-w-0">
-                            <div class="text-[11px] font-black uppercase tracking-widest text-pink-300 mb-1">📸 Latest moment</div>
-                            <div class="font-bold text-white truncate">${esc(m.event_title)}</div>
-                            ${m.body ? `<div class="text-sm text-gray-300 mt-1">${esc(m.body)}</div>` : ''}
-                            <div class="text-xs text-gray-500 mt-2">from ${esc(m.sender_name)} · ${momentAgo(m.ts)}</div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="text-[11px] font-black uppercase tracking-widest text-pink-300">📸 Moments</span>
+                        <div class="flex-1 h-px bg-gray-700/60"></div>
+                        <a href="${galleryHref()}" class="text-[11px] font-bold text-pink-300 hover:text-pink-200">See all →</a>
+                    </div>
+                    <div class="flex items-stretch gap-3 flex-wrap">
+                        <div class="bg-gray-800/60 rounded-2xl border border-pink-900/60 p-4 flex items-center gap-4 cursor-pointer flex-1 min-w-[320px] max-w-2xl"
+                            onclick="openHearthMoment(0)">
+                            <div class="w-28 h-28 rounded-xl overflow-hidden shrink-0 bg-black">${mediaHtml(m, 'w-full h-full object-cover')}</div>
+                            <div class="min-w-0">
+                                <div class="font-bold text-white truncate">${esc(m.event_title)}</div>
+                                ${m.body ? `<div class="text-sm text-gray-300 mt-1">${esc(m.body)}</div>` : ''}
+                                <div class="text-xs text-gray-500 mt-2">from ${esc(m.sender_name)} · ${momentAgo(m.ts)}</div>
+                            </div>
                         </div>
+                        ${rest.length ? `<div class="flex gap-2 flex-wrap items-center">` + rest.map((x, i) => `
+                            <button onclick="openHearthMoment(${i + 1})"
+                                class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/50 bg-black shrink-0">
+                                ${mediaHtml(x, 'w-full h-full object-cover')}
+                                ${(x.attachment || {}).kind === 'video'
+                                    ? '<span class="absolute inset-0 flex items-center justify-center text-xl pointer-events-none">▶️</span>' : ''}
+                            </button>`).join('') + `</div>` : ''}
                     </div>
                 </div>`;
         }
 
         async function poll() {
             try {
-                const res = await fetch(`${apiBase}api/presence/moments?hours=12`);
+                // TWO windows, deliberately: the rail looks back a week so the
+                // panel is browsable, but the unbidden pop stays fresh-only —
+                // a panel powered on after a few days must not ambush the room
+                // with Tuesday's game.
+                const BROWSE_HOURS = 24 * 7;
+                const POP_MAX_AGE_S = 12 * 3600;
+                const res = await fetch(`${apiBase}api/presence/moments?hours=${BROWSE_HOURS}&limit=12`);
                 if (!res.ok) return;
                 const moments = (await res.json()).filter(m => m.attachment
                     && (m.attachment.data_url || m.attachment.url));
-                renderCard(moments[0] || null);
+                renderRail(moments);
                 const prev = localStorage.getItem(SEEN_KEY);
                 const newest = moments.length ? (moments[0].ts || 0) : 0;
                 localStorage.setItem(SEEN_KEY, String(Math.max(newest, parseFloat(prev || '0') || 0)));
                 if (prev === null) return;   // first sighting: seed silently
-                const fresh = moments.filter(m => (m.ts || 0) > (parseFloat(prev) || 0));
+                const seen = parseFloat(prev) || 0;
+                const cutoff = (Date.now() / 1000) - POP_MAX_AGE_S;
+                const fresh = moments.filter(m => (m.ts || 0) > seen && (m.ts || 0) > cutoff);
                 if (fresh.length) window.showMomentOverlayKiosk(fresh[0]);
             } catch (e) { }
         }

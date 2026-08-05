@@ -725,6 +725,12 @@ def config(request: Request):
 def calendar_view(request: Request):
     return templates.TemplateResponse(request=request, name="calendar.html")
 
+@app.get("/moments", response_class=HTMLResponse)
+def moments_gallery(request: Request):
+    """The Moments gallery — the wall-panel surface for looking BACK at
+    moments (the hearth overlay/rail only ever shows the newest)."""
+    return templates.TemplateResponse(request=request, name="moments.html")
+
 @app.get("/moment", response_class=HTMLResponse)
 def moment_popup(request: Request):
     """Standalone one-moment page in the hearth style — built to be iframed
@@ -5599,9 +5605,11 @@ def react_to_message(message_id: str, req: ReactRequest):
 
 @app.get("/api/presence/moments")
 def get_presence_moments(hours: float = 12, limit: int = 12):
-    """Recent moments (photos + clips) from event chats — the hearth feed."""
+    """Recent moments (photos + clips) from event chats — the hearth feed.
+    Caps are generous enough for the /moments gallery (30 days) while the
+    default stays the small freshness window the hearth pop wants."""
     from services import presence
-    return presence.recent_moments(hours=min(hours, 168), limit=min(limit, 30))
+    return presence.recent_moments(hours=min(hours, 720), limit=min(limit, 200))
 
 # "Photos of sports does nothing. Videos are the thing." (family, 2026-08-04)
 # Clips upload as files on the family's box and transcode to H.264 720p in

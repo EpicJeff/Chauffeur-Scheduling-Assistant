@@ -480,6 +480,33 @@ def scenario_recent_moments_feed():
     check(presence.recent_moments(hours=0.001) == [], "hours window respected")
 
 
+def scenario_gallery_window_and_route():
+    """The hearth pop and the gallery need DIFFERENT windows: a 5-day-old
+    moment belongs in /moments but must never pop on a panel."""
+    import main
+    _family()
+    ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    t0 = time.time()
+    for mid, ts in (("fresh", t0 - 60), ("old", t0 - 5 * 86400)):
+        storage.add_chat_message({"id": mid, "channel_id": ch["id"], "sender_member_id": "mom",
+                                  "ts": ts, "type": "text", "body": mid,
+                                  "attachment": {"kind": "photo", "data_url": _TINY_JPEG},
+                                  "reactions": {}})
+
+    pop = [m["id"] for m in main.get_presence_moments(hours=12)]
+    check(pop == ["fresh"], f"the pop window sees only fresh moments, got {pop}")
+    gallery = [m["id"] for m in main.get_presence_moments(hours=24 * 30, limit=200)]
+    check(gallery == ["fresh", "old"], f"the gallery window looks back, got {gallery}")
+
+    # Absurd params clamp instead of erroring (caps raised for the gallery).
+    capped = main.get_presence_moments(hours=99999, limit=9999)
+    check(len(capped) == 2, f"out-of-range params clamp, got {len(capped)}")
+
+    paths = {getattr(r, 'path', '') for r in main.app.routes}
+    check('/moments' in paths and '/moment' in paths,
+          "gallery page and single-moment popup routes both registered")
+
+
 SCENARIOS = [
     scenario_attachment_send_and_validation,
     scenario_reaction_toggle_and_endpoint,
@@ -492,6 +519,7 @@ SCENARIOS = [
     scenario_video_transcode_pipeline,
     scenario_moment_fanout_differentiated,
     scenario_recent_moments_feed,
+    scenario_gallery_window_and_route,
 ]
 
 if __name__ == "__main__":

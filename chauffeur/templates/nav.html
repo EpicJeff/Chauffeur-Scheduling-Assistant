@@ -86,6 +86,17 @@
                             </svg>
                             Map
                         </a>
+                        <a href="moments"
+                            class="{% if request.url.path.endswith('/moments') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z">
+                                </path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            Moments
+                        </a>
                     </div>
                 </div>
             </div>
@@ -179,7 +190,7 @@
             //   ?tabs=none                -> no nav bar at all (pure card)
             //   ?tabs=schedule,chores     -> only those tabs visible
             // Slugs: schedule, calendar, errands, chores, routines, intake,
-            // trips, map. Unknown/empty values are ignored, not fatal.
+            // trips, map, moments. Unknown/empty values are ignored, not fatal.
             const tabsParam = urlParams.get('tabs');
             if (tabsParam !== null) {
                 const navEl = document.querySelector('nav');
@@ -192,7 +203,7 @@
                         'dashboard_v2': 'schedule', 'calendar': 'calendar',
                         'errands': 'errands', 'chores': 'chores',
                         'routines': 'routines', 'intake': 'intake',
-                        'trips': 'trips', 'map': 'map'
+                        'trips': 'trips', 'map': 'map', 'moments': 'moments'
                     };
                     document.querySelectorAll('nav a[href]').forEach(a => {
                         // hrefs were rewritten above to full paths, which under
@@ -282,6 +293,17 @@
                     </path>
                 </svg>
                 Map
+            </a>
+            <a href="moments"
+                class="{% if request.url.path.endswith('/moments') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z">
+                    </path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                Moments
             </a>
             <a href="config" id="mobile-settings-nav-item"
                 class="{% if 'config' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
