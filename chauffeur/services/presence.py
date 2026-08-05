@@ -287,7 +287,12 @@ def poster_url_for(att) -> str:
     if not url.startswith('/api/media/'):
         return ''
     stem = url.rsplit('/', 1)[-1].split('.')[0]
-    return f'/api/media/{stem}.jpg' if stem else ''
+    # Only advertise a poster we can actually deliver (it exists, or ffmpeg is
+    # installed to make it). Without this a box with no ffmpeg serves 404s and
+    # every clip tile renders empty — worse than the black box we replaced.
+    if not stem or not storage.poster_available(stem):
+        return ''
+    return f'/api/media/{stem}.jpg'
 
 
 def _moment_row(m, members, event_title=None):
@@ -347,6 +352,8 @@ def moment_events(offset: int = 0, limit: int = 24):
             'latest_ts': b.get('latest_ts'),
             'cover_url': (poster_url_for(cover_att) or str(cover_att.get('url') or '')
                           or by_message),
+            # The media itself, for the client's thumbnail-failed fallback.
+            'cover_media_url': str(cover_att.get('url') or '') or by_message,
             'cover_kind': cover_att.get('kind') or 'photo',
             'sender_names': sorted(n for n in names if n),
         })

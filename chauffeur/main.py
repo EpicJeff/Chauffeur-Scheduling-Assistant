@@ -5634,6 +5634,40 @@ def get_event_moments(channel_id: str, offset: int = 0, limit: int = 30):
     return presence.event_moments(channel_id, offset=max(0, offset),
                                   limit=min(max(1, limit), 100))
 
+@app.get("/api/debug/media")
+def debug_moment_media():
+    """Is the moment media pipeline healthy on THIS box? Chiefly: did the
+    add-on image actually bring ffmpeg (posters + transcoding depend on it,
+    and a Dockerfile change only lands on a REBUILD, not a restart)."""
+    ffmpeg = storage._ffmpeg_path()
+    files = []
+    try:
+        files = os.listdir(storage.MEDIA_DIR)
+    except OSError:
+        pass
+    clips = [f for f in files if os.path.splitext(f)[1] in ('.mp4', '.webm', '.mov', '.m4v')]
+    posters = {os.path.splitext(f)[0] for f in files if f.endswith('.jpg')}
+    missing = [c for c in clips if os.path.splitext(c)[0] not in posters]
+    inline = 0
+    with storage.db_lock:
+        for m in storage.chat_messages_table.all():
+            att = m.get('attachment') or {}
+            if att.get('kind') == 'photo' and att.get('data_url'):
+                inline += 1
+    return {
+        'ffmpeg': ffmpeg or None,
+        'ffmpeg_ok': bool(ffmpeg),
+        'media_dir': storage.MEDIA_DIR,
+        'clips': len(clips),
+        'posters': len(posters),
+        'clips_missing_posters': missing[:20],
+        'photos_still_inline': inline,
+        'hint': ('OK' if ffmpeg else
+                 'ffmpeg missing — REBUILD the add-on (a restart will not pick up '
+                 'the Dockerfile change). Clip thumbnails fall back to video tiles '
+                 'until then.'),
+    }
+
 @app.get("/api/moments/{message_id}/media")
 def serve_moment_media_by_message(message_id: str):
     """Stable per-moment media URL. Photos are stored as inline data URLs

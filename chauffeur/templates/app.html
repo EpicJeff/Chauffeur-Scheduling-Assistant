@@ -1470,6 +1470,18 @@
             loadMomentsStrip();
         }
 
+        // A thumbnail that fails (missing poster frame, pruned file) must
+        // never leave an empty tile — fall back to the media itself.
+        function momentThumbFallback(img) {
+            const src = img.getAttribute('data-fallback');
+            if (!src || img.dataset.fellBack) return;
+            img.dataset.fellBack = '1';
+            const v = document.createElement('video');
+            v.src = src; v.muted = true; v.playsInline = true;
+            v.preload = 'metadata'; v.className = img.className;
+            img.replaceWith(v);
+        }
+
         // 📸 Moments strip: recent event-chat moments across the family,
         // browsable above the channel list; tap-through to the thread.
         async function loadMomentsStrip() {
@@ -1484,7 +1496,9 @@
                     // By-URL + lazy, and always a still (clips carry a poster
                     // frame) so the strip stays cheap however many exist.
                     const poster = `${apiBase}${String(m.poster_url || m.media_url || '').replace(/^\//, '')}`;
-                    const media = `<img src="${poster}" loading="lazy" class="w-full h-full object-cover">`
+                    const full = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
+                    const media = `<img src="${poster}" loading="lazy" data-fallback="${full}"
+                        onerror="momentThumbFallback(this)" class="w-full h-full object-cover">`
                         + (m.kind === 'video' ? `
                            <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
                                <span class="flex items-center justify-center w-8 h-8 rounded-full bg-black/55 ring-1 ring-white/25">

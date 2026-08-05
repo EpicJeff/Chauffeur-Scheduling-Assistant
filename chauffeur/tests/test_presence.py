@@ -528,8 +528,17 @@ def scenario_video_posters_and_photo_files():
     # Poster URL is DERIVED from the clip id, so clips predating posters get
     # one too; a miss self-heals by generating the frame on request.
     att = {"kind": "video", "url": "/api/media/" + "b" * 32 + ".mp4"}
-    check(presence.poster_url_for(att) == "/api/media/" + "b" * 32 + ".jpg",
-          f"poster derived beside the clip, got {presence.poster_url_for(att)}")
+    with mock.patch.object(storage, "_ffmpeg_path", return_value="/usr/bin/ffmpeg"):
+        check(presence.poster_url_for(att) == "/api/media/" + "b" * 32 + ".jpg",
+              f"poster derived beside the clip, got {presence.poster_url_for(att)}")
+    # No ffmpeg and no poster on disk: do NOT advertise a poster URL that
+    # would 404 and render as an empty tile — fall back to the clip.
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        check(presence.poster_url_for(att) == "",
+              "no deliverable poster -> no poster URL")
+        row = presence._moment_row({"id": "x", "attachment": att, "ts": 1}, {})
+        check(row["poster_url"] == att["url"],
+              f"row falls back to the clip itself, got {row['poster_url']}")
     check(presence.poster_url_for({"kind": "photo", "url": "/api/media/x.jpg"}) == "",
           "photos have no separate poster — they are their own thumbnail")
 

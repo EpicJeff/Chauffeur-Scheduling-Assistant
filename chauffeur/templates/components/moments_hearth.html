@@ -49,8 +49,22 @@
                     ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline class="${cls}"></video>`
                     : `<img src="${mediaUrl(m)}" class="${cls}">`;
             }
-            return `<img src="${mediaUrl(m, 'poster')}" loading="lazy" class="${cls}">`;
+            return `<img src="${mediaUrl(m, 'poster')}" loading="lazy"
+                        data-fallback="${mediaUrl(m)}" onerror="momentThumbFallback(this)"
+                        class="${cls}">`;
         }
+
+        // A thumbnail that fails (missing poster frame) must never leave an
+        // empty tile — fall back to the media itself.
+        window.momentThumbFallback = function (img) {
+            const src = img.getAttribute('data-fallback');
+            if (!src || img.dataset.fellBack) return;
+            img.dataset.fellBack = '1';
+            const v = document.createElement('video');
+            v.src = src; v.muted = true; v.playsInline = true;
+            v.preload = 'metadata'; v.className = img.className;
+            img.replaceWith(v);
+        };
 
         function momentAgo(ts) {
             const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));

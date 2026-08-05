@@ -1807,6 +1807,15 @@ def _ffmpeg_path() -> Optional[str]:
     return shutil.which('ffmpeg')
 
 
+def poster_available(stem: str) -> bool:
+    """Can a poster for this clip actually be served? Either it already
+    exists, or ffmpeg is here to make one on request. Callers must not
+    advertise a poster URL otherwise — a 404 renders as an empty tile."""
+    if os.path.isfile(os.path.join(MEDIA_DIR, stem + '.jpg')):
+        return True
+    return bool(_ffmpeg_path())
+
+
 def generate_poster(stem: str) -> bool:
     """Extract a still frame from a clip as {stem}.jpg — the thumbnail every
     video tile shows. Without it a <video> tile is just a black box (browsers

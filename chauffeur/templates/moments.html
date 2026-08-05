@@ -111,10 +111,23 @@
             // Clips carry an ffmpeg-extracted poster frame, so a grid of 200
             // clips costs 200 thumbnails, not 200 video streams (and never
             // shows the black box browsers paint for preload=metadata).
-            function thumb(posterUrl, kind) {
-                return `<img src="${url(posterUrl)}" loading="lazy" class="tile-media">`
+            function thumb(posterUrl, kind, fullUrl) {
+                return `<img src="${url(posterUrl)}" loading="lazy" data-fallback="${url(fullUrl || posterUrl)}"
+                            onerror="momentThumbFallback(this)" class="tile-media">`
                     + (kind === 'video' ? PLAY_BADGE : '');
             }
+
+            // A thumbnail that fails (missing poster frame) must never leave
+            // an empty tile — fall back to the media itself.
+            window.momentThumbFallback = function (img) {
+                const src = img.getAttribute('data-fallback');
+                if (!src || img.dataset.fellBack) return;
+                img.dataset.fellBack = '1';
+                const v = document.createElement('video');
+                v.src = src; v.muted = true; v.playsInline = true;
+                v.preload = 'metadata'; v.className = img.className;
+                img.replaceWith(v);
+            };
 
             function reactionPills(m) {
                 const r = m.reactions || {};
@@ -167,7 +180,7 @@
                     <button onclick="showEvent('${e.channel_id}')"
                         class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
                         <div class="relative w-full" style="aspect-ratio: 4/3">
-                            ${thumb(e.cover_url, e.cover_kind)}
+                            ${thumb(e.cover_url, e.cover_kind, e.cover_media_url)}
                             <span class="absolute top-2 right-2 text-[11px] font-bold bg-black/70 text-white px-2 py-0.5 rounded-full">
                                 ${e.count} moment${e.count !== 1 ? 's' : ''}</span>
                         </div>
@@ -183,7 +196,7 @@
                 body.innerHTML = gridOpen() + mItems.map(m => `
                     <button onclick="openMomentLightbox('${m.id}')"
                         class="text-left bg-gray-800/60 rounded-2xl border border-pink-900/40 overflow-hidden hover:border-pink-500/60 transition-colors">
-                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind)}</div>
+                        <div class="relative w-full" style="aspect-ratio: 4/3">${thumb(m.poster_url, m.kind, m.media_url)}</div>
                         <div class="p-3">
                             ${m.body ? `<div class="text-[13px] text-gray-200">${esc(m.body)}</div>` : ''}
                             <div class="text-[11px] text-gray-500 mt-1">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
