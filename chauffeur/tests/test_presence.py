@@ -934,6 +934,18 @@ def scenario_resumable_upload():
     except HTTPException as e:
         check(e.status_code == 400, "empty upload refused at init")
 
+    # The add-on's own volume is the real limit, not the cap: uploads and
+    # transcodes work in /data, which Home Assistant shares, and running it
+    # out takes HA down rather than merely failing the upload.
+    with mock.patch.object(storage, "scratch_free_bytes", return_value=1024):
+        try:
+            main.init_resumable_upload(main.UploadInitRequest(
+                size=500 * 1024 * 1024, mime="video/mp4"))
+            check(False, "expected 507")
+        except HTTPException as e:
+            check(e.status_code == 507 and "free" in e.detail,
+                  f"refused when /data lacks working space, got {e.detail}")
+
     payload = b"fake-mp4-bytes-" * 400
     init = main.init_resumable_upload(main.UploadInitRequest(
         size=len(payload), mime="video/mp4"))

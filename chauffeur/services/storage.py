@@ -258,6 +258,18 @@ def migrate_media_layout(batch_limit: int = 0) -> dict:
     return {'scanned': scanned, 'moved': moved, 'errors': errors, 'complete': True}
 
 
+def scratch_free_bytes() -> int:
+    """Free space where uploads and transcodes work. This is the add-on's own
+    volume — /data on the VM's virtual disk — NOT the media root. Filling it
+    does not just fail an upload: Home Assistant shares that disk, and it
+    fails badly when it runs out."""
+    import shutil
+    try:
+        return shutil.disk_usage(media_scratch_dir()).free
+    except OSError:
+        return 0
+
+
 def media_move_into_place(src: str, dst: str):
     """os.replace is atomic but same-filesystem only, and the media root may
     be a mount. Fall back to a cross-device move."""
@@ -2140,13 +2152,19 @@ def _transcode_media(stem: str):
     try:
         # The gate is held only around ffmpeg, so queued clips do not burn
         # their own timeout budget waiting for a slot.
+        # Run it nice. A 4K decode will take every core it is given, and this
+        # box is also running Home Assistant — a pegged CPU reads to the
+        # supervisor as an unresponsive add-on.
+        nice = None
+        if hasattr(os, 'nice'):
+            nice = lambda: os.nice(10)   # noqa: E731 — preexec_fn wants a callable
         with _TRANSCODE_GATE:
             subprocess.run(
                 [_ffmpeg_path(), '-y', '-i', orig,
                  '-vf', "scale='min(1280,iw)':-2",
                  '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
                  '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
-                check=True, capture_output=True, timeout=budget)
+                check=True, capture_output=True, timeout=budget, preexec_fn=nice)
         media_move_into_place(tmp, final)
         os.remove(orig)
         generate_poster(stem)   # thumbnail, so tiles never show a black box

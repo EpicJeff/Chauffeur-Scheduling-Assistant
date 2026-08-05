@@ -5765,6 +5765,17 @@ def debug_moment_media():
         # not a mounted share — the usual cause is a media_root whose spelling
         # does not match the mount name in HA.
         'media_root_is_mount': storage._is_separate_filesystem(storage.MEDIA_DIR),
+        # Uploads and transcodes work on the ADD-ON's volume even when media
+        # is stored elsewhere — this is the number that matters if HA starts
+        # misbehaving during an upload.
+        'scratch_dir': storage.media_scratch_dir(),
+        'scratch_free_gb': round(storage.scratch_free_bytes() / (1024 ** 3), 2),
+        'scratch_reserve_gb': round(_DISK_RESERVE_BYTES / (1024 ** 3), 2),
+        'scratch_in_use_bytes': sum(
+            os.path.getsize(os.path.join(storage.media_scratch_dir(), n))
+            for n in (os.listdir(storage.media_scratch_dir())
+                      if os.path.isdir(storage.media_scratch_dir()) else [])
+            if os.path.isfile(os.path.join(storage.media_scratch_dir(), n))),
         'clips': len(clips),
         'posters': len(posters),
         'clips_missing_posters': missing[:20],
@@ -5835,7 +5846,11 @@ def serve_moment_media_by_message(message_id: str):
 # and both halves of that are gone. A phone's own 4K60 clip is the unit here.
 _VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024
 _UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024
-_UPLOAD_STALE_SECS = 24 * 3600
+# Abandoned parts are swept far more aggressively than they were: at 2 GB a
+# handful of failed retries can fill /data long before a 24 h sweep runs.
+_UPLOAD_STALE_SECS = 2 * 3600
+# Never let uploads take the volume below this. Home Assistant shares it.
+_DISK_RESERVE_BYTES = 4 * 1024 * 1024 * 1024
 
 
 def _upload_paths(upload_id: str):
@@ -5887,6 +5902,19 @@ def init_resumable_upload(req: UploadInitRequest):
             status_code=413,
             detail=f"That clip is {req.size / (1024**3):.1f}GB — the limit is {gb:.0f}GB")
     _sweep_stale_uploads()
+    # The real limit is not the cap, it is the add-on's own volume. Uploads
+    # and transcodes work in /data, which Home Assistant shares — running it
+    # out does not merely fail this upload, it takes HA down with it. Refuse
+    # early and say so, keeping a hard reserve free no matter what.
+    free = storage.scratch_free_bytes()
+    need = int(req.size * 1.15) + _DISK_RESERVE_BYTES
+    if free and free < need:
+        raise HTTPException(
+            status_code=507,
+            detail=(f"Not enough working space on the add-on's disk for a "
+                    f"{req.size / (1024**3):.1f}GB clip "
+                    f"({free / (1024**3):.1f}GB free). Uploads need room on /data "
+                    f"to transcode even when media is stored elsewhere."))
     upload_id = _uuid.uuid4().hex
     part, meta = _upload_paths(upload_id)
     with open(part, 'wb'):
@@ -5968,6 +5996,7 @@ def complete_resumable_upload(upload_id: str):
     saved = storage.finalize_media_upload(part, info.get('mime') or '')
     if not saved:
         raise HTTPException(status_code=400, detail="Unsupported video format")
+    _sweep_stale_uploads()   # a finished upload is a good moment to tidy
     return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}
 
 @app.post("/api/moments/upload")
