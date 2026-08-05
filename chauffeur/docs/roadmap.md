@@ -3,8 +3,8 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-05 (v2.69.1 — meals & provisioning arc
-designed; the old "meals" cut reversed).
+up cold. Last updated: 2026-08-05 (v2.69.2 — meals & provisioning arc
+designed and revised; the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -202,13 +202,23 @@ that the codebase disproves (see the reversed cut below). Full design brief:
 `docs/meal_design.md`.
 
 The insight: **the load is in the constraints, not the recipes.** At 4pm the
-blocker is not a shortage of recipes, it is that practice ends at 7:15 and a
-parent is on pickup until 6:40 — so the window is 25 minutes and the family
-eats in two shifts. Chauffeur is the only app in the house that knows that.
-Own the constraint layer, bridge the content (Mealie/Tandoor/Grocy do recipes
-well). Nightly derivation, never a stored weekly plan — a Sunday plan is a
-static artifact fighting a schedule that mutates by Tuesday, which is the
-same reason this app re-solves rather than schedules once.
+blocker is not a shortage of recipes, it is that practice ends at 7:15, a
+parent is on pickup until 6:40, and two kids eat in the car at 5:10 while the
+rest eat at home at 7:30 — so the question is what can be made in pieces
+before 3:40, packed in three containers, and eaten with a fork in a moving
+car. Chauffeur is the only app in the house that knows that. Own the
+constraint layer, bridge the content (Mealie/Tandoor/Grocy do recipes well).
+Nightly derivation, never a stored weekly plan — a Sunday plan is a static
+artifact fighting a schedule that mutates by Tuesday, which is the same
+reason this app re-solves rather than schedules once.
+
+Corrected 2026-08-05 by how the family actually eats: meals are prepped in
+pieces across the day and eaten **in the car between activities**, and an
+entry may be ordered, part-ordered, or all prep. Two consequences — the
+standalone "bail-out" phase dissolved (ordered food is ordinary, not an
+emergency), and in-car dining rules are **per-family settings, not
+constants** (this family eats full meals with utensils in the car; others
+won't eat in the car at all).
 
 - **M1 — the shopping list (provisioning).** Standing `ShoppingList` /
   `ShoppingItem` entities bound to the recurring grocery errand by tag (NOT
@@ -220,19 +230,27 @@ same reason this app re-solves rather than schedules once.
   included. Barcode deliberately deferred to the native wrapper (Open Food
   Facts solves the lookup for free; `BarcodeDetector` exists in no iOS
   browser, so today it means a WASM decoder — Capacitor gets ML Kit free).
-- **M2 — the bail-out (route-aware meal stops).** Cheapest high-value item:
-  C3's fuel-stop flow retargeted from `gas_station` to restaurants, gated on
-  `trip_scheduler.MEAL_ANCHOR` windows, reusing `dining_style='quick'`.
-  Complication to respect: a fuel stop is one driver on one route; a dinner
-  stop must know who is in the car vs. eating at home.
-- **M3 — the dinner window (the moat).** Read-only derivation over solver
-  output: cook window, eaters per sitting, split-service flag → a line on the
-  existing evening digest + kiosk. Valuable with no recipes attached.
-- **M4 — the repertoire.** 10–20 family meals (cook time, serves, tags,
-  free-text ingredients, `last_served_at` for rotation) filtered by M3's
-  window; ingredients drain into M1. Deliberately thin — a Mealie import is
-  the on-ramp if it ever wants to be a real recipe box. Dietary constraints
-  on FamilyMember, mirroring the solver's grammar: allergies hard, prefs soft.
+- **M2 — the day's eating plan (the moat).** Read-only derivation over solver
+  output: per-person **eating slots** with a modality (`at_home` / `in_car` /
+  `at_venue`), spans not timestamps. Passengers can eat during a leg, the
+  driver cannot — which is the structural reason the driving parent doesn't
+  eat, and "no feasible slot for anyone" is a first-class finding (and the
+  honest trigger for route food, replacing any clock heuristic). Packed meals
+  are **computed** items on the existing `prep_kits.py` surfaces with counts
+  read off the solver's manifest — reuse the surface, not the rule engine.
+  `prep_ahead_mins` becomes schedulable into any earlier gap; `needs_ahead`
+  (thaw) creates a morning touchpoint on K5's launch line. Ordered/hybrid
+  meals route via C3's min-detour machinery, and **delivery is a presence
+  constraint the solver can check** ("nobody is home 6:00–6:40").
+- **M3 — the repertoire.** Fit, not method: four timing numbers
+  (`prep_ahead`/`finish`/`unattended`/`needs_ahead`) instead of one cook time,
+  plus `holds_well`, `portability`, and a `source` axis (prep/ordered/hybrid
+  with vendor + `order_lead_mins` + pickup/delivery). Ingredients classed
+  staple-vs-fresh — inventory's value with no inventory to maintain. Human
+  supplies the name, the LLM fills the metadata, or it never reaches 15
+  entries. ~15–25 entries, surfaced as a filter result not a browsable page,
+  no steps ever. Mealie import is the later on-ramp. Dietary constraints on
+  FamilyMember, mirroring the solver's grammar: allergies hard, prefs soft.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 
