@@ -1544,6 +1544,63 @@
             img.replaceWith(v);
         }
 
+        // The soft play glyph used everywhere a clip is shown as a still —
+        // never the OS ▶️ emoji, which renders differently on every device and
+        // reads like a sticker stuck on the photo. Sizes are LITERAL class
+        // strings: Tailwind only emits classes it can see in the source, so a
+        // interpolated `w-${n}` would silently render unstyled.
+        function playBadge(small) {
+            const ring = small ? 'w-8 h-8' : 'w-12 h-12';
+            const tri = small ? 'w-4 h-4' : 'w-6 h-6';
+            return `<span class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <span class="flex items-center justify-center ${ring} rounded-full bg-black/55 backdrop-blur-sm ring-1 ring-white/25">
+                        <svg viewBox="0 0 24 24" class="${tri} translate-x-[1px]" fill="white" opacity="0.95">
+                            <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
+                        </svg>
+                    </span>
+                </span>`;
+        }
+
+        // Draw a real frame out of a LOCAL file, so a staged clip shows what
+        // it is instead of the black box a <video preload=metadata> paints.
+        // Same idea as the server's ffmpeg poster, done in the browser before
+        // anything is uploaded. Seeks slightly in — frame 0 is often a black
+        // lead-in — and resolves '' on any failure so callers can fall back.
+        function extractVideoPoster(file) {
+            return new Promise(resolve => {
+                const url = URL.createObjectURL(file);
+                const v = document.createElement('video');
+                let settled = false;
+                const done = out => {
+                    if (settled) return;
+                    settled = true;
+                    URL.revokeObjectURL(url);
+                    resolve(out);
+                };
+                v.preload = 'metadata';
+                v.muted = true;
+                v.playsInline = true;
+                v.onloadedmetadata = () => {
+                    v.currentTime = Math.min(0.5, (v.duration || 1) / 2);
+                };
+                v.onseeked = () => {
+                    try {
+                        const scale = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight));
+                        const c = document.createElement('canvas');
+                        c.width = Math.round(v.videoWidth * scale);
+                        c.height = Math.round(v.videoHeight * scale);
+                        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+                        done(c.toDataURL('image/jpeg', 0.8));
+                    } catch (e) { done(''); }   // tainted canvas / codec refusal
+                };
+                v.onerror = () => done('');
+                // iOS can decline to render a frame without playback; never
+                // let the composer hang waiting for one.
+                setTimeout(() => done(''), 4000);
+                v.src = url;
+            });
+        }
+
         // 📸 Moments strip: recent event-chat moments across the family,
         // browsable above the channel list; tap-through to the thread.
         async function loadMomentsStrip() {
@@ -1562,14 +1619,7 @@
                     const full = `${apiBase}${String(m.media_url || '').replace(/^\//, '')}`;
                     const media = `<img src="${poster}" loading="lazy" data-fallback="${full}"
                         onerror="momentThumbFallback(this)" class="w-full h-full object-cover">`
-                        + (m.kind === 'video' ? `
-                           <span class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                               <span class="flex items-center justify-center w-8 h-8 rounded-full bg-black/55 ring-1 ring-white/25">
-                                   <svg viewBox="0 0 24 24" class="w-4 h-4 translate-x-[1px]" fill="white" opacity="0.95">
-                                       <path d="M8 5.5v13a1 1 0 001.53.85l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/>
-                                   </svg>
-                               </span>
-                           </span>` : '');
+                        + (m.kind === 'video' ? playBadge(true) : '');
                     return `<button onclick="openMomentFromStrip('${m.channel_id}','${m.id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}
@@ -1994,6 +2044,7 @@
         // the attachment carries the /api/media URL.
         let pendingAttachment = null;
         let pendingFile = null;          // staged video, uploaded on Send
+        let pendingPoster = '';          // its extracted first frame, reused by the bubble
         const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
         function showAttachPreview(html) {
@@ -2070,13 +2121,15 @@
 
         // A bubble that looks like the message it is about to become, so the
         // thread never jumps when the real one replaces it.
-        function addUploadingBubble(file, body, kind) {
+        function addUploadingBubble(file, body, kind, poster) {
             const wrap = document.getElementById('thread-messages');
-            const objUrl = URL.createObjectURL(file);
+            const objUrl = poster || URL.createObjectURL(file);
             const el = document.createElement('div');
             el.className = 'max-w-[80%] self-end';
             el.dataset.uploading = '1';
-            const media = kind === 'video'
+            // The frame extracted at stage time, so the bubble shows the clip
+            // rather than a black rectangle for the whole upload.
+            const media = (kind === 'video' && !poster)
                 ? `<video src="${objUrl}" muted playsinline preload="metadata"
                        class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover"></video>`
                 : `<img src="${objUrl}" class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover">`;
@@ -2086,16 +2139,27 @@
                 <div class="flex items-center gap-1.5 mt-0.5 justify-end">
                     <span class="upload-status text-[10px] text-gray-500">Sending…</span>
                 </div>`;
-            el._objUrl = objUrl;
+            // Only revoke what we created; a data-URL poster is not a blob URL.
+            el._objUrl = poster ? null : objUrl;
+            el._poster = poster || '';   // so Retry keeps the frame
             uploadingBubbles.push(el);
             wrap.appendChild(el);
             wrap.scrollTop = wrap.scrollHeight;
             return el;
         }
 
+        // pct === null means "in flight, size unknown" (the one-shot fallback):
+        // spin an arc rather than show a percentage we cannot actually track.
         function setBubbleProgress(el, pct) {
             const ring = el.querySelector('.upload-ring');
             const label = el.querySelector('.upload-pct');
+            const svg = el.querySelector('.upload-overlay svg');
+            if (pct === null) {
+                if (svg) svg.classList.add('animate-spin');
+                if (ring) ring.style.strokeDashoffset = (RING_C * 0.75).toFixed(2);
+                if (label) label.remove();
+                return;
+            }
             if (ring) ring.style.strokeDashoffset = (RING_C * (1 - pct / 100)).toFixed(2);
             if (label) label.textContent = `${pct}%`;
         }
@@ -2113,8 +2177,9 @@
             if (overlay) {
                 overlay.innerHTML = `<button class="px-3 py-1.5 rounded-full bg-white/15 border border-white/30 text-white text-xs font-bold">↻ Retry</button>`;
                 overlay.querySelector('button').onclick = () => {
+                    const poster = el._poster;
                     dropUploadingBubble(el);
-                    sendWithUpload(file, body, kind);
+                    sendWithUpload(file, body, kind, poster);
                 };
             }
             const status = el.querySelector('.upload-status');
@@ -2122,6 +2187,22 @@
                 status.textContent = msg || 'Upload failed';
                 status.className = 'upload-status text-[10px] text-red-400 font-bold';
             }
+        }
+
+        // The pre-resumable endpoint, still on the server. Kept as a fallback
+        // for VERSION SKEW: a page loaded from a newer build than the running
+        // add-on (or a cached HTML shell) would otherwise 404 on /init and
+        // fail every upload with nothing to explain it. No progress is
+        // available on this path — the whole point of the chunked one — so
+        // the ring goes indeterminate rather than lying about a percentage.
+        async function uploadOneShot(file, onProgress) {
+            if (onProgress) onProgress(null);
+            const fd = new FormData();
+            fd.append('media', file, file.name || 'moment');
+            const res = await fetch(`${apiBase}api/moments/upload`, { method: 'POST', body: fd });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
+            return data;
         }
 
         async function uploadMomentVideo(file, onProgress) {
@@ -2134,8 +2215,19 @@
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ size: file.size, mime: file.type || '' })
                 });
-                init = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(init.detail || 'Upload refused');
+                if (res.status === 404 || res.status === 405) {
+                    console.warn('[upload] resumable endpoint missing — falling back to one-shot');
+                    return await uploadOneShot(file, onProgress);
+                }
+                const raw = await res.text();
+                try { init = JSON.parse(raw); } catch (e) { init = {}; }
+                if (!res.ok) {
+                    // Carry the status and a snippet: "Upload refused" with no
+                    // number is unactionable when the body is not even JSON.
+                    console.error('[upload] init failed', res.status, raw.slice(0, 300));
+                    throw new Error(typeof init.detail === 'string' ? init.detail
+                                                                    : `Upload refused (${res.status})`);
+                }
             } catch (err) {
                 throw new Error(err.message || `Could not start upload (${fmtBytes(file.size)})`);
             }
@@ -2189,21 +2281,32 @@
         // Staged, NOT uploaded. Nothing leaves the phone until you hit Send —
         // which is also what lets the clip appear in the thread the instant
         // you do, instead of after the transfer.
-        function stagePendingVideo(file) {
+        async function stagePendingVideo(file) {
             if (file.size > MAX_UPLOAD_BYTES) {
                 showGlobalAlert(`That clip is ${fmtBytes(file.size)} — the limit is ${fmtBytes(MAX_UPLOAD_BYTES)}`);
                 return;
             }
             pendingFile = file;
-            const url = URL.createObjectURL(file);
-            showAttachPreview(`<video src="${url}" muted playsinline preload="metadata"
-                class="h-20 rounded-xl border border-gray-700 object-cover"></video>
-                <span class="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none">▶️</span>`);
+            pendingPoster = '';
+            const box = 'h-20 w-20 rounded-xl border border-gray-700 object-cover';
+            // Something immediately, so the composer never sits empty while a
+            // large clip is decoded for its first frame.
+            showAttachPreview(`<div class="${box} bg-gray-800 animate-pulse"></div>`);
+            const poster = await extractVideoPoster(file);
+            if (pendingFile !== file) return;    // superseded or cleared
+            pendingPoster = poster;
+            showAttachPreview(poster
+                ? `<img src="${poster}" class="${box}">${playBadge(true)}`
+                // No frame (iOS can refuse): the element itself, but with the
+                // real badge rather than the OS emoji.
+                : `<video src="${URL.createObjectURL(file)}" muted playsinline preload="metadata"
+                       class="${box}"></video>${playBadge(true)}`);
         }
 
         function clearPendingAttachment() {
             pendingAttachment = null;
             pendingFile = null;
+            pendingPoster = '';
             document.getElementById('thread-attach-preview').style.display = 'none';
             document.getElementById('thread-input').placeholder = 'Message...';
         }
@@ -2219,9 +2322,9 @@
         // Send-then-upload: the bubble appears now, the bytes follow. Returns
         // immediately so the composer is usable again while a 2 GB clip goes
         // up in the background.
-        async function sendWithUpload(file, body, kind) {
+        async function sendWithUpload(file, body, kind, poster) {
             const channelId = activeChannelId;
-            const el = addUploadingBubble(file, body, kind);
+            const el = addUploadingBubble(file, body, kind, poster);
             try {
                 const attachment = await uploadMomentVideo(file, pct => {
                     if (uploadingBubbles.includes(el)) setBubbleProgress(el, pct);
@@ -2247,11 +2350,12 @@
             const body = input.value.trim();
             const attachment = pendingAttachment;
             const file = pendingFile;
+            const poster = pendingPoster;
             if ((!body && !attachment && !file) || !activeChannelId || !selectedMemberId) return;
             if (file) {
                 input.value = '';
                 clearPendingAttachment();
-                sendWithUpload(file, body, 'video');   // deliberately not awaited
+                sendWithUpload(file, body, 'video', poster);   // deliberately not awaited
                 return;
             }
             input.value = '';
