@@ -591,6 +591,45 @@ def scenario_video_posters_and_photo_files():
           "migrated photo's file exists")
 
 
+def scenario_moment_rides_the_message_stream():
+    """An open app should pop a new moment, so the SSE event carries a small
+    preview — URLs only, and only for real moments."""
+    import main
+    from fastapi import BackgroundTasks
+    _family()
+    ch = storage.get_or_create_event_channel("vb1", "Emma's Volleyball")
+    bt = BackgroundTasks()
+    main.MESSAGE_EVENTS.clear()
+
+    main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="she got a kill!",
+        attachment={"kind": "photo", "data_url": _TINY_JPEG}), bt)
+    ev = main.MESSAGE_EVENTS[-1]
+    mo = ev.get("moment")
+    check(mo, f"moment preview rides the stream event, got {ev}")
+    check(mo["event_title"] == "Emma's Volleyball" and mo["sender_name"] == "Mom"
+          and mo["body"] == "she got a kill!" and mo["kind"] == "photo",
+          f"preview carries what the overlay renders, got {mo}")
+    check(mo["media_url"].startswith("/api/") and mo["channel_id"] == ch["id"]
+          and mo["sender_member_id"] == "mom",
+          "preview carries URLs + identity for the client's own-moment guard")
+    check("data_url" not in str(mo), "no media bytes on the stream")
+
+    # Plain chatter must not pop anything.
+    main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="parking is rough"), bt)
+    check("moment" not in main.MESSAGE_EVENTS[-1],
+          "text messages carry no moment preview")
+
+    # Nor should a moment in a private DM (thinking-of-you stays private).
+    dm = storage.get_or_create_dm("mom", "dad")
+    main.send_message(dm["id"], main.SendMessageRequest(
+        sender_member_id="mom", body="thinking of you",
+        attachment={"kind": "photo", "data_url": _TINY_JPEG}), bt)
+    check("moment" not in main.MESSAGE_EVENTS[-1],
+          "DM moments never pop on the stream")
+
+
 def scenario_gallery_event_grouping_and_paging():
     """The gallery groups by EVENT and pages both levels — no time limit."""
     import main
@@ -670,6 +709,7 @@ SCENARIOS = [
     scenario_recent_moments_feed,
     scenario_gallery_window_and_route,
     scenario_video_posters_and_photo_files,
+    scenario_moment_rides_the_message_stream,
     scenario_gallery_event_grouping_and_paging,
 ]
 

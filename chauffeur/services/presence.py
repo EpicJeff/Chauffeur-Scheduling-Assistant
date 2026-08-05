@@ -295,6 +295,31 @@ def poster_url_for(att) -> str:
     return f'/api/media/{stem}.jpg'
 
 
+def moment_stream_meta(channel, message, sender=None):
+    """Small payload rides the message SSE so an OPEN app can pop the moment
+    itself — the kiosk hearth experience, for whoever is holding a phone.
+    URLs only, never media bytes.
+
+    Deliberately does NOT resolve who was at the event: that needs the cached
+    schedule, and this runs on the send request path. The client suppresses
+    the sender, which is the exclusion that actually matters; the full
+    kept-away routing still governs the PUSH in the background fan-out."""
+    att = (message or {}).get('attachment') or {}
+    mid = (message or {}).get('id')
+    by_message = f"/api/moments/{mid}/media"
+    return {'moment': {
+        'id': mid,
+        'channel_id': (channel or {}).get('id'),
+        'kind': att.get('kind') or 'photo',
+        'media_url': str(att.get('url') or '') or by_message,
+        'poster_url': (poster_url_for(att) or str(att.get('url') or '') or by_message),
+        'body': (message or {}).get('body') or '',
+        'sender_member_id': (message or {}).get('sender_member_id'),
+        'sender_name': (sender or {}).get('name') or '?',
+        'event_title': (channel or {}).get('title') or 'A family moment',
+    }}
+
+
 def _moment_row(m, members, event_title=None):
     """One moment shaped for display. `media_url` is the stable by-message
     URL — galleries use it instead of the inline photo data URL so a page of

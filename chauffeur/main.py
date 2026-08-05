@@ -3360,11 +3360,16 @@ def ha_test_notify(req: TestNotifyRequest):
 MESSAGE_EVENTS = []  # ring buffer: {'seq', 'channel_id', 'recipients': [member ids] | None (=everyone)}
 _MESSAGE_SEQ = 0
 
-def _push_message_event(channel_id, recipients):
+def _push_message_event(channel_id, recipients, meta=None):
+    """meta (optional) rides the SSE payload — e.g. {'moment': {...}} so an
+    open app can pop a new moment instead of just bumping a badge."""
     global _MESSAGE_SEQ
     _MESSAGE_SEQ += 1
-    MESSAGE_EVENTS.append({'seq': _MESSAGE_SEQ, 'channel_id': channel_id,
-                           'recipients': recipients})
+    entry = {'seq': _MESSAGE_SEQ, 'channel_id': channel_id,
+             'recipients': recipients}
+    if meta:
+        entry.update(meta)
+    MESSAGE_EVENTS.append(entry)
     del MESSAGE_EVENTS[:-200]
 
 def send_push_to_member(member_id, title, body, url=None):
@@ -5564,7 +5569,16 @@ def send_message(channel_id: str, req: SendMessageRequest, background_tasks: Bac
     # Sender has obviously read their own message.
     storage.set_last_read(channel_id, req.sender_member_id, message['ts'])
     recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
-    _push_message_event(channel_id, recipients)
+    # A moment carries its own preview on the stream so an open app can pop it
+    # (the kiosk hearth experience for whoever is holding a phone).
+    meta = None
+    if attachment and channel.get('kind') == 'event':
+        try:
+            from services import presence
+            meta = presence.moment_stream_meta(channel, message, sender)
+        except Exception as me:
+            print(f"Moment stream meta failed: {me}")
+    _push_message_event(channel_id, recipients, meta)
     background_tasks.add_task(_fanout_message_notifications, channel, message)
     # @argyle turns the family chat into a vector of action: hand the message to
     # the agent as the sender and let it reply in-channel. In an Argyle DM the
@@ -5782,7 +5796,10 @@ async def stream_messages(member_id: str):
                         continue
                     last_seq = ev['seq']
                     if ev['recipients'] is None or member_id in ev['recipients']:
-                        yield f"data: {_json.dumps({'channel_id': ev['channel_id']})}\n\n"
+                        payload = {'channel_id': ev['channel_id']}
+                        if ev.get('moment'):
+                            payload['moment'] = ev['moment']
+                        yield f"data: {_json.dumps(payload)}\n\n"
                         sent = True
                 if sent:
                     last_ping = now

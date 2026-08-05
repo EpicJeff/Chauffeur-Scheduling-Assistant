@@ -1414,6 +1414,7 @@
             messagesStream.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
+                    if (data.moment) maybePopMoment(data.moment);
                     if (activeChannelId && data.channel_id === activeChannelId && currentView === 'messages') {
                         refreshThread();
                     } else {
@@ -1720,9 +1721,12 @@
                 <button onclick="this.closest('.moment-overlay').remove()"
                     class="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
                 <div class="max-w-full text-center">
+                    ${opts.title ? `<div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${mfEscape(opts.title)}</div>` : ''}
                     ${media}
                     ${opts.body ? `<div class="text-white font-bold mt-3 px-4">${mfEscape(opts.body)}</div>` : ''}
                     ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
+                    ${opts.channelId ? `<button onclick="this.closest('.moment-overlay').remove(); setView('messages'); openChannel('${opts.channelId}')"
+                        class="mt-4 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Open chat →</button>` : ''}
                 </div>`;
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
             document.body.appendChild(overlay);
@@ -1757,6 +1761,29 @@
         // Strip tap: open the conversation AND the moment on top of it.
         async function openMomentFromStrip(channelId, messageId) {
             await openChannel(channelId, null, messageId);
+        }
+
+        // A moment landing while the app is OPEN deserves the kiosk's warmth,
+        // not a badge. Guards, in order: never your own moment; only when the
+        // app is actually on screen (a backgrounded app already got the push);
+        // never stack over an open moment; and stay quiet if you're already
+        // looking at that thread, where it renders inline anyway.
+        function maybePopMoment(mo) {
+            if (!mo || !mo.id) return;
+            if (mo.sender_member_id === selectedMemberId) return;
+            if (document.visibilityState !== 'visible') return;
+            if (document.querySelector('.moment-overlay')) return;
+            if (currentView === 'messages' && activeChannelId === mo.channel_id) return;
+            showMomentOverlay({
+                kind: mo.kind,
+                src: `${apiBase}${String(mo.media_url || '').replace(/^\//, '')}`,
+                poster: `${apiBase}${String(mo.poster_url || '').replace(/^\//, '')}`,
+                title: mo.event_title,
+                body: mo.body,
+                senderName: mo.sender_name,
+                channelId: mo.channel_id,
+                messageId: mo.id
+            });
         }
 
         function renderCard(card) {
