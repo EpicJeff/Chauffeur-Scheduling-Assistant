@@ -2159,10 +2159,16 @@ def _transcode_media(stem: str):
         if hasattr(os, 'nice'):
             nice = lambda: os.nice(10)   # noqa: E731 — preexec_fn wants a callable
         with _TRANSCODE_GATE:
+            # -threads 2 bounds BOTH cpu and peak memory. Frame-level threading
+            # holds a decoded frame per thread, and at 4K those are large —
+            # unbounded on a small VM that is also running Home Assistant, the
+            # OOM killer gets to choose what dies, and it does not choose us.
+            # Costs wall-clock on a big clip; the timeout budget already scales.
             subprocess.run(
-                [_ffmpeg_path(), '-y', '-i', orig,
+                [_ffmpeg_path(), '-y', '-threads', '2', '-i', orig,
                  '-vf', "scale='min(1280,iw)':-2",
                  '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+                 '-threads', '2',
                  '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
                 check=True, capture_output=True, timeout=budget, preexec_fn=nice)
         media_move_into_place(tmp, final)
@@ -2170,7 +2176,13 @@ def _transcode_media(stem: str):
         generate_poster(stem)   # thumbnail, so tiles never show a black box
         print(f"[media] transcoded {stem}.mp4")
     except Exception as e:
-        print(f"[media] transcode failed for {stem} (storing as-is): {e}")
+        # ffmpeg's own stderr is the only thing that explains a kill (OOM,
+        # signal, codec) — capture_output swallows it otherwise.
+        err = getattr(e, 'stderr', b'') or b''
+        if isinstance(err, bytes):
+            err = err.decode('utf-8', 'replace')
+        print(f"[media] transcode failed for {stem} (storing as-is): {e}"
+              + (f"\n[media] ffmpeg stderr tail: {err.strip()[-800:]}" if err else ''))
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
