@@ -2108,7 +2108,7 @@
         const RING_C = 2 * Math.PI * 20;   // r=20 in the 48-box viewBox
 
         function uploadOverlay(determinate) {
-            return `<div class="upload-overlay absolute inset-0 rounded-2xl bg-black/50 flex items-center justify-center">
+            return `<div class="upload-overlay absolute inset-0 rounded-2xl bg-black/35 flex items-center justify-center">
                     <svg class="w-16 h-16 -rotate-90 ${determinate ? '' : 'animate-spin'}" viewBox="0 0 48 48">
                         <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="4"></circle>
                         <circle class="upload-ring" cx="24" cy="24" r="20" fill="none" stroke="white" stroke-width="4"
@@ -2129,10 +2129,10 @@
             el.dataset.uploading = '1';
             // The frame extracted at stage time, so the bubble shows the clip
             // rather than a black rectangle for the whole upload.
+            const mediaCls = 'upload-media rounded-2xl rounded-br-sm max-h-64 w-full object-cover';
             const media = (kind === 'video' && !poster)
-                ? `<video src="${objUrl}" muted playsinline preload="metadata"
-                       class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover"></video>`
-                : `<img src="${objUrl}" class="rounded-2xl rounded-br-sm max-h-64 w-full object-cover">`;
+                ? `<video src="${objUrl}" muted playsinline preload="metadata" class="${mediaCls}"></video>`
+                : `<img src="${objUrl}" class="${mediaCls}">`;
             el.innerHTML = `
                 <div class="relative ${body ? 'mb-1' : ''}">${media}${uploadOverlay(kind === 'video')}</div>
                 ${body ? `<div class="px-3.5 py-2 rounded-2xl bg-blue-600 text-white rounded-br-sm text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(body)}</div>` : ''}
@@ -2145,6 +2145,23 @@
             uploadingBubbles.push(el);
             wrap.appendChild(el);
             wrap.scrollTop = wrap.scrollHeight;
+            // No frame yet — Send was pressed before the staged extraction
+            // finished (likely on a big clip), or this is a Retry. Pull one
+            // now and swap it in, so the bubble is never a black rectangle for
+            // the length of an upload. The <video> stays if extraction fails.
+            if (kind === 'video' && !poster) {
+                extractVideoPoster(file).then(p => {
+                    if (!p || !uploadingBubbles.includes(el)) return;
+                    const holder = el.querySelector('.upload-media');
+                    if (!holder) return;
+                    const img = document.createElement('img');
+                    img.src = p;
+                    img.className = holder.className;
+                    holder.replaceWith(img);
+                    el._poster = p;          // Retry keeps it
+                    if (el._objUrl) { URL.revokeObjectURL(el._objUrl); el._objUrl = null; }
+                });
+            }
             return el;
         }
 
