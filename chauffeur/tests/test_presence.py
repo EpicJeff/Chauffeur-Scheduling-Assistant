@@ -695,9 +695,111 @@ def scenario_gallery_event_grouping_and_paging():
         check(e.status_code == 404, "a text message has no media")
 
 
+def scenario_message_delete_and_edit():
+    """Undoing a misfire. Delete is removal (a PARENT may clear a shared
+    channel); edit is authorship (only ever the sender). role='adult' is
+    NOT role='parent' — a grandparent or sitter has no moderation power."""
+    import main
+    from fastapi import BackgroundTasks, HTTPException
+    _member("mom", "Mom", role="parent")
+    _member("gramps", "Grandpa", role="adult")
+    _member("emma", "Emma", role="child", is_child=True)
+    ch = storage.get_or_create_event_channel("evD", "Tournament")
+    bt = BackgroundTasks()
+
+    def _post(mid, sender, body="hi", attachment=None):
+        storage.add_chat_message({"id": mid, "channel_id": ch["id"], "sender_member_id": sender,
+                                  "ts": time.time(), "type": "text", "body": body,
+                                  "attachment": attachment, "reactions": {}})
+
+    # --- delete permissions -------------------------------------------------
+    _post("d_own", "emma")
+    main.delete_message("d_own", main.MessageDeleteRequest(member_id="emma"))
+    check(storage.get_chat_message("d_own") is None, "sender deletes their own message")
+
+    _post("d_kid", "emma")
+    main.delete_message("d_kid", main.MessageDeleteRequest(member_id="mom"))
+    check(storage.get_chat_message("d_kid") is None,
+          "parent clears a kid's message from a shared channel")
+
+    _post("d_adult", "emma")
+    for actor, code in [("gramps", 403), ("ghost", 404)]:
+        try:
+            main.delete_message("d_adult", main.MessageDeleteRequest(member_id=actor))
+            check(False, f"expected {code}")
+        except HTTPException as e:
+            check(e.status_code == code, f"delete by {actor} -> {code}")
+    check(storage.get_chat_message("d_adult") is not None,
+          "a non-parent adult CANNOT delete someone else's message")
+    try:
+        main.delete_message("nope", main.MessageDeleteRequest(member_id="mom"))
+        check(False, "expected 404")
+    except HTTPException as e:
+        check(e.status_code == 404, "unknown message -> 404")
+
+    # A DM is nobody's to moderate, parent or not.
+    dm = storage.get_or_create_dm("emma", "gramps")
+    storage.add_chat_message({"id": "d_dm", "channel_id": dm["id"], "sender_member_id": "emma",
+                              "ts": time.time(), "type": "text", "body": "secret",
+                              "attachment": None, "reactions": {}})
+    try:
+        main.delete_message("d_dm", main.MessageDeleteRequest(member_id="mom"))
+        check(False, "expected 403")
+    except HTTPException as e:
+        check(e.status_code == 403, "parent cannot reach into a DM")
+    check(storage.get_chat_message("d_dm") is not None, "the DM message survives")
+
+    # --- deleting a moment takes its files with it --------------------------
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        saved = storage.save_media_file(b"\x00\x00fake-mp4-bytes", "video/mp4")
+    m = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="emma", body="buzzer beater",
+        attachment={"kind": "video", "url": saved["url"]}), bt)
+    path = storage.media_file_path(saved["id"])
+    check(path and os.path.exists(path), "clip on disk before delete")
+    main.delete_message(m["id"], main.MessageDeleteRequest(member_id="mom"))
+    check(storage.get_chat_message(m["id"]) is None, "moment row gone")
+    # Moments are EXEMPT from the retention cap, so nothing else would ever
+    # collect this file — deleting the row alone would leak it forever.
+    check(not os.path.exists(path), "the clip is removed from disk with it")
+
+    # --- edit is sender-only, and marks itself ------------------------------
+    _post("e_own", "emma", body="we one")
+    upd = main.edit_message("e_own", main.MessageEditRequest(member_id="emma", body="we won"))
+    check(upd["body"] == "we won", "sender edits their own text")
+    check(upd.get("edited_ts"), "edit stamps edited_ts for the 'edited' marker")
+    check(storage.get_chat_message("e_own")["body"] == "we won", "edit persisted")
+
+    for actor, code in [("mom", 403), ("gramps", 403), ("ghost", 404)]:
+        try:
+            main.edit_message("e_own", main.MessageEditRequest(member_id=actor, body="nope"))
+            check(False, f"expected {code}")
+        except HTTPException as e:
+            check(e.status_code == code, f"edit by {actor} -> {code}")
+    check(storage.get_chat_message("e_own")["body"] == "we won",
+          "not even a parent rewrites a kid's words")
+
+    # Editing to blank is a delete wearing a disguise — unless an attachment
+    # still carries the message, in which case it is just clearing a caption.
+    try:
+        main.edit_message("e_own", main.MessageEditRequest(member_id="emma", body="   "))
+        check(False, "expected 400")
+    except HTTPException as e:
+        check(e.status_code == 400, "blanking a text-only message -> 400")
+    # A fresh upload: the one above went to disk with its message.
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        saved2 = storage.save_media_file(b"\x00\x00another-fake-mp4", "video/mp4")
+    m2 = main.send_message(ch["id"], main.SendMessageRequest(
+        sender_member_id="emma", body="oops caption",
+        attachment={"kind": "video", "url": saved2["url"]}), bt)
+    upd = main.edit_message(m2["id"], main.MessageEditRequest(member_id="emma", body=""))
+    check(upd["body"] == "" and upd["attachment"], "a caption may be cleared off a moment")
+
+
 SCENARIOS = [
     scenario_attachment_send_and_validation,
     scenario_reaction_toggle_and_endpoint,
+    scenario_message_delete_and_edit,
     scenario_present_and_kept_away,
     scenario_capture_prompt_sweep,
     scenario_capture_prompt_gates,

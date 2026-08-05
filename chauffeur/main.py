@@ -5628,6 +5628,70 @@ def react_to_message(message_id: str, req: ReactRequest):
     _push_message_event(msg['channel_id'], recipients)
     return msg
 
+class MessageEditRequest(BaseModel):
+    member_id: str
+    body: str
+
+class MessageDeleteRequest(BaseModel):
+    member_id: str
+
+def _may_delete_message(msg: dict, member: dict, channel: dict) -> bool:
+    """Your own message, always. A PARENT may also clear anything out of a
+    SHARED space (event/group) — that is the "kid posted the wrong clip to
+    the team chat" case, and role='parent' is the existing admin role (not
+    every adult: a grandparent or a sitter is an adult, not an authority).
+    DMs stay sender-only so nobody reaches into a private thread."""
+    if msg.get('sender_member_id') == member.get('id'):
+        return True
+    return member.get('role') == 'parent' and channel.get('kind') in ('event', 'group')
+
+@app.delete("/api/messages/{message_id}")
+def delete_message(message_id: str, req: MessageDeleteRequest):
+    """Delete a message and any media it owns. No tombstone — this exists so a
+    misfired photo can be UNDONE, and "X deleted a photo" just advertises the
+    thing you were trying to take back. Best-effort by nature: a push already
+    on a lock screen cannot be recalled, and a kiosk mid-overlay keeps the
+    bytes it already loaded. Everything else self-heals (open threads over
+    SSE, the hearth rail on its 60 s poll)."""
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    msg = storage.get_chat_message(message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    channel = storage.get_channel(msg['channel_id']) or {}
+    if not _may_delete_message(msg, member, channel):
+        raise HTTPException(status_code=403, detail="Not yours to delete")
+    storage.delete_chat_message(message_id)
+    recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
+    _push_message_event(msg['channel_id'], recipients)
+    return {"status": "ok", "id": message_id, "channel_id": msg['channel_id']}
+
+@app.patch("/api/messages/{message_id}")
+def edit_message(message_id: str, req: MessageEditRequest):
+    """Edit your own message's text. SENDER ONLY, deliberately narrower than
+    delete: a parent removing something from a shared channel is moderation,
+    but a parent rewriting a kid's words puts words in their mouth. Captions
+    on moments are editable the same way; the media itself never changes."""
+    body = (req.body or '').strip()
+    member = storage.get_member(req.member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    msg = storage.get_chat_message(message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get('sender_member_id') != req.member_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own messages")
+    # An empty body is only legal when an attachment still carries the message
+    # — otherwise editing to blank is a delete wearing a disguise.
+    if not body and not msg.get('attachment'):
+        raise HTTPException(status_code=400, detail="Message cannot be empty — delete it instead")
+    updated = storage.edit_chat_message(message_id, body)
+    channel = storage.get_channel(msg['channel_id']) or {}
+    recipients = channel.get('member_ids') if channel.get('kind') in ('dm', 'group') else None
+    _push_message_event(msg['channel_id'], recipients)
+    return updated
+
 @app.get("/api/presence/moments")
 def get_presence_moments(hours: float = 12, limit: int = 12):
     """Recent moments (photos + clips) from event chats — the hearth feed.

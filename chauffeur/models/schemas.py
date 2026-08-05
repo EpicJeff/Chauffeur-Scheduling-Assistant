@@ -168,6 +168,9 @@ class ChatMessage(BaseModel):
     # {emoji: [member_id, ...]} — toggled via /api/messages/{id}/react.
     # Reactions never push (the sender at the game is fire-and-forget).
     reactions: Dict[str, List[str]] = Field(default_factory=dict)
+    # Set by /api/messages/{id} PATCH; surfaces render an "edited" marker.
+    # Absent on every message that has never been edited.
+    edited_ts: Optional[float] = None
 
 class ChannelRead(BaseModel):
     channel_id: str

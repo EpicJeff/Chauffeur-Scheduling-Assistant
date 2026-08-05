@@ -963,6 +963,65 @@
             el._hideTimer = setTimeout(() => el.classList.add('opacity-0'), 3500);
         }
 
+        // Promise-based confirm/prompt for the PWA. The kiosk gets these from
+        // components/control_center.html, which the app deliberately does not
+        // include (it carries the whole wall-panel control surface) — so the
+        // same two helpers live here, same names and same contract: confirm
+        // resolves true/false, input resolves the string or NULL on cancel.
+        // Native confirm()/prompt() are blocking, unstyled, and on iOS
+        // standalone PWAs can be suppressed outright.
+        function _pwaModal(inner, wire) {
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[220] bg-black/70 flex items-end sm:items-center justify-center p-4';
+            overlay.innerHTML = `<div class="w-full max-w-sm bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5">${inner}</div>`;
+            document.body.appendChild(overlay);
+            wire(overlay, () => overlay.remove());
+            return overlay;
+        }
+
+        window.promptConfirm = function (title, message, trueText = 'OK', falseText = 'Cancel') {
+            return new Promise(resolve => {
+                _pwaModal(`
+                    <div class="text-white font-bold text-lg mb-1">${mfEscape(title)}</div>
+                    ${message ? `<div class="text-gray-400 text-sm mb-4 leading-snug">${mfEscape(message)}</div>` : '<div class="mb-4"></div>'}
+                    <div class="flex gap-2 justify-end">
+                        <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">${mfEscape(falseText)}</button>
+                        <button data-yes class="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold">${mfEscape(trueText)}</button>
+                    </div>`, (overlay, close) => {
+                    overlay.querySelector('[data-yes]').onclick = () => { close(); resolve(true); };
+                    overlay.querySelector('[data-no]').onclick = () => { close(); resolve(false); };
+                    overlay.addEventListener('click', e => {
+                        if (e.target === overlay) { close(); resolve(false); }
+                    });
+                });
+            });
+        };
+
+        window.promptInput = function (title, message, { placeholder = '', value = '', type = 'text', okText = 'OK' } = {}) {
+            return new Promise(resolve => {
+                const overlay = _pwaModal(`
+                    <div class="text-white font-bold text-lg mb-1">${mfEscape(title)}</div>
+                    ${message ? `<div class="text-gray-400 text-sm mb-3 leading-snug">${mfEscape(message)}</div>` : ''}
+                    <textarea data-field rows="3" placeholder="${mfEscape(placeholder)}"
+                        class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-white text-[15px] focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                    <div class="flex gap-2 justify-end mt-4">
+                        <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
+                        <button data-yes class="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold">${mfEscape(okText)}</button>
+                    </div>`, (overlay, close) => {
+                    overlay.querySelector('[data-yes]').onclick = () =>
+                        { const v = overlay.querySelector('[data-field]').value; close(); resolve(v); };
+                    overlay.querySelector('[data-no]').onclick = () => { close(); resolve(null); };
+                    overlay.addEventListener('click', e => {
+                        if (e.target === overlay) { close(); resolve(null); }
+                    });
+                });
+                // .value, not the attribute — the text may contain quotes.
+                const field = overlay.querySelector('[data-field]');
+                field.value = value;
+                field.focus();
+            });
+        };
+
         // --- Intake proposals (parents approve/ignore from the Family tab) ---
         let proposalsData = [];
         let proposalTargets = null;  // [{id, label}] lazily fetched once
@@ -1657,12 +1716,21 @@
                         ${renderReactions(m)}
                         <button onclick="toggleQuickReact('${m.id}')" type="button"
                             class="text-[13px] text-gray-600 active:text-gray-400 leading-none px-0.5">☺+</button>
-                        <span class="text-[10px] text-gray-600">${t}</span>
+                        ${(canEditMsg(m) || canDeleteMsg(m))
+                            ? `<button onclick="toggleMsgActions('${m.id}')" type="button"
+                                   class="text-[13px] text-gray-600 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
+                        <span class="text-[10px] text-gray-600">${t}${m.edited_ts ? ' · edited' : ''}</span>
                     </div>
                     <div id="qr-${m.id}" class="mt-1 ${mine ? 'text-right' : ''}" style="display:none">
                         ${['👍', '❤️', '😂', '👏', '🎉', '💪'].map(e =>
                             `<button onclick="reactTo('${m.id}','${e}')" type="button"
                                 class="text-xl px-1.5 py-0.5 rounded-full bg-gray-800 border border-gray-700 active:bg-gray-700">${e}</button>`).join('')}
+                    </div>
+                    <div id="ma-${m.id}" class="mt-1 flex gap-1.5 ${mine ? 'justify-end' : ''}" style="display:none">
+                        ${canEditMsg(m) ? `<button onclick="editMessage('${m.id}')" type="button"
+                            class="text-[12px] font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
+                        ${canDeleteMsg(m) ? `<button onclick="deleteMessage('${m.id}')" type="button"
+                            class="text-[12px] font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
                     </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
@@ -1681,6 +1749,84 @@
         function toggleQuickReact(msgId) {
             const row = document.getElementById(`qr-${msgId}`);
             if (row) row.style.display = row.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function toggleMsgActions(msgId) {
+            const row = document.getElementById(`ma-${msgId}`);
+            if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        // Mirrors the server rules in main._may_delete_message — the API is
+        // still the authority, this only decides what to OFFER.
+        function myRole() {
+            return (membersData.find(x => x.id === selectedMemberId) || {}).role || '';
+        }
+        function canEditMsg(m) {
+            // Sender only, and never a bare attachment (there is no text to
+            // edit; changing the photo is delete-and-repost).
+            return m.sender_member_id === selectedMemberId
+                && m.sender_member_id !== 'argyle' && !!m.body;
+        }
+        function canDeleteMsg(m) {
+            if (m.sender_member_id === selectedMemberId) return true;
+            const kind = (channelsData.find(c => c.id === activeChannelId) || {}).kind;
+            return myRole() === 'parent' && (kind === 'event' || kind === 'group');
+        }
+
+        async function editMessage(msgId) {
+            const m = (threadMessages || []).find(x => x.id === msgId);
+            if (!m) return;
+            const next = await promptInput('Edit message', 'Everyone sees it marked as edited.',
+                { value: m.body || '', okText: 'Save' });
+            if (next === null) return;
+            if (!String(next).trim() && !m.attachment) {
+                showGlobalAlert('Message cannot be empty — delete it instead');
+                return;
+            }
+            try {
+                const res = await fetch(`${apiBase}api/messages/${msgId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId, body: next })
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(d.detail || 'Could not edit that message');
+                    return;
+                }
+                await refreshThread();
+            } catch (e) { showGlobalAlert('Could not edit that message'); }
+        }
+
+        // Deleting is final and silent — no tombstone, by design. Say so
+        // plainly in the confirm, including the part we cannot undo.
+        async function deleteMessage(msgId, opts) {
+            const isMoment = !!(opts && opts.isMoment);
+            const ok = await promptConfirm(
+                isMoment ? 'Delete this moment?' : 'Delete this message?',
+                isMoment
+                    ? 'It disappears from the chat, the strip and the gallery, and the file is removed from your box. A notification already delivered to someone\'s phone cannot be taken back.'
+                    : 'It disappears for everyone. This cannot be undone.',
+                'Delete', 'Cancel');
+            if (!ok) return false;
+            try {
+                const res = await fetch(`${apiBase}api/messages/${msgId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: selectedMemberId })
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    showGlobalAlert(d.detail || 'Could not delete that message');
+                    return false;
+                }
+                await refreshThread();
+                loadMomentsStrip();   // a deleted moment must leave the strip too
+                return true;
+            } catch (e) {
+                showGlobalAlert('Could not delete that message');
+                return false;
+            }
         }
 
         async function reactTo(msgId, emoji) {
@@ -1727,6 +1873,8 @@
                     ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
                     ${opts.channelId ? `<button onclick="this.closest('.moment-overlay').remove(); setView('messages'); openChannel('${opts.channelId}')"
                         class="mt-4 px-4 py-2 rounded-full bg-white/15 text-white text-sm font-bold">Open chat →</button>` : ''}
+                    ${opts.canDelete ? `<button onclick="deleteMomentFromOverlay(this, '${opts.messageId}')"
+                        class="mt-4 ml-2 px-4 py-2 rounded-full bg-red-600/25 border border-red-500/50 text-red-200 text-sm font-bold">Delete</button>` : ''}
                 </div>`;
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
             document.body.appendChild(overlay);
@@ -1744,18 +1892,31 @@
                     src: momentMediaSrc(m.attachment),
                     poster: momentPosterSrc(m.attachment),
                     body: m.body,
-                    senderName: m.sender_member_id === selectedMemberId ? null : sender.name
+                    senderName: m.sender_member_id === selectedMemberId ? null : sender.name,
+                    messageId: m.id, canDelete: canDeleteMsg(m)
                 });
             }
             const row = (momentsStripData || []).find(x => x.id === id);
             if (row) {
+                // Strip rows are always event-channel moments (recent_moments
+                // never returns DMs), so a parent may clear any of them.
+                const canDelete = row.sender_member_id === selectedMemberId
+                    || myRole() === 'parent';
                 return showMomentOverlay({
                     kind: row.kind,
                     src: `${apiBase}${String(row.media_url || '').replace(/^\//, '')}`,
                     poster: `${apiBase}${String(row.poster_url || '').replace(/^\//, '')}`,
-                    body: row.body, senderName: row.sender_name
+                    body: row.body, senderName: row.sender_name,
+                    messageId: row.id, canDelete: canDelete
                 });
             }
+        }
+
+        // The overlay is where a misfired photo actually gets noticed, so it
+        // deletes from here too — and dismisses itself once the moment is gone.
+        async function deleteMomentFromOverlay(btn, msgId) {
+            const overlay = btn.closest('.moment-overlay');
+            if (await deleteMessage(msgId, { isMoment: true })) overlay.remove();
         }
 
         // Strip tap: open the conversation AND the moment on top of it.

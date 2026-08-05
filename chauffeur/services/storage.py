@@ -2056,6 +2056,40 @@ def get_chat_message(message_id: str) -> Optional[dict]:
         return dict(res[0]) if res else None
 
 
+def delete_chat_message(message_id: str) -> Optional[dict]:
+    """Remove a message outright — no tombstone. Returns the deleted message
+    (callers need its channel_id to refresh open threads) or None if it was
+    already gone. Deleting the ROW is not enough: moments are exempt from the
+    retention cap, so nothing else will ever come along and collect the clip,
+    poster and transcode working files — without this they leak forever."""
+    with db_lock:
+        res = chat_messages_table.search(Query().id == message_id)
+        if not res:
+            return None
+        msg = dict(res[0])
+        _delete_media_for_messages([msg])
+        chat_messages_table.remove(Query().id == message_id)
+        return msg
+
+
+def edit_chat_message(message_id: str, body: str) -> Optional[dict]:
+    """Rewrite a message's text, stamping edited_ts so surfaces can mark it.
+    The attachment is deliberately untouched — swapping the photo out from
+    under a caption is delete-and-repost, not an edit."""
+    import time
+    with db_lock:
+        res = chat_messages_table.search(Query().id == message_id)
+        if not res:
+            return None
+        msg = dict(res[0])
+        edited_ts = time.time()
+        chat_messages_table.update({'body': body, 'edited_ts': edited_ts},
+                                   Query().id == message_id)
+        msg['body'] = body
+        msg['edited_ts'] = edited_ts
+        return msg
+
+
 def get_event_moment_index() -> List[dict]:
     """One entry per EVENT that has moments — the gallery's top level. No time
     limit by design: moments are exempt from the chat retention cap, so this

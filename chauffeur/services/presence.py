@@ -346,6 +346,10 @@ def _moment_row(m, members, event_title=None):
         'sender_name': sender.get('name') or '?',
         'sender_color': sender.get('color_code') or '#3b82f6',
         'sender_avatar': sender.get('avatar'),
+        # Lets a surface decide whether THIS viewer may delete the moment
+        # without re-fetching the message (the strip's lightbox opens rows
+        # older than the thread's 100-message window).
+        'sender_member_id': m.get('sender_member_id'),
     }
 
 
