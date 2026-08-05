@@ -86,6 +86,55 @@ async def migrate_geocode_amputation_v2564():
                 f"distance/route/schedule caches reset")
 
 
+async def migrate_moment_clips_v2590():
+    """One-time retranscode of moment clips uploaded before the ffmpeg
+    pipeline (v2.59.0): raw phone clips (HEVC .mov especially) don't play on
+    Chrome-based wall panels. For every video attachment whose file predates
+    the pipeline, transcode to H.264 mp4 under a fresh id and repoint the
+    message attachment — renderers pick the new URL up on the next fetch.
+    Skips silently when ffmpeg is absent (bare dev env)."""
+    if storage.get_app_state('moment_clips_transcoded'):
+        return
+    storage.set_app_state('moment_clips_transcoded', time.time())
+    if not storage._ffmpeg_path():
+        return
+
+    def _work():
+        import os
+        from tinydb import Query
+        migrated = 0
+        with storage.db_lock:
+            msgs = [dict(m) for m in storage.chat_messages_table.all()]
+        for m in msgs:
+            att = m.get('attachment') or {}
+            url = str(att.get('url') or '')
+            if att.get('kind') != 'video' or not url.startswith('/api/media/'):
+                continue
+            old_id = url.rsplit('/', 1)[-1]
+            old_path = storage.media_file_path(old_id)
+            # Already-pending transcodes (.orig fallback) heal themselves;
+            # only settled raw files need the pass.
+            if not old_path or old_path.endswith('.orig'):
+                continue
+            stem = old_id.split('.')[0]
+            os.replace(old_path, os.path.join(storage.MEDIA_DIR, stem + '.orig'))
+            storage._transcode_media(stem)   # synchronous here — startup task
+            new_id = stem + '.mp4'
+            if storage.media_file_path(new_id):
+                with storage.db_lock:
+                    storage.chat_messages_table.update(
+                        {'attachment': {'kind': 'video',
+                                        'url': f'/api/media/{new_id}',
+                                        'mime': 'video/mp4'}},
+                        Query().id == m['id'])
+                migrated += 1
+        return migrated
+
+    migrated = await asyncio.to_thread(_work)
+    if migrated:
+        logger.info(f"v2.59.0 moment clips: retranscoded {migrated} pre-pipeline clip(s)")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -97,3 +146,7 @@ async def run_all_migrations():
         await migrate_trip_metadata_v247()
     except Exception as e:
         logger.error(f"Error running migrations: {e}")
+    try:
+        await migrate_moment_clips_v2590()
+    except Exception as e:
+        logger.error(f"Error running moment clip migration: {e}")

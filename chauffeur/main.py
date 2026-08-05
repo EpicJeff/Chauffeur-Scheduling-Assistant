@@ -5604,17 +5604,34 @@ def get_presence_moments(hours: float = 12, limit: int = 12):
     return presence.recent_moments(hours=min(hours, 168), limit=min(limit, 30))
 
 # "Photos of sports does nothing. Videos are the thing." (family, 2026-08-04)
-# Clips upload as files on the family's box; the attachment holds the URL.
-_VIDEO_MAX_BYTES = 60 * 1024 * 1024
+# Clips upload as files on the family's box and transcode to H.264 720p in
+# the background (Dockerfile ships ffmpeg), so the raw upload cap can be
+# generous — the STORED clip ends up ~10x smaller.
+_VIDEO_MAX_BYTES = 500 * 1024 * 1024
 
 @app.post("/api/moments/upload")
 async def upload_moment_media(media: UploadFile = File(...)):
-    data = await media.read()
-    if not data:
+    import uuid as _uuid
+    os.makedirs(storage.MEDIA_DIR, exist_ok=True)
+    part = os.path.join(storage.MEDIA_DIR, _uuid.uuid4().hex + '.part')
+    size = 0
+    # Stream to disk — a phone clip must never sit in RAM whole.
+    with open(part, 'wb') as f:
+        while True:
+            chunk = await media.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > _VIDEO_MAX_BYTES:
+                f.close()
+                os.remove(part)
+                raise HTTPException(status_code=413,
+                                    detail="Clip too large (500MB max) — try a shorter one")
+            f.write(chunk)
+    if not size:
+        os.remove(part)
         raise HTTPException(status_code=400, detail="Empty upload")
-    if len(data) > _VIDEO_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="Clip too large (60MB max) — try a shorter one")
-    saved = storage.save_media_file(data, media.content_type or '')
+    saved = storage.finalize_media_upload(part, media.content_type or '')
     if not saved:
         raise HTTPException(status_code=400, detail="Unsupported video format")
     return {'kind': 'video', 'url': saved['url'], 'mime': saved['mime']}

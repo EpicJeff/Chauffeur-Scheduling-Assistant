@@ -22,7 +22,8 @@
         function mediaHtml(m, cls) {
             const att = m.attachment || {};
             if (att.kind === 'video' && att.url) {
-                return `<video src="${apiBase.replace(/\/$/, '')}${att.url}" autoplay muted loop playsinline class="${cls}"></video>`;
+                // Relative (like the api fetches) so HA ingress paths work.
+                return `<video src="${apiBase}${att.url.replace(/^\//, '')}" autoplay muted loop playsinline class="${cls}"></video>`;
             }
             return `<img src="${att.data_url || ''}" class="${cls}">`;
         }

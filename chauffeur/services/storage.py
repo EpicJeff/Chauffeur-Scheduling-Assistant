@@ -1797,25 +1797,89 @@ _MEDIA_MIME_BY_EXT = {v: k for k, v in _MEDIA_EXT_BY_MIME.items()}
 _MEDIA_ID_RE = None  # compiled lazily
 
 
-def save_media_file(data: bytes, mime: str) -> Optional[dict]:
-    """Persist a moment clip; returns {'id', 'url', 'mime'} or None for an
-    unsupported mime. The id is uuid hex + a mime-derived extension, so the
-    serving endpoint can trust it without a lookup table."""
+def _ffmpeg_path() -> Optional[str]:
+    import shutil
+    return shutil.which('ffmpeg')
+
+
+def _transcode_media(stem: str):
+    """Background: normalize {stem}.orig to H.264 720p mp4 at {stem}.mp4 —
+    phones record HEVC .mov that Chrome-based wall panels cannot decode, and
+    a raw 4K clip is ~10x the size it needs to be. Atomic swap onto the SAME
+    media id the attachment already references; until it lands, the serving
+    endpoint falls back to the original bytes. On any failure the original
+    is renamed into place (store-as-is — never lose the moment)."""
+    import subprocess
+    orig = os.path.join(MEDIA_DIR, stem + '.orig')
+    final = os.path.join(MEDIA_DIR, stem + '.mp4')
+    tmp = os.path.join(MEDIA_DIR, stem + '.tmp.mp4')
+    try:
+        subprocess.run(
+            [_ffmpeg_path(), '-y', '-i', orig,
+             '-vf', "scale='min(1280,iw)':-2",
+             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+             '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
+            check=True, capture_output=True, timeout=600)
+        os.replace(tmp, final)
+        os.remove(orig)
+        print(f"[media] transcoded {stem}.mp4")
+    except Exception as e:
+        print(f"[media] transcode failed for {stem} (storing as-is): {e}")
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            if os.path.exists(orig):
+                os.replace(orig, final)
+        except OSError:
+            pass
+
+
+def finalize_media_upload(src_path: str, mime: str) -> Optional[dict]:
+    """Take a fully-written upload temp file and register it as moment media;
+    returns {'id', 'url', 'mime'} or None for an unsupported mime (the temp
+    is removed either way on failure). With ffmpeg available (the add-on
+    image ships it) the clip is normalized to H.264 720p mp4 in the
+    background and the returned id is the FINAL .mp4 id — the original
+    serves in the meantime. Without ffmpeg (bare dev env) the original is
+    stored as-is under its native extension."""
+    import threading
     import uuid as _uuid
     ext = _MEDIA_EXT_BY_MIME.get((mime or '').lower().split(';')[0])
     if not ext:
+        try:
+            os.remove(src_path)
+        except OSError:
+            pass
         return None
     os.makedirs(MEDIA_DIR, exist_ok=True)
-    media_id = _uuid.uuid4().hex + ext
-    with open(os.path.join(MEDIA_DIR, media_id), 'wb') as f:
-        f.write(data)
+    stem = _uuid.uuid4().hex
+    if _ffmpeg_path():
+        os.replace(src_path, os.path.join(MEDIA_DIR, stem + '.orig'))
+        threading.Thread(target=_transcode_media, args=(stem,), daemon=True).start()
+        media_id = stem + '.mp4'
+        return {'id': media_id, 'url': f'/api/media/{media_id}', 'mime': 'video/mp4'}
+    media_id = stem + ext
+    os.replace(src_path, os.path.join(MEDIA_DIR, media_id))
     return {'id': media_id, 'url': f'/api/media/{media_id}',
             'mime': _MEDIA_MIME_BY_EXT[ext]}
 
 
+def save_media_file(data: bytes, mime: str) -> Optional[dict]:
+    """Bytes convenience wrapper over finalize_media_upload (tests, small
+    clips). Large uploads should stream to a temp file instead."""
+    import uuid as _uuid
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    tmp = os.path.join(MEDIA_DIR, _uuid.uuid4().hex + '.part')
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    return finalize_media_upload(tmp, mime)
+
+
 def media_file_path(media_id: str) -> Optional[str]:
     """Validated absolute path for a media id, or None (bad id / missing).
-    The id regex doubles as the traversal guard."""
+    The id regex doubles as the traversal guard. While a transcode is
+    pending, the {stem}.orig fallback serves so a just-sent moment is never
+    a 404."""
     global _MEDIA_ID_RE
     if _MEDIA_ID_RE is None:
         import re
@@ -1823,7 +1887,10 @@ def media_file_path(media_id: str) -> Optional[str]:
     if not _MEDIA_ID_RE.match(media_id or ''):
         return None
     path = os.path.join(MEDIA_DIR, media_id)
-    return path if os.path.isfile(path) else None
+    if os.path.isfile(path):
+        return path
+    orig = os.path.join(MEDIA_DIR, media_id.split('.')[0] + '.orig')
+    return orig if os.path.isfile(orig) else None
 
 
 def media_mime(media_id: str) -> str:
@@ -1832,15 +1899,19 @@ def media_mime(media_id: str) -> str:
 
 def _delete_media_for_messages(msgs):
     """Best-effort file cleanup when messages roll off the retention cap —
-    a pruned moment must not orphan its clip on disk."""
+    a pruned moment must not orphan its clip (or a pending transcode's
+    working files) on disk."""
     for m in msgs:
         att = (m.get('attachment') or {}) if isinstance(m, dict) else {}
         url = str(att.get('url') or '')
         if url.startswith('/api/media/'):
-            path = media_file_path(url.rsplit('/', 1)[-1])
-            if path:
+            media_id = url.rsplit('/', 1)[-1]
+            stem = media_id.split('.')[0]
+            if not (len(stem) == 32 and all(c in '0123456789abcdef' for c in stem)):
+                continue
+            for name in (media_id, stem + '.orig', stem + '.tmp.mp4'):
                 try:
-                    os.remove(path)
+                    os.remove(os.path.join(MEDIA_DIR, name))
                 except OSError:
                     pass
 

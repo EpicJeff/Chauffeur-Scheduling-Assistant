@@ -327,12 +327,15 @@ def scenario_video_media_store_and_attachment():
     ch = storage.get_or_create_event_channel("evV", "Big Game")
     bt = BackgroundTasks()
 
-    saved = storage.save_media_file(b"\x00\x00fake-mp4-bytes", "video/mp4")
+    # Pin the no-ffmpeg path (a dev box may or may not have it on PATH).
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        saved = storage.save_media_file(b"\x00\x00fake-mp4-bytes", "video/mp4")
     check(saved and saved["url"].startswith("/api/media/") and saved["mime"] == "video/mp4",
           f"media file saved with mime-derived id, got {saved}")
     check(storage.media_file_path(saved["id"]), "saved file resolves")
-    check(storage.save_media_file(b"x", "application/pdf") is None,
-          "unsupported mime refused")
+    with mock.patch.object(storage, "_ffmpeg_path", return_value=None):
+        check(storage.save_media_file(b"x", "application/pdf") is None,
+              "unsupported mime refused")
     for junk in ("../../etc/passwd", "abc.mp4", "a" * 32 + ".exe", ""):
         check(storage.media_file_path(junk) is None, f"junk id refused: {junk!r}")
 
@@ -358,6 +361,45 @@ def scenario_video_media_store_and_attachment():
                                   "reactions": {}})
     check(storage.media_file_path(saved["id"]) is None and not os.path.exists(path),
           "pruned moment's clip removed from disk")
+
+
+def scenario_video_transcode_pipeline():
+    """iPhone HEVC .mov can't play on a Chrome wall panel: with ffmpeg the
+    clip normalizes to H.264 mp4 on the SAME id; the original serves while
+    the transcode is pending, and failure falls back to store-as-is."""
+    calls = []
+    with mock.patch.object(storage, "_ffmpeg_path", return_value="/usr/bin/ffmpeg"), \
+         mock.patch("threading.Thread") as thread:
+        thread.side_effect = lambda target=None, args=(), daemon=None: \
+            calls.append((target, args)) or mock.MagicMock()
+        saved = storage.save_media_file(b"fake-hevc-mov", "video/quicktime")
+    check(saved and saved["id"].endswith(".mp4") and saved["mime"] == "video/mp4",
+          f"ffmpeg path promises the FINAL mp4 id up front, got {saved}")
+    check(calls and calls[0][0] is storage._transcode_media,
+          "transcode kicked off in the background")
+    stem = saved["id"].split(".")[0]
+
+    # Pending window: the .orig fallback serves — a just-sent moment is never 404.
+    path = storage.media_file_path(saved["id"])
+    check(path and path.endswith(".orig"), f"original serves while pending, got {path}")
+
+    # Simulate ffmpeg success: swap in the mp4, original removed.
+    final = os.path.join(storage.MEDIA_DIR, saved["id"])
+    with open(final, "wb") as f:
+        f.write(b"transcoded-h264")
+    os.remove(os.path.join(storage.MEDIA_DIR, stem + ".orig"))
+    path = storage.media_file_path(saved["id"])
+    check(path == final, "after the swap the mp4 serves on the same id/url")
+
+    # Failure path: _transcode_media with a broken ffmpeg renames orig into place.
+    with mock.patch.object(storage, "_ffmpeg_path", return_value="/nonexistent/ffmpeg"):
+        orig2 = os.path.join(storage.MEDIA_DIR, "a" * 32 + ".orig")
+        with open(orig2, "wb") as f:
+            f.write(b"clip-bytes")
+        storage._transcode_media("a" * 32)
+    kept = os.path.join(storage.MEDIA_DIR, "a" * 32 + ".mp4")
+    check(os.path.exists(kept) and not os.path.exists(orig2),
+          "failed transcode stores the original as-is — the moment is never lost")
 
 
 def scenario_moment_fanout_differentiated():
@@ -447,6 +489,7 @@ SCENARIOS = [
     scenario_prompt_worthiness_gates,
     scenario_thinking_of_you_inversion,
     scenario_video_media_store_and_attachment,
+    scenario_video_transcode_pipeline,
     scenario_moment_fanout_differentiated,
     scenario_recent_moments_feed,
 ]
