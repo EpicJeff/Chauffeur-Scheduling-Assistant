@@ -114,6 +114,9 @@
                         <button @click="getPictures()" :disabled="picsBusy"
                             class="text-xs font-bold text-gray-500 hover:text-white disabled:opacity-40"
                             x-text="picsBusy ? 'Looking…' : 'Get pictures'"></button>
+                        <button @click="showRules = !showRules; if (showRules) loadRules()"
+                            class="text-xs font-bold text-gray-500 hover:text-white"
+                            x-text="showRules ? 'Hide how we eat' : 'How we eat'"></button>
                         <button @click="showRepertoire = !showRepertoire"
                             class="text-xs font-bold text-gray-500 hover:text-white"
                             x-text="showRepertoire ? 'Hide our meals' : 'Our meals'"></button>
@@ -271,6 +274,109 @@
                         class="w-full mt-4 px-4 py-2.5 rounded-xl bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold hover:bg-pink-500/30 disabled:opacity-40">
                         <span x-text="weekBusy ? 'Adding…' : approveLabel()"></span>
                     </button>
+                </div>
+
+                <!-- How we eat (M11). Rhythms rather than dishes: how often
+                     meat comes up, that takeout is occasional, that one pot of
+                     beans runs for a few days before the next. A rule that
+                     matches NO dish is the silent failure mode, so every rule
+                     shows what it currently covers. -->
+                <div x-show="showRules" x-cloak
+                    class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
+                    <div class="flex items-baseline justify-between mb-1 gap-3">
+                        <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">
+                            ⚖️ How we eat
+                        </h4>
+                        <button @click="showRuleForm = !showRuleForm"
+                            class="text-xs font-bold text-gray-500 hover:text-white shrink-0"
+                            x-text="showRuleForm ? 'Cancel' : '+ Rule'"></button>
+                    </div>
+                    <p class="text-[11px] text-gray-500 mb-3">
+                        Or just tell Argyle — "we only eat meat about once a week".
+                    </p>
+
+                    <!-- The form changes with the KIND, because "how often" and
+                         "one at a time" ask genuinely different questions. -->
+                    <div x-show="showRuleForm" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-3">
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <button @click="ruleDraft.kind = 'frequency_cap'"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg border"
+                                :class="ruleDraft.kind === 'frequency_cap'
+                                    ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                    : 'border-gray-700 text-gray-400'">How often</button>
+                            <button @click="ruleDraft.kind = 'batch_cycle'"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg border"
+                                :class="ruleDraft.kind === 'batch_cycle'
+                                    ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                    : 'border-gray-700 text-gray-400'">One at a time</button>
+                        </div>
+
+                        <input x-model="ruleDraft.name" type="text"
+                            placeholder="In your words — e.g. meat about once a week"
+                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 mb-2">
+
+                        <div class="flex flex-wrap items-end gap-3">
+                            <div class="flex-1 min-w-[180px]">
+                                <label class="block text-[11px] text-gray-500 mb-1">Applies to</label>
+                                <input x-model="ruleDraft.applies" type="text"
+                                    placeholder="tag or dish names, e.g. beans"
+                                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500">
+                            </div>
+                            <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer pb-2">
+                                <input type="checkbox" x-model="ruleDraft.takeout" class="accent-pink-500 w-4 h-4">
+                                Takeout
+                            </label>
+                            <div x-show="ruleDraft.kind === 'frequency_cap'" class="flex items-end gap-2">
+                                <div>
+                                    <label class="block text-[11px] text-gray-500 mb-1">At most</label>
+                                    <input x-model.number="ruleDraft.max_servings" type="number" min="1" max="14"
+                                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] text-gray-500 mb-1">per days</label>
+                                    <input x-model.number="ruleDraft.window_days" type="number" min="1" max="60"
+                                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white">
+                                </div>
+                            </div>
+                            <div x-show="ruleDraft.kind === 'batch_cycle'">
+                                <label class="block text-[11px] text-gray-500 mb-1">days per batch</label>
+                                <input x-model.number="ruleDraft.dwell_days" type="number" min="1" max="14"
+                                    class="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-sm text-white">
+                            </div>
+                            <button @click="saveRule()" :disabled="ruleBusy"
+                                class="text-xs font-bold px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                                x-text="ruleBusy ? 'Saving…' : 'Add'"></button>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="r in rules" :key="'mr-' + r.id">
+                            <div class="bg-gray-900 rounded-xl border px-4 py-2.5 flex items-start gap-3"
+                                :class="r.match_count ? 'border-gray-700' : 'border-amber-500/50'">
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-sm font-semibold text-gray-200"
+                                        :class="r.is_enabled ? '' : 'line-through opacity-50'"
+                                        x-text="r.name || r.description"></div>
+                                    <div class="text-[11px] text-gray-500" x-text="r.description"></div>
+                                    <div class="text-[11px]"
+                                        :class="r.match_count ? 'text-gray-600' : 'text-amber-400'"
+                                        x-text="r.match_count
+                                            ? 'covers ' + r.matches.slice(0, 6).join(', ')
+                                              + (r.match_count > 6 ? ' +' + (r.match_count - 6) : '')
+                                            : 'matches no dish yet — it is not doing anything'"></div>
+                                </div>
+                                <button @click="toggleRule(r)"
+                                    class="text-[11px] font-bold shrink-0"
+                                    :class="r.is_enabled ? 'text-gray-500 hover:text-white' : 'text-pink-300'"
+                                    x-text="r.is_enabled ? 'Pause' : 'Resume'"></button>
+                                <button @click="deleteRule(r)"
+                                    class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
+                            </div>
+                        </template>
+                        <div x-show="!rules.length" class="text-xs text-gray-500">
+                            No rules yet — the plan just rotates what you cook.
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Our meals: corrections and additions, a sibling of Tonight
@@ -710,6 +816,10 @@
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
                 pickerDate: null, pickerQuery: '', occasionDate: '',
+                rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
+                ruleDraft: { kind: 'frequency_cap', name: '', applies: '',
+                             takeout: false, max_servings: 1, window_days: 7,
+                             dwell_days: 3 },
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -879,6 +989,87 @@
                 isOnList(name) {
                     return this.open.some(i =>
                         i.name.trim().toLowerCase() === name.trim().toLowerCase());
+                },
+
+                async loadRules() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/rules');
+                        this.rules = r.ok ? (await r.json()).rules || [] : [];
+                    } catch (e) { this.rules = []; }
+                },
+
+                async saveRule() {
+                    // "Applies to" is one field on purpose: the family types a
+                    // word, and whether it lands as a tag or a dish name is our
+                    // problem, not theirs. Sent as both — the server keeps
+                    // whichever actually resolves.
+                    const d = this.ruleDraft;
+                    const words = (d.applies || '').split(',').map(w => w.trim()).filter(Boolean);
+                    if (!words.length && !d.takeout) {
+                        showGlobalAlert('What does this apply to? A tag like "beans", '
+                            + 'some dish names, or tick Takeout.');
+                        return;
+                    }
+                    const known = new Set((this.repertoire || [])
+                        .map(x => (x.name || '').toLowerCase()));
+                    const dishNames = words.filter(w => known.has(w.toLowerCase()));
+                    const tags = words.filter(w => !known.has(w.toLowerCase()));
+                    this.ruleBusy = true;
+                    try {
+                        const body = {
+                            name: (d.name || '').trim() || words.join(', ') || 'takeout',
+                            kind: d.kind, tags: tags,
+                            dish_ids: (this.repertoire || [])
+                                .filter(x => dishNames.some(n =>
+                                    n.toLowerCase() === (x.name || '').toLowerCase()))
+                                .map(x => x.id),
+                            sources: d.takeout ? ['ordered'] : [],
+                            max_servings: parseInt(d.max_servings) || 1,
+                            window_days: parseInt(d.window_days) || 7,
+                            dwell_days: parseInt(d.dwell_days) || 3,
+                        };
+                        const r = await fetch(this.apiBase + 'api/meals/rules', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        if (!r.ok) { showGlobalAlert('Could not save that rule.'); return; }
+                        const res = await r.json();
+                        // A rule matching nothing is the silent failure this
+                        // whole surface exists to prevent — say it out loud.
+                        if (!res.match_count) {
+                            showGlobalAlert('Saved, but it matches no dish yet, so it '
+                                + "won't do anything. Try a tag your dishes actually "
+                                + 'carry, or name the dishes directly.');
+                        }
+                        this.showRuleForm = false;
+                        this.ruleDraft = { kind: 'frequency_cap', name: '', applies: '',
+                                           takeout: false, max_servings: 1,
+                                           window_days: 7, dwell_days: 3 };
+                        await this.loadRules();
+                        this.loadWeek();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.ruleBusy = false;
+                    }
+                },
+
+                async toggleRule(r) {
+                    await fetch(this.apiBase + 'api/meals/rules/' + r.id
+                        + '?is_enabled=' + (r.is_enabled ? 'false' : 'true'),
+                        { method: 'PATCH' });
+                    await this.loadRules();
+                    this.loadWeek();
+                },
+
+                async deleteRule(r) {
+                    if (!await promptConfirm('Remove this rule?',
+                        'The plan will stop honouring "' + (r.name || r.description)
+                        + '". You can always add it again.')) return;
+                    await fetch(this.apiBase + 'api/meals/rules/' + r.id,
+                                { method: 'DELETE' });
+                    await this.loadRules();
+                    this.loadWeek();
                 },
 
                 async getPictures() {

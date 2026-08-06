@@ -2186,6 +2186,52 @@ def scenario_rules_can_be_disabled_without_deleting_them():
     check(storage.get_meal_rule(rid), "and the rule is still there to re-enable")
 
 
+def scenario_the_rules_panel_gets_what_it_renders():
+    """The rules shipped with an API and agent tools and NO UI, so there was
+    nowhere to see or add them. The panel renders description, matches and
+    match_count off the list endpoint — if those stop coming back it silently
+    renders blank rows, which is how the feature looked absent in the first
+    place."""
+    reset_db(); _seed_people(); _settings()
+    import main
+    _rules_repertoire()
+    main.create_meal_rule(main.MealRuleReq(
+        name='meat about once a week', kind='frequency_cap', tags=['meat'],
+        max_servings=1, window_days=7))
+    main.create_meal_rule(main.MealRuleReq(
+        name='takeout now and then', kind='frequency_cap', sources=['ordered'],
+        max_servings=1, window_days=10))
+    main.create_meal_rule(main.MealRuleReq(
+        name='nothing matches me', kind='frequency_cap', tags=['venison']))
+
+    rows = main.list_meal_rules()['rules']
+    check(len(rows) == 3, f"disabled ones are listed too, got {len(rows)}")
+    for r in rows:
+        for key in ('id', 'name', 'description', 'matches', 'match_count',
+                    'is_enabled'):
+            check(key in r, f"the panel needs {key}, got {sorted(r)}")
+    by_name = {r['name']: r for r in rows}
+    check(by_name['meat about once a week']['match_count'] == 3,
+          f"tags resolve, got {by_name['meat about once a week']['matches']}")
+    check(by_name['takeout now and then']['match_count'] == 2,
+          "takeout resolves with no tagging at all")
+    check(by_name['nothing matches me']['match_count'] == 0,
+          "and the empty one is visibly empty so the panel can warn")
+    check('at most 1 in a week' in by_name['meat about once a week']['description'],
+          f"description reads as English, got "
+          f"{by_name['meat about once a week']['description']!r}")
+
+    rid = by_name['meat about once a week']['id']
+    main.patch_meal_rule(rid, is_enabled=False)
+    check(storage.get_meal_rule(rid)['is_enabled'] is False, "pause works")
+    check(rid not in [r['id'] for r in storage.get_meal_rules()],
+          "a paused rule stops governing")
+    check(rid in [r['id'] for r in storage.get_meal_rules(include_disabled=True)],
+          "but is still there to resume")
+    main.remove_meal_rule(rid)
+    check(not storage.get_meal_rule(rid), "and delete removes it")
+
+
 def scenario_rule_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _rules_repertoire()

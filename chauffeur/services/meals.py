@@ -641,8 +641,8 @@ def describe_meal_rule(rule: dict) -> str:
         return (f"{subject}: one at a time, about {rule.get('dwell_days', 3)} "
                 f"days each, then the next")
     n, w = rule.get('max_servings', 1), rule.get('window_days', 7)
-    every = 'week' if w == 7 else f"{w} days"
-    return f"{subject}: at most {n} in a {every}"
+    every = 'a week' if w == 7 else ('a day' if w == 1 else f"{w} days")
+    return f"{subject}: at most {n} in {every}"
 
 
 def rule_matches(rule: dict, dish: dict) -> bool:
