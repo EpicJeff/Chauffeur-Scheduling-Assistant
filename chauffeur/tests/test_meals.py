@@ -2037,6 +2037,158 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+# --- M9: dishes that come as a set ------------------------------------------
+# Reported from real use: brisket (takeout) with beans and fries (home) arrived
+# together once and the family asked whether that would HOLD. Measured: it did
+# not — over a fortnight the trio survived 0 of 3 brisket nights. M5 handles
+# coherence as a soft tag affinity, which is a preference, not a relationship.
+
+def scenario_pairing_is_a_relationship_not_a_coincidence():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    brisket = _dish('brisket', type='entree', source='ordered')
+    beans = _dish('beans', type='side', side_type='other')
+    fries = _dish('fries', type='side', side_type='starch')
+    for n, st in (('broccoli', 'vegetable'), ('rice', 'starch'),
+                  ('salad', 'salad'), ('corn', 'vegetable')):
+        _dish(n, type='side', side_type=st)
+    for n in ('tacos', 'salmon', 'spaghetti'):
+        _dish(n, type='entree')
+
+    def brisket_nights(week):
+        return [d for d in week
+                if any(x['name'] == 'brisket' for x in d['dishes'])]
+
+    loose = brisket_nights(meals.compose_week('2026-09-10', 14))
+    intact_before = [d for d in loose
+                     if {'beans', 'fries'} <= {x['name'] for x in d['dishes']}]
+    check(loose, "brisket does come up")
+    check(not intact_before,
+          f"and without a declared pairing the trio does NOT hold, got "
+          f"{len(intact_before)}/{len(loose)}")
+
+    meals.set_pairing(brisket['id'], [beans['id'], fries['id']])
+    bound = brisket_nights(meals.compose_week('2026-09-10', 14))
+    intact_after = [d for d in bound
+                    if {'beans', 'fries'} <= {x['name'] for x in d['dishes']}]
+    check(bound and len(intact_after) == len(bound),
+          f"declared, it holds every time: {len(intact_after)}/{len(bound)}")
+
+
+def scenario_pairing_is_directed_so_partners_stay_free():
+    """The asymmetry IS the design: brisket brings beans, but beans are not
+    thereby confined to brisket. A symmetric matrix is the O(n^2) upkeep M5
+    refused to inflict."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    brisket = _dish('brisket', type='entree')
+    beans = _dish('beans', type='side', side_type='other')
+    _dish('tacos', type='entree')
+    meals.set_pairing(brisket['id'], [beans['id']])
+
+    week = meals.compose_week('2026-09-10', 10)
+    with_tacos = [d for d in week if any(x['name'] == 'tacos' for x in d['dishes'])]
+    check(any('beans' in {x['name'] for x in d['dishes']} for d in with_tacos),
+          "beans still turn up beside other entrees")
+
+
+def scenario_only_with_confines_a_dish_to_its_partner():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    curry = _dish('curry', type='entree')
+    _dish('tacos', type='entree')
+    naan = _dish('naan', type='side', side_type='starch')
+    _dish('rice', type='side', side_type='starch')
+    meals.set_pairing(naan['id'], [curry['id']], 'only_with')
+
+    week = meals.compose_week('2026-09-10', 12)
+    for day in week:
+        names = {x['name'] for x in day['dishes']}
+        if 'naan' in names:
+            check('curry' in names,
+                  f"naan never appears without curry, got {names}")
+
+
+def scenario_a_pairing_never_overrides_an_allergy():
+    """A pairing is the family saying these go together — not a licence to put
+    an allergen on the plate. The hard filter still wins."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    brisket = _dish('brisket', type='entree')
+    peanuts = _dish('peanut slaw', type='side', side_type='salad', tags=['peanut'])
+    _dish('plain slaw', type='side', side_type='salad')
+    meals.set_pairing(brisket['id'], [peanuts['id']])
+    for m in storage.get_all_members():
+        storage.update_member(m['id'], {'dietary_avoid': ['peanut']})
+
+    week = meals.compose_week('2026-09-10', 6)
+    for day in week:
+        names = {x['name'] for x in day['dishes']}
+        check('peanut slaw' not in names,
+              f"the allergen stays off the plate even when paired, got {names}")
+
+
+def scenario_a_pairing_cycle_terminates():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    a = _dish('brisket', type='entree')
+    b = _dish('beans', type='side', side_type='other')
+    meals.set_pairing(a['id'], [b['id']])
+    meals.set_pairing(b['id'], [a['id']])      # the family can easily say both
+    week = meals.compose_week('2026-09-10', 2)
+    check(week and all(len(d['dishes']) <= 4 for d in week),
+          f"mutual pairing does not loop, got {[len(d['dishes']) for d in week]}")
+
+
+def scenario_paired_sides_fill_the_slots_they_occupy():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    brisket = _dish('brisket', type='entree')
+    beans = _dish('beans', type='side', side_type='other')
+    fries = _dish('fries', type='side', side_type='starch')
+    for n, st in (('broccoli', 'vegetable'), ('rice', 'starch')):
+        _dish(n, type='side', side_type=st)
+    meals.set_pairing(brisket['id'], [beans['id'], fries['id']])
+
+    day = next(d for d in meals.compose_week('2026-09-10', 6)
+               if any(x['name'] == 'brisket' for x in d['dishes']))
+    sides = [x for x in day['dishes'] if x['type'] == 'side']
+    check(len(sides) == 2, f"two sides asked for, two delivered — the pairing "
+                           f"fills them rather than adding a third, got "
+                           f"{[s['name'] for s in sides]}")
+
+
+def scenario_pairing_tools_in_both_stacks():
+    reset_db(); _seed_people(); _settings()
+    _dish('brisket', type='entree')
+    _dish('beans', type='side', side_type='other')
+    _dish('fries', type='side', side_type='starch')
+    from services import agent_tools, agent_tools_v2
+    want = {"pair_dishes", "unpair_dishes"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    res = agent_tools.execute_tool("pair_dishes", {
+        "dish_name": "brisket", "partner_names": "beans and fries"})
+    check(res['status'] == 'success', f"set by voice, got {res}")
+    b = storage.find_dish_by_name('brisket')
+    check(len(b['always_with']) == 2,
+          f"'beans and fries' parsed as two partners, got {b['always_with']}")
+
+    gone = agent_tools.execute_tool("unpair_dishes", {"dish_name": "brisket"})
+    check(gone['status'] == 'success'
+          and not storage.find_dish_by_name('brisket')['always_with'],
+          f"and undone by voice, got {gone}")
+
+
 def scenario_variants_of_one_dish_stay_distinguishable():
     """Reported: "pizza made from frozen or ordered out all just show as
     pizza". M4 built `_chip_label` for exactly this and M5 retired slots, which

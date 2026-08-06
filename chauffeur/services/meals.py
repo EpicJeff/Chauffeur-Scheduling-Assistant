@@ -598,6 +598,17 @@ def _as_of_ts(date_str: str) -> float:
     return datetime.datetime.combine(d, datetime.time(0, 0)).timestamp()
 
 
+def _pairing_ok(dish: dict, chosen: list) -> bool:
+    """`only_with` is the reverse of `always_with`: this dish is never proposed
+    on its own merits, only alongside a partner it names. A sauce that belongs
+    to exactly one entree should not turn up next to salmon."""
+    partners = dish.get('only_with') or []
+    if not partners:
+        return True
+    have = {d['id'] for d in chosen}
+    return any(p in have for p in partners)
+
+
 def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
           as_of: float = None, served: dict = None) -> float:
     score = 0.0
@@ -649,9 +660,13 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')), None)
 
     def pick(pool, affinity=frozenset(), exclude=()):
+        # `chosen` is empty when the entree is picked, so an entree declaring
+        # only_with can never lead a plate — which is right: a dish that only
+        # exists alongside something else is not the something else.
         cands = [d for d in pool
                  if d['id'] not in exclude
-                 and _dish_ok(d, avoid, binding, leftover_ids)]
+                 and _dish_ok(d, avoid, binding, leftover_ids)
+                 and _pairing_ok(d, chosen)]
         if not cands:
             return None
         return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike,
@@ -673,11 +688,37 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         or _rank(best_meal, leftover_ids, frozenset(), dislike, as_of, served)
         > _rank(best_entree, leftover_ids, frozenset(), dislike, as_of, served))
 
+    def attach(seed, acc):
+        """Pull in whatever this dish ALWAYS brings.
+
+        Hard filters still win: a pairing is the family saying "these go
+        together", not a licence to put an allergen on the plate. Cycles are
+        guarded because brisket->beans and beans->brisket is a thing a family
+        can easily say.
+        """
+        queue, seen = [seed], {seed['id']}
+        while queue:
+            cur = queue.pop(0)
+            for did in (cur.get('always_with') or []):
+                if did in seen or any(d['id'] == did for d in acc):
+                    continue
+                seen.add(did)
+                mate = storage.get_dish(did)
+                if not mate or not mate.get('is_active', True):
+                    continue
+                if not _dish_ok(mate, avoid, binding, leftover_ids):
+                    continue          # allergy/portability still governs
+                acc.append(mate)
+                queue.append(mate)
+        return acc
+
     if use_meal:
         chosen.append(best_meal)
+        attach(best_meal, chosen)
     else:
         if best_entree:
             chosen.append(best_entree)
+            attach(best_entree, chosen)
         affinity = {str(t).strip().lower()
                     for t in ((best_entree or {}).get('tags') or [])}
         # Spread the sides across kinds — a starch and a vegetable is the usual
@@ -686,12 +727,17 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         # the running, so leftover potatoes lost to a fresh vegetable. Using up
         # what exists is the stronger signal; variety is a tiebreak.
         sides_pool = storage.get_dishes_by_type('side')
-        used_types = set()
-        for _ in range(sides_n):
+        used_types = {d.get('side_type') or 'other' for d in chosen
+                      if d.get('type') == 'side'}
+        # Sides that came along with the entree already fill their slots — a
+        # plate set to two sides that arrives with beans and fries is FULL.
+        free_slots = sides_n - len([d for d in chosen if d.get('type') == 'side'])
+        for _ in range(max(0, free_slots)):
             taken_ids = {d['id'] for d in chosen}
             cands = [d for d in sides_pool
                      if d['id'] not in taken_ids
-                     and _dish_ok(d, avoid, binding, leftover_ids)]
+                     and _dish_ok(d, avoid, binding, leftover_ids)
+                     and _pairing_ok(d, chosen)]
             if not cands:
                 break
             got = max(cands, key=lambda d: (
@@ -2470,6 +2516,56 @@ def household_staples(limit: int = 40) -> list:
 # reminded nobody, which is precisely the useless half.
 
 PREP_GRACE_MINS = 90          # a late nudge still helps; a stale one does not
+
+
+def set_pairing(dish_id: str, partner_ids: list, mode: str = 'always_with',
+                replace: bool = False) -> dict:
+    """"Brisket always comes with beans and fries."
+
+    Directed on purpose: this records a fact about BRISKET, and leaves beans
+    and fries free to appear beside anything else. The symmetric version — a
+    goes-with matrix — is the thing M5 refused to build, because it is O(n^2)
+    of upkeep a family will never do.
+    """
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    if mode not in ('always_with', 'only_with'):
+        return {'status': 'error', 'message': f"Unknown pairing '{mode}'."}
+    ids = [p for p in (partner_ids or []) if p and p != dish_id]
+    real = [p for p in ids if storage.get_dish(p)]
+    cur = [] if replace else list(dish.get(mode) or [])
+    for p in real:
+        if p not in cur:
+            cur.append(p)
+    storage.update_dish(dish_id, {mode: cur})
+    return {'status': 'success', 'dish': storage.get_dish(dish_id),
+            'partners': cur, 'ignored': [p for p in ids if p not in real]}
+
+
+def clear_pairing(dish_id: str, partner_id: str = None,
+                  mode: str = 'always_with') -> dict:
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    cur = list(dish.get(mode) or [])
+    keep = [] if not partner_id else [p for p in cur if p != partner_id]
+    storage.update_dish(dish_id, {mode: keep})
+    return {'status': 'success', 'removed': len(cur) - len(keep),
+            'dish': storage.get_dish(dish_id)}
+
+
+def pairing_view(dish: dict, all_by_id: dict = None) -> dict:
+    """Names rather than ids, for anything that has to show this to a human."""
+    all_by_id = all_by_id if all_by_id is not None else \
+        {d['id']: d for d in storage.get_dishes()}
+
+    def names(ids):
+        return [(all_by_id.get(i) or {}).get('short_name')
+                or (all_by_id.get(i) or {}).get('name')
+                for i in (ids or []) if i in all_by_id]
+    return {'always_with': names(dish.get('always_with')),
+            'only_with': names(dish.get('only_with'))}
 
 
 def with_chip_labels(dishes: list, all_dishes: list = None) -> list:

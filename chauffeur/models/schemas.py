@@ -856,6 +856,18 @@ class Dish(BaseModel):
     ingredients: List[MealIngredient] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
 
+    # Pairing (M9). DIRECTED and per-dish, deliberately not a compatibility
+    # matrix: "brisket always comes with beans and fries" is one statement on
+    # one dish, whereas a symmetric goes-with grid is O(n^2) of maintenance
+    # that a family will never keep current — which is exactly why M5 refused
+    # to model coherence and used a soft tag affinity instead. The asymmetry is
+    # the whole point: brisket BRINGS beans and fries, while beans and fries
+    # remain free to appear beside anything else.
+    always_with: List[str] = Field(default_factory=list)   # dish ids that come too
+    # The reverse constraint, also directed: never propose this dish unless one
+    # of these is on the plate ("that sauce is only ever with the brisket").
+    only_with: List[str] = Field(default_factory=list)
+
     # "Potatoes" is too vague to time or shop for — which kind, cooked how?
     # The model GUESSES rather than interrogating (entry must stay one
     # sentence), flags the guess here, and the family refines when they feel

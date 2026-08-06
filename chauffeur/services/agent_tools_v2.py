@@ -1397,6 +1397,60 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
                        f"{'s' if n != 1 else ''} on the list."}
 
 
+def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
+                acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "brisket always comes with beans and fries", "the rice only ever
+    goes with the curry". Directed — the partners stay free to appear on their
+    own unless `exclusive` says otherwise."""
+    from services import storage, meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error",
+                "message": f"I don't have a dish called '{dish_name}'."}
+    wanted = [p.strip() for p in str(partner_names or '').replace(' and ', ',').split(',')
+              if p.strip()]
+    found, missing = [], []
+    for nm in wanted:
+        p = storage.find_dish_by_name(nm)
+        (found.append(p) if p else missing.append(nm))
+    if not found:
+        return {"status": "error",
+                "message": f"I couldn't find {', '.join(missing) or 'those dishes'} "
+                           "in what you cook. Add them first and I'll pair them up."}
+    nm = dish.get('short_name') or dish['name']
+    if exclusive:
+        # "X only ever goes with Y" is a statement about X, recorded on X.
+        meals.set_pairing(dish['id'], [p['id'] for p in found], 'only_with')
+        names = ', '.join(p.get('short_name') or p['name'] for p in found)
+        return {"status": "success",
+                "message": f"Got it — {nm} only comes up with {names}."}
+    meals.set_pairing(dish['id'], [p['id'] for p in found], 'always_with')
+    names = ', '.join(p.get('short_name') or p['name'] for p in found)
+    tail = (f" (I don't have {', '.join(missing)} yet.)" if missing else "")
+    return {"status": "success",
+            "message": f"Got it — {nm} always comes with {names}.{tail}"}
+
+
+def unpair_dishes(dish_name: str, partner_name: str = "",
+                  acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "brisket doesn't always come with fries anymore"."""
+    from services import storage, meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error", "message": f"I don't have a dish called '{dish_name}'."}
+    pid = None
+    if (partner_name or '').strip():
+        p = storage.find_dish_by_name(partner_name)
+        pid = p['id'] if p else None
+    total = 0
+    for mode in ('always_with', 'only_with'):
+        total += meals.clear_pairing(dish['id'], pid, mode).get('removed', 0)
+    nm = dish.get('short_name') or dish['name']
+    if not total:
+        return {"status": "success", "message": f"{nm} wasn't paired with that anyway."}
+    return {"status": "success", "message": f"Done — {nm} isn't tied to that now."}
+
+
 def set_dish_prep(dish_name: str, action: str, when: str = "hours_before",
                   hours: float = 1.0, acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "we soak the rice the night before", "the chicken marinates an
@@ -2071,6 +2125,31 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD."}
                 },
                 "required": []
+            }
+        },
+        {
+            "name": "pair_dishes",
+            "description": "Records that dishes always come together (brisket always comes with beans and fries, pizza always with salad). Directed: the partners stay free to appear beside other things. Set exclusive=true for the reverse - this dish is ONLY ever proposed alongside those partners.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "The dish that brings the others, e.g. brisket."},
+                    "partner_names": {"type": "string", "description": "Comma separated dishes that come with it, e.g. beans, fries."},
+                    "exclusive": {"type": "boolean", "description": "true for 'X is only ever served with Y'."}
+                },
+                "required": ["dish_name", "partner_names"]
+            }
+        },
+        {
+            "name": "unpair_dishes",
+            "description": "Removes a pairing (brisket does not always come with fries anymore).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish."},
+                    "partner_name": {"type": "string", "description": "Which partner; omit to clear all of that dish's pairings."}
+                },
+                "required": ["dish_name"]
             }
         },
         {

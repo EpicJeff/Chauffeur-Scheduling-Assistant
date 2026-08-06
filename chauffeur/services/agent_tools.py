@@ -518,6 +518,21 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class PairDishesTool(BaseModel):
+    """
+    Records that dishes always come together ("brisket always comes with beans and fries"). Directed - the partners stay free to appear elsewhere.
+    """
+    dish_name: str = Field(..., description="The dish that brings the others.")
+    partner_names: str = Field(..., description="Comma separated dishes that come with it.")
+    exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
+
+class UnpairDishesTool(BaseModel):
+    """
+    Removes a pairing between dishes.
+    """
+    dish_name: str = Field(..., description="Which dish.")
+    partner_name: Optional[str] = Field(None, description="Which partner; omit to clear all pairings for that dish.")
+
 class SetDishPrepTool(BaseModel):
     """
     Records prep done OUTSIDE the cook window and sets its reminder ("we soak the rice the night before", "the chicken marinates an hour first").
@@ -696,6 +711,8 @@ TOOL_SCHEMAS = {
     "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
     "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
     "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "pair_dishes": PairDishesTool.model_json_schema(),
+    "unpair_dishes": UnpairDishesTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -1840,6 +1857,15 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_pair_dishes(args: dict) -> dict:
+    from services.agent_tools_v2 import pair_dishes
+    return pair_dishes(args.get("dish_name") or "", args.get("partner_names") or "",
+                       bool(args.get("exclusive")))
+
+def handle_unpair_dishes(args: dict) -> dict:
+    from services.agent_tools_v2 import unpair_dishes
+    return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
+
 def handle_set_dish_prep(args: dict) -> dict:
     from services.agent_tools_v2 import set_dish_prep
     return set_dish_prep(args.get("dish_name") or "", args.get("action") or "",
@@ -1993,6 +2019,8 @@ TOOL_HANDLERS = {
     "get_week_dinners": handle_get_week_dinners,
     "approve_week_dinners": handle_approve_week_dinners,
     "get_shopping_trip": handle_get_shopping_trip,
+    "pair_dishes": handle_pair_dishes,
+    "unpair_dishes": handle_unpair_dishes,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

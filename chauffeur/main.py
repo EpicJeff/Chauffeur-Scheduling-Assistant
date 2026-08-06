@@ -5415,6 +5415,28 @@ class DishImage(BaseModel):
     url: Optional[str] = None
     source: str = 'family'
 
+class PairingReq(BaseModel):
+    partner_ids: List[str] = []
+    mode: str = 'always_with'      # always_with | only_with
+    replace: bool = False
+
+@app.post("/api/meals/dishes/{dish_id}/pairing")
+def set_dish_pairing(dish_id: str, req: PairingReq):
+    """"Brisket always comes with beans and fries" — directed, so beans and
+    fries stay free to appear beside anything else."""
+    from services import meals as _meals
+    res = _meals.set_pairing(dish_id, req.partner_ids, req.mode, req.replace)
+    _touch_stream()
+    return res
+
+@app.delete("/api/meals/dishes/{dish_id}/pairing")
+def clear_dish_pairing(dish_id: str, partner_id: Optional[str] = None,
+                       mode: str = 'always_with'):
+    from services import meals as _meals
+    res = _meals.clear_pairing(dish_id, partner_id, mode)
+    _touch_stream()
+    return res
+
 class PrepStepReq(BaseModel):
     action: str
     when: str = 'hours_before'      # night_before | hours_before | morning_of

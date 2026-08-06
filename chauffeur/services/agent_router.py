@@ -302,7 +302,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              "get_shopping_trip", "schedule_shopping_trip",
                              # M8: prep-ahead reads and writes are complete on
                              # their own too.
-                             "set_dish_prep", "clear_dish_prep", "get_prep_ahead"}
+                             "set_dish_prep", "clear_dish_prep", "get_prep_ahead",
+                             # M9: pairing reads back as a complete sentence.
+                             "pair_dishes", "unpair_dishes"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -572,7 +574,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "add_dishes", "get_week_dinners",
                                    "approve_week_dinners", "get_shopping_trip",
                                    "schedule_shopping_trip", "set_dish_prep",
-                                   "clear_dish_prep", "get_prep_ahead"):
+                                   "clear_dish_prep", "get_prep_ahead",
+                                   "pair_dishes", "unpair_dishes"):
                     from services import agent_tools_v2 as _atv2
                     actor = acting_member
                     if actor is None and driver:
@@ -586,6 +589,15 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.get_week_dinners(acting_member=actor)
                     elif func_name == "approve_week_dinners":
                         res = _atv2.approve_week_dinners(acting_member=actor)
+                    elif func_name == "pair_dishes":
+                        res = _atv2.pair_dishes(args.get("dish_name", "") or "",
+                                                args.get("partner_names", "") or "",
+                                                bool(args.get("exclusive")),
+                                                acting_member=actor)
+                    elif func_name == "unpair_dishes":
+                        res = _atv2.unpair_dishes(args.get("dish_name", "") or "",
+                                                  args.get("partner_name", "") or "",
+                                                  acting_member=actor)
                     elif func_name == "set_dish_prep":
                         res = _atv2.set_dish_prep(
                             args.get("dish_name", "") or "",
