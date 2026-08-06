@@ -622,6 +622,73 @@ def scenario_an_open_option_satisfies_its_category():
     check('beans' in res['skipped'], "and it says it skipped it")
 
 
+def scenario_a_background_trip_is_not_a_commitment():
+    """Regression (reported 2026-08-05): two kids away on a trip with nothing
+    else on the calendar were reported as having NO GAP TO EAT. A background
+    trip runs midnight-to-midnight, so counting it as occupation swallowed the
+    whole day. All-day presence is not physical occupation — and someone on a
+    trip is not eating at this house at all."""
+    reset_db(); _seed_people()
+    settings = _settings()
+    sched = {
+        "events": [{
+            "id": "trip", "title": "Grandma's", "event_type": "background_trip",
+            "start": f"{DAY}T00:00:00", "end": f"{DAY}T23:59:00",
+            "all_day": True, "location": "Away",
+            "calendar_ids": ["add@cal", "ben@cal"],
+        }],
+        "assignments": {}, "matched_rules": {},
+    }
+    plan = meals.eating_plan(DAY, 'dinner', sched, settings)
+    check(not plan['no_slot'],
+          f"nobody is trapped by a trip — got no_slot={plan['no_slot']}")
+    check({a['name'] for a in plan['away']} == {"Addison", "Ben"},
+          f"the travellers are recorded as AWAY, not silently dropped — got {plan['away']}")
+    check([p['name'] for p in plan['people']] == ["Mom"],
+          "only the people actually home are in the household plan")
+    check(not plan['nobody_can_eat'], "and this is not a crisis")
+    check(meals.plan_summary_lines(plan) == [],
+          f"a quiet evening with two kids away says nothing, got "
+          f"{meals.plan_summary_lines(plan)}")
+
+    # The real shape: trips span several days, so the event does NOT start on
+    # the day being planned. Commitment gathering only looks at events
+    # starting today, so away-detection has to scan the whole range.
+    span = dict(sched)
+    span['events'] = [{**sched['events'][0],
+                       "start": "2026-09-06T00:00:00",
+                       "end": "2026-09-11T00:00:00"}]
+    mid = meals.eating_plan(DAY, 'dinner', span, settings)
+    check({a['name'] for a in mid['away']} == {"Addison", "Ben"},
+          f"a multi-day trip covering today still reads as away, got {mid['away']}")
+
+    # ...and the day after it ends, they are home again.
+    after = meals.eating_plan("2026-09-12", 'dinner', span, settings)
+    check(not after['away'], f"the trip does not follow them home, got {after['away']}")
+
+
+def scenario_an_all_day_event_does_not_block_eating():
+    """"Spirit Week" is a presence marker, not a 24-hour occupation."""
+    reset_db(); _seed_people()
+    settings = _settings()
+    sched = {
+        "events": [{
+            "id": "spirit", "title": "Spirit Week", "event_type": "standard",
+            "start": f"{DAY}T00:00:00", "end": f"{DAY}T23:59:00",
+            "all_day": True, "location": "School",
+            "calendar_ids": ["add@cal"],
+        }],
+        "assignments": {}, "matched_rules": {},
+    }
+    slots = [s for s in meals.eating_slots(_member("Addison"), DAY, sched, settings)
+             if s['meal'] == 'dinner']
+    check(slots and slots[0]['modality'] == 'at_home',
+          f"an all-day marker leaves the evening free, got {slots}")
+    plan = meals.eating_plan(DAY, 'dinner', sched, settings)
+    check(not plan['no_slot'], "and nobody is reported as unable to eat")
+    check(not plan['away'], "an ordinary all-day event does NOT mean away")
+
+
 def _leftover(**kw):
     from models.schemas import Leftover
     rec = Leftover(date=kw.pop('date', DAY), **kw).model_dump()

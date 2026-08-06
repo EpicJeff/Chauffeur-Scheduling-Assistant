@@ -134,6 +134,15 @@ def member_commitments(member_id: str, date_str: str, sched: dict,
             continue
         if ev.get('trip_suppressed'):
             continue
+        # ALL-DAY PRESENCE IS NOT PHYSICAL OCCUPATION — the same rule the
+        # passenger double-booking pass already follows. An all-day event
+        # ("Spirit Week") or a background trip starts at midnight and runs 24h,
+        # so treating it as a commitment swallowed the entire day and reported
+        # everyone as having no gap to eat. A background trip means the person
+        # is AWAY, which is handled by `away_on_trip` dropping them from the
+        # household plan — not by pretending they are busy every minute.
+        if ev.get('all_day') or ev.get('event_type') == 'background_trip':
+            continue
         ev_id = str(ev.get('id', ''))
         present = presence.members_at_event(ev, ev_id, sched)
         if not any(m['id'] == member_id for m in present):
@@ -155,6 +164,34 @@ def member_commitments(member_id: str, date_str: str, sched: dict,
                             'is_driving': driving}
     out = sorted(blocks.values(), key=lambda b: b['start'])
     return out
+
+
+def away_on_trip(member_id: str, date_str: str, sched: dict) -> bool:
+    """Is this member away on a background trip covering this day?
+
+    Someone on a trip is not eating at this house, so they belong OUT of the
+    household plan entirely — not given a wide-open at-home evening (they are
+    not here) and not reported as having no gap (they are not trapped, they
+    are in another city). Chauffeur does not plan trip meals.
+    """
+    from services import presence
+    for ev in sched.get('events', []) or []:
+        if ev.get('event_type') != 'background_trip':
+            continue
+        start, end = _parse_iso(ev.get('start')), _parse_iso(ev.get('end'))
+        if not start or not end:
+            continue
+        try:
+            day = datetime.date.fromisoformat(date_str)
+        except ValueError:
+            return False
+        # end is exclusive for all-day spans; a same-day trip still counts.
+        if not (start.date() <= day <= end.date()):
+            continue
+        if any(m['id'] == member_id
+               for m in presence.members_at_event(ev, str(ev.get('id', '')), sched)):
+            return True
+    return False
 
 
 def _travel_mins(a, b) -> int:
@@ -340,9 +377,15 @@ def eating_plan(date_str: str, meal: str = 'dinner', sched: dict = None,
     settings = settings if settings is not None else (storage.get_settings() or {})
     drivers_by_event = _driver_member_ids(sched)
 
-    people, no_slot = [], []
+    people, no_slot, away = [], [], []
     for m in storage.get_all_members():
         if m.get('system'):
+            continue
+        # Away on a trip: not eating at this house tonight. Recorded rather
+        # than silently dropped — a plan that quietly omits people is the kind
+        # of invisible behaviour that reads as a bug.
+        if away_on_trip(m['id'], date_str, sched):
+            away.append({'member_id': m['id'], 'name': m.get('name')})
             continue
         slots = [s for s in eating_slots(m, date_str, sched, settings, drivers_by_event)
                  if s['meal'] == meal]
@@ -437,6 +480,7 @@ def eating_plan(date_str: str, meal: str = 'dinner', sched: dict = None,
         'packed_count': len(packed),
         'packed_member_ids': [p['member_id'] for p in packed],
         'no_slot': [{'member_id': p['member_id'], 'name': p['name']} for p in no_slot],
+        'away': away,
         'nobody_can_eat': bool(people) and not sitting_rows,
         'car_dining': dining_setting('car', settings),
         'venue_dining': dining_setting('venue', settings),
@@ -900,4 +944,9 @@ def plan_summary_lines(plan: dict) -> list:
 
     for miss in plan.get('no_slot') or []:
         lines.append(f"⏳ {miss['name']} has no gap to eat — worth a look.")
+    # Only worth saying when the evening was already worth talking about; on
+    # its own, "someone is away" is not news the family needs told back.
+    if lines and plan.get('away'):
+        names = ", ".join(a['name'] for a in plan['away'])
+        lines.append(f"✈️ {names} away — not counted in.")
     return lines
