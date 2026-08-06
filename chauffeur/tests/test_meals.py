@@ -2407,6 +2407,87 @@ def scenario_a_locked_night_survives_a_bulk_repropose():
           "but a deliberate per-day reset releases it")
 
 
+def _repropose_bed(entrees=('tacos', 'brisket', 'chicken', 'pasta', 'chili')):
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    for n in entrees:
+        _dish(n, type='entree')
+    for n in ('salad', 'rice', 'broccoli'):
+        _dish(n, type='side', side_type='other')
+
+
+def _entrees_of(week):
+    return {d['date']: next((x['name'] for x in d['dishes']
+                             if x.get('type') == 'entree'), None) for d in week}
+
+
+def scenario_repropose_moves_a_week_nobody_has_touched():
+    """The button spent three versions doing nothing and it took a bug report
+    to notice. It reset every PINNED night and reloaded — but the composer is
+    deterministic, so an untouched night recomposes to exactly what was already
+    on it, and untouched is the normal case. Only an edit ever moved."""
+    _repropose_bed()
+    before = meals.compose_week('2026-09-14', 5)
+    check(all(not d['pinned'] for d in before), "nothing is pinned to begin with")
+
+    after = meals.repropose_week('2026-09-14', 5)
+    b, a = _entrees_of(before), _entrees_of(after)
+    check(all(b[d] != a[d] for d in b),
+          f"every night is offered something else, got {b} then {a}")
+    check(all(x['dishes'] for x in after), "and no night was left with no dinner")
+
+
+def scenario_repropose_leaves_a_locked_night_exactly_alone():
+    """A lock is "this is Mom's birthday dinner". Repropose is entitled to
+    sweep an edit away and must not touch this."""
+    _repropose_bed()
+    steak = _dish('steak', type='entree')
+    meals.set_plate_lock('2026-09-16', True, "Mom's birthday", [steak['id']])
+
+    before = meals.compose_week('2026-09-14', 5)
+    after = meals.repropose_week('2026-09-14', 5)
+    wed = next(d for d in after if d['date'] == '2026-09-16')
+    check([x['name'] for x in wed['dishes']] == ['steak'], "the dish is still there")
+    check(wed['locked'] and wed['note'] == "Mom's birthday", "and so is the reason")
+    check(not (storage.get_plate('2026-09-16') or {}).get('rejected'),
+          "a night that was never proposed has nothing to refuse")
+    b, a = _entrees_of(before), _entrees_of(after)
+    check(all(b[d] != a[d] for d in b if d != '2026-09-16'),
+          f"while every other night moved, got {b} then {a}")
+
+
+def scenario_repropose_rotates_rather_than_dead_ending():
+    """With two entrees, a fourth press has nothing un-refused left. Refusals
+    are therefore ORDERED and weighted, not a filter with a fallback: the dish
+    turned down longest ago comes back first, so it alternates forever instead
+    of sticking on the top-ranked one."""
+    _repropose_bed(entrees=('tacos', 'brisket'))
+    seen = []
+    for i in range(6):
+        week = (meals.compose_week('2026-09-14', 1) if i == 0
+                else meals.repropose_week('2026-09-14', 1))
+        got = _entrees_of(week)['2026-09-14']
+        check(got is not None, f"press {i} still proposes a dinner")
+        seen.append(got)
+    check(all(seen[i] != seen[i + 1] for i in range(len(seen) - 1)),
+          f"and never repeats itself twice running, got {seen}")
+
+
+def scenario_a_refusal_expires_with_the_night_it_was_about():
+    """Refusals ride on the plate row, so they are pruned with everything else
+    rather than following a dish around forever."""
+    _repropose_bed()
+    meals.repropose_week('2026-09-14', 2)
+    check((storage.get_plate('2026-09-14') or {}).get('rejected'),
+          "the refusal was recorded")
+    check(not storage.get_plate('2026-09-14').get('edited'),
+          "without pinning the night — it must stay fluid")
+
+    meals.reset_plate('2026-09-14', force=True)
+    check(not storage.get_plate('2026-09-14'),
+          "and a deliberate per-day reset clears it, so the night starts over")
+
+
 def scenario_an_edit_does_not_silently_unlock_the_night():
     """_persist_plate rebuilds the record from scratch, so without carrying the
     lock forward an ordinary edit — or the week approval, which re-persists

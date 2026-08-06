@@ -1427,20 +1427,18 @@
                 },
 
                 async loadWeek(repropose) {
-                    // `repropose` drops every pin in the window first, so the
-                    // whole span is composed fresh — the escape hatch when the
-                    // proposal has drifted from what the family wants.
+                    // `repropose` asks the server for a DIFFERENT week, not the
+                    // same one again. It used to reset each pinned night from
+                    // here and reload, which did nothing at all unless the
+                    // family had edited something — the composer is
+                    // deterministic, so an untouched night recomposes to what
+                    // was already on it. The server remembers the refusal now;
+                    // locked nights are left alone there, as they were here.
                     try {
-                        if (repropose) {
-                            // Locked nights are skipped: the whole point of a
-                            // lock is that a bulk repropose cannot sweep away
-                            // a birthday dinner set weeks in advance.
-                            for (const d of this.week.filter(x => x.pinned && !x.locked)) {
-                                await fetch(this.apiBase + 'api/meals/plate/reset?date='
-                                    + encodeURIComponent(d.date), { method: 'POST' });
-                            }
-                        }
-                        const r = await fetch(this.apiBase + 'api/meals/week');
+                        const url = repropose
+                            ? this.apiBase + 'api/meals/week/repropose'
+                            : this.apiBase + 'api/meals/week';
+                        const r = await fetch(url, repropose ? { method: 'POST' } : {});
                         if (!r.ok) return;
                         const data = await r.json();
                         this.week = data.week || [];

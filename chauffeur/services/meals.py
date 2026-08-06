@@ -839,7 +839,8 @@ def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
 
 
 def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
-                  served: dict = None, runs: dict = None) -> list:
+                  served: dict = None, runs: dict = None,
+                  rejected: list = None) -> list:
     """Propose one day's dishes. Nothing is stored — this is the suggestion.
 
     Coherence is handled with a SOFT tag affinity to the entree rather than a
@@ -850,6 +851,14 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     `served` is the forward-simulation overlay from compose_week: {dish_id ->
     when an earlier day in this horizon took it}. Absent, this behaves exactly
     as it always did for a single day.
+
+    `rejected` is what this night has already been offered and turned down
+    (Repropose), OLDEST FIRST. It is a heavy rank penalty rather than a filter,
+    and it is ordered rather than a set, which is what makes a small repertoire
+    rotate instead of dead-ending: a never-refused dish wins outright, and once
+    everything has been refused the one turned down longest ago comes back
+    first. A filter would either empty the night or need an exhaustion reset
+    that cannot see which pool actually ran out.
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     sides_n, want_dessert = plate_settings(settings)
@@ -862,6 +871,15 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     as_of = _as_of_ts(date_str)
     # How this household eats, resolved once for the day (M11).
     ctx = rule_context(as_of, served or {}, settings, runs or {})
+
+    # Big enough to dominate every term in _rank (which tops out around 100 for
+    # an already-made dish): "not this one" is the family speaking, not another
+    # heuristic to be outweighed.
+    refused_at = {d: i for i, d in enumerate(rejected or ())}
+
+    def refusal(dish):
+        i = refused_at.get(dish['id'])
+        return 0.0 if i is None else -1000.0 * (i + 1)
 
     slots = [p['first'] for p in (plan.get('people') or []) if p.get('first')]
     binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')), None)
@@ -877,8 +895,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                  and _rules_ok(d, ctx)]
         if not cands:
             return None
-        return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike,
-                                              as_of, served))
+        return max(cands, key=lambda d: refusal(d)
+                   + _rank(d, leftover_ids, affinity, dislike, as_of, served))
 
     chosen = []
     # A `meal` dish is the whole plate. It only wins outright when it is
@@ -952,7 +970,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
             if not cands:
                 break
             got = max(cands, key=lambda d: (
-                _rank(d, leftover_ids, affinity, dislike, as_of, served)
+                refusal(d)
+                + _rank(d, leftover_ids, affinity, dislike, as_of, served)
                 + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)
                 # The open pot outranks variety: a batch cycle is the family
                 # saying they WILL be eating this for a few days.
@@ -1001,6 +1020,7 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
     rec = Plate(date=date_str, edited=True,
                 locked=bool(prior.get('locked')),
                 note=prior.get('note'),
+                rejected=list(prior.get('rejected') or []),
                 items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
     storage.save_plate(rec)
     return rec
@@ -1025,6 +1045,7 @@ def set_plate_lock(date_str: str, locked: bool = True, note: str = None,
     storage.prune_plates(_today_iso())
     rec = Plate(date=date_str, edited=True, locked=bool(locked),
                 note=(note if note is not None else prior.get('note')) or None,
+                rejected=list(prior.get('rejected') or []),
                 items=[PlateItem(dish_id=d['id']) for d in cur]).model_dump()
     storage.save_plate(rec)
     return {'status': 'success', 'date': date_str, 'locked': bool(locked),
@@ -1245,7 +1266,8 @@ def compose_week(start_date: str = None, days: int = 7,
                       if i['dish_id'] in by_id]
         else:
             dishes = compose_plate(date_str, plan, settings, served=served,
-                                   runs=runs)
+                                   runs=runs,
+                                   rejected=(saved or {}).get('rejected'))
         stamp = _as_of_ts(date_str)
         # Deliberately NOT zeroed on a night the dish is skipped: one takeout
         # evening does not empty the pot, and zeroing there stretched a 3-day
@@ -1276,6 +1298,59 @@ def compose_week(start_date: str = None, days: int = 7,
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
         })
     return out
+
+
+def repropose_week(start_date: str = None, days: int = 7) -> list:
+    """"Not this — show me something else." The whole span, minus locked nights.
+
+    The button existed before this and did nothing, which took some working
+    out. It reset every PINNED night and reloaded — but the composer is
+    deterministic, so an untouched night recomposes to exactly what was already
+    on it, and an untouched night is the normal case. Pressing Repropose on a
+    week nobody had edited was guaranteed to return the same week. It only ever
+    worked as an undo for edits.
+
+    What makes it move is remembering the refusal: every dish currently on an
+    unlocked night is written to that night's `rejected` list, so the next
+    composition steps past it. Rejection rather than randomness, because these
+    nights recompose on every page load — a random composer would deal the
+    family a different week every fifteen minutes.
+
+    Locked nights are untouched, including their rejections: a locked night is
+    not being proposed at all, so there is nothing to refuse.
+    """
+    week = compose_week(start_date, days)
+    storage.prune_plates(_today_iso())
+    for day in week:
+        if not day.get('locked'):
+            _refuse(day['date'], [d['id'] for d in day['dishes']])
+    return compose_week(start_date, days)
+
+
+def _refuse(date_str: str, dish_ids: list) -> dict:
+    """Record a night's refusals, dropping any edit that was on it.
+
+    A bulk repropose is entitled to sweep an edit away (that is the whole
+    `edited` vs `locked` distinction), so this deliberately writes
+    `edited=False` and no items — the night goes back to being fluid.
+
+    A dish refused AGAIN moves to the back of the queue rather than staying
+    where it was, which is what keeps the rotation turning: the order is
+    oldest-refusal-first, and compose_plate brings those back first.
+    """
+    from models.schemas import Plate
+    prior = storage.get_plate(date_str) or {}
+    if prior.get('locked'):
+        return prior
+    fresh = [i for i in dish_ids or []]
+    keep = [i for i in (prior.get('rejected') or []) if i not in fresh] + fresh
+    if not keep:
+        storage.delete_plate(date_str)
+        return {}
+    rec = Plate(date=date_str, edited=False, locked=False,
+                note=prior.get('note'), rejected=keep, items=[]).model_dump()
+    storage.save_plate(rec)
+    return rec
 
 
 def approve_week(start_date: str = None, days: int = 7, list_id: str = None,

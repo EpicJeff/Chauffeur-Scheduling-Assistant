@@ -5612,6 +5612,19 @@ def meal_week_approve(start: Optional[str] = None, days: Optional[int] = None,
     res['window'] = win
     return res
 
+@app.post("/api/meals/week/repropose")
+def meal_week_repropose(start: Optional[str] = None, days: Optional[int] = None):
+    """"Not this." Every unlocked night in the window is offered something
+    else; locked nights are left exactly as they are."""
+    from services import meals as _meals
+    win = _meals.plan_window()
+    start_str = start or win['start']
+    n = int(days) if days else win['days']
+    week = _meals.repropose_week(start_str, n)
+    _touch_stream()
+    return {'window': win, 'start': start_str, 'days': n,
+            'sides_per_meal': _meals.plate_settings()[0], 'week': week}
+
 @app.post("/api/meals/plate/pin")
 def plate_pin(req: PlateEdit):
     """Freeze one day as proposed, without shopping for it yet."""

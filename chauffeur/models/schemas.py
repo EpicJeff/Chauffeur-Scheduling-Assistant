@@ -956,6 +956,16 @@ class Plate(BaseModel):
     # "Grandma is bringing dinner" is expressed: nothing to cook, nothing to
     # shop for, and it does not read as a night nobody has planned yet.
     note: Optional[str] = None
+    # What this night has already been OFFERED and turned down. Repropose is
+    # otherwise a no-op: the composer is deterministic, so recomposing an
+    # untouched night returns exactly what was on it. This is the only source
+    # of variation, and it is a memory rather than randomness so the plan a
+    # family looked at is still there when the page reloads.
+    #
+    # A row carrying only rejections has edited=False, so it neither pins the
+    # night nor holds dishes still — and it is pruned with every other plate,
+    # so a refusal expires on its own.
+    rejected: List[str] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
 
 class MealSlot(BaseModel):
