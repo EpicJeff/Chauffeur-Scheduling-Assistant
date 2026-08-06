@@ -364,7 +364,12 @@
                 },
 
                 async deleteMeal(m) {
-                    if (!await promptConfirm('Remove "' + m.name + '" from your meals?')) return;
+                    // promptConfirm is (title, message, okText) — passing only a
+                    // title leaves message undefined, and the modal throws on
+                    // message.replace() so the promise never resolves and the
+                    // button silently does nothing.
+                    if (!await promptConfirm('Remove meal',
+                        `Take "${m.name}" out of your meals?`, 'Remove')) return;
                     await fetch(this.apiBase + 'api/meals/repertoire/' + m.id, { method: 'DELETE' });
                     await this.loadRepertoire();
                     await this.loadSuggestions();
@@ -445,19 +450,27 @@
                 },
 
                 async removeItem(it) {
-                    if (!await promptConfirm('Take "' + it.name + '" off the list?')) return;
+                    if (!await promptConfirm('Remove item',
+                        `Take "${it.name}" off the list? If you bought it, check it off instead.`,
+                        'Remove')) return;
                     await fetch(this.apiBase + 'api/shopping/items/' + it.id, { method: 'DELETE' });
                     this.loadItems(true);
                 },
 
                 async clearChecked() {
-                    if (!await promptConfirm('Clear everything in the cart?')) return;
+                    if (!await promptConfirm('Clear the cart',
+                        `Remove the ${this.checked.length} checked item${this.checked.length === 1 ? '' : 's'} from this list?`,
+                        'Clear')) return;
                     await fetch(this.apiBase + 'api/shopping/lists/' + this.activeId + '/clear-checked', { method: 'POST' });
                     this.loadItems(true);
                 },
 
                 async newList() {
-                    const name = await promptInput('Name the list (e.g. Costco)');
+                    // Same signature trap: promptInput is (title, message, opts).
+                    // A missing message rendered the literal string "undefined".
+                    const name = await promptInput('New list',
+                        'Name it after the store — items on it route to that errand.',
+                        { placeholder: 'Costco' });
                     if (!name || !name.trim()) return;
                     const r = await fetch(this.apiBase + 'api/shopping/lists', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
