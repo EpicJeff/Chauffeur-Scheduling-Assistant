@@ -252,6 +252,26 @@ async def push_notification_loop():
             except Exception as ce:
                 print(f"Car readiness sweep error: {ce}")
 
+            # --- Prep reminders (M8) ---
+            # Soaking beans happens on a different DAY from cooking them, so
+            # nothing on tonight's plate can prompt it. Checked every cycle
+            # rather than on the 30-min beat: a night-before nudge is only
+            # useful in a narrow window, and PREP_GRACE_MINS already stops a
+            # stale one going out. Quiet hours are NOT applied — the evening
+            # prep time is deliberately late, and a family that set 20:30 has
+            # asked to be told at 20:30.
+            try:
+                from services import meals as _prep_svc
+
+                def _prep_push(member, title, body):
+                    _notify_member_lanes(member, title, body, '/shopping')
+
+                fired = await asyncio.to_thread(_prep_svc.run_prep_reminders, _prep_push)
+                if fired:
+                    print(f"Prep reminders sent: {len(fired)}")
+            except Exception as pre:
+                print(f"Prep reminder error: {pre}")
+
             # --- Week meal plan proposal (M6, docs/meal_week_design.md) ---
             # A day or two before the standing grocery run, Argyle brings the
             # span that shop has to cover: "how does this look?" Once per
@@ -5393,6 +5413,53 @@ def create_shopping_list_errand(list_id: str, background_tasks: BackgroundTasks,
 class DishImage(BaseModel):
     url: Optional[str] = None
     source: str = 'family'
+
+class PrepStepReq(BaseModel):
+    action: str
+    when: str = 'hours_before'      # night_before | hours_before | morning_of
+    hours: float = 1.0
+    note: Optional[str] = None
+
+@app.post("/api/meals/dishes/{dish_id}/prep")
+def add_dish_prep(dish_id: str, req: PrepStepReq):
+    """Work that happens outside the cook window, and the nudge for it."""
+    from services import meals as _meals
+    res = _meals.add_prep_step(dish_id, req.action, req.when, req.hours, req.note)
+    _touch_stream()
+    return res
+
+@app.delete("/api/meals/dishes/{dish_id}/prep")
+def remove_dish_prep(dish_id: str, action: Optional[str] = None,
+                     step_id: Optional[str] = None):
+    from services import meals as _meals
+    res = _meals.remove_prep_step(dish_id, action, step_id)
+    _touch_stream()
+    return res
+
+@app.get("/api/meals/prep")
+def prep_ahead(days: int = 2):
+    """What needs doing ahead for the nights coming up — the read behind
+    "anything to do tonight?"."""
+    import datetime as _dt
+    from services import meals as _meals
+    now = _dt.datetime.now()
+    settings = storage.get_settings() or {}
+    out = []
+    for i in range(max(1, min(7, days))):
+        date_str = (now.date() + _dt.timedelta(days=i)).isoformat()
+        plan = _meals.eating_plan(date_str, 'dinner', settings=settings)
+        plate = _meals.get_or_compose_plate(date_str, plan, settings)
+        for dish in plate['dishes']:
+            for step in _meals.dish_prep_steps(dish):
+                due = _meals.prep_step_due_at(step, date_str, settings, plan)
+                out.append({'date': date_str, 'dish_id': dish['id'],
+                            'dish': dish.get('short_name') or dish.get('name'),
+                            'action': step['action'], 'when': step.get('when'),
+                            'hours': step.get('hours'), 'note': step.get('note'),
+                            'due_at': due.isoformat(),
+                            'overdue': due < now})
+    out.sort(key=lambda x: x['due_at'])
+    return {'prep': out}
 
 @app.get("/api/shopping/staples")
 def shopping_staples(limit: int = 40):

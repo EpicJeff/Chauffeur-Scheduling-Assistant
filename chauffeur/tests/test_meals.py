@@ -2037,6 +2037,141 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+# --- M8: prep that happens outside the cook window ---------------------------
+# Reported from real use: some foods need work on a DIFFERENT DAY. Soaking rice
+# the night before is cognitive load precisely because nothing about cooking
+# dinner prompts it. The dish already carried `needs_ahead`, a label with no
+# time and no reminder — the useless half.
+
+def scenario_the_night_before_is_a_moment_not_an_offset():
+    """THE load-bearing decision. Soaking rice for a 6pm dinner is something
+    you do at ~9pm the evening BEFORE. Dinner-minus-12h is arithmetically
+    correct and behaviourally useless — it fires at 6am on the day, hours after
+    the water needed to be on."""
+    reset_db(); _seed_people()
+    _settings(prep_reminder_time="20:30")
+    rice = _dish('white rice', type='side', side_type='starch')
+    meals.add_prep_step(rice['id'], 'soak', 'night_before')
+    step = storage.get_dish(rice['id'])['prep_steps'][0]
+
+    due = meals.prep_step_due_at(step, '2026-09-10', storage.get_settings())
+    check(due.date() == datetime.date(2026, 9, 9),
+          f"it fires the PREVIOUS day, got {due.date()}")
+    check((due.hour, due.minute) == (20, 30),
+          f"at the household's evening prep time, got {due.hour}:{due.minute:02d}")
+
+    # An offset would have landed in the small hours of the cooking day.
+    naive = meals._dinner_time('2026-09-10') - datetime.timedelta(hours=12)
+    check(naive.date() == datetime.date(2026, 9, 10) and naive != due,
+          f"the arithmetic answer is a different, useless time ({naive})")
+
+
+def scenario_hours_before_counts_back_from_when_food_is_needed():
+    reset_db(); _seed_people()
+    _settings()
+    chicken = _dish('chicken', type='entree')
+    meals.add_prep_step(chicken['id'], 'marinate', 'hours_before', hours=2)
+    step = storage.get_dish(chicken['id'])['prep_steps'][0]
+
+    dinner = meals._dinner_time(DAY)
+    due = meals.prep_step_due_at(step, DAY, storage.get_settings())
+    check((dinner - due) == datetime.timedelta(hours=2),
+          f"two hours before the first sitting, got {dinner - due}")
+    check(due.date() == dinner.date(), "on the same day, unlike a soak")
+
+
+def scenario_prep_is_per_dish_and_opt_in():
+    """Not everyone soaks their rice — that is a fact about the household, not
+    about rice, so it is never inferred."""
+    reset_db(); _seed_people(); _settings()
+    a = _dish('white rice', type='side', side_type='starch')
+    b = _dish('brown rice', type='side', side_type='starch')
+    meals.add_prep_step(a['id'], 'soak', 'night_before')
+    check(len(meals.dish_prep_steps(storage.get_dish(a['id']))) == 1, "set on the one")
+    check(not meals.dish_prep_steps(storage.get_dish(b['id'])),
+          "and nothing was inferred onto the other")
+
+    # Re-stating a step edits it rather than stacking a duplicate.
+    meals.add_prep_step(a['id'], 'Soak', 'hours_before', hours=4)
+    steps = storage.get_dish(a['id'])['prep_steps']
+    check(len(steps) == 1 and steps[0]['when'] == 'hours_before',
+          f"same action = an edit, not a second reminder, got {steps}")
+
+    meals.remove_prep_step(a['id'], 'soak')
+    check(not meals.dish_prep_steps(storage.get_dish(a['id'])), "and it can be dropped")
+
+
+def scenario_the_reminder_fires_once_and_not_when_stale():
+    reset_db(); _seed_people()
+    _settings(prep_reminder_time="20:30")
+    rice = _dish('white rice', type='side', side_type='starch')
+    meals.add_prep_step(rice['id'], 'soak', 'night_before')
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    meals.add_to_plate(tomorrow, rice['id'])          # pin it onto tomorrow
+
+    evening = datetime.datetime.combine(datetime.date.today(),
+                                        datetime.time(20, 31))
+    sent = []
+    fired = meals.run_prep_reminders(lambda m, t, b: sent.append(b), now=evening)
+    check(len(fired) == 1 and sent, f"the nudge goes out, got {fired}")
+    check('soak' in sent[0].lower() and 'tomorrow' in sent[0].lower(),
+          f"and says what and when, got {sent[0]!r}")
+
+    again = meals.run_prep_reminders(lambda m, t, b: sent.append(b),
+                                     now=evening + datetime.timedelta(minutes=30))
+    check(not again and len(sent) == len(set(sent)),
+          "the every-cycle sweep must not re-nudge")
+
+    # Hours later it is no longer useful, so a fresh install stays quiet.
+    storage.app_state_table.truncate()
+    late = datetime.datetime.combine(datetime.date.today(), datetime.time(23, 59))
+    check(not meals.run_prep_reminders(lambda m, t, b: sent.append(b), now=late),
+          "a stale nudge is worse than none")
+
+
+def scenario_an_already_made_dish_needs_no_prep():
+    reset_db(); _seed_people()
+    _settings(prep_reminder_time="20:30")
+    rice = _dish('white rice', type='side', side_type='starch')
+    meals.add_prep_step(rice['id'], 'soak', 'night_before')
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    meals.add_to_plate(tomorrow, rice['id'])
+    meals.toggle_leftover_dish(tomorrow, rice['id'])   # already cooked
+
+    evening = datetime.datetime.combine(datetime.date.today(), datetime.time(20, 31))
+    check(not meals.run_prep_reminders(lambda m, t, b: None, now=evening),
+          "nothing to soak for a dish that is already made")
+
+
+def scenario_prep_tools_in_both_stacks():
+    reset_db(); _seed_people(); _settings()
+    _dish('white rice', type='side', side_type='starch')
+    from services import agent_tools, agent_tools_v2
+    want = {"set_dish_prep", "clear_dish_prep", "get_prep_ahead"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    res = agent_tools.execute_tool("set_dish_prep", {
+        "dish_name": "white rice", "action": "soak", "when": "night_before"})
+    check(res['status'] == 'success' and 'night before' in res['message'],
+          f"set by voice, got {res}")
+    d = storage.find_dish_by_name('white rice')
+    check(meals.dish_prep_steps(d)[0]['when'] == 'night_before', "and it stuck")
+
+    gone = agent_tools.execute_tool("clear_dish_prep", {"dish_name": "white rice"})
+    check(gone['status'] == 'success'
+          and not meals.dish_prep_steps(storage.find_dish_by_name('white rice')),
+          f"and can be undone by voice, got {gone}")
+
+
 # --- K1: the kiosk board ----------------------------------------------------
 
 import contextlib

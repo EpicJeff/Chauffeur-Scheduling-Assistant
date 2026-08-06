@@ -300,6 +300,27 @@
                                     </button>
                                     <div class="text-[11px] text-gray-600 truncate"
                                         x-text="dishBlurb(m)"></div>
+                                    <!-- Prep that happens OUTSIDE the cook
+                                         window (M8). Opt-in per dish, because
+                                         whether rice gets soaked is a fact
+                                         about this household, not about rice. -->
+                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                        <template x-for="(p, pi) in (m.prep_steps || [])"
+                                            :key="'pp-' + m.id + pi">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-amber-500/15 border border-amber-500/40 text-amber-300
+                                                         flex items-center gap-1.5">
+                                                <span x-text="prepLabel(p)"></span>
+                                                <button @click="dropPrep(m, p)"
+                                                    class="text-amber-500/70 hover:text-red-400"
+                                                    title="Stop reminding">✕</button>
+                                            </span>
+                                        </template>
+                                        <button @click="addPrep(m)"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300">
+                                            + prep ahead
+                                        </button>
+                                    </div>
                                 </div>
                                 <button @click="deleteDish(m)"
                                     class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
@@ -1173,6 +1194,52 @@
                     this.drain.added = [...(this.drain.added || []), sk.name];
                     await this.loadRepertoire();
                     this.loadItems(true);
+                },
+
+                prepLabel(p) {
+                    if (p.when === 'night_before') return p.action + ' — night before';
+                    if (p.when === 'morning_of') return p.action + ' — that morning';
+                    const h = Number(p.hours || 1);
+                    return p.action + ' — ' + (Number.isInteger(h) ? h : h.toFixed(1)) + 'h before';
+                },
+
+                async addPrep(dish) {
+                    // Two questions, not a form. The second one is the whole
+                    // point: "the night before" is a different KIND of answer
+                    // from "an hour before", not a bigger number.
+                    const action = await promptInput('Prep ahead of time',
+                        'What needs doing before cooking ' + (dish.short_name || dish.name)
+                        + '? e.g. soak, marinate, take out to thaw.');
+                    if (!action) return;
+                    const when = await promptInput('When?',
+                        'Type "night" for the night before, "morning" for that morning, '
+                        + 'or a number of hours before dinner (e.g. 1).');
+                    if (when === null) return;
+                    const raw = (when || '').trim().toLowerCase();
+                    let body = { action: action.trim(), when: 'hours_before', hours: 1 };
+                    if (raw.startsWith('night') || raw.startsWith('overnight')) {
+                        body.when = 'night_before';
+                    } else if (raw.startsWith('morning')) {
+                        body.when = 'morning_of';
+                    } else {
+                        const n = parseFloat(raw);
+                        body.hours = isNaN(n) || n <= 0 ? 1 : n;
+                    }
+                    const r = await fetch(this.apiBase + 'api/meals/dishes/' + dish.id + '/prep', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    if (!r.ok) { showGlobalAlert('Could not save that.'); return; }
+                    await this.loadRepertoire();
+                    this.loadPlate(); this.loadWeek();
+                },
+
+                async dropPrep(dish, step) {
+                    await fetch(this.apiBase + 'api/meals/dishes/' + dish.id
+                        + '/prep?step_id=' + encodeURIComponent(step.id || ''),
+                        { method: 'DELETE' });
+                    await this.loadRepertoire();
+                    this.loadPlate(); this.loadWeek();
                 },
 
                 dishBlurb(d) {

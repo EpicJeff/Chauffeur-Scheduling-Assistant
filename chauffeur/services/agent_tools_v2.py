@@ -1397,6 +1397,68 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
                        f"{'s' if n != 1 else ''} on the list."}
 
 
+def set_dish_prep(dish_name: str, action: str, when: str = "hours_before",
+                  hours: float = 1.0, acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "we soak the rice the night before", "the chicken marinates an
+    hour first". Attaches prep that happens OUTSIDE the cook window to a dish,
+    with the reminder that goes with it."""
+    from services import storage, meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error",
+                "message": f"I don't have a dish called '{dish_name}'. Want me to add it?"}
+    res = meals.add_prep_step(dish['id'], action, when, hours)
+    if res.get('status') != 'success':
+        return {"status": "error", "message": res.get('message') or "That didn't work."}
+    from models.schemas import PrepStep
+    label = PrepStep(**{k: v for k, v in res['step'].items()
+                        if k in ('action', 'when', 'hours', 'note', 'id')}).label()
+    nm = dish.get('short_name') or dish['name']
+    return {"status": "success",
+            "message": f"Got it — {nm}: {label}. I'll remind you."}
+
+
+def clear_dish_prep(dish_name: str, action: str = "",
+                    acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "we don't soak the rice anymore"."""
+    from services import storage, meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error", "message": f"I don't have a dish called '{dish_name}'."}
+    res = meals.remove_prep_step(dish['id'], (action or '').strip() or None)
+    nm = dish.get('short_name') or dish['name']
+    if not res.get('removed'):
+        return {"status": "success", "message": f"{nm} didn't have that set anyway."}
+    return {"status": "success", "message": f"Done — no more {action or 'prep'} for {nm}."}
+
+
+def get_prep_ahead(acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "is there anything I need to do tonight for tomorrow?" — the
+    soaking-and-marinating question the plate could never answer."""
+    import datetime as _dt
+    from services import meals, storage
+    now = _dt.datetime.now()
+    settings = storage.get_settings() or {}
+    lines = []
+    for i in range(2):
+        date_str = (now.date() + _dt.timedelta(days=i)).isoformat()
+        plan = meals.eating_plan(date_str, 'dinner', settings=settings)
+        plate = meals.get_or_compose_plate(date_str, plan, settings)
+        for dish in plate['dishes']:
+            for step in meals.dish_prep_steps(dish):
+                due = meals.prep_step_due_at(step, date_str, settings, plan)
+                if due < now - _dt.timedelta(hours=6) or due > now + _dt.timedelta(hours=30):
+                    continue
+                nm = dish.get('short_name') or dish['name']
+                when_txt = ("now" if due <= now else due.strftime('%I:%M %p').lstrip('0'))
+                for_txt = "tonight" if i == 0 else "tomorrow"
+                lines.append(f"{step['action']} the {nm} for {for_txt} ({when_txt})")
+    if not lines:
+        return {"status": "success",
+                "message": "Nothing needs doing ahead for the next couple of days."}
+    return {"status": "success", "message": "Ahead of time: " + "; ".join(lines) + "."}
+
+
 def get_week_dinners(acting_member: dict = None) -> Dict[str, Any]:
     """READ: the dinners planned for the span the next grocery run covers —
     the answer to "what are we eating this week" and "what do I need to buy
@@ -2010,6 +2072,37 @@ def get_available_tools() -> List[Dict]:
                 },
                 "required": []
             }
+        },
+        {
+            "name": "set_dish_prep",
+            "description": "Records prep that happens OUTSIDE the cook window and sets the reminder for it: we soak the rice the night before, the beans soak overnight, the chicken marinates an hour first, take the mince out in the morning. Use whenever someone describes something done ahead of cooking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish, e.g. rice or chicken."},
+                    "action": {"type": "string", "description": "The verb: soak, marinate, thaw, take out of the freezer."},
+                    "when": {"type": "string", "enum": ["night_before", "hours_before", "morning_of"], "description": "night_before for overnight soaking, hours_before with hours for a marinade, morning_of for a thaw."},
+                    "hours": {"type": "number", "description": "How many hours before dinner, when using hours_before."}
+                },
+                "required": ["dish_name", "action"]
+            }
+        },
+        {
+            "name": "clear_dish_prep",
+            "description": "Removes prep from a dish (we do not soak the rice anymore, stop reminding me to marinate the chicken).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish."},
+                    "action": {"type": "string", "description": "Which step; omit to clear all prep for that dish."}
+                },
+                "required": ["dish_name"]
+            }
+        },
+        {
+            "name": "get_prep_ahead",
+            "description": "Answers is there anything I need to do tonight / do I need to soak anything / anything to prep for tomorrow. Lists work due outside the cook window for tonight and tomorrow.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {
             "name": "get_shopping_trip",

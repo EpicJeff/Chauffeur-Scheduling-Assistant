@@ -518,6 +518,28 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class SetDishPrepTool(BaseModel):
+    """
+    Records prep done OUTSIDE the cook window and sets its reminder ("we soak the rice the night before", "the chicken marinates an hour first").
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. rice or chicken.")
+    action: str = Field(..., description="The verb: soak, marinate, thaw, take out of the freezer.")
+    when: Optional[str] = Field("hours_before", description="night_before | hours_before | morning_of")
+    hours: Optional[float] = Field(1.0, description="How many hours before dinner, when using hours_before.")
+
+class ClearDishPrepTool(BaseModel):
+    """
+    Removes prep from a dish ("we don't soak the rice anymore").
+    """
+    dish_name: str = Field(..., description="Which dish.")
+    action: Optional[str] = Field(None, description="Which step; omit to clear all prep for that dish.")
+
+class GetPrepAheadTool(BaseModel):
+    """
+    Answers "is there anything I need to do tonight" / "do I need to soak anything" for tonight and tomorrow.
+    """
+    pass
+
 class GetShoppingTripTool(BaseModel):
     """
     Answers "when are we going shopping" / "when is the grocery run" with the SCHEDULED trip and how many things are waiting.
@@ -674,6 +696,9 @@ TOOL_SCHEMAS = {
     "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
     "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
     "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "set_dish_prep": SetDishPrepTool.model_json_schema(),
+    "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
+    "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
     "schedule_shopping_trip": ScheduleShoppingTripTool.model_json_schema(),
 }
 
@@ -1815,6 +1840,20 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_set_dish_prep(args: dict) -> dict:
+    from services.agent_tools_v2 import set_dish_prep
+    return set_dish_prep(args.get("dish_name") or "", args.get("action") or "",
+                         args.get("when") or "hours_before",
+                         args.get("hours") or 1.0)
+
+def handle_clear_dish_prep(args: dict) -> dict:
+    from services.agent_tools_v2 import clear_dish_prep
+    return clear_dish_prep(args.get("dish_name") or "", args.get("action") or "")
+
+def handle_get_prep_ahead(args: dict) -> dict:
+    from services.agent_tools_v2 import get_prep_ahead
+    return get_prep_ahead()
+
 def handle_get_shopping_trip(args: dict) -> dict:
     from services.agent_tools_v2 import get_shopping_trip
     return get_shopping_trip(args.get("list_name") or "")
@@ -1954,6 +1993,9 @@ TOOL_HANDLERS = {
     "get_week_dinners": handle_get_week_dinners,
     "approve_week_dinners": handle_approve_week_dinners,
     "get_shopping_trip": handle_get_shopping_trip,
+    "set_dish_prep": handle_set_dish_prep,
+    "clear_dish_prep": handle_clear_dish_prep,
+    "get_prep_ahead": handle_get_prep_ahead,
     "schedule_shopping_trip": handle_schedule_shopping_trip,
 }
 

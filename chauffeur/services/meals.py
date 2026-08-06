@@ -2460,3 +2460,181 @@ def household_staples(limit: int = 40) -> list:
     out.sort(key=lambda x: (-x['buys'], -rows[' '.join(x['name'].lower().split())]['last_at'],
                             -x['dish_count'], x['name'].lower()))
     return out[:limit]
+
+
+# --- Prep reminders (arc M8) ------------------------------------------------
+# Soaking beans the night before is cognitively separate from cooking dinner:
+# it happens on a different DAY, nothing on the plate prompts it, and
+# forgetting it silently invalidates tomorrow's plan. The plate could already
+# say a dish "needs a thaw head start" — a label with no time attached that
+# reminded nobody, which is precisely the useless half.
+
+PREP_GRACE_MINS = 90          # a late nudge still helps; a stale one does not
+
+
+def dish_prep_steps(dish: dict) -> list:
+    return [s for s in (dish.get('prep_steps') or []) if (s.get('action') or '').strip()]
+
+
+def add_prep_step(dish_id: str, action: str, when: str = 'hours_before',
+                  hours: float = 1.0, note: str = None) -> dict:
+    """Whether rice gets soaked is a fact about THIS household, not about rice
+    — so this is opt-in per dish and never inferred."""
+    from models.schemas import PrepStep
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    action = (action or '').strip()
+    if not action:
+        return {'status': 'error', 'message': 'What should happen ahead of time?'}
+    when = when if when in ('night_before', 'hours_before', 'morning_of') else 'hours_before'
+    step = PrepStep(action=action, when=when, hours=float(hours or 1),
+                    note=(note or '').strip() or None).model_dump()
+    steps = [s for s in (dish.get('prep_steps') or [])
+             if (s.get('action') or '').strip().lower() != action.lower()]
+    steps.append(step)          # same action = editing it, not stacking a second
+    storage.update_dish(dish_id, {'prep_steps': steps})
+    return {'status': 'success', 'dish': storage.get_dish(dish_id), 'step': step}
+
+
+def remove_prep_step(dish_id: str, action: str = None, step_id: str = None) -> dict:
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    steps = list(dish.get('prep_steps') or [])
+    if not step_id and not (action or '').strip():
+        keep = []               # "stop reminding me about the rice" = all of it
+    else:
+        keep = [s for s in steps
+                if not ((step_id and s.get('id') == step_id)
+                        or (action and (s.get('action') or '').lower()
+                            == action.strip().lower()))]
+    storage.update_dish(dish_id, {'prep_steps': keep})
+    return {'status': 'success', 'removed': len(steps) - len(keep),
+            'dish': storage.get_dish(dish_id)}
+
+
+def _hhmm(raw, dh, dm):
+    try:
+        parts = str(raw).split(':')
+        return max(0, min(23, int(parts[0]))), max(0, min(59, int(parts[1])))
+    except (TypeError, ValueError, IndexError):
+        return dh, dm
+
+
+def _dinner_time(date_str: str, plan: dict = None) -> datetime.datetime:
+    """When the food is actually needed — the first sitting, else the dinner
+    window's start."""
+    plan = plan or eating_plan(date_str, 'dinner')
+    rows = plan.get('sittings') or []
+    if rows:
+        try:
+            return _parse_iso(rows[0]['start'])
+        except Exception:
+            pass
+    day = datetime.date.fromisoformat(date_str)
+    return datetime.datetime.combine(day, MEAL_WINDOWS['dinner'][0])
+
+
+def prep_step_due_at(step: dict, date_str: str, settings: dict = None,
+                     plan: dict = None) -> datetime.datetime:
+    """When to actually say it.
+
+    `night_before` is deliberately NOT dinner-minus-N. Soaking rice for a 6pm
+    dinner is something you do at 9pm the evening before; the arithmetic answer
+    (6am on the day) is correct and useless. It fires at the household's
+    evening prep time on the PREVIOUS day.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    day = datetime.date.fromisoformat(date_str)
+    when = step.get('when') or 'hours_before'
+    if when == 'night_before':
+        hh, mm = _hhmm(settings.get('prep_reminder_time'), 20, 30)
+        return datetime.datetime.combine(day - datetime.timedelta(days=1),
+                                         datetime.time(hh, mm))
+    if when == 'morning_of':
+        hh, mm = _hhmm(settings.get('prep_morning_time'), 8, 0)
+        return datetime.datetime.combine(day, datetime.time(hh, mm))
+    try:
+        hours = float(step.get('hours') or 1)
+    except (TypeError, ValueError):
+        hours = 1.0
+    return _dinner_time(date_str, plan) - datetime.timedelta(hours=hours)
+
+
+def prep_reminders_due(now: datetime.datetime = None, settings: dict = None,
+                       horizon_days: int = 2) -> list:
+    """Every prep nudge that should have gone out by `now` and has not.
+
+    Looks forward far enough to catch TOMORROW's night-before steps, which is
+    the whole point — a sweep that only ever considers today can never tell you
+    to soak anything.
+    """
+    now = now or datetime.datetime.now()
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    out = []
+    for i in range(max(1, horizon_days)):
+        date_str = (now.date() + datetime.timedelta(days=i)).isoformat()
+        plan = eating_plan(date_str, 'dinner', settings=settings)
+        plate = get_or_compose_plate(date_str, plan, settings)
+        made = set((plate_totals(plate['dishes'], date_str) or {})
+                   .get('leftover_dish_ids') or [])
+        for dish in plate['dishes']:
+            if dish.get('id') in made:
+                continue          # already cooked; nothing to prepare for it
+            for step in dish_prep_steps(dish):
+                due = prep_step_due_at(step, date_str, settings, plan)
+                if due > now:
+                    continue
+                # Stale nudges are worse than none: "soak the beans" three
+                # hours after they needed to be in water is just noise.
+                if (now - due).total_seconds() > PREP_GRACE_MINS * 60:
+                    continue
+                out.append({
+                    'key': f"prep:{dish['id']}:{date_str}:{step.get('id') or step['action']}",
+                    'date': date_str, 'dish_id': dish['id'],
+                    'dish': dish.get('short_name') or dish.get('name'),
+                    'action': step['action'], 'when': step.get('when'),
+                    'note': step.get('note'), 'due_at': due.isoformat(),
+                    'for_label': 'tonight' if i == 0 else
+                                 datetime.date.fromisoformat(date_str).strftime('%A'),
+                })
+    return out
+
+
+def run_prep_reminders(send, now: datetime.datetime = None) -> list:
+    """One sweep. `send(member, title, body)` delivers to one person.
+
+    Markers are set BEFORE sending (the push-loop convention): a half-failing
+    send must not re-nudge every thirty seconds.
+    """
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('prep_reminders_enabled', True):
+        return []
+    due = prep_reminders_due(now, settings)
+    if not due:
+        return []
+    sent = dict(storage.get_app_state('prep_reminders_sent') or {})
+    cutoff = now.timestamp() - 14 * 86400
+    sent = {k: v for k, v in sent.items() if float(v or 0) >= cutoff}
+
+    cooks = [m for m in storage.get_all_members()
+             if m.get('role') in _COOKING_ROLES and not m.get('system')]
+    fired = []
+    for item in due:
+        if item['key'] in sent:
+            continue
+        sent[item['key']] = now.timestamp()
+        fired.append(item['key'])
+        when_word = 'for tonight' if item['for_label'] == 'tonight' else 'for tomorrow'
+        title = f"🍽️ {item['action'].capitalize()} the {item['dish']}"
+        body = (f"{item['action'].capitalize()} the {item['dish']} {when_word}"
+                + (f" — {item['note']}" if item.get('note') else "") + ".")
+        for m in cooks:
+            try:
+                send(m, title, body)
+            except Exception:
+                pass
+    storage.set_app_state('prep_reminders_sent', sent)
+    return fired

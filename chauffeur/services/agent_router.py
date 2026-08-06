@@ -299,7 +299,10 @@ sending or claiming, and never pass from_member/member_name for them.
                              # both complete spoken answers on their own.
                              "get_week_dinners", "approve_week_dinners",
                              # M7: the trip read and its creation likewise.
-                             "get_shopping_trip", "schedule_shopping_trip"}
+                             "get_shopping_trip", "schedule_shopping_trip",
+                             # M8: prep-ahead reads and writes are complete on
+                             # their own too.
+                             "set_dish_prep", "clear_dish_prep", "get_prep_ahead"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -568,7 +571,8 @@ sending or claiming, and never pass from_member/member_name for them.
                 elif func_name in ("get_tonights_plate", "change_tonights_plate",
                                    "add_dishes", "get_week_dinners",
                                    "approve_week_dinners", "get_shopping_trip",
-                                   "schedule_shopping_trip"):
+                                   "schedule_shopping_trip", "set_dish_prep",
+                                   "clear_dish_prep", "get_prep_ahead"):
                     from services import agent_tools_v2 as _atv2
                     actor = acting_member
                     if actor is None and driver:
@@ -582,6 +586,18 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.get_week_dinners(acting_member=actor)
                     elif func_name == "approve_week_dinners":
                         res = _atv2.approve_week_dinners(acting_member=actor)
+                    elif func_name == "set_dish_prep":
+                        res = _atv2.set_dish_prep(
+                            args.get("dish_name", "") or "",
+                            args.get("action", "") or "",
+                            args.get("when", "hours_before") or "hours_before",
+                            args.get("hours", 1) or 1, acting_member=actor)
+                    elif func_name == "clear_dish_prep":
+                        res = _atv2.clear_dish_prep(args.get("dish_name", "") or "",
+                                                    args.get("action", "") or "",
+                                                    acting_member=actor)
+                    elif func_name == "get_prep_ahead":
+                        res = _atv2.get_prep_ahead(acting_member=actor)
                     elif func_name == "get_shopping_trip":
                         res = _atv2.get_shopping_trip(args.get("list_name", "") or "",
                                                       acting_member=actor)

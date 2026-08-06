@@ -513,6 +513,11 @@ class Settings(BaseModel):
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none
+    # Prep reminders (M8). "The night before" is a human moment, not an
+    # offset — this is when the household is still up and can start a soak.
+    prep_reminders_enabled: bool = True
+    prep_reminder_time: str = "20:30"       # evening nudge for night-before prep
+    prep_morning_time: str = "08:00"        # morning-of prep
     # Walmart cart (arc W1). The store id localizes the cart; the Impact
     # Radius trio is only used by families who have actually onboarded as
     # affiliates — the plain cart URL needs none of it and is the default.
@@ -736,6 +741,40 @@ class ShoppingItem(BaseModel):
     checked_by: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
+class PrepStep(BaseModel):
+    """Work that happens OUTSIDE the cook window, and the reminder for it.
+
+    This is the load the meal plan could not carry: soaking beans the night
+    before is cognitively separate from cooking dinner, it happens on a
+    different DAY, and forgetting it silently invalidates tomorrow's plan. The
+    plate could already say a dish "needs a thaw head start" — a label with no
+    time and no reminder attached, which is exactly the part that does not
+    help.
+
+    `when` is not a number by accident. "The night before" is a HUMAN moment
+    (after dinner, before bed), not an offset: soaking rice for a 6pm dinner is
+    something you do at 9pm the evening before, and `dinner - 12h` would put
+    the reminder at 6am on the day. Encoding it as an offset gets the arithmetic
+    right and the behaviour wrong.
+
+    Per-DISH and opt-in, because whether rice gets soaked is a fact about this
+    household, not about rice — the same reasoning as `MealIngredient.kind`.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    action: str                            # "soak", "marinate", "take out to thaw"
+    when: str = 'hours_before'             # night_before | hours_before | morning_of
+    hours: float = 1.0                     # only read when when == 'hours_before'
+    note: Optional[str] = None
+
+    def label(self) -> str:
+        if self.when == 'night_before':
+            return f"{self.action} — the night before"
+        if self.when == 'morning_of':
+            return f"{self.action} — that morning"
+        h = int(self.hours) if float(self.hours).is_integer() else self.hours
+        return f"{self.action} — {h}h before"
+
+
 class MealIngredient(BaseModel):
     # Light structure only — quantity and unit are NEVER parsed. `kind` is the
     # trick that recovers most of inventory's value with none of its
@@ -802,7 +841,10 @@ class Dish(BaseModel):
     prep_ahead_mins: int = 0
     finish_mins: int = 0
     unattended_mins: int = 0
+    # A LABEL, not a schedule: it says a head start exists but not when, and it
+    # reminds nobody. `prep_steps` is the thing that actually fires.
     needs_ahead: str = 'none'          # none | thaw | marinate | slow_cooker
+    prep_steps: List['PrepStep'] = Field(default_factory=list)
 
     holds_well: bool = False
     portability: str = 'none'          # none | handheld | utensils_ok
