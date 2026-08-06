@@ -1647,6 +1647,10 @@
                                 <input type="checkbox" x-model="mealWeekEnabled" class="accent-teal-500 w-4 h-4">
                                 Propose the week
                             </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
+                                <input type="checkbox" x-model="proposeShoppingErrands" class="accent-teal-500 w-4 h-4">
+                                Offer a trip for a list with no errand
+                            </label>
                             <button @click="saveSettings()"
                                 class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
                                 Planning</button>
@@ -3498,6 +3502,7 @@
                 carFuelStation: '',
                 groceryWeekday: '', groceryPlanLeadDays: 2, mealWeekEnabled: true,
                 groceryDays: [], groceryReason: '', groceryTripMins: 90,
+                proposeShoppingErrands: true,
                 nearbyStations: [],
                 stationSearchBusy: false,
                 stationSearchError: '',
@@ -3909,6 +3914,7 @@
                     this.groceryPlanLeadDays = data.grocery_plan_lead_days != null
                         ? data.grocery_plan_lead_days : 2;
                     this.mealWeekEnabled = data.meal_week_enabled !== false;
+                    this.proposeShoppingErrands = data.propose_shopping_errands !== false;
                     this.loadGroceryDays();
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
                     this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
@@ -4046,6 +4052,7 @@
                                 ? null : parseInt(this.groceryWeekday, 10),
                             grocery_plan_lead_days: parseInt(this.groceryPlanLeadDays, 10),
                             meal_week_enabled: this.mealWeekEnabled,
+                            propose_shopping_errands: this.proposeShoppingErrands,
                             suggested_routes_enabled: this.suggestedRoutesEnabled,
                             chat_suggestions_enabled: this.chatSuggestionsEnabled,
                             tomorrow_digest_enabled: this.tomorrowDigestEnabled,

@@ -1349,6 +1349,54 @@ def get_tonights_plate(target_date: str = "today", acting_member: dict = None) -
             "message": f"{when}: {verb} " + ", ".join(names) + f".{tail}."}
 
 
+def schedule_shopping_trip(store: str = "", list_name: str = "",
+                           weekly: bool = True,
+                           acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "schedule a grocery run" / "we need a shopping trip" — creates the
+    errand bound to a list, which the solver then places against the week."""
+    from services import storage, shopping
+    lst = None
+    if list_name:
+        lst = next((l for l in storage.get_shopping_lists()
+                    if (l.get('name') or '').strip().lower() == list_name.strip().lower()),
+                   None)
+        if not lst:
+            return {"status": "error", "message": f"I don't have a list called '{list_name}'."}
+    lst = lst or storage.ensure_default_shopping_list()
+    res = shopping.create_errand_for_list(lst['id'], location=(store or '').strip() or None,
+                                          recurring=bool(weekly))
+    return {"status": "error" if res['status'] == 'error' else "success",
+            "message": res['message']}
+
+
+def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "when are we going shopping" — the SCHEDULED trip if the solver has
+    placed it, which beats any weekday rule."""
+    from services import storage, shopping
+    lst = None
+    if list_name:
+        lst = next((l for l in storage.get_shopping_lists()
+                    if (l.get('name') or '').strip().lower() == list_name.strip().lower()),
+                   None)
+    lst = lst or storage.ensure_default_shopping_list()
+    n = len(storage.get_shopping_items(lst['id'], include_checked=False))
+    nxt = shopping.next_scheduled_shop(lst['id'])
+    if not nxt:
+        return {"status": "success",
+                "message": f"There's no trip scheduled for {lst['name']} — "
+                           f"{n} thing{'s' if n != 1 else ''} waiting on it. "
+                           "Want me to add one?"}
+    if not nxt.get('scheduled'):
+        return {"status": "success",
+                "message": f"{nxt['errand']['title']} is set up but hasn't been "
+                           f"placed in the week yet. {n} thing"
+                           f"{'s' if n != 1 else ''} on the list."}
+    return {"status": "success",
+            "message": f"{nxt['label']} at {nxt['time_label']} — "
+                       f"{nxt['errand']['location']}, {n} thing"
+                       f"{'s' if n != 1 else ''} on the list."}
+
+
 def get_week_dinners(acting_member: dict = None) -> Dict[str, Any]:
     """READ: the dinners planned for the span the next grocery run covers —
     the answer to "what are we eating this week" and "what do I need to buy
@@ -1959,6 +2007,30 @@ def get_available_tools() -> List[Dict]:
                 "type": "object",
                 "properties": {
                     "target_date": {"type": "string", "description": "Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_shopping_trip",
+            "description": "Answers when are we going shopping / when is the grocery run. Returns the SCHEDULED trip if the solver has placed it, plus how many things are waiting on that list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "list_name": {"type": "string", "description": "Which list or store; omit for the default list."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "schedule_shopping_trip",
+            "description": "Creates a recurring shopping trip for a list (schedule a grocery run, we need a shopping trip, add a weekly Costco run). The solver then fits it into the week. Use when there is no trip yet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "store": {"type": "string", "description": "Where they shop, e.g. Kroger on Main St."},
+                    "list_name": {"type": "string", "description": "Which list; omit for the default list."},
+                    "weekly": {"type": "boolean", "description": "true (default) for a standing weekly run, false for a one-off."}
                 },
                 "required": []
             }

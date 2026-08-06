@@ -512,6 +512,7 @@ class Settings(BaseModel):
     grocery_weekday: Optional[int] = None
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
     meal_week_enabled: bool = True
+    propose_shopping_errands: bool = True   # offer a trip for a list that has none
     # School calendar (services/school.py): what a "school day" is. All
     # empty = plain weekday behavior. The designated calendar's all-day
     # events matching a no-school keyword mark school out; the year bounds

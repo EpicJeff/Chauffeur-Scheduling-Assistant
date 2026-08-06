@@ -115,3 +115,181 @@ def already_on_list(list_id: str, candidates: list) -> list:
         if c['already']:
             c['suggested'] = False
     return candidates
+
+
+# --- The trip itself (meals & provisioning arc M7) ---------------------------
+# A standing list with no trip attached is half a system: the family can write
+# down what they need and still have nowhere for it to happen. The binding
+# already existed (ShoppingList.errand_tag against Errand.tags, chosen so it
+# survives a recurring errand regenerating with a new id every cycle) — what
+# was missing was any way to CREATE the errand, and any use of it once it
+# exists. See docs/meal_week_design.md.
+
+import datetime
+
+DEFAULT_SHOP_MINS = 90          # a real grocery run, not a dash for milk
+SHOP_WINDOW = ('08:00', '20:00')
+
+
+def errand_for_list(list_id: str) -> dict:
+    """The errand this list is bound to, if one exists."""
+    if not list_id:
+        return None
+    for e in storage.get_all_errands():
+        if e.get('is_completed'):
+            continue
+        if any(l.get('id') == list_id for l in storage.find_shopping_lists_for_errand(e)):
+            return e
+    return None
+
+
+def next_scheduled_shop(list_id: str) -> dict:
+    """When the solver actually PUT the trip, not which weekday we guessed.
+
+    This is the honest answer to "which day do we shop": a weekday setting is a
+    guess made from average free time, while a scheduled errand is a decision
+    made against the real week, with the drives and the detour accounted for.
+    """
+    e = errand_for_list(list_id)
+    if not e:
+        return None
+    start = storage.get_all_scheduled_errands().get(e.get('id'))
+    if not start:
+        return {'errand': e, 'scheduled': False}
+    try:
+        when = datetime.datetime.fromisoformat(str(start).replace('Z', '+00:00'))
+    except ValueError:
+        return {'errand': e, 'scheduled': False}
+    return {'errand': e, 'scheduled': True, 'start': start,
+            'date': when.date().isoformat(), 'weekday': when.weekday(),
+            'label': when.strftime('%A'),
+            'time_label': when.strftime('%I:%M %p').lstrip('0')}
+
+
+def create_errand_for_list(list_id: str = None, weekday: int = None,
+                           duration_mins: int = None, location: str = None,
+                           recurring: bool = True) -> dict:
+    """Give a list somewhere to happen.
+
+    `valid_days_of_week` is left OPEN by default rather than pinned to the
+    chosen weekday: the whole point of having a solver is that it can find a
+    good slot against the actual week, and pinning the day throws that away.
+    A weekday is passed only when the family has explicitly said "we shop on
+    Tuesdays" — then it is a constraint they chose, not one we invented.
+    """
+    from models.schemas import Errand
+    lst = storage.get_shopping_list(list_id) if list_id \
+        else storage.ensure_default_shopping_list()
+    if not lst:
+        return {'status': 'error', 'message': 'No such list.'}
+    existing = errand_for_list(lst['id'])
+    if existing:
+        return {'status': 'exists', 'errand': existing, 'list': lst,
+                'message': f"'{lst['name']}' already has a trip: {existing['title']}."}
+
+    tag = (lst.get('errand_tag') or '').strip()
+    if not tag:
+        # Bind by tag from here on — a list tied to an errand ID would be
+        # orphaned the first time the recurring errand regenerated.
+        tag = (lst.get('name') or 'groceries').strip().lower().replace(' ', '_')
+        storage.update_shopping_list(lst['id'], {'errand_tag': tag})
+        lst = storage.get_shopping_list(lst['id'])
+
+    where = (location or lst.get('store') or '').strip()
+    if not where:
+        return {'status': 'needs_location', 'list': lst,
+                'message': f"Where do you shop for '{lst['name']}'? "
+                           "I need a store to put the trip at."}
+
+    errand = Errand(
+        title=f"{lst['name']} run" if not lst['name'].lower().endswith('run')
+              else lst['name'],
+        location=where,
+        duration_mins=int(duration_mins or DEFAULT_SHOP_MINS),
+        priority=2,
+        tags=[tag],
+        recurrence_rule='weekly' if recurring else None,
+        window_days=7 if recurring else 3,
+        time_window_start=SHOP_WINDOW[0], time_window_end=SHOP_WINDOW[1],
+        valid_days_of_week=[int(weekday)] if weekday is not None else [],
+    )
+    data = errand.model_dump()
+    storage.add_errand(data)
+    return {'status': 'success', 'errand': data, 'list': lst,
+            'message': f"Added a {'weekly ' if recurring else ''}"
+                       f"{data['duration_mins']}-minute trip to {where} for "
+                       f"'{lst['name']}'. The solver will fit it into the week."}
+
+
+def lists_needing_a_trip(min_items: int = 5) -> list:
+    """Lists carrying real weight with nowhere to happen.
+
+    Deliberately not a nag on every list: a list with two things on it is not a
+    trip, and a list nobody is adding to does not need one either.
+    """
+    out = []
+    for l in storage.get_shopping_lists():
+        if errand_for_list(l['id']):
+            continue
+        open_items = storage.get_shopping_items(l['id'], include_checked=False)
+        if len(open_items) >= min_items:
+            out.append({'list': l, 'open_count': len(open_items)})
+    return out
+
+
+def propose_shopping_errands(now=None, deliver=None, min_items: int = 5) -> dict:
+    """Offer a trip for a list that has weight and nowhere to happen.
+
+    Fires once per list until acted on. A list nobody can shop for is the
+    quiet failure this whole slice exists to remove — the family writes things
+    down all week and the trip lives only in someone's head.
+    """
+    now = now or datetime.datetime.now()
+    settings = storage.get_settings() or {}
+    if not settings.get('propose_shopping_errands', True):
+        return {'status': 'disabled'}
+    seen = dict(storage.get_app_state('shopping_errand_proposed') or {})
+    cutoff = (now.date() - datetime.timedelta(days=30)).isoformat()
+    seen = {k: v for k, v in seen.items() if str(v) >= cutoff}
+
+    offered = []
+    for row in lists_needing_a_trip(min_items):
+        lst, n = row['list'], row['open_count']
+        if lst['id'] in seen:
+            continue
+        seen[lst['id']] = now.date().isoformat()          # marker FIRST
+        store = (lst.get('store') or '').strip()
+        summary = f"A weekly trip for '{lst['name']}' ({n} things waiting)"
+        body = (f"🛒 '{lst['name']}' has {n} things on it and no trip scheduled — "
+                f"it only exists in someone's head right now. Want me to add a "
+                f"weekly {DEFAULT_SHOP_MINS}-minute run"
+                + (f" to {store}" if store else "")
+                + " and let the solver fit it into the week?")
+        if not store:
+            body += ("\n(I don't know where you shop for this — approving will "
+                     "ask for the store.)")
+        payload = {'list_id': lst['id'], 'recurring': True}
+        (deliver or _deliver_errand_proposal)(summary, payload, body)
+        offered.append(lst['id'])
+    storage.set_app_state('shopping_errand_proposed', seen)
+    return {'status': 'proposed' if offered else 'nothing_to_offer',
+            'lists': offered}
+
+
+def _deliver_errand_proposal(summary: str, payload: dict, body: str):
+    """Family channel + approvals banner, same path as the car stop."""
+    from services import chat_actions
+    res = chat_actions.create_action_proposal('add_shopping_errand', summary, payload)
+    if res.get('status') != 'success':
+        return None
+    pid = res['proposal_id']
+    try:
+        fam = storage.get_family_channel()
+        if fam:
+            storage.update_action_proposal(pid, {'channel_id': fam['id']})
+            argyle = storage.ensure_argyle_member()
+            from services.agent_tools_v2 import _post_chat_message
+            _post_chat_message(fam, argyle, body, card=res['card'])
+    except Exception as ex:
+        print(f"shopping errand proposal delivery failed: {ex}")
+    return pid

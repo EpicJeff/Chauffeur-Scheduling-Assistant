@@ -268,6 +268,12 @@ async def push_notification_loop():
                         if res.get("status") == "proposed":
                             print(f"Week plan proposed: {res['days']} nights, "
                                   f"{res['dish_count']} dishes")
+                        # M7: a list with weight and nowhere to happen.
+                        from services import shopping as _shop_svc
+                        sres = await asyncio.to_thread(_shop_svc.propose_shopping_errands,
+                                                       now_dt)
+                        if sres.get("status") == "proposed":
+                            print(f"Shopping trip proposed for {len(sres['lists'])} list(s)")
             except Exception as wpe:
                 print(f"Week plan sweep error: {wpe}")
 
@@ -5288,6 +5294,29 @@ def meal_week(start: Optional[str] = None, days: Optional[int] = None):
     return {'window': win, 'start': start_str, 'days': n,
             'sides_per_meal': _meals.plate_settings()[0],
             'week': _meals.compose_week(start_str, n)}
+
+@app.get("/api/shopping/lists/{list_id}/errand")
+def shopping_list_errand(list_id: str):
+    """The trip this list is bound to, and when it's actually scheduled."""
+    from services import shopping as _shop
+    return {'errand': _shop.errand_for_list(list_id),
+            'next': _shop.next_scheduled_shop(list_id)}
+
+@app.post("/api/shopping/lists/{list_id}/errand")
+def create_shopping_list_errand(list_id: str, background_tasks: BackgroundTasks,
+                                weekday: Optional[int] = None,
+                                duration_mins: Optional[int] = None,
+                                location: Optional[str] = None,
+                                recurring: bool = True):
+    """Give a list somewhere to happen — a recurring errand bound by tag, which
+    the errand pass then places minimum-detour against the real week."""
+    from services import shopping as _shop
+    res = _shop.create_errand_for_list(list_id, weekday, duration_mins,
+                                       location, recurring)
+    if res.get('status') == 'success':
+        background_tasks.add_task(trigger_background_refresh)
+        _touch_stream()
+    return res
 
 @app.get("/api/meals/grocery-day")
 def grocery_day_suggestion():

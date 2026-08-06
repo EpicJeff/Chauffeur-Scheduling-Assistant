@@ -518,6 +518,20 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class GetShoppingTripTool(BaseModel):
+    """
+    Answers "when are we going shopping" / "when is the grocery run" with the SCHEDULED trip and how many things are waiting.
+    """
+    list_name: Optional[str] = Field(None, description="Which list or store; omit for the default list.")
+
+class ScheduleShoppingTripTool(BaseModel):
+    """
+    Creates a recurring shopping trip for a list ("schedule a grocery run", "add a weekly Costco run"). The solver then fits it into the week.
+    """
+    store: Optional[str] = Field(None, description="Where they shop, e.g. Kroger on Main St.")
+    list_name: Optional[str] = Field(None, description="Which list; omit for the default list.")
+    weekly: Optional[bool] = Field(True, description="true (default) for a standing weekly run, false for a one-off.")
+
 class GetWeekDinnersTool(BaseModel):
     """
     Answers "what are we eating this week" / "what's the meal plan" / "what do I need to buy for" - every night in the span the next grocery run has to cover.
@@ -659,6 +673,8 @@ TOOL_SCHEMAS = {
     "add_dishes": AddDishesTool.model_json_schema(),
     "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
     "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
+    "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "schedule_shopping_trip": ScheduleShoppingTripTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1799,6 +1815,16 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_get_shopping_trip(args: dict) -> dict:
+    from services.agent_tools_v2 import get_shopping_trip
+    return get_shopping_trip(args.get("list_name") or "")
+
+def handle_schedule_shopping_trip(args: dict) -> dict:
+    from services.agent_tools_v2 import schedule_shopping_trip
+    return schedule_shopping_trip(args.get("store") or "",
+                                  args.get("list_name") or "",
+                                  args.get("weekly", True))
+
 def handle_get_week_dinners(args: dict) -> dict:
     from services.agent_tools_v2 import get_week_dinners
     return get_week_dinners()
@@ -1927,6 +1953,8 @@ TOOL_HANDLERS = {
     "add_dishes": handle_add_dishes,
     "get_week_dinners": handle_get_week_dinners,
     "approve_week_dinners": handle_approve_week_dinners,
+    "get_shopping_trip": handle_get_shopping_trip,
+    "schedule_shopping_trip": handle_schedule_shopping_trip,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

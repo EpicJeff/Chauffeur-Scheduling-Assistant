@@ -270,6 +270,29 @@
                 </button>
             </div>
 
+            <!-- The trip (M7). A standing list with nothing to attach it to is
+                 half a system: you can write down what you need and still have
+                 nowhere for it to happen. When a trip exists we show WHEN the
+                 solver actually put it, which is the honest answer to "which
+                 day do we shop" — a weekday setting is only a guess. -->
+            <div class="mb-6 text-sm" x-show="!isKiosk">
+                <div x-show="trip && trip.scheduled" class="text-gray-300">
+                    🛒 <span class="font-bold" x-text="trip && trip.label"></span>
+                    <span class="text-gray-500"
+                        x-text="trip ? ' at ' + trip.time_label + ' · ' + (trip.errand || {}).location : ''"></span>
+                </div>
+                <div x-show="trip && trip.errand && !trip.scheduled" class="text-gray-400">
+                    🛒 <span x-text="(trip.errand || {}).title"></span>
+                    <span class="text-gray-500"> — not placed in the week yet</span>
+                </div>
+                <div x-show="!trip" class="flex items-center gap-2 flex-wrap">
+                    <span class="text-gray-400">No trip scheduled for this list.</span>
+                    <button @click="scheduleTrip()" :disabled="tripBusy"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                        x-text="tripBusy ? 'Adding…' : 'Schedule a trip'"></button>
+                </div>
+            </div>
+
             <!-- ===== Add row ===== -->
             <div class="flex gap-2 mb-6" x-show="!isKiosk">
                 <input x-model="draft" @keydown.enter="addItem()" type="text"
@@ -444,6 +467,7 @@
                 addDishId: '',
                 drain: null,
                 week: [], weekWindow: null, weekBusy: false, dayAdd: {},
+                trip: null, tripBusy: false,
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -458,6 +482,7 @@
                     this.loadPlate();   // non-blocking: derived, may take a beat
                     this.loadRepertoire();
                     this.loadWeek();
+                    this.loadTrip();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
@@ -482,6 +507,46 @@
                         const r = await fetch(this.apiBase + 'api/meals/plate');
                         if (r.ok) this.plate = await r.json();
                     } catch (e) { }
+                },
+
+                async loadTrip() {
+                    if (!this.activeId) { this.trip = null; return; }
+                    try {
+                        const r = await fetch(this.apiBase + 'api/shopping/lists/'
+                            + this.activeId + '/errand');
+                        this.trip = r.ok ? (await r.json()).next : null;
+                    } catch (e) { this.trip = null; }
+                },
+
+                async scheduleTrip() {
+                    // The store is the one thing we cannot guess. Ask once,
+                    // remember it on the list, and never ask again.
+                    const l = (this.lists || []).find(x => x.id === this.activeId);
+                    let where = (l && l.store) || '';
+                    if (!where) {
+                        where = await promptInput('Where do you shop?',
+                            'The store this list is for — e.g. Kroger, Main St. '
+                            + 'The trip gets placed there.');
+                        if (!where) return;
+                    }
+                    this.tripBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/shopping/lists/'
+                            + this.activeId + '/errand?location='
+                            + encodeURIComponent(where), { method: 'POST' });
+                        const res = r.ok ? await r.json() : null;
+                        if (!res || res.status === 'error') {
+                            showGlobalAlert((res && res.message) || 'Could not add the trip.');
+                            return;
+                        }
+                        showGlobalAlert(res.message);
+                        await this.loadTrip();
+                        this.loadWeek();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.tripBusy = false;
+                    }
                 },
 
                 async loadWeek(repropose) {
@@ -818,7 +883,10 @@
                     if (r2.ok) this.lists = await r2.json();
                 },
 
-                selectList(id) { this.activeId = id; this.candidates = []; this.loadItems(); },
+                selectList(id) {
+                    this.activeId = id; this.candidates = [];
+                    this.loadItems(); this.loadTrip();
+                },
 
                 byline(it) {
                     const who = this.members[it.added_by];

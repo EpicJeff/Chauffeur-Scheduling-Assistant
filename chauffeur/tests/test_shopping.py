@@ -15,6 +15,7 @@ Load-bearing properties, each traceable to docs/meal_design.md §M1:
 
 Run from chauffeur/:  python tests/test_shopping.py
 """
+import datetime
 from unittest import mock
 
 from harness import check  # noqa: F401  (harness isolates CHAUFFEUR_DATA_DIR)
@@ -28,11 +29,17 @@ from services.agent_tools_v2 import (add_shopping_items, get_shopping_list_items
 def _reset():
     import main  # noqa: F401
     for t in (storage.shopping_lists_table, storage.shopping_items_table,
-              storage.members_table, storage.errands_table):
+              storage.members_table, storage.errands_table,
+              storage.app_state_table, storage.daily_schedules_table):
         t.truncate()
     storage.get_settings = lambda: {"calendar_ids": ["primary"]}
     storage.add_member({"id": "momm", "name": "Mom", "role": "parent"})
     storage.add_member({"id": "kid1", "name": "Addison", "role": "child", "is_child": True})
+
+
+def _item(name, list_id):
+    from models.schemas import ShoppingItem
+    return ShoppingItem(list_id=list_id, name=name).model_dump()
 
 
 def _mk_errand(title="Groceries", tags=None, location="Kroger"):
@@ -320,6 +327,134 @@ def scenario_tools_registered_in_both_stacks():
     lid = storage.ensure_default_shopping_list()['id']
     check([i['name'] for i in storage.get_shopping_items(lid)] == ["salt"],
           "the v1 bridge writes through to the same storage as v2")
+
+
+# --- the trip (M7) -----------------------------------------------------------
+# A standing list with no errand is half a system: you can write down what you
+# need and still have nowhere for it to happen.
+
+def scenario_a_list_can_be_given_a_trip():
+    _reset()
+    from services import shopping
+    lst = storage.ensure_default_shopping_list()
+    check(shopping.errand_for_list(lst['id']) is None, "no trip to begin with")
+
+    res = shopping.create_errand_for_list(lst['id'], location="Kroger")
+    check(res['status'] == 'success', f"trip created, got {res}")
+    e = res['errand']
+    check(e['duration_mins'] == shopping.DEFAULT_SHOP_MINS and e['recurrence_rule'] == 'weekly',
+          f"a real weekly run, not a dash for milk, got {e['duration_mins']}")
+    check(e['valid_days_of_week'] == [],
+          "the day is left OPEN — pinning it throws away the only reason to "
+          "have a solver")
+    check(lst['errand_tag'] in e['tags'],
+          f"bound by TAG so it survives regeneration, got {e['tags']}")
+    check(shopping.errand_for_list(lst['id'])['id'] == e['id'], "and reads back")
+
+    again = shopping.create_errand_for_list(lst['id'], location="Kroger")
+    check(again['status'] == 'exists', f"never two trips for one list, got {again}")
+
+
+def scenario_an_explicit_day_is_a_constraint_the_family_chose():
+    _reset()
+    from services import shopping
+    lst = storage.ensure_default_shopping_list()
+    res = shopping.create_errand_for_list(lst['id'], weekday=1, location="Kroger")
+    check(res['errand']['valid_days_of_week'] == [1],
+          "we shop on Tuesdays is a constraint they chose, so it is honoured")
+
+
+def scenario_a_trip_with_no_store_asks_rather_than_guessing():
+    _reset()
+    from services import shopping
+    from models.schemas import ShoppingList
+    l = ShoppingList(name="Costco").model_dump()      # no store set
+    storage.add_shopping_list(l)
+    res = shopping.create_errand_for_list(l['id'])
+    check(res['status'] == 'needs_location' and 'Where' in res['message'],
+          f"the store is the one thing we cannot invent, got {res}")
+    check(shopping.errand_for_list(l['id']) is None, "and nothing was created")
+
+
+def scenario_the_scheduled_trip_beats_the_weekday_guess():
+    """THE point of the slice. A weekday setting is a guess from average free
+    time; a scheduled errand is a decision made against the real week."""
+    _reset()
+    from services import shopping, meals
+    lst = storage.ensure_default_shopping_list()
+    shopping.create_errand_for_list(lst['id'], location="Kroger")
+    e = shopping.errand_for_list(lst['id'])
+
+    settings = {'grocery_weekday': 5, 'grocery_plan_lead_days': 2}   # Saturday
+    today = datetime.date(2026, 8, 10)                              # a Monday
+    when, source, _ = meals.shop_date(settings, today)
+    check(source == 'weekday' and when.weekday() == 5,
+          f"unplaced trip falls back to the configured day, got {source} {when}")
+
+    # Now the solver places it on the Wednesday.
+    storage.save_cached_daily_schedule('2026-08-12', {'scheduled_errands': [
+        {'id': e['id'], 'start': '2026-08-12T10:00:00', 'end': '2026-08-12T11:30:00',
+         'title': e['title'], 'location': 'Kroger'}]}, 'h1')
+    when2, source2, detail = meals.shop_date(settings, today)
+    check(source2 == 'scheduled' and when2 == datetime.date(2026, 8, 12),
+          f"the SCHEDULED trip wins over the weekday setting, got {source2} {when2}")
+    check(detail['time_label'] == '10:00 AM', f"and carries the time, got {detail}")
+
+    win = meals.plan_window(settings, today)
+    check(win['grocery_date'] == '2026-08-12' and win['shop_source'] == 'scheduled',
+          f"the meal window follows the real trip, got {win}")
+
+
+def scenario_a_trip_is_offered_only_for_a_list_carrying_weight():
+    _reset()
+    from services import shopping
+    lst = storage.ensure_default_shopping_list()
+    for n in ('milk', 'eggs'):
+        storage.add_shopping_item(_item(n, lst['id']))
+    check(not shopping.lists_needing_a_trip(),
+          "two things is not a trip, and a nag for it is noise")
+
+    for n in ('bread', 'apples', 'chicken', 'rice'):
+        storage.add_shopping_item(_item(n, lst['id']))
+    need = shopping.lists_needing_a_trip()
+    check(len(need) == 1 and need[0]['open_count'] == 6, f"now it is, got {need}")
+
+    sent = []
+    res = shopping.propose_shopping_errands(deliver=lambda s, p, b: sent.append(b))
+    check(res['status'] == 'proposed' and len(sent) == 1, f"offered once, got {res}")
+    check('6 things' in sent[0] and 'no trip scheduled' in sent[0],
+          f"and says why, got {sent[0][:120]}")
+
+    res2 = shopping.propose_shopping_errands(deliver=lambda s, p, b: sent.append(b))
+    check(res2['status'] == 'nothing_to_offer' and len(sent) == 1,
+          "the 30-minute sweep must not re-offer the same list")
+
+    shopping.create_errand_for_list(lst['id'], location="Kroger")
+    check(not shopping.lists_needing_a_trip(), "and a list with a trip is done")
+
+
+def scenario_m7_tools_in_both_stacks():
+    _reset()
+    from services import agent_tools, agent_tools_v2
+    want = {"get_shopping_trip", "schedule_shopping_trip"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    ask = agent_tools.execute_tool("get_shopping_trip", {})
+    check("no trip scheduled" in ask['message'], f"reads the absence, got {ask}")
+    made = agent_tools.execute_tool("schedule_shopping_trip", {"store": "Kroger"})
+    check(made['status'] == 'success', f"creates it by voice, got {made}")
+    from services import shopping
+    check(shopping.errand_for_list(storage.ensure_default_shopping_list()['id']),
+          "and the errand really exists")
 
 
 # --- the page itself ---------------------------------------------------------

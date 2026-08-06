@@ -854,6 +854,38 @@ def next_grocery_date(today: datetime.date = None, weekday: int = 5) -> datetime
     return today + datetime.timedelta(days=(weekday - today.weekday()) % 7)
 
 
+def shop_date(settings: dict = None, today: datetime.date = None,
+              list_id: str = None) -> tuple:
+    """The next shopping trip, and where that answer came from.
+
+    Three sources, best first:
+      `scheduled` — the solver actually placed the bound errand this week. This
+        is a decision made against the real week, with drives and detour
+        accounted for, and it beats any weekday rule.
+      `errand`    — a trip exists but has not been placed yet; use its allowed
+        weekday if it names one.
+      `weekday`   — no trip exists. Fall back to the configured or derived day.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    today = today or datetime.date.today()
+    gw, _ = grocery_settings(settings)
+    try:
+        from services import shopping as _shop
+        lid = list_id or (storage.ensure_default_shopping_list() or {}).get('id')
+        nxt = _shop.next_scheduled_shop(lid)
+    except Exception:
+        nxt = None
+    if nxt and nxt.get('scheduled'):
+        when = datetime.date.fromisoformat(nxt['date'])
+        if when >= today:
+            return when, 'scheduled', nxt
+    if nxt and nxt.get('errand'):
+        days = nxt['errand'].get('valid_days_of_week') or []
+        if days:
+            return next_grocery_date(today, int(days[0])), 'errand', nxt
+    return next_grocery_date(today, gw), 'weekday', nxt
+
+
 def plan_window(settings: dict = None, today: datetime.date = None) -> dict:
     """What span the week plan should cover, and whether we are planning it.
 
@@ -864,15 +896,18 @@ def plan_window(settings: dict = None, today: datetime.date = None) -> dict:
     what is left of the span already bought for.
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
-    gw, lead = grocery_settings(settings)
+    _, lead = grocery_settings(settings)
     today = today or datetime.date.today()
-    nxt = next_grocery_date(today, gw)
+    nxt, source, detail = shop_date(settings, today)
     until = (nxt - today).days
+    base = {'grocery_date': nxt.isoformat(), 'days_until_shop': until,
+            'shop_source': source,
+            'shop_time_label': (detail or {}).get('time_label') if source == 'scheduled' else None,
+            'has_errand': bool((detail or {}).get('errand'))}
     if until <= lead:
-        return {'start': nxt.isoformat(), 'days': 7, 'mode': 'planning',
-                'grocery_date': nxt.isoformat(), 'days_until_shop': until}
-    return {'start': today.isoformat(), 'days': max(1, until), 'mode': 'current',
-            'grocery_date': nxt.isoformat(), 'days_until_shop': until}
+        return {**base, 'start': nxt.isoformat(), 'days': 7, 'mode': 'planning'}
+    return {**base, 'start': today.isoformat(), 'days': max(1, until),
+            'mode': 'current'}
 
 
 def week_dates(start_date: str = None, days: int = 7) -> list:
