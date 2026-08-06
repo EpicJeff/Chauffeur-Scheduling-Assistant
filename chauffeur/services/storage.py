@@ -405,6 +405,7 @@ with db_lock:
     dishes_table = db.table('dishes')
     plates_table = db.table('plates')
     walmart_items_table = db.table('walmart_items')
+    meal_rules_table = db.table('meal_rules')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1876,6 +1877,36 @@ def save_plate(data: dict) -> dict:
 def delete_plate(date_str: str):
     with db_lock:
         plates_table.remove(Query().date == date_str)
+
+# --- Meal rules (arc M11) ---
+# How this household eats, as opposed to what it eats. Small table, read on
+# every compose, so it is loaded whole rather than queried per dish.
+
+def get_meal_rules(include_disabled: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(r) for r in meal_rules_table.all()]
+    if not include_disabled:
+        rows = [r for r in rows if r.get('is_enabled', True)]
+    return sorted(rows, key=lambda r: (r.get('created_at') or 0))
+
+def get_meal_rule(rule_id: str) -> Optional[dict]:
+    with db_lock:
+        res = meal_rules_table.search(Query().id == rule_id)
+        return dict(res[0]) if res else None
+
+def save_meal_rule(data: dict) -> dict:
+    with db_lock:
+        meal_rules_table.upsert(data, Query().id == data['id'])
+    return data
+
+def update_meal_rule(rule_id: str, patch: dict) -> bool:
+    with db_lock:
+        return bool(meal_rules_table.update(patch, Query().id == rule_id))
+
+def delete_meal_rule(rule_id: str):
+    with db_lock:
+        meal_rules_table.remove(Query().id == rule_id)
+
 
 # --- Walmart item mapping (arc W1) ---
 # Keyed by NORMALIZED NAME, not by shopping item id: the family buys roughly

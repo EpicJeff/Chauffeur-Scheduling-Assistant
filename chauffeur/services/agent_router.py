@@ -305,7 +305,9 @@ sending or claiming, and never pass from_member/member_name for them.
                              "set_dish_prep", "clear_dish_prep", "get_prep_ahead",
                              # M9: pairing reads back as a complete sentence.
                              "pair_dishes", "unpair_dishes",
-                             "plan_specific_dinner", "unlock_dinner"}
+                             "plan_specific_dinner", "unlock_dinner",
+                             # M11: how the household eats.
+                             "set_meal_rule", "get_meal_rules"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -577,7 +579,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                    "schedule_shopping_trip", "set_dish_prep",
                                    "clear_dish_prep", "get_prep_ahead",
                                    "pair_dishes", "unpair_dishes",
-                                   "plan_specific_dinner", "unlock_dinner"):
+                                   "plan_specific_dinner", "unlock_dinner",
+                                   "set_meal_rule", "get_meal_rules"):
                     from services import agent_tools_v2 as _atv2
                     actor = acting_member
                     if actor is None and driver:
@@ -591,6 +594,18 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.get_week_dinners(acting_member=actor)
                     elif func_name == "approve_week_dinners":
                         res = _atv2.approve_week_dinners(acting_member=actor)
+                    elif func_name == "set_meal_rule":
+                        res = _atv2.set_meal_rule(
+                            args.get("description", "") or "",
+                            args.get("kind", "frequency_cap") or "frequency_cap",
+                            args.get("tags", "") or "",
+                            args.get("dish_names", "") or "",
+                            bool(args.get("takeout")),
+                            int(args.get("max_servings") or 1),
+                            int(args.get("window_days") or 7),
+                            int(args.get("dwell_days") or 3), acting_member=actor)
+                    elif func_name == "get_meal_rules":
+                        res = _atv2.get_meal_rules(acting_member=actor)
                     elif func_name == "plan_specific_dinner":
                         res = _atv2.plan_specific_dinner(
                             args.get("target_date", "") or "",

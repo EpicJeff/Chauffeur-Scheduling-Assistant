@@ -5415,6 +5415,57 @@ class DishImage(BaseModel):
     url: Optional[str] = None
     source: str = 'family'
 
+class MealRuleReq(BaseModel):
+    name: str = ""
+    kind: str = 'frequency_cap'         # frequency_cap | batch_cycle
+    dish_ids: List[str] = []
+    tags: List[str] = []
+    types: List[str] = []
+    side_types: List[str] = []
+    sources: List[str] = []
+    max_servings: int = 1
+    window_days: int = 7
+    dwell_days: int = 3
+
+@app.get("/api/meals/rules")
+def list_meal_rules():
+    """How this household eats, in plain words plus what each rule matches — a
+    rule matching nothing is the silent failure worth surfacing."""
+    from services import meals as _meals
+    dishes = storage.get_dishes()
+    out = []
+    for r in storage.get_meal_rules(include_disabled=True):
+        matched = [d for d in dishes if _meals.rule_matches(r, d)]
+        out.append({**r, 'description': _meals.describe_meal_rule(r),
+                    'matches': [d.get('short_name') or d['name'] for d in matched],
+                    'match_count': len(matched)})
+    return {'rules': out}
+
+@app.post("/api/meals/rules")
+def create_meal_rule(req: MealRuleReq):
+    from services import meals as _meals
+    res = _meals.add_meal_rule(req.name, req.kind, dish_ids=req.dish_ids,
+                               tags=req.tags, types=req.types,
+                               side_types=req.side_types, sources=req.sources,
+                               max_servings=req.max_servings,
+                               window_days=req.window_days,
+                               dwell_days=req.dwell_days)
+    _touch_stream()
+    return res
+
+@app.patch("/api/meals/rules/{rule_id}")
+def patch_meal_rule(rule_id: str, is_enabled: Optional[bool] = None):
+    if is_enabled is not None:
+        storage.update_meal_rule(rule_id, {'is_enabled': bool(is_enabled)})
+    _touch_stream()
+    return storage.get_meal_rule(rule_id) or {'status': 'error'}
+
+@app.delete("/api/meals/rules/{rule_id}")
+def remove_meal_rule(rule_id: str):
+    storage.delete_meal_rule(rule_id)
+    _touch_stream()
+    return {'status': 'success'}
+
 class PairingReq(BaseModel):
     partner_ids: List[str] = []
     mode: str = 'always_with'      # always_with | only_with

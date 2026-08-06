@@ -518,6 +518,25 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class SetMealRuleTool(BaseModel):
+    """
+    Records how this household EATS: meat about once a week, takeout occasionally, one kind of beans at a time for a few days.
+    """
+    description: str = Field(..., description="The rule in the family own words.")
+    kind: Optional[str] = Field("frequency_cap", description="frequency_cap or batch_cycle.")
+    tags: Optional[str] = Field(None, description="Comma separated dish tags, e.g. meat or beans.")
+    dish_names: Optional[str] = Field(None, description="Comma separated specific dishes.")
+    takeout: Optional[bool] = Field(False, description="true when the rule is about takeout.")
+    max_servings: Optional[int] = Field(1, description="How many times, for frequency_cap.")
+    window_days: Optional[int] = Field(7, description="Per how many days (7 = a week).")
+    dwell_days: Optional[int] = Field(3, description="How many days one batch lasts.")
+
+class GetMealRulesTool(BaseModel):
+    """
+    Lists the household meal rules.
+    """
+    pass
+
 class PlanSpecificDinnerTool(BaseModel):
     """
     Sets a specific dinner on a specific date and LOCKS it ("steak Monday for Mom's birthday", "Grandma is bringing dinner Tuesday").
@@ -725,6 +744,8 @@ TOOL_SCHEMAS = {
     "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
     "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
     "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "set_meal_rule": SetMealRuleTool.model_json_schema(),
+    "get_meal_rules": GetMealRulesTool.model_json_schema(),
     "plan_specific_dinner": PlanSpecificDinnerTool.model_json_schema(),
     "unlock_dinner": UnlockDinnerTool.model_json_schema(),
     "pair_dishes": PairDishesTool.model_json_schema(),
@@ -1873,6 +1894,20 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_set_meal_rule(args: dict) -> dict:
+    from services.agent_tools_v2 import set_meal_rule
+    return set_meal_rule(args.get("description") or "",
+                         args.get("kind") or "frequency_cap",
+                         args.get("tags") or "", args.get("dish_names") or "",
+                         bool(args.get("takeout")),
+                         int(args.get("max_servings") or 1),
+                         int(args.get("window_days") or 7),
+                         int(args.get("dwell_days") or 3))
+
+def handle_get_meal_rules(args: dict) -> dict:
+    from services.agent_tools_v2 import get_meal_rules
+    return get_meal_rules()
+
 def handle_plan_specific_dinner(args: dict) -> dict:
     from services.agent_tools_v2 import plan_specific_dinner
     return plan_specific_dinner(args.get("target_date") or "",
@@ -2045,6 +2080,8 @@ TOOL_HANDLERS = {
     "get_week_dinners": handle_get_week_dinners,
     "approve_week_dinners": handle_approve_week_dinners,
     "get_shopping_trip": handle_get_shopping_trip,
+    "set_meal_rule": handle_set_meal_rule,
+    "get_meal_rules": handle_get_meal_rules,
     "plan_specific_dinner": handle_plan_specific_dinner,
     "unlock_dinner": handle_unlock_dinner,
     "pair_dishes": handle_pair_dishes,

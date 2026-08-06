@@ -741,6 +741,52 @@ class ShoppingItem(BaseModel):
     checked_by: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
+class MealRule(BaseModel):
+    """A standing fact about how THIS household eats.
+
+    M9 modelled "these dishes come together", which is a property of a dish.
+    These are not properties of any dish — they are rhythms, and they are the
+    thing that makes a plan feel like this family's rather than a generic one:
+
+      "we only eat meat about once a week"          -> frequency_cap
+      "takeout is an occasional thing"              -> frequency_cap
+      "we cook one kind of beans, eat it 2-3 days,  -> batch_cycle
+       then make the next kind, then the next"
+
+    Deliberately NOT a general predicate language. Two kinds, both drawn from
+    what the family actually said, each enforced at the point where the
+    composer picks dishes. The solver's Rule/ErrandRule is the precedent: named,
+    listable, individually switchable, and boring to reason about.
+
+    Selector clauses are ANDed, and empty clauses are ignored — so
+    `sources=['ordered']` alone means all takeout, while `tags=['beef']` plus
+    `types=['entree']` means beef mains only.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    name: str = ""
+    kind: str = 'frequency_cap'        # frequency_cap | batch_cycle
+    is_enabled: bool = True
+
+    dish_ids: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    types: List[str] = Field(default_factory=list)
+    side_types: List[str] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list)
+
+    # frequency_cap: at most `max_servings` of the matched set per window.
+    max_servings: int = 1
+    window_days: int = 7
+
+    # batch_cycle: one member of the matched set is "the open pot". It keeps
+    # being served for `dwell_days`, then the group advances to whichever
+    # member has gone longest without — which is what cooking a big batch and
+    # working through it actually looks like.
+    dwell_days: int = 3
+
+    created_at: float = Field(default_factory=time.time)
+
+
 class PrepStep(BaseModel):
     """Work that happens OUTSIDE the cook window, and the reminder for it.
 

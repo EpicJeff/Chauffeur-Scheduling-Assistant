@@ -1397,6 +1397,51 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
                        f"{'s' if n != 1 else ''} on the list."}
 
 
+def set_meal_rule(description: str, kind: str = "frequency_cap",
+                  tags: str = "", dish_names: str = "", takeout: bool = False,
+                  max_servings: int = 1, window_days: int = 7,
+                  dwell_days: int = 3, acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: how this household EATS. "we only eat meat about once a week",
+    "takeout now and then", "we cook one kind of beans at a time and eat it a
+    few days before making the next"."""
+    from services import storage, meals
+    tag_list = [t.strip().lower()
+                for t in str(tags or '').replace(' and ', ',').split(',')
+                if t.strip()]
+    ids, missing = [], []
+    for nm in [n.strip() for n in str(dish_names or '').replace(' and ', ',').split(',')
+               if n.strip()]:
+        d = storage.find_dish_by_name(nm)
+        (ids.append(d['id']) if d else missing.append(nm))
+    res = meals.add_meal_rule(description, kind, tags=tag_list, dish_ids=ids,
+                              sources=['ordered'] if takeout else [],
+                              max_servings=max_servings, window_days=window_days,
+                              dwell_days=dwell_days)
+    said = meals.describe_meal_rule(res['rule'])
+    if not res['match_count']:
+        return {"status": "success",
+                "message": f"Noted ({said}) - but it does not match any dish I "
+                           "know yet, so it will not do anything. Tell me which "
+                           "dishes it covers and I will attach it."}
+    tail = f" (I do not have {', '.join(missing)} yet.)" if missing else ""
+    return {"status": "success",
+            "message": f"Got it - {said}. That covers "
+                       f"{', '.join(res['matches'][:6])}"
+                       f"{'...' if res['match_count'] > 6 else ''}.{tail}"}
+
+
+def get_meal_rules(acting_member: dict = None) -> Dict[str, Any]:
+    """READ: what rules do you have for our meals."""
+    from services import storage, meals
+    rules = storage.get_meal_rules()
+    if not rules:
+        return {"status": "success",
+                "message": "No meal rules set - I am just rotating what you cook."}
+    return {"status": "success",
+            "message": "Your meal rules: "
+                       + "; ".join(meals.describe_meal_rule(r) for r in rules) + "."}
+
+
 def plan_specific_dinner(target_date: str, dish_names: str = "", note: str = "",
                          acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "steak on Monday, it's Mom's birthday", "Grandma is bringing
@@ -2169,6 +2214,29 @@ def get_available_tools() -> List[Dict]:
                 },
                 "required": []
             }
+        },
+        {
+            "name": "set_meal_rule",
+            "description": "Records how this household EATS, as opposed to what it eats: we only eat meat about once a week, takeout is occasional, we cook one kind of beans at a time and eat it two or three days before making the next. Use kind=frequency_cap with max_servings and window_days for how often, or kind=batch_cycle with dwell_days for cook-a-batch-then-rotate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "The rule in the family own words, e.g. meat about once a week."},
+                    "kind": {"type": "string", "enum": ["frequency_cap", "batch_cycle"], "description": "frequency_cap for how often; batch_cycle for cook one, eat it a few days, then the next."},
+                    "tags": {"type": "string", "description": "Comma separated dish tags it applies to, e.g. meat or beans."},
+                    "dish_names": {"type": "string", "description": "Comma separated specific dishes, when tags will not do."},
+                    "takeout": {"type": "boolean", "description": "true when the rule is about takeout or delivery."},
+                    "max_servings": {"type": "number", "description": "How many times, for frequency_cap."},
+                    "window_days": {"type": "number", "description": "Per how many days, for frequency_cap (7 = a week)."},
+                    "dwell_days": {"type": "number", "description": "How many days one batch lasts, for batch_cycle."}
+                },
+                "required": ["description"]
+            }
+        },
+        {
+            "name": "get_meal_rules",
+            "description": "Lists the household meal rules (what rules do you have for our meals, how often do we eat meat).",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {
             "name": "plan_specific_dinner",

@@ -598,6 +598,167 @@ def _as_of_ts(date_str: str) -> float:
     return datetime.datetime.combine(d, datetime.time(0, 0)).timestamp()
 
 
+def add_meal_rule(name: str, kind: str = 'frequency_cap', **kw) -> dict:
+    """Create a rule. Returns it plus the dishes it currently matches, because
+    a rule that matches nothing is the failure mode here — "meat" is not a
+    field, and a tag the family never used silently governs nobody."""
+    from models.schemas import MealRule
+    kind = kind if kind in ('frequency_cap', 'batch_cycle') else 'frequency_cap'
+    rule = MealRule(name=(name or '').strip() or kind.replace('_', ' '),
+                    kind=kind,
+                    dish_ids=[str(x) for x in (kw.get('dish_ids') or [])],
+                    tags=[str(t).strip().lower() for t in (kw.get('tags') or []) if str(t).strip()],
+                    types=[str(t) for t in (kw.get('types') or [])],
+                    side_types=[str(t) for t in (kw.get('side_types') or [])],
+                    sources=[str(t) for t in (kw.get('sources') or [])],
+                    max_servings=max(1, int(kw.get('max_servings') or 1)),
+                    window_days=max(1, int(kw.get('window_days') or 7)),
+                    dwell_days=max(1, int(kw.get('dwell_days') or 3))).model_dump()
+    storage.save_meal_rule(rule)
+    matched = [d for d in storage.get_dishes() if rule_matches(rule, d)]
+    return {'status': 'success', 'rule': rule,
+            'matches': [d.get('short_name') or d['name'] for d in matched],
+            'match_count': len(matched)}
+
+
+def describe_meal_rule(rule: dict) -> str:
+    """Plain words, so a family can audit what they told it."""
+    what = []
+    if rule.get('tags'):
+        what.append('/'.join(rule['tags']))
+    if rule.get('sources'):
+        what.append('takeout' if 'ordered' in rule['sources']
+                    else '/'.join(rule['sources']))
+    if rule.get('types'):
+        what.append('/'.join(rule['types']))
+    if rule.get('dish_ids'):
+        names = [(storage.get_dish(i) or {}).get('short_name')
+                 or (storage.get_dish(i) or {}).get('name')
+                 for i in rule['dish_ids']]
+        what.append(', '.join(n for n in names if n))
+    subject = ' '.join(what) or 'nothing yet'
+    if rule.get('kind') == 'batch_cycle':
+        return (f"{subject}: one at a time, about {rule.get('dwell_days', 3)} "
+                f"days each, then the next")
+    n, w = rule.get('max_servings', 1), rule.get('window_days', 7)
+    every = 'week' if w == 7 else f"{w} days"
+    return f"{subject}: at most {n} in a {every}"
+
+
+def rule_matches(rule: dict, dish: dict) -> bool:
+    """Selector clauses are ANDed; empty clauses are ignored.
+
+    So `sources=['ordered']` alone means all takeout, while `tags=['beef']`
+    with `types=['entree']` means beef mains only. Explicit `dish_ids` is the
+    escape hatch for anything the tags do not capture cleanly — which is most
+    households, since "meat" is not a field.
+    """
+    if rule.get('dish_ids') and dish.get('id') not in rule['dish_ids']:
+        return False
+    if rule.get('tags'):
+        have = {str(t).strip().lower() for t in (dish.get('tags') or [])}
+        if not (have & {str(t).strip().lower() for t in rule['tags']}):
+            return False
+    if rule.get('types') and (dish.get('type') or '') not in rule['types']:
+        return False
+    if rule.get('side_types') and (dish.get('side_type') or '') not in rule['side_types']:
+        return False
+    if rule.get('sources') and str(dish.get('source') or 'prep') not in rule['sources']:
+        return False
+    # A rule with no clauses at all matches nothing, rather than everything —
+    # an empty selector is a half-written rule, not a household-wide ban.
+    return any(rule.get(k) for k in
+               ('dish_ids', 'tags', 'types', 'side_types', 'sources'))
+
+
+def _served_days(dish_ids: set, as_of: float, window_days: int,
+                 served: dict, all_dishes: list) -> int:
+    """How many days inside the window already carry one of these dishes.
+
+    Counts the forward-simulation overlay exactly (M6 records every day the
+    horizon has composed so far), plus at most ONE historical serving from
+    `last_served_at`. That last part is a real limit and worth naming: the
+    dish row remembers only its most recent serving, so a cap of "twice a
+    week" cannot see a third helping from last Tuesday. For "once a week" —
+    which is what families actually say, and both cases here — it is exact.
+    """
+    lo = as_of - window_days * 86400.0
+    days = set()
+    for did in dish_ids:
+        ts = served.get(did)
+        if ts and lo <= ts < as_of:
+            days.add(int(ts // 86400))
+    if not days:
+        for d in all_dishes:
+            if d.get('id') in dish_ids:
+                ts = d.get('last_served_at') or 0
+                if lo <= ts < as_of:
+                    days.add(int(ts // 86400))
+                    break
+    return len(days)
+
+
+def rule_context(as_of: float, served: dict, settings: dict = None,
+                 runs: dict = None) -> dict:
+    """Everything the rules decide ONCE per composed day.
+
+    Batch cycles in particular must be resolved per day rather than per
+    candidate: the question "which pot is open" has one answer, and asking it
+    per dish would let two members of the same group both look eligible.
+    """
+    rules = storage.get_meal_rules()
+    if not rules:
+        return {'blocked': set(), 'forced': set(), 'rules': []}
+    all_dishes = storage.get_dishes()
+    blocked, forced = set(), set()
+
+    for rule in rules:
+        members = [d for d in all_dishes if rule_matches(rule, d)]
+        if not members:
+            continue
+        ids = {d['id'] for d in members}
+
+        if rule.get('kind') == 'frequency_cap':
+            used = _served_days(ids, as_of, int(rule.get('window_days') or 7),
+                                served, all_dishes)
+            if used >= max(1, int(rule.get('max_servings') or 1)):
+                blocked |= ids
+
+        elif rule.get('kind') == 'batch_cycle':
+            dwell = max(1, int(rule.get('dwell_days') or 3))
+
+            def last_of(d):
+                return max(served.get(d['id'], 0), d.get('last_served_at') or 0)
+
+            recent = max(members, key=last_of)
+            when = last_of(recent)
+            # HOW LONG the pot has been open, not how long since it was last
+            # eaten. Measuring the gap keeps a batch alive forever: it is eaten
+            # every day, so "time since last served" is permanently one day and
+            # the window slides indefinitely. A 14-day plan sat on black beans
+            # for all 14 days before this was counted properly.
+            run = int((runs or {}).get(recent['id'], 0))
+            # A skipped night (takeout, someone else cooking) does not end a
+            # batch — the pot is still in the fridge.
+            still_open = bool(when) and (as_of - when) <= (dwell + 1) * 86400.0
+            if still_open and run < dwell:
+                blocked |= (ids - {recent['id']})
+                forced.add(recent['id'])
+            else:
+                others = [d for d in members if d['id'] != recent['id']] or members
+                nxt = min(others, key=last_of)
+                blocked |= (ids - {nxt['id']})
+                forced.add(nxt['id'])
+                if runs is not None and runs.get(nxt['id']):
+                    runs[nxt['id']] = 0      # a fresh pot starts a fresh count
+
+    return {'blocked': blocked, 'forced': forced, 'rules': rules}
+
+
+def _rules_ok(dish: dict, ctx: dict) -> bool:
+    return dish.get('id') not in (ctx or {}).get('blocked', ())
+
+
 def _pairing_ok(dish: dict, chosen: list) -> bool:
     """`only_with` is the reverse of `always_with`: this dish is never proposed
     on its own merits, only alongside a partner it names. A sauce that belongs
@@ -634,7 +795,7 @@ def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
 
 
 def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
-                  served: dict = None) -> list:
+                  served: dict = None, runs: dict = None) -> list:
     """Propose one day's dishes. Nothing is stored — this is the suggestion.
 
     Coherence is handled with a SOFT tag affinity to the entree rather than a
@@ -655,6 +816,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     for l in leftovers:
         leftover_ids.update(l.get('dish_ids') or [])
     as_of = _as_of_ts(date_str)
+    # How this household eats, resolved once for the day (M11).
+    ctx = rule_context(as_of, served or {}, settings, runs or {})
 
     slots = [p['first'] for p in (plan.get('people') or []) if p.get('first')]
     binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')), None)
@@ -666,7 +829,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         cands = [d for d in pool
                  if d['id'] not in exclude
                  and _dish_ok(d, avoid, binding, leftover_ids)
-                 and _pairing_ok(d, chosen)]
+                 and _pairing_ok(d, chosen)
+                 and _rules_ok(d, ctx)]
         if not cands:
             return None
         return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike,
@@ -708,6 +872,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                     continue
                 if not _dish_ok(mate, avoid, binding, leftover_ids):
                     continue          # allergy/portability still governs
+                if not _rules_ok(mate, ctx):
+                    continue          # nor does a pairing bust a frequency cap
                 acc.append(mate)
                 queue.append(mate)
         return acc
@@ -737,12 +903,16 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
             cands = [d for d in sides_pool
                      if d['id'] not in taken_ids
                      and _dish_ok(d, avoid, binding, leftover_ids)
-                     and _pairing_ok(d, chosen)]
+                     and _pairing_ok(d, chosen)
+                     and _rules_ok(d, ctx)]
             if not cands:
                 break
             got = max(cands, key=lambda d: (
                 _rank(d, leftover_ids, affinity, dislike, as_of, served)
-                + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)))
+                + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)
+                # The open pot outranks variety: a batch cycle is the family
+                # saying they WILL be eating this for a few days.
+                + (50.0 if d['id'] in ctx.get('forced', ()) else 0.0)))
             used_types.add(got.get('side_type') or 'other')
             chosen.append(got)
 
@@ -1015,7 +1185,9 @@ def compose_week(start_date: str = None, days: int = 7,
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     sched = storage.get_cached_schedule() or {}   # read once, not once per day
-    served, out = {}, []
+    # `runs` counts how many days a batch has been open, which is what a
+    # batch_cycle needs; `served` only ever holds the most recent stamp.
+    served, runs, out = {}, {}, []
     for date_str in week_dates(start_date, days):
         plan = eating_plan(date_str, 'dinner', sched=sched, settings=settings)
         saved = storage.get_plate(date_str)
@@ -1028,10 +1200,15 @@ def compose_week(start_date: str = None, days: int = 7,
             dishes = [by_id[i['dish_id']] for i in (saved.get('items') or [])
                       if i['dish_id'] in by_id]
         else:
-            dishes = compose_plate(date_str, plan, settings, served=served)
+            dishes = compose_plate(date_str, plan, settings, served=served,
+                                   runs=runs)
         stamp = _as_of_ts(date_str)
+        # Deliberately NOT zeroed on a night the dish is skipped: one takeout
+        # evening does not empty the pot, and zeroing there stretched a 3-day
+        # batch across 5 calendar days. `still_open` ends an abandoned batch.
         for d in dishes:
             served[d['id']] = stamp
+            runs[d['id']] = runs.get(d['id'], 0) + 1
         totals = plate_totals(dishes, date_str)
         out.append({
             'date': date_str,

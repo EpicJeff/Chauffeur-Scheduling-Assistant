@@ -2037,6 +2037,181 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+# --- M11: how this household eats --------------------------------------------
+# From the family, and it is the case M9's this-with-this could not carry:
+# "we eat 3 kinds of beans, make each in a large quantity and eat it 2-3 days
+# then make the next; we only eat meat once a week or so; takeout now and
+# then". None of those are properties of a dish — they are rhythms.
+
+def _rules_repertoire():
+    beans = [_dish(n, type='side', side_type='other', tags=['beans'])
+             for n in ('black beans', 'pinto beans', 'red beans')]
+    for n in ('beef tacos', 'roast chicken', 'pork chops'):
+        _dish(n, type='entree', tags=['meat'])
+    for n in ('pizza delivery', 'thai takeout'):
+        _dish(n, type='meal', source='ordered')
+    for n in ('veggie chili', 'bean burritos', 'lentil curry', 'shakshuka'):
+        _dish(n, type='entree', tags=['vegetarian'])
+    for n, st in (('rice', 'starch'), ('salad', 'salad'),
+                  ('broccoli', 'vegetable'), ('corn', 'vegetable')):
+        _dish(n, type='side', side_type=st)
+    return beans
+
+
+def _served_days(week, names):
+    return [i for i, d in enumerate(week)
+            if {x['name'] for x in d['dishes']} & set(names)]
+
+
+def scenario_a_frequency_cap_holds_across_a_composed_fortnight():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    _rules_repertoire()
+
+    loose = _served_days(meals.compose_week('2026-09-07', 14),
+                         ('beef tacos', 'roast chicken', 'pork chops'))
+    check(len(loose) > 2, f"unruled, meat comes up often — {len(loose)} days")
+
+    meals.add_meal_rule('meat about once a week', 'frequency_cap',
+                        tags=['meat'], max_servings=1, window_days=7)
+    days = _served_days(meals.compose_week('2026-09-07', 14),
+                        ('beef tacos', 'roast chicken', 'pork chops'))
+    check(all(b - a >= 7 for a, b in zip(days, days[1:])),
+          f"never twice inside a week, got days {days}")
+    check(days, "but it is not banned outright either")
+
+
+def scenario_takeout_is_capped_by_source_not_by_tagging_every_dish():
+    """source='ordered' is structural, so this rule needs no tags at all —
+    which matters because "meat" is not a field but takeout effectively is."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _rules_repertoire()
+    meals.add_meal_rule('takeout now and then', 'frequency_cap',
+                        sources=['ordered'], max_servings=1, window_days=10)
+    days = _served_days(meals.compose_week('2026-09-07', 14),
+                        ('pizza delivery', 'thai takeout'))
+    check(all(b - a >= 10 for a, b in zip(days, days[1:])),
+          f"takeout stays occasional, got days {days}")
+
+
+def scenario_a_batch_cycle_dwells_then_rotates():
+    """THE one that needed measuring. The first cut compared "time since last
+    served" against the dwell — but a batch is eaten EVERY day, so that gap is
+    permanently one day and the window slid forever: a 14-day plan sat on black
+    beans for all 14 days. The dwell has to count SERVINGS."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    beans = _rules_repertoire()
+    meals.add_meal_rule('one pot of beans at a time', 'batch_cycle',
+                        tags=['beans'], dwell_days=3)
+
+    week = meals.compose_week('2026-09-07', 14)
+    per_day = []
+    for d in week:
+        got = [x['name'] for x in d['dishes'] if x['name'].endswith('beans')]
+        per_day.append(got[0] if got else None)
+        check(len(got) <= 1, f"only ever ONE pot open at a time, got {got}")
+
+    runs = []
+    for b in per_day:
+        if b and (not runs or runs[-1][0] != b):
+            runs.append([b, 1])
+        elif b:
+            runs[-1][1] += 1
+    check(len({r[0] for r in runs}) == 3,
+          f"all three beans get their turn, got {runs}")
+    check(any(r[1] > 1 for r in runs),
+          f"and each is eaten for more than one day, got {runs}")
+    check(all(r[1] <= 3 for r in runs),
+          f"without any batch overstaying the dwell, got {runs}")
+
+
+def scenario_a_rule_matching_nothing_says_so():
+    """"meat" is not a field. A tag the family never used governs nobody, and
+    silently doing nothing is the failure mode worth surfacing."""
+    reset_db(); _seed_people(); _settings()
+    _dish('lentil curry', type='entree', tags=['vegetarian'])
+    res = meals.add_meal_rule('no venison', 'frequency_cap', tags=['venison'])
+    check(res['match_count'] == 0, "matches nothing")
+    from services import agent_tools
+    said = agent_tools.execute_tool("set_meal_rule", {
+        "description": "we hardly ever eat venison", "tags": "venison"})
+    check('not match any dish' in said['message'],
+          f"and the agent says so rather than claiming success, got {said}")
+
+
+def scenario_an_empty_selector_governs_nobody():
+    reset_db(); _seed_people(); _settings()
+    _dish('lentil curry', type='entree')
+    res = meals.add_meal_rule('half a rule', 'frequency_cap')
+    check(res['match_count'] == 0,
+          "a rule with no clauses matches NOTHING rather than everything — a "
+          "half-written rule must not become a household-wide ban")
+
+
+def scenario_a_cap_is_not_bypassed_by_a_pairing():
+    """M9 pairings pull dishes in outside the normal candidate filter, so the
+    cap has to be enforced there too or brisket smuggles the meat in."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    steak = _dish('steak', type='entree', tags=['meat'])
+    bacon = _dish('bacon greens', type='side', side_type='vegetable', tags=['meat'])
+    _dish('plain greens', type='side', side_type='vegetable')
+    meals.set_pairing(steak['id'], [bacon['id']])
+    meals.add_meal_rule('meat once a week', 'frequency_cap',
+                        tags=['meat'], max_servings=1, window_days=7)
+
+    week = meals.compose_week('2026-09-07', 7)
+    days = _served_days(week, ('steak', 'bacon greens'))
+    check(len(days) <= 1,
+          f"the cap survives the pairing that would otherwise bust it, "
+          f"got days {days}")
+
+
+def scenario_rules_can_be_disabled_without_deleting_them():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _rules_repertoire()
+    res = meals.add_meal_rule('meat once a week', 'frequency_cap',
+                              tags=['meat'], max_servings=1, window_days=7)
+    rid = res['rule']['id']
+    capped = _served_days(meals.compose_week('2026-09-07', 14),
+                          ('beef tacos', 'roast chicken', 'pork chops'))
+    storage.update_meal_rule(rid, {'is_enabled': False})
+    loose = _served_days(meals.compose_week('2026-09-07', 14),
+                         ('beef tacos', 'roast chicken', 'pork chops'))
+    check(len(loose) > len(capped),
+          f"disabling releases it, got {len(loose)} vs {len(capped)}")
+    check(storage.get_meal_rule(rid), "and the rule is still there to re-enable")
+
+
+def scenario_rule_tools_in_both_stacks():
+    reset_db(); _seed_people(); _settings()
+    _rules_repertoire()
+    from services import agent_tools, agent_tools_v2
+    want = {"set_meal_rule", "get_meal_rules"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    made = agent_tools.execute_tool("set_meal_rule", {
+        "description": "we only eat meat about once a week", "tags": "meat",
+        "max_servings": 1, "window_days": 7})
+    check(made['status'] == 'success' and 'covers' in made['message'],
+          f"set by voice and names what it covers, got {made}")
+    listed = agent_tools.execute_tool("get_meal_rules", {})
+    check('meat' in listed['message'] and 'week' in listed['message'],
+          f"and reads back in plain words, got {listed}")
+
+
 # --- M10: a night that is spoken for -----------------------------------------
 
 def scenario_a_locked_night_survives_a_bulk_repropose():
