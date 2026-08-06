@@ -176,7 +176,7 @@
                                 </span>
                             </template>
                             <span x-show="!(plate.dishes || []).length" class="text-xs text-gray-500">
-                                Nothing composed — add a dish below.
+                                Nothing composed — add dishes below.
                             </span>
                         </div>
 
@@ -186,7 +186,7 @@
                         <div class="flex items-center gap-2 mt-3">
                             <button @click="openDishPicker(plate.date)"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200">
-                                + Add a dish
+                                + Add dishes
                             </button>
                             <button @click="plateToList()"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white ml-auto">
@@ -774,7 +774,7 @@
                      Link Existing Event dialog: picking something lifts it OUT
                      of the list and into a pill, so what is chosen and what is
                      left are never the same visual thing. -->
-                <div x-show="pickerMode === 'multi' && pickerSelected.length"
+                <div x-show="pickerSelected.length"
                     class="flex flex-wrap gap-1.5 mb-3">
                     <template x-for="d in pickerPills()" :key="'pp-' + d.id">
                         <button @click="unpickDish(d)"
@@ -811,12 +811,12 @@
                 </div>
                 <div class="flex justify-end gap-2 mt-4">
                     <button @click="closePicker()"
-                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold"
-                        x-text="pickerMode === 'multi' ? 'Cancel' : 'Close'"></button>
-                    <button x-show="pickerMode === 'multi'" @click="commitPicker()"
-                        class="px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold">
-                        Done
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold">
+                        Cancel
                     </button>
+                    <button @click="commitPicker()" :disabled="pickerBusy"
+                        class="px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold disabled:opacity-50"
+                        x-text="pickerBusy ? 'Adding…' : 'Done'"></button>
                 </div>
             </div>
         </div>
@@ -882,8 +882,8 @@
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
                 pickerDate: null, pickerQuery: '', occasionDate: '',
-                pickerOpen: false, pickerMode: 'single', pickerTarget: null,
-                pickerSelected: [],
+                pickerOpen: false, pickerTarget: null,
+                pickerSelected: [], pickerBusy: false,
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
                 ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
                              takeout: false, max_servings: 1, window_days: 7,
@@ -1435,13 +1435,13 @@
                 },
 
                 // --- dish picker ---
-                // ONE picker for every "which dishes?" question on this page:
-                // adding to a night (single — pick and it lands) and choosing
-                // a set for a rule (multi — pills at the top, Done commits).
-                // The rules form previously inlined its own chip lists, which
-                // is how it grew into a wall of controls.
+                // ONE picker for every "which dishes?" question on this page,
+                // and it is multi-select everywhere: pills at the top, Done
+                // commits. Adding to a night used to close on the first click,
+                // which made the normal case — a main AND a side — two full
+                // open/pick/reload rounds. `pickerTarget` is the only thing
+                // that differs now: a rule field to fill, or null for a night.
                 openDishPicker(dateStr) {
-                    this.pickerMode = 'single';
                     this.pickerTarget = null;
                     this.pickerSelected = [];
                     this.pickerDate = dateStr
@@ -1454,7 +1454,6 @@
                 },
 
                 openDishMultiPicker(target) {
-                    this.pickerMode = 'multi';
                     this.pickerTarget = target;
                     this.pickerSelected = [...(this.ruleDraft[target] || [])];
                     this.pickerDate = null;
@@ -1471,11 +1470,34 @@
                     this.pickerDate = null;
                 },
 
-                commitPicker() {
+                async commitPicker() {
                     if (this.pickerTarget) {
                         this.ruleDraft[this.pickerTarget] = [...this.pickerSelected];
+                        this.closePicker();
+                        return;
+                    }
+                    // A night. The dialog stays up until every dish has landed,
+                    // so a half-written night can't be mistaken for the whole
+                    // choice, and the week reloads ONCE at the end rather than
+                    // once per dish.
+                    const date = this.pickerDate;
+                    const ids = [...this.pickerSelected];
+                    if (!ids.length) { this.closePicker(); return; }
+                    this.pickerBusy = true;
+                    try {
+                        for (const id of ids) {
+                            await fetch(this.apiBase + 'api/meals/plate/add', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ dish_id: id, date: date })
+                            });
+                        }
+                    } finally {
+                        this.pickerBusy = false;
                     }
                     this.closePicker();
+                    await this.loadWeek();
+                    if (date === this.plate.date) await this.loadPlate();
                 },
 
                 pickerPills() {
@@ -1485,12 +1507,8 @@
                 },
 
                 pickDish(d) {
-                    if (this.pickerMode === 'multi') {
-                        if (!this.pickerSelected.includes(d.id)) this.pickerSelected.push(d.id);
-                        this.pickerQuery = '';
-                        return;
-                    }
-                    this.addPickedDish(d);
+                    if (!this.pickerSelected.includes(d.id)) this.pickerSelected.push(d.id);
+                    this.pickerQuery = '';
                 },
 
                 unpickDish(d) {
@@ -1499,15 +1517,15 @@
                 },
 
                 pickerTitle() {
-                    if (this.pickerMode === 'multi') {
+                    if (this.pickerTarget) {
                         return this.pickerTarget === 'exclude_dish_ids'
                             ? 'Which dishes should this rule NOT cover?'
                             : 'Which dishes does this rule cover?';
                     }
-                    if (!this.pickerDate) return 'Add a dish';
+                    if (!this.pickerDate) return 'Add dishes';
                     const day = (this.week || []).find(w => w.date === this.pickerDate);
-                    if (this.pickerDate === this.plate.date) return 'Add a dish to tonight';
-                    return 'Add a dish to ' + (day ? day.weekday : this.pickerDate);
+                    if (this.pickerDate === this.plate.date) return 'Add dishes to tonight';
+                    return 'Add dishes to ' + (day ? day.weekday : this.pickerDate);
                 },
 
                 dishPickerMeta(d) {
@@ -1524,15 +1542,18 @@
                     // variants onto a compact chip — using it here made three
                     // different pizzas indistinguishable at the one moment you
                     // are choosing between them.
-                    // Anything already taken (on the plate, or lifted into a
-                    // pill) drops OUT of the list rather than sitting there
-                    // looking pickable.
-                    const on = new Set(this.pickerMode === 'multi'
-                        ? this.pickerSelected
-                        : (this.pickerDate === this.plate.date
-                            ? (this.plate.dishes || []).map(d => d.id)
+                    // Anything already taken drops OUT of the list rather than
+                    // sitting there looking pickable — and for a night that is
+                    // the UNION of what is on the night already and what has
+                    // been lifted into a pill, not one or the other.
+                    const on = new Set(this.pickerSelected);
+                    if (!this.pickerTarget && this.pickerDate) {
+                        const already = this.pickerDate === this.plate.date
+                            ? (this.plate.dishes || [])
                             : (((this.week || []).find(w => w.date === this.pickerDate)
-                                || {}).dishes || []).map(d => d.id)));
+                                || {}).dishes || []);
+                        already.forEach(d => on.add(d.id));
+                    }
                     const q = (this.pickerQuery || '').trim().toLowerCase();
                     return (this.repertoire || [])
                         .filter(d => !on.has(d.id))
@@ -1545,18 +1566,6 @@
 
                 pickerFirst() {
                     return this.pickerResults()[0] || null;
-                },
-
-                async addPickedDish(dish) {
-                    if (!dish) return;
-                    const date = this.pickerDate;
-                    this.closePicker();
-                    await fetch(this.apiBase + 'api/meals/plate/add', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ dish_id: dish.id, date: date })
-                    });
-                    await this.loadWeek();
-                    if (date === this.plate.date) await this.loadPlate();
                 },
 
                 async dropFromDay(day, dish) {
