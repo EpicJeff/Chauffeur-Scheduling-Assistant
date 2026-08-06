@@ -518,6 +518,18 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class GetWeekDinnersTool(BaseModel):
+    """
+    Answers "what are we eating this week" / "what's the meal plan" / "what do I need to buy for" - every night in the span the next grocery run has to cover.
+    """
+    pass
+
+class ApproveWeekDinnersTool(BaseModel):
+    """
+    The family approves the whole week ("that looks good", "plan the week"). Pins every night and puts the span's fresh ingredients on the shopping list.
+    """
+    pass
+
 class ChangeTonightsPlateTool(BaseModel):
     """
     Adds or drops ONE dish for ONE evening ("we've got corn too", "no salad tonight"). Changes only that evening's plate; the family's list of what they cook is untouched.
@@ -645,6 +657,8 @@ TOOL_SCHEMAS = {
     "get_tonights_plate": GetTonightsPlateTool.model_json_schema(),
     "change_tonights_plate": ChangeTonightsPlateTool.model_json_schema(),
     "add_dishes": AddDishesTool.model_json_schema(),
+    "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
+    "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1785,6 +1799,14 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_get_week_dinners(args: dict) -> dict:
+    from services.agent_tools_v2 import get_week_dinners
+    return get_week_dinners()
+
+def handle_approve_week_dinners(args: dict) -> dict:
+    from services.agent_tools_v2 import approve_week_dinners
+    return approve_week_dinners()
+
 def handle_change_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import change_tonights_plate
     return change_tonights_plate(args.get("dish_name") or "",
@@ -1903,6 +1925,8 @@ TOOL_HANDLERS = {
     "get_tonights_plate": handle_get_tonights_plate,
     "change_tonights_plate": handle_change_tonights_plate,
     "add_dishes": handle_add_dishes,
+    "get_week_dinners": handle_get_week_dinners,
+    "approve_week_dinners": handle_approve_week_dinners,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

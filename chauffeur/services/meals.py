@@ -583,7 +583,23 @@ def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set) -> b
     return True
 
 
-def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set) -> float:
+def _as_of_ts(date_str: str) -> float:
+    """The instant a plate should be ranked FROM — midnight of its own date.
+
+    Recency used to be measured from wall-clock now regardless of which day
+    was being composed, which is precisely why planning ahead was impossible:
+    Monday through Thursday all scored against identical values and proposed
+    much the same dinner four nights running.
+    """
+    try:
+        d = datetime.date.fromisoformat(str(date_str))
+    except (TypeError, ValueError):
+        return _now_ts()
+    return datetime.datetime.combine(d, datetime.time(0, 0)).timestamp()
+
+
+def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
+          as_of: float = None, served: dict = None) -> float:
     score = 0.0
     if dish['id'] in leftover_ids:
         score += 100.0                        # already made — obviously tonight
@@ -595,17 +611,29 @@ def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set) -> float:
     score -= {'easy': 0.0, 'normal': 0.3, 'project': 1.5}.get(
         str(dish.get('effort') or 'normal'), 0.3)
     last = dish.get('last_served_at') or 0
-    score += min((_now_ts() - last) / 86400.0, 21) / 21.0
+    # `served` carries the days ALREADY composed in this horizon. Without it a
+    # week of plates is just the same ranking run seven times; with it, taking
+    # a dish on Monday pushes it down the order for Tuesday exactly as really
+    # serving it would.
+    if served:
+        last = max(last, served.get(dish['id'], 0))
+    ref = as_of if as_of is not None else _now_ts()
+    score += min(max(ref - last, 0.0) / 86400.0, 21) / 21.0
     return score
 
 
-def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> list:
-    """Propose tonight's dishes. Nothing is stored — this is the suggestion.
+def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
+                  served: dict = None) -> list:
+    """Propose one day's dishes. Nothing is stored — this is the suggestion.
 
     Coherence is handled with a SOFT tag affinity to the entree rather than a
     modelled "goes with" relation: getting salmon and tortillas occasionally
     is a much smaller cost than making the family maintain a compatibility
     matrix, and swapping a chip is one tap.
+
+    `served` is the forward-simulation overlay from compose_week: {dish_id ->
+    when an earlier day in this horizon took it}. Absent, this behaves exactly
+    as it always did for a single day.
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     sides_n, want_dessert = plate_settings(settings)
@@ -615,6 +643,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> li
     leftover_ids = set()
     for l in leftovers:
         leftover_ids.update(l.get('dish_ids') or [])
+    as_of = _as_of_ts(date_str)
 
     slots = [p['first'] for p in (plan.get('people') or []) if p.get('first')]
     binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')), None)
@@ -625,7 +654,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> li
                  and _dish_ok(d, avoid, binding, leftover_ids)]
         if not cands:
             return None
-        return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike))
+        return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike,
+                                              as_of, served))
 
     chosen = []
     # A `meal` dish is the whole plate. It only wins outright when it is
@@ -640,8 +670,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> li
     # every plate on a fresh repertoire.
     use_meal = best_meal and (
         not best_entree
-        or _rank(best_meal, leftover_ids, frozenset(), dislike)
-        > _rank(best_entree, leftover_ids, frozenset(), dislike))
+        or _rank(best_meal, leftover_ids, frozenset(), dislike, as_of, served)
+        > _rank(best_entree, leftover_ids, frozenset(), dislike, as_of, served))
 
     if use_meal:
         chosen.append(best_meal)
@@ -665,7 +695,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> li
             if not cands:
                 break
             got = max(cands, key=lambda d: (
-                _rank(d, leftover_ids, affinity, dislike)
+                _rank(d, leftover_ids, affinity, dislike, as_of, served)
                 + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)))
             used_types.add(got.get('side_type') or 'other')
             chosen.append(got)
@@ -698,11 +728,231 @@ def get_or_compose_plate(date_str: str, plan: dict = None,
 
 def _persist_plate(date_str: str, dishes: list) -> dict:
     from models.schemas import Plate, PlateItem
-    storage.prune_plates(date_str)
+    # Prune relative to TODAY, never to the plate being written. Pruning by the
+    # saved date was harmless while only tonight existed; with a week of plans
+    # in the table, pinning Thursday would have deleted Monday through
+    # Wednesday on the way past.
+    storage.prune_plates(_today_iso())
     rec = Plate(date=date_str, edited=True,
                 items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
     storage.save_plate(rec)
     return rec
+
+
+def grocery_settings(settings: dict = None) -> tuple:
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        gw = max(0, min(6, int(settings.get('grocery_weekday', 5))))
+    except (TypeError, ValueError):
+        gw = 5
+    try:
+        lead = max(0, min(6, int(settings.get('grocery_plan_lead_days', 2))))
+    except (TypeError, ValueError):
+        lead = 2
+    return gw, lead
+
+
+def next_grocery_date(today: datetime.date = None, weekday: int = 5) -> datetime.date:
+    today = today or datetime.date.today()
+    return today + datetime.timedelta(days=(weekday - today.weekday()) % 7)
+
+
+def plan_window(settings: dict = None, today: datetime.date = None) -> dict:
+    """What span the week plan should cover, and whether we are planning it.
+
+    A family plans up to the NEXT grocery run, a day or two before it, and buys
+    for that span — so the horizon is the shop's coverage period, not "the next
+    7 days from whenever you happened to open the page". Inside the lead window
+    the plan is the upcoming shop's; outside it, the honest thing to show is
+    what is left of the span already bought for.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    gw, lead = grocery_settings(settings)
+    today = today or datetime.date.today()
+    nxt = next_grocery_date(today, gw)
+    until = (nxt - today).days
+    if until <= lead:
+        return {'start': nxt.isoformat(), 'days': 7, 'mode': 'planning',
+                'grocery_date': nxt.isoformat(), 'days_until_shop': until}
+    return {'start': today.isoformat(), 'days': max(1, until), 'mode': 'current',
+            'grocery_date': nxt.isoformat(), 'days_until_shop': until}
+
+
+def week_dates(start_date: str = None, days: int = 7) -> list:
+    try:
+        start = datetime.date.fromisoformat(str(start_date)) if start_date \
+            else datetime.date.today()
+    except (TypeError, ValueError):
+        start = datetime.date.today()
+    days = max(1, min(21, int(days or 7)))
+    return [(start + datetime.timedelta(days=i)).isoformat() for i in range(days)]
+
+
+def compose_week(start_date: str = None, days: int = 7,
+                 settings: dict = None) -> list:
+    """The days ahead, composed in order so each one knows what the ones
+    before it took.
+
+    Deciding dinner and buying for it is the load — and neither is possible on
+    the day. The horizon is the whole point; a week of independently-ranked
+    plates would just be the same top-ranked entree seven times.
+
+    A day the family has touched is PINNED and returned as-is (the hold-still
+    rule that swapping a chip already followed). An untouched day stays fluid
+    and recomposes as the schedule moves under it, which is a feature: Thursday
+    turning into a 20-minute night should change what Thursday proposes.
+    Pinned days still feed the rotation, or the plan would repeat around them.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    sched = storage.get_cached_schedule() or {}   # read once, not once per day
+    served, out = {}, []
+    for date_str in week_dates(start_date, days):
+        plan = eating_plan(date_str, 'dinner', sched=sched, settings=settings)
+        saved = storage.get_plate(date_str)
+        pinned = bool(saved and saved.get('edited'))
+        if pinned:
+            by_id = {d['id']: d for d in storage.get_dishes_by_ids(
+                [i['dish_id'] for i in saved.get('items') or []])}
+            dishes = [by_id[i['dish_id']] for i in (saved.get('items') or [])
+                      if i['dish_id'] in by_id]
+        else:
+            dishes = compose_plate(date_str, plan, settings, served=served)
+        stamp = _as_of_ts(date_str)
+        for d in dishes:
+            served[d['id']] = stamp
+        totals = plate_totals(dishes, date_str)
+        out.append({
+            'date': date_str,
+            'weekday': datetime.date.fromisoformat(date_str).strftime('%a'),
+            'dishes': dishes,
+            'pinned': pinned,
+            'cook_window_mins': plan.get('cook_window_mins'),
+            'no_slot': [p.get('name') for p in (plan.get('no_slot') or [])],
+            'away': [p.get('name') for p in (plan.get('away') or [])],
+            'prep_ahead_mins': totals.get('prep_ahead_mins'),
+            'finish_mins': totals.get('finish_mins'),
+            'unattended_mins': totals.get('unattended_mins'),
+            'leftover_dish_ids': totals.get('leftover_dish_ids'),
+        })
+    return out
+
+
+def approve_week(start_date: str = None, days: int = 7, list_id: str = None,
+                 added_by: str = None) -> dict:
+    """"How does this look?" — yes. Pin every day and buy for all of them.
+
+    This is the whole point of the arc: the family's planning session collapses
+    into one approval, and the list for the shop is a consequence rather than a
+    second chore. Pinning is not decoration — once the ingredients are bought,
+    a day that quietly recomposed itself would have spent their money on a
+    dinner they are no longer having.
+    """
+    week = compose_week(start_date, days)
+    lst_id = list_id or storage.ensure_default_shopping_list()['id']
+    added, skipped, pinned = [], [], []
+    for day in week:
+        _persist_plate(day['date'], day['dishes'])
+        pinned.append(day['date'])
+        res = dishes_to_shopping(day['dishes'], lst_id, added_by=added_by,
+                                 skip_dish_ids=day.get('leftover_dish_ids'))
+        added.extend(res['added'])
+        # The day rides along on every skip: "already on the list" is the
+        # normal case across a week (chicken on Monday and Thursday buys once)
+        # and it is only legible if you can see which day it came from.
+        for sk in res['skipped']:
+            skipped.append({**sk, 'date': day['date'], 'weekday': day['weekday']})
+    return {'added': added, 'skipped': skipped, 'skipped_names': [x['name'] for x in skipped],
+            'list_id': lst_id, 'pinned_dates': pinned, 'day_count': len(week),
+            'dish_count': sum(len(d['dishes']) for d in week)}
+
+
+def _week_proposal_body(week: list, win: dict) -> str:
+    """What Argyle actually says. The nights ARE the message — a card saying
+    "a meal plan is ready" would just be a second trip to go and look at it."""
+    shop = datetime.date.fromisoformat(win['grocery_date']).strftime('%A')
+    when = {0: 'today', 1: 'tomorrow'}.get(win['days_until_shop'],
+                                           f"in {win['days_until_shop']} days")
+    lines = [f"🗓️ Shopping {shop} ({when}) — here's what I have for the {len(week)} nights it covers:"]
+    for day in week:
+        names = [d.get('short_name') or d['name'] for d in day['dishes']]
+        lines.append(f"  {day['weekday']}: " + (", ".join(names) if names else "—"))
+    lines.append("Approve and I'll put the whole week on the list, or change any "
+                 "night on the Meals page first.")
+    return "\n".join(lines)
+
+
+def propose_week_plan(now: datetime.datetime = None, deliver=None) -> dict:
+    """Bring the week to the family a couple of days before the shop.
+
+    This is the arc's reason to exist: the planning session becomes one "how
+    does this look?". Fires ONCE per shopping cycle, keyed on the grocery date,
+    with the marker set before delivery (the push-loop convention). Returns
+    {status, ...} describing what happened, for logs and tests.
+    """
+    settings = storage.get_settings() or {}
+    if not settings.get('meal_week_enabled', True):
+        return {'status': 'disabled'}
+    now = now or datetime.datetime.now()
+    win = plan_window(settings, now.date())
+    if win['mode'] != 'planning':
+        return {'status': 'not_yet', 'days_until_shop': win['days_until_shop']}
+
+    marker = f"week_plan:{win['grocery_date']}"
+    seen = dict(storage.get_app_state('week_plan_proposed') or {})
+    if marker in seen:
+        return {'status': 'already_proposed', 'marker': marker}
+
+    week = compose_week(win['start'], win['days'], settings)
+    if not any(d['dishes'] for d in week):
+        # Nothing to propose from. Silence is right — a card saying "I have no
+        # dinners for you" is not a plan, and the repertoire prompt already
+        # lives on the page.
+        return {'status': 'empty_repertoire'}
+
+    # Marker FIRST: a half-failing delivery must not re-propose every sweep.
+    cutoff = (now.date() - datetime.timedelta(days=60)).isoformat()
+    seen = {k: v for k, v in seen.items() if str(v) >= cutoff}
+    seen[marker] = now.date().isoformat()
+    storage.set_app_state('week_plan_proposed', seen)
+
+    summary = (f"{len(week)} nights of dinners for the "
+               f"{datetime.date.fromisoformat(win['grocery_date']).strftime('%A')} shop")
+    payload = {'start': win['start'], 'days': win['days'],
+               'grocery_date': win['grocery_date']}
+    body = _week_proposal_body(week, win)
+    (deliver or _deliver_week_proposal)(summary, payload, body)
+    return {'status': 'proposed', 'marker': marker, 'days': len(week),
+            'dish_count': sum(len(d['dishes']) for d in week)}
+
+
+def _deliver_week_proposal(summary: str, payload: dict, body: str):
+    """Same delivery as the car-stop card: family channel (parents approve
+    there, chat fan-out pushes phones) plus the dashboard approvals banner."""
+    from services import chat_actions
+    res = chat_actions.create_action_proposal('approve_week_plan', summary, payload)
+    if res.get('status') != 'success':
+        return None
+    pid = res['proposal_id']
+    try:
+        fam = storage.get_family_channel()
+        if fam:
+            storage.update_action_proposal(pid, {'channel_id': fam['id']})
+            argyle = storage.ensure_argyle_member()
+            from services.agent_tools_v2 import _post_chat_message
+            _post_chat_message(fam, argyle, body, card=res['card'])
+    except Exception as ex:
+        print(f"week plan proposal delivery failed: {ex}")
+    return pid
+
+
+def pin_plate(date_str: str, dishes: list = None) -> dict:
+    """Freeze a day exactly as proposed. Shopping for a day pins it: once the
+    ingredients are bought, a plan that quietly recomposed itself would have
+    spent the family's money on a dinner they are no longer having."""
+    if dishes is None:
+        dishes = get_or_compose_plate(date_str)['dishes']
+    _persist_plate(date_str, dishes)
+    return {'date': date_str, 'dishes': dishes, 'pinned': True}
 
 
 def add_to_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:

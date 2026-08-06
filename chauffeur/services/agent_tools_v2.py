@@ -1349,6 +1349,48 @@ def get_tonights_plate(target_date: str = "today", acting_member: dict = None) -
             "message": f"{when}: {verb} " + ", ".join(names) + f".{tail}."}
 
 
+def get_week_dinners(acting_member: dict = None) -> Dict[str, Any]:
+    """READ: the dinners planned for the span the next grocery run covers —
+    the answer to "what are we eating this week" and "what do I need to buy
+    for"."""
+    from services import meals
+    win = meals.plan_window()
+    week = meals.compose_week(win['start'], win['days'])
+    if not any(d['dishes'] for d in week):
+        return {"status": "success",
+                "message": "There's nothing to build a week from yet — tell me a "
+                           "few things you cook and I'll plan it out."}
+    shop = datetime.date.fromisoformat(win['grocery_date']).strftime('%A')
+    head = (f"Shopping {shop}. The {len(week)} nights it covers:"
+            if win['mode'] == 'planning'
+            else f"{len(week)} nights left before {shop}'s shop:")
+    lines = [f"{d['weekday']}: " + (", ".join(x.get('short_name') or x['name']
+                                              for x in d['dishes']) or "nothing yet")
+             + (" (pinned)" if d['pinned'] else "")
+             for d in week]
+    return {"status": "success", "message": head + " " + "; ".join(lines) + "."}
+
+
+def approve_week_dinners(acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "that looks good" / "plan the week" — pins every night in the
+    window and puts the whole span's fresh ingredients on the shopping list."""
+    from services import meals
+    win = meals.plan_window()
+    res = meals.approve_week(win['start'], win['days'],
+                             added_by=(acting_member or {}).get('id'))
+    if not res['day_count']:
+        return {"status": "success", "message": "There's nothing planned to approve yet."}
+    n = len(res['added'])
+    if not n:
+        return {"status": "success",
+                "message": f"{res['day_count']} nights are set — everything they "
+                           "need was already on the list."}
+    return {"status": "success",
+            "message": f"{res['day_count']} nights are set. Added {n} item"
+                       f"{'s' if n != 1 else ''}: " + ", ".join(res['added'][:8])
+                       + ("…" if n > 8 else "") + "."}
+
+
 def change_tonights_plate(dish_name: str, action: str = "add",
                           target_date: str = "today",
                           acting_member: dict = None) -> Dict[str, Any]:
@@ -1920,6 +1962,16 @@ def get_available_tools() -> List[Dict]:
                 },
                 "required": []
             }
+        },
+        {
+            "name": "get_week_dinners",
+            "description": "Answers what are we eating this week / what is the meal plan / what do I need to buy for. Returns every night in the span the next grocery run has to cover, and which nights are already pinned.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        },
+        {
+            "name": "approve_week_dinners",
+            "description": "The family says the week looks good (that works, looks good, approve the plan, plan the week). Pins every night and puts the whole span's fresh ingredients on the shopping list in one go. Only for approving the WHOLE week - use change_tonights_plate to alter a single night.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         },
         {
             "name": "change_tonights_plate",

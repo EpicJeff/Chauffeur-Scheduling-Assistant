@@ -132,6 +132,69 @@
                     </div>
                 </div>
 
+                <!-- The week ahead (M6). The load in meals is deciding and
+                     provisioning, and neither can be done on the day — so the
+                     family's planning session becomes one "how does this
+                     look?". Days are chips like Tonight's, editable in place;
+                     approving pins them all and buys for the whole span. -->
+                <div x-show="week.length" class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
+                    <div class="flex items-baseline justify-between mb-1 gap-3">
+                        <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">
+                            🗓️ <span x-text="weekHeading()"></span>
+                        </h4>
+                        <button @click="loadWeek(true)"
+                            class="text-xs text-gray-500 hover:text-white shrink-0">Repropose</button>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mb-4" x-text="weekBlurb()"></div>
+
+                    <div class="space-y-2">
+                        <template x-for="day in week" :key="'wd-' + day.date">
+                            <div class="bg-gray-900 rounded-xl border px-3 py-2.5"
+                                :class="day.pinned ? 'border-pink-400/40' : 'border-gray-700'">
+                                <div class="flex items-baseline gap-2 mb-1.5">
+                                    <span class="text-xs font-bold text-gray-300 w-10 shrink-0"
+                                        x-text="day.weekday"></span>
+                                    <span class="text-[11px] text-gray-500 flex-1 truncate"
+                                        x-text="dayBlurb(day)"></span>
+                                    <span x-show="day.pinned" title="Pinned — held still"
+                                        class="text-[11px] text-pink-300 shrink-0">📌</span>
+                                    <button x-show="day.pinned" @click="resetDay(day)"
+                                        class="text-[11px] text-gray-600 hover:text-white shrink-0">Reset</button>
+                                </div>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <template x-for="d in (day.dishes || [])" :key="'wdd-' + day.date + d.id">
+                                        <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
+                                            :class="(day.leftover_dish_ids || []).includes(d.id)
+                                                ? 'bg-gray-800 border-gray-700 text-gray-600 line-through'
+                                                : 'bg-gray-800 border-gray-700 text-gray-200'">
+                                            <span :title="d.name + ' · ' + (d.side_type || d.type)"
+                                                x-text="d.short_name || d.name"></span>
+                                            <button @click="dropFromDay(day, d)" title="Not this night"
+                                                class="text-gray-600 hover:text-red-400">✕</button>
+                                        </span>
+                                    </template>
+                                    <span x-show="!(day.dishes || []).length" class="text-[11px] text-gray-600">
+                                        Nothing to propose from — add dishes below.
+                                    </span>
+                                    <select x-model="dayAdd[day.date]" @change="addToDay(day)"
+                                        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-[11px] text-gray-400">
+                                        <option value="">+</option>
+                                        <template x-for="d in addableForDay(day)" :key="'wa-' + day.date + d.id">
+                                            <option :value="d.id"
+                                                x-text="(d.short_name || d.name) + ' · ' + (d.side_type || d.type)"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <button @click="approveWeek()" :disabled="weekBusy"
+                        class="w-full mt-4 px-4 py-2.5 rounded-xl bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold hover:bg-pink-500/30 disabled:opacity-40">
+                        <span x-text="weekBusy ? 'Adding…' : approveLabel()"></span>
+                    </button>
+                </div>
+
                 <!-- Our meals: corrections and additions, a sibling of Tonight
                      rather than nested inside it — Tonight answers "what now",
                      this is the standing list behind it. Adding costs ONE
@@ -337,6 +400,7 @@
                                 <div class="text-[11px] text-gray-500">
                                     <span x-text="skipReason(sk)"></span>
                                     <span class="opacity-70" x-show="sk.dish" x-text="' · ' + sk.dish"></span>
+                                    <span class="opacity-70" x-show="sk.weekday" x-text="' · ' + sk.weekday"></span>
                                 </div>
                             </div>
                             <button x-show="sk.reason === 'staple'" @click="alwaysBuy(sk)"
@@ -379,6 +443,7 @@
                 plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
                 addDishId: '',
                 drain: null,
+                week: [], weekWindow: null, weekBusy: false, dayAdd: {},
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -392,6 +457,7 @@
                     await this.loadItems();
                     this.loadPlate();   // non-blocking: derived, may take a beat
                     this.loadRepertoire();
+                    this.loadWeek();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
@@ -416,6 +482,115 @@
                         const r = await fetch(this.apiBase + 'api/meals/plate');
                         if (r.ok) this.plate = await r.json();
                     } catch (e) { }
+                },
+
+                async loadWeek(repropose) {
+                    // `repropose` drops every pin in the window first, so the
+                    // whole span is composed fresh — the escape hatch when the
+                    // proposal has drifted from what the family wants.
+                    try {
+                        if (repropose) {
+                            for (const d of this.week.filter(x => x.pinned)) {
+                                await fetch(this.apiBase + 'api/meals/plate/reset?date='
+                                    + encodeURIComponent(d.date), { method: 'POST' });
+                            }
+                        }
+                        const r = await fetch(this.apiBase + 'api/meals/week');
+                        if (!r.ok) return;
+                        const data = await r.json();
+                        this.week = data.week || [];
+                        this.weekWindow = data.window || null;
+                    } catch (e) { }
+                },
+
+                weekHeading() {
+                    const w = this.weekWindow || {};
+                    return w.mode === 'planning' ? 'Next week’s dinners' : 'The rest of this week';
+                },
+
+                weekBlurb() {
+                    const w = this.weekWindow || {};
+                    if (!w.grocery_date) return '';
+                    const shop = new Date(w.grocery_date + 'T12:00:00')
+                        .toLocaleDateString(undefined, { weekday: 'long' });
+                    const n = this.week.length;
+                    if (w.mode === 'planning') {
+                        const when = w.days_until_shop === 0 ? 'today'
+                            : w.days_until_shop === 1 ? 'tomorrow' : `in ${w.days_until_shop} days`;
+                        return `${n} nights, covering until the next shop. Shopping ${shop} (${when}).`;
+                    }
+                    return `${n} night${n === 1 ? '' : 's'} left before ${shop}’s shop.`;
+                },
+
+                approveLabel() {
+                    const pinned = this.week.filter(d => d.pinned).length;
+                    return pinned === this.week.length && this.week.length
+                        ? 'Looks good — top up the list'
+                        : 'Looks good — add it all to the list';
+                },
+
+                dayBlurb(day) {
+                    const bits = [];
+                    const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
+                    if (day.cook_window_mins != null)
+                        bits.push(day.cook_window_mins + ' min window');
+                    if (hands) bits.push(hands + ' min hands-on');
+                    if ((day.away || []).length) bits.push(day.away.join(', ') + ' away');
+                    if ((day.no_slot || []).length) bits.push('no slot: ' + day.no_slot.join(', '));
+                    return bits.join(' · ');
+                },
+
+                addableForDay(day) {
+                    const on = new Set((day.dishes || []).map(d => d.id));
+                    return (this.repertoire || []).filter(d => !on.has(d.id));
+                },
+
+                async addToDay(day) {
+                    const id = this.dayAdd[day.date];
+                    if (!id) return;
+                    this.dayAdd[day.date] = '';
+                    await fetch(this.apiBase + 'api/meals/plate/add', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dish_id: id, date: day.date })
+                    });
+                    await this.loadWeek();
+                    if (day.date === this.plate.date) this.loadPlate();
+                },
+
+                async dropFromDay(day, dish) {
+                    await fetch(this.apiBase + 'api/meals/plate/remove', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dish_id: dish.id, date: day.date })
+                    });
+                    await this.loadWeek();
+                    if (day.date === this.plate.date) this.loadPlate();
+                },
+
+                async resetDay(day) {
+                    await fetch(this.apiBase + 'api/meals/plate/reset?date='
+                        + encodeURIComponent(day.date), { method: 'POST' });
+                    await this.loadWeek();
+                    if (day.date === this.plate.date) this.loadPlate();
+                },
+
+                async approveWeek() {
+                    // The one press this arc exists for. Same result dialog as
+                    // "+ List" — the skips carry their day, because "already on
+                    // the list" is the normal case across a week.
+                    this.weekBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/week/approve?list_id='
+                            + encodeURIComponent(this.activeId || ''), { method: 'POST' });
+                        if (!r.ok) { showGlobalAlert('Could not add the week to the list.'); return; }
+                        this.drain = await r.json();
+                        await this.loadWeek();
+                        this.loadPlate();
+                        this.loadItems(true);
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.weekBusy = false;
+                    }
                 },
 
                 plateBlurb() {

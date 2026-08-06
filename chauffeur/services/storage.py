@@ -1837,6 +1837,14 @@ def delete_plate(date_str: str):
     with db_lock:
         plates_table.remove(Query().date == date_str)
 
+def get_plates_between(start_date: str, end_date: str) -> List[dict]:
+    """Every pinned plate in an inclusive date range (meals arc M6)."""
+    with db_lock:
+        rows = [dict(p) for p in plates_table.all()]
+    return sorted([p for p in rows
+                   if start_date <= (p.get('date') or '') <= end_date],
+                  key=lambda p: p.get('date') or '')
+
 def prune_plates(before_date: str) -> int:
     with db_lock:
         rows = [dict(p) for p in plates_table.all()]

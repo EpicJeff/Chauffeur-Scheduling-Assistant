@@ -294,7 +294,10 @@ sending or claiming, and never pass from_member/member_name for them.
                              "add_meal_to_repertoire", "add_meal_ingredients_to_list",
                              "mark_meal_served", "mark_leftovers", "clear_leftovers",
                              "refine_meal_dish", "get_tonights_plate",
-                             "change_tonights_plate", "add_dishes"}
+                             "change_tonights_plate", "add_dishes",
+                             # M6: the week read and its one-shot approval are
+                             # both complete spoken answers on their own.
+                             "get_week_dinners", "approve_week_dinners"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -561,7 +564,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                                       acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("get_tonights_plate", "change_tonights_plate",
-                                   "add_dishes"):
+                                   "add_dishes", "get_week_dinners",
+                                   "approve_week_dinners"):
                     from services import agent_tools_v2 as _atv2
                     actor = acting_member
                     if actor is None and driver:
@@ -571,6 +575,10 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.get_tonights_plate(
                             args.get("target_date", "today") or "today",
                             acting_member=actor)
+                    elif func_name == "get_week_dinners":
+                        res = _atv2.get_week_dinners(acting_member=actor)
+                    elif func_name == "approve_week_dinners":
+                        res = _atv2.approve_week_dinners(acting_member=actor)
                     elif func_name == "change_tonights_plate":
                         res = _atv2.change_tonights_plate(
                             args.get("dish_name", "") or "",

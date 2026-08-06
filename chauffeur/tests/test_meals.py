@@ -1799,6 +1799,192 @@ def scenario_empty_repertoire_and_nothing_fitting_are_different_answers():
     check(msg2 != msg, "the two answers must not be the same")
 
 
+# --- M6: the week ahead -----------------------------------------------------
+# The load in meals is DECIDING and PROVISIONING, and neither can be done on
+# the day. Everything below exists to make one "how does this look?" replace
+# the family's planning session. See docs/meal_week_design.md.
+
+def _week_repertoire():
+    """Seven entrees and six sides — enough that a week has real choices."""
+    ent = [_dish(n, type='entree',
+                 ingredients=[{'name': n + ' base', 'kind': 'fresh'}])
+           for n in ('chicken thighs', 'tacos', 'salmon', 'spaghetti',
+                     'chili', 'stir fry', 'pork chops')]
+    sides = [_dish(n, type='side', side_type=st,
+                   ingredients=[{'name': n, 'kind': 'fresh'}])
+             for n, st in (('rice', 'starch'), ('broccoli', 'vegetable'),
+                           ('salad', 'salad'), ('potatoes', 'starch'),
+                           ('green beans', 'vegetable'), ('corn', 'vegetable'))]
+    return ent, sides
+
+
+def scenario_a_week_does_not_repeat_the_same_dinner():
+    """THE load-bearing property. Ranking used to measure recency from
+    wall-clock now regardless of which day was being composed, so every day in
+    a horizon scored identically and proposed the same entree. Planning ahead
+    was impossible for that one reason."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    _week_repertoire()
+
+    week = meals.compose_week('2026-08-08', 7)
+    check(len(week) == 7, f"seven nights, got {len(week)}")
+    entrees = [next(x['name'] for x in d['dishes'] if x['type'] == 'entree')
+               for d in week]
+    check(len(set(entrees)) == 7,
+          f"seven DIFFERENT entrees across the week, got {entrees}")
+
+    # And prove the old behaviour really was the failure: composing each day
+    # independently (no forward simulation) collapses to one dinner.
+    solo = [next(x['name'] for x in meals.compose_plate(d['date'])
+                 if x['type'] == 'entree') for d in week]
+    check(len(set(solo)) == 1,
+          f"without the overlay every night is the same — got {set(solo)}")
+
+
+def scenario_the_window_is_the_shop_it_has_to_cover():
+    """Families plan up to the next grocery run, a day or two before it — the
+    horizon is that shop's coverage period, not "7 days from whenever"."""
+    reset_db(); _seed_people()
+    _settings(grocery_weekday=5, grocery_plan_lead_days=2)   # Saturday, 2 days
+
+    thursday = datetime.date(2026, 8, 6)
+    win = meals.plan_window(storage.get_settings(), thursday)
+    check(win['mode'] == 'planning' and win['start'] == '2026-08-08',
+          f"inside the lead window we plan the coming shop, got {win}")
+    check(win['days'] == 7 and win['days_until_shop'] == 2, f"got {win}")
+
+    monday = datetime.date(2026, 8, 10)
+    win2 = meals.plan_window(storage.get_settings(), monday)
+    check(win2['mode'] == 'current' and win2['start'] == '2026-08-10',
+          f"outside it, show what's LEFT of the span already bought for, got {win2}")
+    check(win2['days'] == 5, f"Monday through Friday before Saturday, got {win2['days']}")
+
+    saturday = datetime.date(2026, 8, 8)
+    win3 = meals.plan_window(storage.get_settings(), saturday)
+    check(win3['mode'] == 'planning' and win3['days_until_shop'] == 0,
+          f"shop day itself still plans, got {win3}")
+
+
+def scenario_approving_the_week_pins_it_and_buys_for_it():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    _week_repertoire()
+
+    before = meals.compose_week('2026-08-08', 3)
+    res = meals.approve_week('2026-08-08', 3)
+    check(res['day_count'] == 3 and len(res['pinned_dates']) == 3,
+          f"every night in the window is pinned, got {res['pinned_dates']}")
+    check(res['added'], "and the span's fresh ingredients went on the list")
+
+    after = meals.compose_week('2026-08-08', 3)
+    check(all(d['pinned'] for d in after), "the week now reports itself pinned")
+    check([[x['id'] for x in d['dishes']] for d in after]
+          == [[x['id'] for x in d['dishes']] for d in before],
+          "and holds exactly what was approved — money has been spent on it")
+
+    # Second press buys nothing new; the skips say why, and which night.
+    again = meals.approve_week('2026-08-08', 3)
+    check(not again['added'], f"nothing bought twice, got {again['added']}")
+    dupes = [s for s in again['skipped'] if s['reason'] == 'already on the list']
+    check(dupes and all(s.get('weekday') for s in dupes),
+          "every skip names the night it came from")
+
+
+def scenario_a_pinned_night_still_feeds_the_rotation():
+    """A pinned day that did not count would let the plan repeat around it."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    ent, _ = _week_repertoire()
+
+    meals.add_to_plate('2026-08-08', ent[3]['id'])          # pin spaghetti Sat
+    week = meals.compose_week('2026-08-08', 7)
+    check(week[0]['pinned'], "Saturday is pinned")
+    later = [x['name'] for d in week[1:] for x in d['dishes']]
+    check(ent[3]['name'] not in later,
+          f"the pinned dish is not re-proposed later in the week, got {later}")
+
+
+def scenario_editing_one_night_leaves_the_others_alone():
+    """prune_plates used to delete every plate BEFORE the one being written —
+    harmless when only tonight existed, fatal with a week in the table."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    ent, _ = _week_repertoire()
+
+    meals.approve_week('2026-08-08', 3)
+    check(len(storage.get_plates_between('2026-08-08', '2026-08-10')) == 3,
+          "three nights pinned")
+    meals.add_to_plate('2026-08-10', ent[5]['id'])          # edit the LAST one
+    kept = storage.get_plates_between('2026-08-08', '2026-08-10')
+    check(len(kept) == 3,
+          f"editing a later night must not prune the earlier ones, got {len(kept)}")
+
+
+def scenario_the_week_is_proposed_once_per_shopping_cycle():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False,
+              grocery_weekday=5, grocery_plan_lead_days=2)
+    _week_repertoire()
+    sent = []
+
+    thursday = datetime.datetime(2026, 8, 6, 9, 0)
+    res = meals.propose_week_plan(thursday, deliver=lambda s, p, b: sent.append((s, p, b)))
+    check(res['status'] == 'proposed' and len(sent) == 1, f"proposed once, got {res}")
+    check('Sat' in sent[0][2] and 'Shopping Saturday' in sent[0][2],
+          f"the nights ARE the message, got {sent[0][2][:120]}")
+
+    again = meals.propose_week_plan(thursday + datetime.timedelta(hours=1),
+                                    deliver=lambda s, p, b: sent.append((s, p, b)))
+    check(again['status'] == 'already_proposed' and len(sent) == 1,
+          "the 30-minute sweep must not re-propose the same cycle")
+
+    monday = datetime.datetime(2026, 8, 10, 9, 0)
+    check(meals.propose_week_plan(monday, deliver=lambda *a: sent.append(a)
+                                  )['status'] == 'not_yet',
+          "and outside the lead window it stays quiet")
+
+
+def scenario_an_empty_repertoire_proposes_nothing():
+    """A card saying "I have no dinners for you" is not a plan."""
+    reset_db(); _seed_people()
+    _settings(grocery_weekday=5, grocery_plan_lead_days=2)
+    sent = []
+    res = meals.propose_week_plan(datetime.datetime(2026, 8, 6, 9, 0),
+                                  deliver=lambda *a: sent.append(a))
+    check(res['status'] == 'empty_repertoire' and not sent, f"silent, got {res}")
+
+
+def scenario_m6_tools_in_both_stacks():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _week_repertoire()
+    from services import agent_tools, agent_tools_v2
+    want = {"get_week_dinners", "approve_week_dinners"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    # The router must both DISPATCH them and treat them as terminal, or the
+    # week answer costs a needless 40-80s concluding Gemma round.
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    read = agent_tools.execute_tool("get_week_dinners", {})
+    check(read['status'] == 'success' and 'Shopping' in read['message'],
+          f"the v1 bridge reads the week, got {read}")
+    done = agent_tools.execute_tool("approve_week_dinners", {})
+    check(done['status'] == 'success' and 'nights are set' in done['message'],
+          f"and approves it, got {done}")
+    check(all(d['pinned'] for d in meals.compose_week(
+        meals.plan_window()['start'], meals.plan_window()['days'])),
+        "approving by voice pins the same nights the button does")
+
+
 def scenario_m3_tools_in_both_stacks():
     reset_db(); _seed_people()
     _settings()

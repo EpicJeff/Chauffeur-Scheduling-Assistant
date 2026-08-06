@@ -78,6 +78,7 @@ ADMIN_ACTIONS = {
     "add_errand", "update_errand", "delete_errand", "add_errand_rule",
     "create_event",
     "add_car_stop",
+    "approve_week_plan",
 }
 
 # Human-friendly label shown as the card's action badge.
@@ -94,6 +95,7 @@ ACTION_LABELS = {
     "add_errand_rule": "Add errand rule",
     "create_event": "Add to calendar",
     "add_car_stop": "Car stop",
+    "approve_week_plan": "Week of dinners",
 }
 
 
@@ -200,6 +202,27 @@ def _add_car_stop(payload: dict) -> dict:
             "message": f"Added '{title}' — the solver will slot it with minimum detour."}
 
 
+def _approve_week_plan(payload: dict) -> dict:
+    """"How does this look?" — yes. Pins the proposed span and puts the whole
+    week's fresh ingredients on the list (meals arc M6).
+
+    The plan is RECOMPOSED at approval rather than replayed from the payload:
+    between proposing and tapping yes the family may have swapped a night on
+    the page, and the plan they are looking at must be the plan they get.
+    """
+    from services import meals
+    start = (payload.get('start') or '').strip() or None
+    days = int(payload.get('days') or 7)
+    res = meals.approve_week(start, days, payload.get('list_id'))
+    n_added, n_days = len(res['added']), res['day_count']
+    if not n_added:
+        return {"status": "success",
+                "message": f"{n_days} nights are set — everything they need was already on the list."}
+    return {"status": "success",
+            "message": f"{n_days} nights are set and {n_added} item"
+                       f"{'s' if n_added != 1 else ''} went on the list for the shop."}
+
+
 def _execute(action_type: str, payload: dict) -> dict:
     """Run an approved action through the tested handlers."""
     from services import agent_tools
@@ -216,6 +239,8 @@ def _execute(action_type: str, payload: dict) -> dict:
                                                payload.get("target_date"))
     if action_type == "create_event":
         return _create_event(payload)
+    if action_type == "approve_week_plan":
+        return _approve_week_plan(payload)
     if action_type in agent_tools.TOOL_HANDLERS:
         return agent_tools.execute_tool(action_type, payload)
     return {"status": "error", "message": f"Unknown action type '{action_type}'."}

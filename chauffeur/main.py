@@ -252,6 +252,25 @@ async def push_notification_loop():
             except Exception as ce:
                 print(f"Car readiness sweep error: {ce}")
 
+            # --- Week meal plan proposal (M6, docs/meal_week_design.md) ---
+            # A day or two before the standing grocery run, Argyle brings the
+            # span that shop has to cover: "how does this look?" Once per
+            # cycle, keyed on the grocery date with the marker set FIRST.
+            # Quiet-hours gated — this is a card worth waking up TO, not for.
+            try:
+                from services import family_digest, meals as _meals_svc
+                now_dt = datetime.now()
+                if not family_digest.in_kid_quiet_hours(now_dt, storage.get_settings() or {}):
+                    last = float(storage.get_app_state("week_plan_last_run") or 0)
+                    if time.time() - last >= 1800:
+                        storage.set_app_state("week_plan_last_run", time.time())
+                        res = await asyncio.to_thread(_meals_svc.propose_week_plan, now_dt)
+                        if res.get("status") == "proposed":
+                            print(f"Week plan proposed: {res['days']} nights, "
+                                  f"{res['dish_count']} dishes")
+            except Exception as wpe:
+                print(f"Week plan sweep error: {wpe}")
+
             # --- Status-day calendar sweep (Presence & Status P2) ---
             # Protocol keywords vs the cached schedule window: a matching
             # calendar event auto-sets the status day (adults told with the
@@ -5257,6 +5276,38 @@ def plate_to_list(list_id: Optional[str] = None, date: Optional[str] = None):
     _touch_stream()
     res['dish_count'] = len(plate['dishes'])
     return res
+
+@app.get("/api/meals/week")
+def meal_week(start: Optional[str] = None, days: Optional[int] = None):
+    """The dinners ahead, composed in order. Defaults to the span the next
+    grocery run has to buy for — that is the unit families actually plan in."""
+    from services import meals as _meals
+    win = _meals.plan_window()
+    start_str = start or win['start']
+    n = int(days) if days else win['days']
+    return {'window': win, 'start': start_str, 'days': n,
+            'sides_per_meal': _meals.plate_settings()[0],
+            'week': _meals.compose_week(start_str, n)}
+
+@app.post("/api/meals/week/approve")
+def meal_week_approve(start: Optional[str] = None, days: Optional[int] = None,
+                      list_id: Optional[str] = None, member_id: Optional[str] = None):
+    """"How does this look?" — yes. Pins every day in the window and puts the
+    whole span's fresh ingredients on the list in one press."""
+    from services import meals as _meals
+    win = _meals.plan_window()
+    res = _meals.approve_week(start or win['start'], int(days) if days else win['days'],
+                              list_id, added_by=member_id)
+    _touch_stream()
+    res['window'] = win
+    return res
+
+@app.post("/api/meals/plate/pin")
+def plate_pin(req: PlateEdit):
+    """Freeze one day as proposed, without shopping for it yet."""
+    import datetime as _dt
+    from services import meals as _meals
+    return _meals.pin_plate(req.date or _dt.date.today().isoformat())
 
 @app.post("/api/meals/leftovers/toggle")
 def toggle_leftover(req: PlateEdit):

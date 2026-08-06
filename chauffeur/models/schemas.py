@@ -502,6 +502,13 @@ class Settings(BaseModel):
     # starting proposal.
     sides_per_meal: int = 2
     include_dessert: bool = True
+    # The provisioning cycle (meals arc M6). Families do not plan "the next 7
+    # days" — they plan up to the next grocery run, a day or two before it, and
+    # buy for that span. Both of those are what the week plan is anchored to,
+    # so the plan Argyle brings covers exactly what this trip has to buy for.
+    grocery_weekday: int = 5          # 0=Mon .. 6=Sun; the standing shop day
+    grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
+    meal_week_enabled: bool = True
     # School calendar (services/school.py): what a "school day" is. All
     # empty = plain weekday behavior. The designated calendar's all-day
     # events matching a no-school keyword mark school out; the year bounds
