@@ -5423,6 +5423,7 @@ class MealRuleReq(BaseModel):
     types: List[str] = []
     side_types: List[str] = []
     sources: List[str] = []
+    exclude_dish_ids: List[str] = []
     max_servings: int = 1
     window_days: int = 7
     dwell_days: int = 3
@@ -5447,6 +5448,7 @@ def create_meal_rule(req: MealRuleReq):
     res = _meals.add_meal_rule(req.name, req.kind, dish_ids=req.dish_ids,
                                tags=req.tags, types=req.types,
                                side_types=req.side_types, sources=req.sources,
+                               exclude_dish_ids=req.exclude_dish_ids,
                                max_servings=req.max_servings,
                                window_days=req.window_days,
                                dwell_days=req.dwell_days)
@@ -5463,6 +5465,7 @@ class MealRulePatch(BaseModel):
     types: Optional[List[str]] = None
     side_types: Optional[List[str]] = None
     sources: Optional[List[str]] = None
+    exclude_dish_ids: Optional[List[str]] = None
     max_servings: Optional[int] = None
     window_days: Optional[int] = None
     dwell_days: Optional[int] = None

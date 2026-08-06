@@ -530,6 +530,7 @@ class SetMealRuleTool(BaseModel):
     max_servings: Optional[int] = Field(1, description="How many times, for frequency_cap.")
     window_days: Optional[int] = Field(7, description="Per how many days (7 = a week).")
     dwell_days: Optional[int] = Field(3, description="How many days one batch lasts.")
+    except_dishes: Optional[str] = Field(None, description="Comma separated dishes the rule should NOT cover.")
 
 class GetMealRulesTool(BaseModel):
     """
@@ -1902,7 +1903,8 @@ def handle_set_meal_rule(args: dict) -> dict:
                          bool(args.get("takeout")),
                          int(args.get("max_servings") or 1),
                          int(args.get("window_days") or 7),
-                         int(args.get("dwell_days") or 3))
+                         int(args.get("dwell_days") or 3),
+                         args.get("except_dishes") or "")
 
 def handle_get_meal_rules(args: dict) -> dict:
     from services.agent_tools_v2 import get_meal_rules

@@ -773,6 +773,11 @@ class MealRule(BaseModel):
     types: List[str] = Field(default_factory=list)
     side_types: List[str] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
+    # Subtraction, because a tag is nearly always ALMOST right: "beans" is the
+    # rotation the family described, except baked beans are not part of that
+    # rotation at all. Without this the only way to express it is to abandon
+    # the tag and enumerate every dish by hand.
+    exclude_dish_ids: List[str] = Field(default_factory=list)
 
     # frequency_cap: at most `max_servings` of the matched set per window.
     max_servings: int = 1

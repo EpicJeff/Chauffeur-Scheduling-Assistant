@@ -603,7 +603,8 @@ sending or claiming, and never pass from_member/member_name for them.
                             bool(args.get("takeout")),
                             int(args.get("max_servings") or 1),
                             int(args.get("window_days") or 7),
-                            int(args.get("dwell_days") or 3), acting_member=actor)
+                            int(args.get("dwell_days") or 3),
+                            args.get("except_dishes", "") or "", acting_member=actor)
                     elif func_name == "get_meal_rules":
                         res = _atv2.get_meal_rules(acting_member=actor)
                     elif func_name == "plan_specific_dinner":

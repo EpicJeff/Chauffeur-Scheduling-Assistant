@@ -2232,6 +2232,49 @@ def scenario_the_rules_panel_gets_what_it_renders():
     check(not storage.get_meal_rule(rid), "and delete removes it")
 
 
+def scenario_a_tag_can_be_almost_right():
+    """Reported: the bean rotation is black, red and pinto — but the "beans"
+    tag drags baked beans in too. A tag is nearly always ALMOST right, and
+    without subtraction the only way out is enumerating every dish by hand."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    _rules_repertoire()
+    baked = _dish('baked beans', type='side', side_type='other', tags=['beans'])
+
+    wide = meals.add_meal_rule('beans', 'batch_cycle', tags=['beans'], dwell_days=3)
+    check('baked beans' in wide['matches'],
+          f"the plain tag drags it in, got {wide['matches']}")
+
+    narrowed = meals.add_meal_rule('bean rotation', 'batch_cycle', tags=['beans'],
+                                   exclude_dish_ids=[baked['id']], dwell_days=3)
+    check('baked beans' not in narrowed['matches'],
+          f"excluded, got {narrowed['matches']}")
+    check(narrowed['match_count'] == 3,
+          f"leaving exactly the three that rotate, got {narrowed['matches']}")
+
+    # And it really stays out of the cycle over a composed fortnight.
+    storage.delete_meal_rule(wide['rule']['id'])
+    week = meals.compose_week('2026-09-07', 14)
+    for day in week:
+        names = {x['name'] for x in day['dishes']}
+        check('baked beans' not in names,
+              f"the excluded dish never joins the rotation, got {names}")
+
+
+def scenario_an_exclusion_beats_every_other_clause():
+    """"Not this one" is never conditional — it has to win even over an
+    explicit dish list, or an edit that adds an exclusion appears to do
+    nothing."""
+    reset_db(); _seed_people(); _settings()
+    a = _dish('black beans', type='side', side_type='other', tags=['beans'])
+    b = _dish('baked beans', type='side', side_type='other', tags=['beans'])
+    rule = {'dish_ids': [a['id'], b['id']], 'exclude_dish_ids': [b['id']],
+            'tags': [], 'types': [], 'side_types': [], 'sources': []}
+    check(meals.rule_matches(rule, a), "the kept one still matches")
+    check(not meals.rule_matches(rule, b),
+          "and the excluded one does not, despite being listed explicitly")
+
+
 def scenario_a_rule_can_be_edited_in_place():
     """Without this, changing "once a week" to "twice" meant deleting the rule
     and rebuilding it from memory — and the same PATCH has to carry a one-field
@@ -2297,6 +2340,19 @@ def scenario_editing_keeps_what_the_rule_applies_to():
           f"got {row.get('dish_ids')}")
     check(row.get('tags') == [] and row.get('sources') == [],
           "and the other selector fields, so nothing is lost on a round trip")
+
+    # Exclusions have to survive the trip too, or editing a narrowed rule
+    # silently re-admits the dish it was narrowed to keep out.
+    chicken = storage.find_dish_by_name('roast chicken')
+    narrowed = main.create_meal_rule(main.MealRuleReq(
+        name='meat but not chicken', kind='frequency_cap', tags=['meat'],
+        exclude_dish_ids=[chicken['id']], max_servings=1, window_days=7))
+    row2 = next(r for r in main.list_meal_rules()['rules']
+                if r['id'] == narrowed['rule']['id'])
+    check(row2.get('exclude_dish_ids') == [chicken['id']],
+          f"exclusions round-trip, got {row2.get('exclude_dish_ids')}")
+    check('roast chicken' not in row2['matches'],
+          f"and are honoured in what it reports covering, got {row2['matches']}")
 
 
 def scenario_rule_tools_in_both_stacks():

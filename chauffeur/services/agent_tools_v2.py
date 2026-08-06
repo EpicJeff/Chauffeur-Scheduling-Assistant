@@ -1400,7 +1400,8 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
 def set_meal_rule(description: str, kind: str = "frequency_cap",
                   tags: str = "", dish_names: str = "", takeout: bool = False,
                   max_servings: int = 1, window_days: int = 7,
-                  dwell_days: int = 3, acting_member: dict = None) -> Dict[str, Any]:
+                  dwell_days: int = 3, except_dishes: str = "",
+                  acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: how this household EATS. "we only eat meat about once a week",
     "takeout now and then", "we cook one kind of beans at a time and eat it a
     few days before making the next"."""
@@ -1413,7 +1414,14 @@ def set_meal_rule(description: str, kind: str = "frequency_cap",
                if n.strip()]:
         d = storage.find_dish_by_name(nm)
         (ids.append(d['id']) if d else missing.append(nm))
+    # "the beans, but not baked beans" — a tag is nearly always almost right.
+    excl = []
+    for nm in [n.strip() for n in str(except_dishes or '').replace(' and ', ',').split(',')
+               if n.strip()]:
+        d = storage.find_dish_by_name(nm)
+        (excl.append(d['id']) if d else missing.append(nm))
     res = meals.add_meal_rule(description, kind, tags=tag_list, dish_ids=ids,
+                              exclude_dish_ids=excl,
                               sources=['ordered'] if takeout else [],
                               max_servings=max_servings, window_days=window_days,
                               dwell_days=dwell_days)
@@ -2228,7 +2236,8 @@ def get_available_tools() -> List[Dict]:
                     "takeout": {"type": "boolean", "description": "true when the rule is about takeout or delivery."},
                     "max_servings": {"type": "number", "description": "How many times, for frequency_cap."},
                     "window_days": {"type": "number", "description": "Per how many days, for frequency_cap (7 = a week)."},
-                    "dwell_days": {"type": "number", "description": "How many days one batch lasts, for batch_cycle."}
+                    "dwell_days": {"type": "number", "description": "How many days one batch lasts, for batch_cycle."},
+                    "except_dishes": {"type": "string", "description": "Comma separated dishes the rule should NOT cover, e.g. baked beans when the beans tag catches too much."}
                 },
                 "required": ["description"]
             }

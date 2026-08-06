@@ -611,6 +611,7 @@ def add_meal_rule(name: str, kind: str = 'frequency_cap', **kw) -> dict:
                     types=[str(t) for t in (kw.get('types') or [])],
                     side_types=[str(t) for t in (kw.get('side_types') or [])],
                     sources=[str(t) for t in (kw.get('sources') or [])],
+                    exclude_dish_ids=[str(x) for x in (kw.get('exclude_dish_ids') or [])],
                     max_servings=max(1, int(kw.get('max_servings') or 1)),
                     window_days=max(1, int(kw.get('window_days') or 7)),
                     dwell_days=max(1, int(kw.get('dwell_days') or 3))).model_dump()
@@ -642,7 +643,7 @@ def edit_meal_rule(rule_id: str, patch: dict) -> dict:
         clean['is_enabled'] = bool(patch['is_enabled'])
     if patch.get('tags') is not None:
         clean['tags'] = [str(t).strip().lower() for t in patch['tags'] if str(t).strip()]
-    for key in ('dish_ids', 'types', 'side_types', 'sources'):
+    for key in ('dish_ids', 'types', 'side_types', 'sources', 'exclude_dish_ids'):
         if patch.get(key) is not None:
             clean[key] = [str(x) for x in patch[key]]
     if patch.get('max_servings') is not None:
@@ -692,6 +693,10 @@ def rule_matches(rule: dict, dish: dict) -> bool:
     escape hatch for anything the tags do not capture cleanly — which is most
     households, since "meat" is not a field.
     """
+    # Exclusions win over every other clause, including an explicit dish list —
+    # "not this one" is never something the family meant only conditionally.
+    if dish.get('id') in (rule.get('exclude_dish_ids') or []):
+        return False
     if rule.get('dish_ids') and dish.get('id') not in rule['dish_ids']:
         return False
     if rule.get('tags'):

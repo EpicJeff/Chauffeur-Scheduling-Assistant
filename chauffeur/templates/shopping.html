@@ -315,11 +315,32 @@
                             placeholder="In your words — e.g. meat about once a week"
                             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 mb-2">
 
+                        <!-- Dishes are PICKED, never typed. The old single
+                             "applies to" box guessed whether a word was a tag
+                             or a dish name, matched only the full name, and
+                             silently fell back to a tag when it missed — so
+                             naming three beans produced three meaningless tags
+                             and a rule that governed nobody. -->
+                        <label class="block text-[11px] text-gray-500 mb-1">Applies to these dishes</label>
+                        <div class="flex flex-wrap gap-1.5 mb-2 max-h-32 overflow-y-auto">
+                            <template x-for="d in ruleDishes()" :key="'rd-' + d.id">
+                                <button @click="toggleRuleDish(d)"
+                                    class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors"
+                                    :class="ruleDraft.dish_ids.includes(d.id)
+                                        ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-pink-400/40'"
+                                    x-text="d.name"></button>
+                            </template>
+                            <span x-show="!ruleDishes().length" class="text-[11px] text-gray-600">
+                                No dishes yet.
+                            </span>
+                        </div>
+
                         <div class="flex flex-wrap items-end gap-3">
                             <div class="flex-1 min-w-[180px]">
-                                <label class="block text-[11px] text-gray-500 mb-1">Applies to</label>
-                                <input x-model="ruleDraft.applies" type="text"
-                                    placeholder="tag or dish names, e.g. beans"
+                                <label class="block text-[11px] text-gray-500 mb-1">…or by tag</label>
+                                <input x-model="ruleDraft.tags" type="text"
+                                    placeholder="e.g. beans — leave blank if you picked dishes"
                                     class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500">
                             </div>
                             <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer pb-2">
@@ -347,6 +368,28 @@
                                 class="text-xs font-bold px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
                                 x-text="ruleBusy ? 'Saving…' : (ruleDraft.id ? 'Save' : 'Add')"></button>
                         </div>
+
+                        <!-- A tag is nearly always ALMOST right: "beans" is the
+                             rotation, except baked beans are not in it. Only
+                             offered when a tag or takeout is doing the
+                             selecting — with dishes picked by hand there is
+                             nothing to subtract from. -->
+                        <div x-show="(ruleDraft.tags || '').trim() || ruleDraft.takeout"
+                            class="mt-3 pt-3 border-t border-gray-700">
+                            <label class="block text-[11px] text-gray-500 mb-1">…except these</label>
+                            <div class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                                <template x-for="d in ruleDishes()" :key="'rx-' + d.id">
+                                    <button @click="toggleRuleExclude(d)"
+                                        class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors"
+                                        :class="ruleDraft.exclude_dish_ids.includes(d.id)
+                                            ? 'bg-amber-500/20 border-amber-400/60 text-amber-200 line-through'
+                                            : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-amber-400/40'"
+                                        x-text="d.name"></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <p class="text-[11px] text-gray-500 mt-3" x-text="rulePreview()"></p>
                     </div>
 
                     <div class="space-y-2">
@@ -1003,9 +1046,54 @@
                 },
 
                 blankRule() {
-                    return { id: null, kind: 'frequency_cap', name: '', applies: '',
-                             takeout: false, max_servings: 1, window_days: 7,
-                             dwell_days: 3 };
+                    return { id: null, kind: 'frequency_cap', name: '', tags: '',
+                             dish_ids: [], exclude_dish_ids: [], takeout: false,
+                             max_servings: 1, window_days: 7, dwell_days: 3 };
+                },
+
+                ruleDishes() {
+                    return [...(this.repertoire || [])]
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+
+                toggleRuleDish(d) {
+                    const on = this.ruleDraft.dish_ids;
+                    const i = on.indexOf(d.id);
+                    if (i >= 0) on.splice(i, 1); else on.push(d.id);
+                },
+
+                toggleRuleExclude(d) {
+                    const off = this.ruleDraft.exclude_dish_ids;
+                    const i = off.indexOf(d.id);
+                    if (i >= 0) off.splice(i, 1); else off.push(d.id);
+                },
+
+                // What this rule would catch, worked out in the browser exactly
+                // as the server does it. A rule that silently governs nobody is
+                // the failure mode here, so it is answered BEFORE saving rather
+                // than reported after.
+                ruleWouldMatch() {
+                    const d = this.ruleDraft;
+                    const tags = (d.tags || '').split(',').map(t => t.trim().toLowerCase())
+                        .filter(Boolean);
+                    const hasClause = d.dish_ids.length || tags.length || d.takeout;
+                    if (!hasClause) return [];
+                    return (this.repertoire || []).filter(x => {
+                        if (d.exclude_dish_ids.includes(x.id)) return false;
+                        if (d.dish_ids.length && !d.dish_ids.includes(x.id)) return false;
+                        if (tags.length && !(x.tags || [])
+                            .some(t => tags.includes(String(t).toLowerCase()))) return false;
+                        if (d.takeout && (x.source || 'prep') !== 'ordered') return false;
+                        return true;
+                    });
+                },
+
+                rulePreview() {
+                    const hit = this.ruleWouldMatch();
+                    if (!hit.length) return 'Right now this matches no dish — it would do nothing.';
+                    const names = hit.slice(0, 8).map(x => x.name).join(', ');
+                    return 'Covers ' + hit.length + ': ' + names
+                        + (hit.length > 8 ? '…' : '');
                 },
 
                 newRule() {
@@ -1019,17 +1107,16 @@
                 },
 
                 editRule(r) {
-                    // "Applies to" has to round-trip back OUT, or editing a rule
-                    // silently drops what it applied to and quietly turns it
-                    // into a rule that governs nobody.
-                    const dishNames = (r.dish_ids || [])
-                        .map(id => (this.repertoire || []).find(x => x.id === id))
-                        .filter(Boolean).map(x => x.name);
+                    // Every selector round-trips back OUT, or editing a rule
+                    // silently drops what it applied to and turns it into one
+                    // that governs nobody.
                     this.ruleDraft = {
                         id: r.id,
                         kind: r.kind || 'frequency_cap',
                         name: r.name || '',
-                        applies: [...(r.tags || []), ...dishNames].join(', '),
+                        tags: (r.tags || []).join(', '),
+                        dish_ids: [...(r.dish_ids || [])],
+                        exclude_dish_ids: [...(r.exclude_dish_ids || [])],
                         takeout: (r.sources || []).includes('ordered'),
                         max_servings: r.max_servings || 1,
                         window_days: r.window_days || 7,
@@ -1039,30 +1126,22 @@
                 },
 
                 async saveRule() {
-                    // "Applies to" is one field on purpose: the family types a
-                    // word, and whether it lands as a tag or a dish name is our
-                    // problem, not theirs. Sent as both — the server keeps
-                    // whichever actually resolves.
                     const d = this.ruleDraft;
-                    const words = (d.applies || '').split(',').map(w => w.trim()).filter(Boolean);
-                    if (!words.length && !d.takeout) {
-                        showGlobalAlert('What does this apply to? A tag like "beans", '
-                            + 'some dish names, or tick Takeout.');
+                    const tags = (d.tags || '').split(',').map(t => t.trim())
+                        .filter(Boolean);
+                    if (!d.dish_ids.length && !tags.length && !d.takeout) {
+                        showGlobalAlert('What does this apply to? Pick the dishes, '
+                            + 'type a tag, or tick Takeout.');
                         return;
                     }
-                    const known = new Set((this.repertoire || [])
-                        .map(x => (x.name || '').toLowerCase()));
-                    const dishNames = words.filter(w => known.has(w.toLowerCase()));
-                    const tags = words.filter(w => !known.has(w.toLowerCase()));
                     this.ruleBusy = true;
                     try {
                         const body = {
-                            name: (d.name || '').trim() || words.join(', ') || 'takeout',
+                            name: (d.name || '').trim() || tags.join(', ')
+                                  || (d.takeout ? 'takeout' : 'rule'),
                             kind: d.kind, tags: tags,
-                            dish_ids: (this.repertoire || [])
-                                .filter(x => dishNames.some(n =>
-                                    n.toLowerCase() === (x.name || '').toLowerCase()))
-                                .map(x => x.id),
+                            dish_ids: [...d.dish_ids],
+                            exclude_dish_ids: [...d.exclude_dish_ids],
                             sources: d.takeout ? ['ordered'] : [],
                             max_servings: parseInt(d.max_servings) || 1,
                             window_days: parseInt(d.window_days) || 7,
