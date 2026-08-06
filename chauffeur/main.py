@@ -274,6 +274,14 @@ async def push_notification_loop():
                                                        now_dt)
                         if sres.get("status") == "proposed":
                             print(f"Shopping trip proposed for {len(sres['lists'])} list(s)")
+                        # K1: trickle-fill the kiosk board's pictures. A few per
+                        # sweep, never on render — the board must not stall
+                        # fetching images, and a family with a key configured
+                        # should not have to know a button exists.
+                        if _meals_svc.unsplash_key():
+                            ires = await asyncio.to_thread(_meals_svc.backfill_dish_images, 4)
+                            if ires.get("filled"):
+                                print(f"Dish pictures: {', '.join(ires['filled'])}")
             except Exception as wpe:
                 print(f"Week plan sweep error: {wpe}")
 

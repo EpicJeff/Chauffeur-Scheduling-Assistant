@@ -2343,17 +2343,18 @@ def dish_image_query(dish: dict) -> str:
 
 
 def unsplash_key() -> str:
-    import json as _json
-    import os as _os
-    try:
-        if _os.path.exists('/data/options.json'):
-            with open('/data/options.json') as f:
-                k = (_json.load(f).get('unsplash_api_key') or '').strip()
-                if k:
-                    return k
-    except Exception:
-        pass
-    return (_os.environ.get('UNSPLASH_API_KEY') or '').strip() or None
+    """Delegate to the resolver the REST of the app uses.
+
+    This was originally a second implementation reading only
+    /data/options.json and an env var — so a key saved through the config UI
+    (which lands in settings) was invisible here while the trip backgrounds
+    found it perfectly well, and the backfill reported "no key configured" to a
+    family who plainly had one. Same class as every other bug in this arc: two
+    individually-correct pieces that did not refer to each other.
+    """
+    from services import maps as _maps
+    return (str(_maps.get_map_option('unsplash_api_key', '') or '').strip()
+            or None)
 
 
 def fetch_stock_image(dish: dict) -> str:

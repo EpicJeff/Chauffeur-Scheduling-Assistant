@@ -2221,6 +2221,30 @@ def scenario_a_dish_image_prefers_the_familys_own_photo():
     check(res['skipped'] >= 1, f"and says it skipped it, got {res}")
 
 
+def scenario_the_unsplash_key_is_read_the_same_way_the_rest_of_the_app_reads_it():
+    """The backfill had its OWN key lookup rather than using
+    maps.get_map_option, which every other caller goes through and which checks
+    SETTINGS before /data/options.json.
+
+    Not the cause of "the board has no pictures" — that was simply that nothing
+    ever ran the backfill — but a duplicate resolver that silently disagrees
+    with the shared one is how this codebase keeps producing bugs where both
+    halves are individually fine.
+    """
+    reset_db(); _seed_people()
+    from services import maps
+
+    _settings(unsplash_api_key='key-from-the-config-ui')
+    check(meals.unsplash_key() == 'key-from-the-config-ui',
+          f"a key in settings is found, got {meals.unsplash_key()!r}")
+    check(maps.get_map_option('unsplash_api_key', None) == meals.unsplash_key(),
+          "and by exactly the resolver the rest of the app uses")
+
+    _settings()   # no key anywhere
+    check(meals.unsplash_key() is None,
+          f"absent stays absent, got {meals.unsplash_key()!r}")
+
+
 def scenario_stock_images_search_for_a_cooked_dish_not_an_ingredient():
     """Searching the bare name finds raw meat and anatomical diagrams — worse
     than no picture for the child who needed it."""
