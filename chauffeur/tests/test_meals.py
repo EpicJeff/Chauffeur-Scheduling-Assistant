@@ -1088,6 +1088,107 @@ def _two_veg_meal():
     return meal, veg
 
 
+def scenario_chips_name_the_option_not_the_category():
+    """Regression (reported 2026-08-05): "roasted potatoes (red, russet,
+    yellow)" made three dishes that all shared short_name "potatoes", so every
+    chip read "potatoes" and you could not tell which was selected."""
+    reset_db(); _seed_people(); _settings()
+    from models.schemas import Meal, MealSlot
+    spuds = [_dish(f"roasted {k} potatoes", short_name="potatoes", role="starch",
+                   prep_ahead_mins=10, finish_mins=5, unattended_mins=35,
+                   portability='utensils_ok', holds_well=True,
+                   ingredients=[{'name': f'{k} potatoes', 'kind': 'fresh'}])
+             for k in ("red", "russet", "yellow")]
+    solo = _dish("white rice", short_name="rice", finish_mins=2,
+                 portability='utensils_ok', holds_well=True)
+    meal = Meal(name="Plate", slots=[
+        MealSlot(label="potatoes", dish_ids=[s['id'] for s in spuds]),
+        MealSlot(label="rice", dish_ids=[solo['id']]),
+    ]).model_dump()
+    storage.add_meal(meal)
+
+    plate = meals.compose_meal(meal)
+    chips = {d['_slot']: d['_chip'] for d in plate['dishes']}
+    spud_chip = next(v for k, v in chips.items() if 'potato' in v)
+    check(spud_chip != "potatoes",
+          f"the chip must distinguish the option, got {spud_chip!r}")
+    check(any(w in spud_chip for w in ("red", "russet", "yellow")),
+          f"it names the variety, got {spud_chip!r}")
+    check("potatoes" in spud_chip,
+          f"and keeps the noun so 'red' alone is not the whole chip, got {spud_chip!r}")
+    rice_chip = next(v for k, v in chips.items() if 'rice' in v)
+    check(rice_chip == "rice",
+          f"a single-option slot still shows the family's own word, got {rice_chip!r}")
+
+    # Every option in the pool gets its own distinct chip.
+    labels = {meals._chip_label(s, spuds) for s in spuds}
+    check(len(labels) == 3, f"all three read differently, got {labels}")
+
+    # The label has to read like something a person would say across the
+    # shapes these pools actually take.
+    def _pool(names, short):
+        return [{'id': f'x{i}', 'name': n, 'short_name': short}
+                for i, n in enumerate(names)]
+    cases = [
+        # short_name is the food itself -> keep it, drop the shared method
+        (["roasted red potatoes", "roasted russet potatoes"], "potatoes",
+         ["red potatoes", "russet potatoes"]),
+        # short_name is a CATEGORY, not a word in the name -> never glue it on
+        (["steamed carrots", "steamed broccoli"], "vegetable",
+         ["carrots", "broccoli"]),
+        # the noun sits mid-name -> word ORDER must survive
+        (["grilled chicken thighs", "baked chicken breast"], "chicken",
+         ["grilled chicken thighs", "baked chicken breast"]),
+    ]
+    for names, short, expect in cases:
+        pool = _pool(names, short)
+        got = [meals._chip_label(d, pool) for d in pool]
+        check(got == expect, f"{short}: expected {expect}, got {got}")
+
+
+def scenario_enumerated_options_are_not_flagged_as_vague():
+    """Same report: one of the three potato options carried a "?" asking which
+    type and how cooked — when the description already said roasted AND listed
+    the varieties. Options in a slot are variants of one thing, so a lone
+    flag among clean siblings is model noise."""
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",
+                                    "home_location": HOME}
+    def spud(kind, vague=False):
+        d = {"name": f"roasted {kind} potatoes", "short_name": "potatoes",
+             "role": "starch", "prep_ahead_mins": 10, "finish_mins": 5,
+             "unattended_mins": 35, "portability": "utensils_ok",
+             "holds_well": True,
+             "ingredients": [{"name": f"{kind} potatoes", "kind": "fresh"}]}
+        if vague:
+            d.update({"needs_detail": True,
+                      "detail_question": "Which potatoes, and how cooked?"})
+        return d
+    split = {"name": "Chicken plate", "slots": [
+        {"label": "potatoes", "optional": False,
+         "dishes": [spud("red"), spud("russet", vague=True), spud("yellow")]}]}
+    with mock.patch('services.model_pools.call_pool_json', return_value=split):
+        meals.create_meal_from_dishes(
+            "roasted potatoes (red, russet, yellow)")
+    check(not storage.dishes_needing_detail(),
+          f"a lone flag among clean siblings is cleared, got "
+          f"{[d['name'] for d in storage.dishes_needing_detail()]}")
+
+    # But a genuinely vague single dish still asks.
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key"}
+    lone = {"name": "roasted potatoes", "short_name": "potatoes",
+            "needs_detail": True, "detail_question": "Which potatoes?",
+            "portability": "utensils_ok"}
+    with mock.patch('services.model_pools.call_pool_json',
+                    return_value={"name": "Plate", "slots": [
+                        {"label": "potatoes", "dishes": [lone]}]}):
+        meals.create_meal_from_dishes("chicken and potatoes")
+    check(len(storage.dishes_needing_detail()) == 1,
+          "a single unspecified dish still asks — the guard is about siblings, "
+          "not about never asking")
+
+
 def scenario_two_slots_sharing_a_label_stay_independent():
     """Regression (reported 2026-08-05): "veggies x 2" gave two chips that
     fought — one pick moved both, one wouldn't cycle, and sometimes a chip

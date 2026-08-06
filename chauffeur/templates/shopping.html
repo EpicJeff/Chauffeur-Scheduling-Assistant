@@ -99,9 +99,9 @@
                                                     ? 'bg-gray-900 border-gray-700 text-gray-600 line-through'
                                                     : 'bg-gray-800 border-gray-700 text-gray-300'">
                                                 <button @click="swapDish(m, d)" :disabled="d._pool < 2"
-                                                    :title="d._pool > 1 ? 'Swap for another option' : d.name"
+                                                    :title="d.name + (d._pool > 1 ? ' — tap to swap (' + d._pool + ' options)' : '')"
                                                     :class="d._pool > 1 ? 'hover:text-white' : 'cursor-default'"
-                                                    x-text="d.short_name || d.name"></button>
+                                                    x-text="d._chip || d.short_name || d.name"></button>
                                                 <button @click="dishLeftover(m, d)" title="Already made"
                                                     class="text-gray-600 hover:text-pink-300">✓</button>
                                                 <button x-show="d.needs_detail" @click="refineDish(m, d)"

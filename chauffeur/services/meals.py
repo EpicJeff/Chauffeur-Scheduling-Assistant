@@ -546,6 +546,38 @@ def _eater_diet(plan: dict) -> tuple:
 # dishes actually chosen for it, which is both more accurate than one set of
 # numbers per plate and what makes per-dish leftovers exact.
 
+def _chip_label(dish: dict, pool: list) -> str:
+    """What the chip should SAY.
+
+    `short_name` is the family's generic word ("potatoes") and is right for a
+    slot with one option — but with three potato varieties in the pool every
+    chip read "potatoes" and you could not tell which was selected. So when
+    there are options, show what DISTINGUISHES this one: the words in its name
+    that its siblings do not share ("roasted red potatoes" among red/russet/
+    yellow -> "red potatoes"). Falls back to the full name when the names have
+    nothing in common, and to short_name when there is nothing to distinguish.
+    """
+    name = (dish.get('name') or '').strip()
+    short = (dish.get('short_name') or '').strip()
+    if len(pool) < 2:
+        return short or name
+    shared = None
+    for other in pool:
+        if other.get('id') == dish.get('id'):
+            continue
+        words = {w for w in (other.get('name') or '').lower().split() if w}
+        shared = words if shared is None else (shared & words)
+    shared = shared or set()
+    # Drop the words every sibling shares, EXCEPT the family's own noun — "red"
+    # alone is not a dish, "red potatoes" is. Walking the name in order keeps
+    # the words in the order a person would say them; re-appending the noun
+    # produced things like "grilled thighs chicken".
+    protect = {w for w in short.lower().split() if w}
+    kept = [w for w in name.split()
+            if w.lower() not in shared or w.lower() in protect]
+    return ' '.join(kept) if kept else (name or short)
+
+
 def slot_key(slot: dict, idx: int = 0) -> str:
     """Stable identity for a slot. Falls back to position for rows written
     before slots had ids — NEVER to the label, which repeats ("veggies x 2")
@@ -590,7 +622,8 @@ def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> li
             pick = min(free, key=lambda d: d.get('last_served_at') or 0)
         taken.add(pick['id'])
         picks[i] = {**pick, '_slot': key, '_label': slot.get('label'),
-                    '_optional': bool(slot.get('optional')), '_pool': len(pool)}
+                    '_optional': bool(slot.get('optional')), '_pool': len(pool),
+                    '_chip': _chip_label(pick, pool)}
     for i in range(len(slots)):
         if i in picks:
             chosen.append(picks[i])
@@ -1034,12 +1067,17 @@ _DISH_SYSTEM = (
     "- ingredients: kind='staple' for things a kitchen always has (salt, oil, "
     "common spices, rice, pasta, flour), 'fresh' for what must be bought. No "
     "quantities.\n"
-    "- needs_detail: TRUE when the family was too vague to time or shop "
-    "accurately — 'potatoes' does not say which kind or how cooked, and "
+    "- needs_detail: TRUE only when the family was too vague to time or shop "
+    "accurately — bare 'potatoes' says neither which kind nor how cooked, and "
     "roasted vs mashed are different jobs. GUESS a sensible common version "
     "anyway and put it in `name`; never refuse and never leave it blank. Set "
     "detail_question to the single short question that would resolve it "
     "('Which potatoes, and roasted or mashed?').\n"
+    "  FALSE whenever they already told you. 'roasted potatoes (red, russet, "
+    "yellow)' gives BOTH the method and the varieties — that is three fully "
+    "specified dishes, not a question. Never ask about something stated in "
+    "the description, and be consistent: options in one slot are variants of "
+    "the same thing, so either all of them need detail or none do.\n"
     "- Be realistic about a weeknight home kitchen."
 )
 
@@ -1120,6 +1158,16 @@ def split_into_dishes(description: str) -> dict:
                   if d]
         if not dishes:
             continue
+        # Options in one slot are variants of the same thing, so they are
+        # either all specific enough or none of them are. The model flags them
+        # inconsistently — "roasted potatoes (red, russet, yellow)" came back
+        # with two clean dishes and one asking which type and how cooked — and
+        # a lone question mark on one of three identical-looking chips is just
+        # noise. If any sibling is clean, they all are.
+        if len(dishes) > 1 and any(not d.get('needs_detail') for d in dishes):
+            for d in dishes:
+                d['needs_detail'] = False
+                d['detail_question'] = None
         slots.append({'label': str(raw_slot.get('label') or '').strip()[:40] or None,
                       'optional': bool(raw_slot.get('optional')),
                       'dishes': dishes})
