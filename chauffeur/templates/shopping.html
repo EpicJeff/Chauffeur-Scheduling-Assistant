@@ -91,8 +91,11 @@
                                             : 'bg-gray-800 border-gray-700 text-gray-200')">
                                     <span :title="d.name + ' · ' + (d.side_type || d.type)"
                                         x-text="d.short_name || d.name"></span>
-                                    <button @click="dishLeftoverOnPlate(d)" title="Already made"
-                                        class="text-gray-600 hover:text-pink-300">✓</button>
+                                    <button @click="toggleLeftover(d)"
+                                        :title="isMade(d) ? 'Not made after all' : 'Already made'"
+                                        :class="isMade(d)
+                                            ? 'text-pink-300 hover:text-gray-400'
+                                            : 'text-gray-600 hover:text-pink-300'">✓</button>
                                     <button x-show="d.needs_detail" @click="refinePlateDish(d)"
                                         :title="d.detail_question || 'Which kind?'"
                                         class="text-amber-400 hover:text-amber-300 font-bold">?</button>
@@ -401,10 +404,17 @@
                     await this.loadPlate();
                 },
 
-                async dishLeftoverOnPlate(d) {
-                    await fetch(this.apiBase + 'api/meals/leftovers', {
+                isMade(d) {
+                    return (this.plate.leftover_dish_ids || []).includes(d.id);
+                },
+
+                async toggleLeftover(d) {
+                    // Reversible in place. The first cut only ever added, so
+                    // undoing "already made" meant dropping the dish off the
+                    // plate and adding it back.
+                    await fetch(this.apiBase + 'api/meals/leftovers/toggle', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ dish_ids: [d.id], label: d.name })
+                        body: JSON.stringify({ dish_id: d.id })
                     });
                     await this.loadPlate();
                 },

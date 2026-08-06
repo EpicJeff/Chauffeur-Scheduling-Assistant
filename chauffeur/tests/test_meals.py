@@ -1103,6 +1103,80 @@ def scenario_the_plate_is_adjustable_by_talking():
           "an unknown dish asks rather than inventing one")
 
 
+def scenario_already_made_is_a_toggle_not_a_one_way_door():
+    """Reported 2026-08-05: once a dish was marked already-made there was no
+    way back except removing it from the plate and adding it again."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    rice = p['starches'][0]
+
+    check(meals.toggle_leftover_dish(DAY, rice['id']) is True, "marks it")
+    check(meals.dish_is_leftover(DAY, rice['id']), "and it reads as made")
+    check(meals.toggle_leftover_dish(DAY, rice['id']) is False, "flips back")
+    check(not meals.dish_is_leftover(DAY, rice['id']),
+          "so undoing costs one tap, not a remove-and-re-add")
+    check(not storage.get_leftovers(DAY),
+          "and the emptied record is cleaned up rather than left behind")
+
+    # Un-marking ONE dish out of a multi-dish note leaves the others alone.
+    veg = p['vegs'][0]
+    _leftover(dish_ids=[rice['id'], veg['id']], label="Sunday's")
+    check(meals.unmark_leftover_dish(DAY, rice['id']), "strips just the rice")
+    check(not meals.dish_is_leftover(DAY, rice['id']), "rice is back to being made")
+    check(meals.dish_is_leftover(DAY, veg['id']),
+          "the other dish in the same note is untouched")
+
+
+def scenario_removing_a_dish_forgets_it_was_already_made():
+    """Reported alongside the toggle: the mark outlived the plate, so taking a
+    dish off and putting it back brought a struck-through chip with it."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    rice = p['starches'][0]
+    meals.add_to_plate(DAY, rice['id'])
+    meals.toggle_leftover_dish(DAY, rice['id'])
+    check(meals.dish_is_leftover(DAY, rice['id']), "marked")
+
+    meals.remove_from_plate(DAY, rice['id'])
+    check(not meals.dish_is_leftover(DAY, rice['id']),
+          "taking it off the plate clears the mark — it only means something "
+          "while the dish is ON the plate")
+
+    meals.add_to_plate(DAY, rice['id'])
+    plate = meals.get_or_compose_plate(DAY)
+    totals = meals.plate_totals(plate['dishes'], DAY)
+    check(rice['id'] not in (totals.get('leftover_dish_ids') or []),
+          "so re-adding gives a normal chip, not a struck-through one")
+    check(totals['prep_ahead_mins'] + totals['finish_mins'] > 0,
+          "and its cook time is charged again, because it does need making")
+
+
+def scenario_the_undo_works_by_voice_too():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    from services.agent_tools_v2 import mark_leftovers, clear_leftovers
+    mark_leftovers("", target_date=DAY, parts="rice")
+    check(meals.dish_is_leftover(DAY, p['starches'][0]['id']), "rice marked by voice")
+
+    out = clear_leftovers(target_date=DAY, what="rice")
+    check(out['status'] == 'success' and 'rice' in out['message'].lower(),
+          f"'the rice isn't made after all' undoes just that, got {out['message']}")
+    check(not meals.dish_is_leftover(DAY, p['starches'][0]['id']), "and it took")
+
+    again = clear_leftovers(target_date=DAY, what="rice")
+    check(again['status'] == 'success' and "wasn't marked" in again['message'],
+          f"undoing twice says so rather than erroring, got {again['message']}")
+
+
 def scenario_m5_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _pantry()

@@ -719,11 +719,17 @@ def add_to_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
 
 
 def remove_from_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
-    """Drop a dish — "no salad tonight"."""
+    """Drop a dish — "no salad tonight".
+
+    Also clears any already-made mark on it. That mark only means something
+    while the dish is ON the plate, and leaving it behind meant re-adding the
+    dish brought back a struck-through chip nobody asked for.
+    """
     cur = get_or_compose_plate(date_str, plan)['dishes']
     kept = [d for d in cur if d['id'] != dish_id]
     if len(kept) == len(cur):
         return {'dishes': cur, 'unchanged': True}
+    unmark_leftover_dish(date_str, dish_id)
     _persist_plate(date_str, kept)
     return {'dishes': kept}
 
@@ -732,6 +738,52 @@ def reset_plate(date_str: str) -> dict:
     """Back to the proposal — plans change."""
     storage.delete_plate(date_str)
     return get_or_compose_plate(date_str)
+
+
+def dish_is_leftover(date_str: str, dish_id: str) -> bool:
+    for l in storage.get_leftovers(date_str):
+        if dish_id in (l.get('dish_ids') or []):
+            return True
+    return False
+
+
+def unmark_leftover_dish(date_str: str, dish_id: str) -> bool:
+    """Take a single dish back off the already-made list.
+
+    A record may cover several dishes ("rice and beans are made"), so this
+    strips just this one and deletes the record only when it was a per-dish
+    record that has been emptied. Whole-meal leftovers carry no dish_ids and
+    are left alone — they are a different statement.
+    """
+    changed = False
+    for l in storage.get_leftovers(date_str):
+        ids = list(l.get('dish_ids') or [])
+        if dish_id not in ids:
+            continue
+        ids.remove(dish_id)
+        changed = True
+        if ids:
+            storage.delete_leftover(l['id'])
+            storage.add_leftover({**l, 'dish_ids': ids})
+        else:
+            storage.delete_leftover(l['id'])
+    return changed
+
+
+def toggle_leftover_dish(date_str: str, dish_id: str, label: str = None) -> bool:
+    """Returns the NEW state. Marking already-made has to be reversible in
+    place — the first cut only ever added, so undoing it meant removing the
+    dish from the plate and adding it back."""
+    from models.schemas import Leftover
+    if dish_is_leftover(date_str, dish_id):
+        unmark_leftover_dish(date_str, dish_id)
+        return False
+    storage.prune_leftovers(date_str)
+    dish = storage.get_dish(dish_id) or {}
+    storage.add_leftover(Leftover(
+        date=date_str, dish_ids=[dish_id],
+        label=label or dish.get('name')).model_dump())
+    return True
 
 
 def plate_totals(dishes: list, date_str: str = None) -> dict:

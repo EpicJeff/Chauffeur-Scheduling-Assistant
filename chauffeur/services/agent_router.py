@@ -593,7 +593,8 @@ sending or claiming, and never pass from_member/member_name for them.
                                                    target_date=args.get("target_date", "today") or "today",
                                                    parts=args.get("parts", "") or "")
                     else:
-                        res = _atv2.clear_leftovers(args.get("target_date", "today") or "today")
+                        res = _atv2.clear_leftovers(args.get("target_date", "today") or "today",
+                                                    what=args.get("what", "") or "")
                     if res.get("message"): agent_message = res["message"]
                 elif func_name in ("suggest_dinner", "add_meal_to_repertoire",
                                    "add_meal_ingredients_to_list", "mark_meal_served"):

@@ -1807,7 +1807,8 @@ def handle_mark_leftovers(args: dict) -> dict:
 
 def handle_clear_leftovers(args: dict) -> dict:
     from services.agent_tools_v2 import clear_leftovers
-    return clear_leftovers(args.get("target_date") or "today")
+    return clear_leftovers(args.get("target_date") or "today",
+                           what=args.get("what") or "")
 
 def handle_get_eating_plan(args: dict) -> dict:
     from services.agent_tools_v2 import get_eating_plan

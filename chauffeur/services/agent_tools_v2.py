@@ -1446,10 +1446,23 @@ def mark_leftovers(what: str = "", target_date: str = "today", parts: str = "",
             "message": f"Noted — {label} {when}. Nothing to cook."}
 
 
-def clear_leftovers(target_date: str = "today", acting_member: dict = None) -> Dict[str, Any]:
-    """Undo — plans change."""
-    from services import storage
+def clear_leftovers(target_date: str = "today", what: str = "",
+                    acting_member: dict = None) -> Dict[str, Any]:
+    """Undo — plans change. Name a dish to un-mark just that one, or leave it
+    off to clear the whole day."""
+    from services import storage, meals
     day = _parse_fuzzy_date(target_date or 'today')
+    if (what or '').strip():
+        dish = storage.find_dish_by_name(what)
+        if dish and meals.unmark_leftover_dish(day.isoformat(), dish['id']):
+            return {"status": "success",
+                    "message": f"OK — {dish.get('short_name') or dish['name']} "
+                               "still needs making, then."}
+        if dish:
+            return {"status": "success",
+                    "message": f"{dish.get('short_name') or dish['name']} "
+                               "wasn't marked as already made."}
+        return {"status": "error", "message": f"I don't have a dish called '{what}'."}
     n = storage.clear_leftovers(day.isoformat())
     if not n:
         return {"status": "success", "message": "There were no leftovers marked."}
@@ -1959,10 +1972,11 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "clear_leftovers",
-            "description": "Undoes a leftovers note for a day ('actually we're cooking tonight', 'the leftovers are gone').",
+            "description": "Undoes an already-made note ('actually we're cooking tonight', 'the rice isn't made after all', 'the leftovers are gone'). Name a dish in `what` to un-mark just that one; omit it to clear the whole day.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "what": {"type": "string", "description": "A single dish to un-mark, e.g. 'rice'. Omit to clear everything marked for that day."},
                     "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."}
                 },
                 "required": []

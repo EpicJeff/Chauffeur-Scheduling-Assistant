@@ -5211,6 +5211,17 @@ def plate_remove(req: PlateEdit):
     return _meals.remove_from_plate(req.date or _dt.date.today().isoformat(),
                                     req.dish_id)
 
+@app.post("/api/meals/leftovers/toggle")
+def toggle_leftover(req: PlateEdit):
+    """Flip one dish between already-made and not. Marking has to be
+    reversible in place, or undoing it means removing the dish and re-adding
+    it."""
+    import datetime as _dt
+    from services import meals as _meals
+    day = req.date or _dt.date.today().isoformat()
+    marked = _meals.toggle_leftover_dish(day, req.dish_id)
+    return {"status": "ok", "dish_id": req.dish_id, "leftover": marked}
+
 @app.post("/api/meals/plate/reset")
 def plate_reset(date: Optional[str] = None):
     import datetime as _dt
