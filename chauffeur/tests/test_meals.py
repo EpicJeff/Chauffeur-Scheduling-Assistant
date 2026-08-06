@@ -1189,6 +1189,55 @@ def scenario_enumerated_options_are_not_flagged_as_vague():
           "not about never asking")
 
 
+def scenario_a_stale_detail_flag_does_not_survive_dish_reuse():
+    """Regression (reported 2026-08-05): russet potatoes ALWAYS showed a "?".
+    The sibling rule cleaned freshly-extracted dishes, but dishes are REUSED —
+    a row saved with the flag before the rule existed came back flagged on
+    every re-entry, and no amount of re-typing the meal would clear it."""
+    reset_db(); _seed_people(); _settings()
+    from models.schemas import Meal, MealSlot
+    # A dish already in storage carrying the old flag.
+    russet = _dish("roasted russet potatoes", short_name="potatoes",
+                   portability='utensils_ok', holds_well=True, finish_mins=5,
+                   needs_detail=True,
+                   detail_question="Which potatoes, and how cooked?")
+    red = _dish("roasted red potatoes", short_name="potatoes",
+                portability='utensils_ok', holds_well=True, finish_mins=5)
+
+    meal = Meal(name="Plate", slots=[
+        MealSlot(label="potatoes", dish_ids=[red['id'], russet['id']])]).model_dump()
+    storage.add_meal(meal)
+
+    # READ path: the "?" is gone immediately, without re-entering the meal.
+    plate = meals.compose_meal(meal, prefer={
+        meals.slot_key(meal['slots'][0], 0): russet['id']})
+    chip = plate['dishes'][0]
+    check(chip['id'] == russet['id'], "russet is the one on the plate")
+    check(not chip['needs_detail'],
+          "a clean sibling makes the stale flag moot on READ — nobody should "
+          "have to re-enter a meal to clear it")
+
+    # And the repair persists once the slot is normalized.
+    check(meals.normalize_slot_detail([red['id'], russet['id']]) == 1,
+          "the stored row is repaired too")
+    check(not storage.get_dish(russet['id'])['needs_detail'],
+          "so it stays clean")
+
+
+def scenario_reuse_matches_exactly_and_never_merges_dishes():
+    reset_db(); _seed_people(); _settings()
+    _dish("roasted russet potatoes", short_name="potatoes",
+          portability='utensils_ok', finish_mins=5)
+    check(storage.find_dish_for_reuse("potatoes") is None,
+          "a generic 'potatoes' must NOT bind to the russet dish and inherit "
+          "its times, ingredients and flags")
+    check(storage.find_dish_for_reuse("roasted russet potatoes") is not None,
+          "an exact name still reuses — rice is rice")
+    # The agent's fuzzy lookup is deliberately still fuzzy.
+    check(storage.find_dish_by_name("potatoes") is not None,
+          "but 'the potatoes' still resolves when someone says it out loud")
+
+
 def scenario_two_slots_sharing_a_label_stay_independent():
     """Regression (reported 2026-08-05): "veggies x 2" gave two chips that
     fought — one pick moved both, one wouldn't cycle, and sometimes a chip

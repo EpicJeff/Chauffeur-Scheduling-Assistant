@@ -1781,6 +1781,24 @@ def find_dish_by_name(name: str) -> Optional[dict]:
             return d
     return None
 
+def find_dish_for_reuse(name: str) -> Optional[dict]:
+    """EXACT match only — the reuse path must not merge distinct dishes.
+
+    `find_dish_by_name` falls back to substring so the agent can resolve "the
+    potatoes", but reusing on a substring would let a later generic
+    "potatoes" silently bind to "roasted russet potatoes" (and inherit its
+    times, ingredients and any stale flag). Rice is rice; rice is not fried
+    rice.
+    """
+    low = (name or '').strip().lower()
+    if not low:
+        return None
+    for d in get_dishes(include_inactive=True):
+        if (d.get('name') or '').strip().lower() == low:
+            return d
+    return None
+
+
 def add_dish(data: dict) -> str:
     with db_lock:
         dishes_table.insert(data)

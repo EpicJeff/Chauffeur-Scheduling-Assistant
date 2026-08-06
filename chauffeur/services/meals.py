@@ -546,6 +546,31 @@ def _eater_diet(plan: dict) -> tuple:
 # dishes actually chosen for it, which is both more accurate than one set of
 # numbers per plate and what makes per-dish leftovers exact.
 
+def slot_detail_is_moot(pool: list) -> bool:
+    """Does this slot's own set of options already answer the question?
+
+    Options are variants of one thing, so if any sibling is specific enough
+    the whole slot is — "roasted potatoes (red, russet, yellow)" states both
+    the method and the varieties. A "?" on one of three otherwise-identical
+    chips is model noise, not a question worth asking.
+    """
+    return len(pool) > 1 and any(not d.get('needs_detail') for d in pool)
+
+
+def normalize_slot_detail(dish_ids: list) -> int:
+    """Clear stale flags across a slot, IN STORAGE. Returns how many changed."""
+    pool = storage.get_dishes_by_ids(dish_ids or [])
+    if not slot_detail_is_moot(pool):
+        return 0
+    n = 0
+    for d in pool:
+        if d.get('needs_detail'):
+            storage.update_dish(d['id'], {'needs_detail': False,
+                                          'detail_question': None})
+            n += 1
+    return n
+
+
 def _chip_label(dish: dict, pool: list) -> str:
     """What the chip should SAY.
 
@@ -621,9 +646,16 @@ def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> li
         if pick is None:
             pick = min(free, key=lambda d: d.get('last_served_at') or 0)
         taken.add(pick['id'])
-        picks[i] = {**pick, '_slot': key, '_label': slot.get('label'),
-                    '_optional': bool(slot.get('optional')), '_pool': len(pool),
-                    '_chip': _chip_label(pick, pool)}
+        entry = {**pick, '_slot': key, '_label': slot.get('label'),
+                 '_optional': bool(slot.get('optional')), '_pool': len(pool),
+                 '_chip': _chip_label(pick, pool)}
+        # Suppress a stale flag on READ too. Dishes already saved with one
+        # would otherwise keep showing "?" until the meal happened to be
+        # re-entered, which is not something anyone should have to discover.
+        if entry.get('needs_detail') and slot_detail_is_moot(pool):
+            entry['needs_detail'] = False
+            entry['detail_question'] = None
+        picks[i] = entry
     for i in range(len(slots)):
         if i in picks:
             chosen.append(picks[i])
@@ -1192,12 +1224,17 @@ def create_meal_from_dishes(description: str) -> dict:
     for s in split['slots']:
         ids = []
         for d in s['dishes']:
-            existing = storage.find_dish_by_name(d['name'])
+            existing = storage.find_dish_for_reuse(d['name'])
             if existing:
                 ids.append(existing['id'])
                 continue
             storage.add_dish(d)
             ids.append(d['id'])
+        # Dishes are REUSED, so a row saved with a stale needs_detail flag
+        # comes back flagged however many times the meal is re-entered — the
+        # sibling rule has to run over the RESOLVED slot, not just over the
+        # freshly extracted dicts.
+        normalize_slot_detail(ids)
         slots.append({'label': s['label'], 'dish_ids': ids,
                       'optional': s['optional']})
 
