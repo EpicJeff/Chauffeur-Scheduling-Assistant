@@ -2096,6 +2096,52 @@ def scenario_being_out_of_a_staple_does_not_reclassify_it():
           "and still appears in the grid next week")
 
 
+def scenario_the_board_reports_work_not_the_prep_horizon():
+    """Reported: every kiosk block said "180 min". The block was showing
+    cook_window_mins — free time available, clamped to PREP_HORIZON_MINS — so
+    every unconstrained evening printed the identical ceiling and the board
+    looked broken. The week payload has to carry what the board actually
+    needs: how much WORK the night is, and whether the window truly pinches."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=0, include_dessert=False)
+    _dish('roast chicken', type='entree', prep_ahead_mins=5, finish_mins=25,
+          unattended_mins=40, ingredients=[{'name': 'chicken', 'kind': 'fresh'}])
+
+    week = meals.compose_week('2026-08-10', 3)
+    for day in week:
+        check(day['cook_window_mins'] == meals.PREP_HORIZON_MINS,
+              f"an open evening reports the horizon, which is why every block "
+              f"read the same number, got {day['cook_window_mins']}")
+        check(day['prep_ahead_mins'] == 5 and day['finish_mins'] == 25
+              and day['unattended_mins'] == 40,
+              f"and the real work is available to show instead, got {day}")
+        check(day['has_cook'] is True, f"a cooking adult was considered, got {day}")
+
+
+def scenario_a_zero_cook_window_means_two_different_things():
+    """0 is what an UNSOLVED day reports and also what a genuinely impossible
+    evening reports. Conflating them either suppresses a real M2 finding or
+    puts a scary number on every block of an empty install."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=0, include_dessert=False)
+    _dish('spaghetti', type='entree', prep_ahead_mins=5, finish_mins=20,
+          ingredients=[{'name': 'pasta', 'kind': 'fresh'}])
+
+    storage.set_cached_schedule(_tight_evening())
+    day = meals.compose_week(DAY, 1)[0]
+    check(day['has_cook'] is True,
+          f"somebody who COULD cook was considered, so a 0 window here would "
+          f"be a real finding rather than missing data, got {day['has_cook']}")
+
+    # Nobody who can cook at all: the same 0 now means "we don't know".
+    for m in storage.get_all_members():
+        if m.get('role') == 'parent':
+            storage.update_member(m['id'], {'role': 'child', 'is_child': True})
+    day2 = meals.compose_week(DAY, 1)[0]
+    check(day2['has_cook'] is False,
+          f"so the board can stay silent instead of warning, got {day2['has_cook']}")
+
+
 def scenario_a_dish_image_prefers_the_familys_own_photo():
     reset_db(); _seed_people(); _settings()
     d = _dish('tacos', type='meal')

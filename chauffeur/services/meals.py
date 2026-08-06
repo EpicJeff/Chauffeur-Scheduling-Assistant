@@ -959,6 +959,14 @@ def compose_week(start_date: str = None, days: int = 7,
             'dishes': dishes,
             'pinned': pinned,
             'cook_window_mins': plan.get('cook_window_mins'),
+            'cook_window_who': plan.get('cook_window_who'),
+            # A cook window of 0 is ambiguous on its own: it is what an
+            # unsolved day reports AND what a genuinely impossible evening
+            # reports. This says whether anyone who COULD cook was even
+            # considered, so the board can tell "we don't know" from "there is
+            # no time" — the second being a first-class M2 finding.
+            'has_cook': any(p.get('role') in _COOKING_ROLES
+                            for p in (plan.get('people') or [])),
             'no_slot': [p.get('name') for p in (plan.get('no_slot') or [])],
             'away': [p.get('name') for p in (plan.get('away') or [])],
             'prep_ahead_mins': totals.get('prep_ahead_mins'),

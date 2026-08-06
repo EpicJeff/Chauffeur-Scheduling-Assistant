@@ -65,8 +65,9 @@
                                         :class="isToday(day) ? 'text-pink-300' : 'text-gray-400'"
                                         x-text="isToday(day) ? 'Tonight' : day.weekday"></span>
                                     <span class="text-[11px] text-gray-400"
-                                        x-show="day.cook_window_mins != null"
-                                        x-text="day.cook_window_mins + ' min'"></span>
+                                        x-show="dayEffort(day)" x-text="dayEffort(day)"></span>
+                                    <span class="text-[11px] font-bold text-amber-300"
+                                        x-show="daySqueeze(day)" x-text="daySqueeze(day)"></span>
                                 </div>
                                 <div class="text-white font-bold leading-tight mt-0.5"
                                     x-text="dayHeadline(day)"></div>
@@ -681,6 +682,38 @@
                     const t = (m && (m.side_type || m.type)) || 'other';
                     return { meal: '🍲', entree: '🍗', vegetable: '🥦', starch: '🍚',
                              salad: '🥗', dessert: '🍰' }[t] || '🍽️';
+                },
+                // How much WORK the night is — the number a "what's for dinner"
+                // board is actually being asked for. The block used to show
+                // cook_window_mins, which is the free time available, clamped
+                // to a 180-minute prep horizon — so every unconstrained evening
+                // read an identical "180 min" and the board looked broken.
+                dayEffort(day) {
+                    const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
+                    const bits = [];
+                    if (hands) bits.push(hands + ' min');
+                    if (day.unattended_mins) bits.push(day.unattended_mins + ' min oven');
+                    return bits.join(' · ');
+                },
+                // The window is only news when it PINCHES. An evening with
+                // three hours free is not information, and printing it nightly
+                // is how a real warning gets ignored.
+                daySqueeze(day) {
+                    const w = day.cook_window_mins;
+                    // A window of 0 is ambiguous by itself — it is what an
+                    // unsolved day reports AND what a genuinely impossible
+                    // evening reports. has_cook separates them: with nobody
+                    // who could cook even considered, we simply don't know.
+                    if (!day.has_cook) return '';
+                    if (!w) return 'nobody free to cook';
+                    // 180 is the prep horizon, i.e. unconstrained. Printing it
+                    // put an identical number on every block, which is how a
+                    // real warning gets ignored.
+                    if (w >= 180) return '';
+                    const hands = (day.prep_ahead_mins || 0) + (day.finish_mins || 0);
+                    if (w < hands) return 'only ' + w + ' min';
+                    if (w <= 60 || (hands && w < hands * 1.5)) return 'tight · ' + w + ' min';
+                    return '';
                 },
                 isToday(day) {
                     const d = new Date();
