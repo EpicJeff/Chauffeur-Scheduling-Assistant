@@ -5098,6 +5098,36 @@ def patch_dish(dish_id: str, req: DishPatch):
         storage.update_dish(dish_id, patch)
     return storage.get_dish(dish_id)
 
+class IngredientPatch(BaseModel):
+    name: str
+    kind: str = 'fresh'        # staple | fresh
+
+@app.post("/api/meals/dishes/{dish_id}/ingredient")
+def set_ingredient_kind(dish_id: str, req: IngredientPatch):
+    """Override the staple-vs-fresh guess for one ingredient.
+
+    Whether beans are a pantry staple or a thing you buy is a judgement about
+    THIS household — bulk buyers restock them, others assume they're in the
+    cupboard — so the model's guess has to be correctable, and the skip
+    reasons on the shopping drain are what make it findable.
+    """
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        raise HTTPException(status_code=404, detail="Dish not found")
+    kind = 'staple' if str(req.kind).lower() == 'staple' else 'fresh'
+    name = (req.name or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Which ingredient?")
+    ings = [dict(i) for i in (dish.get('ingredients') or [])]
+    hit = next((i for i in ings if (i.get('name') or '').strip().lower()
+                == name.lower()), None)
+    if hit:
+        hit['kind'] = kind
+    else:
+        ings.append({'name': name, 'kind': kind})
+    storage.update_dish(dish_id, {'ingredients': ings})
+    return storage.get_dish(dish_id)
+
 @app.post("/api/meals/dishes/{dish_id}/refine")
 def refine_dish_api(dish_id: str, req: DishRefineRequest):
     """Answer the "which potatoes, and how?" question — re-derives the dish's

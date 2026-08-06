@@ -1698,28 +1698,46 @@ def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
     skip = set(skip_dish_ids or [])
     lst_id = list_id or storage.ensure_default_shopping_list()['id']
     added, skipped = [], []
+
+    def note(name, reason, dish):
+        # Skips carry their REASON. Every one of these is a judgement the
+        # model made and the family cannot see: whether beans are a pantry
+        # staple, whether a dish has any ingredients recorded at all. A silent
+        # skip is indistinguishable from a bug — and was reported as one.
+        skipped.append({'name': name, 'reason': reason,
+                        'dish': dish.get('short_name') or dish.get('name'),
+                        'dish_id': dish.get('id')})
+
     for d in dishes:
+        label = d.get('short_name') or d.get('name')
         if d.get('id') in skip:
-            skipped.append(d.get('short_name') or d.get('name'))
+            note(label, 'already made', d)
             continue
         if str(d.get('source') or 'prep') == 'ordered':
-            skipped.append(d.get('name'))
+            note(label, 'ordered', d)
             continue
-        for ing in d.get('ingredients') or []:
-            name = (ing.get('name') or '').strip()
-            if not name:
-                continue
+        ings = [i for i in (d.get('ingredients') or [])
+                if (i.get('name') or '').strip()]
+        if not ings:
+            # Nothing recorded for this dish, so nothing can be bought for it.
+            # Reported rather than passed over in silence.
+            note(label, 'no ingredients recorded', d)
+            continue
+        for ing in ings:
+            name = ing['name'].strip()
             if (ing.get('kind') or 'fresh') == 'staple':
-                skipped.append(name)
+                note(name, 'staple', d)
                 continue
             if storage.find_open_shopping_item(lst_id, name):
-                skipped.append(name)
+                note(name, 'already on the list', d)
                 continue
             storage.add_shopping_item(ShoppingItem(
                 list_id=lst_id, name=name, added_via='meal',
                 source_meal_id=d.get('id'), added_by=added_by).model_dump())
             added.append(name)
-    return {'added': added, 'skipped': skipped, 'list_id': lst_id}
+    return {'added': added, 'skipped': skipped,
+            'skipped_names': [x['name'] for x in skipped],
+            'list_id': lst_id}
 
 
 def ingredients_to_shopping(meal: dict, list_id: str = None,

@@ -1177,6 +1177,49 @@ def scenario_the_undo_works_by_voice_too():
           f"undoing twice says so rather than erroring, got {again['message']}")
 
 
+def scenario_every_skip_says_why_and_a_staple_can_be_overridden():
+    """Reported 2026-08-05: "+ List doesn't add everything". It was right to
+    skip rice and beans by its own lights — the model called them pantry
+    staples — but a silent skip is indistinguishable from a bug, and whether
+    beans are a staple is a judgement about THIS household (bulk buyers
+    restock them; others assume the cupboard)."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    beans = _dish("black beans", short_name="beans", type='side',
+                  side_type='starch', finish_mins=5, portability='utensils_ok',
+                  ingredients=[{'name': 'black beans', 'kind': 'staple'}])
+    plain = _dish("steamed broccoli", short_name="broccoli", type='side',
+                  side_type='vegetable', finish_mins=8, portability='utensils_ok')
+    lid = storage.ensure_default_shopping_list()['id']
+
+    res = meals.dishes_to_shopping([beans, plain], lid)
+    by_name = {x['name']: x for x in res['skipped']}
+    check('black beans' in by_name and by_name['black beans']['reason'] == 'staple',
+          f"the skip is reported WITH its reason, got {res['skipped']}")
+    check(by_name['black beans']['dish_id'] == beans['id'],
+          "and it carries the dish, so the guess can be corrected in one tap")
+    check(by_name['broccoli']['reason'] == 'no ingredients recorded',
+          f"a dish with nothing recorded says so rather than passing silently, "
+          f"got {by_name.get('broccoli')}")
+
+    # The override: flip it permanently.
+    import main
+    main.set_ingredient_kind(beans['id'],
+                             main.IngredientPatch(name='black beans', kind='fresh'))
+    again = meals.dishes_to_shopping([beans and storage.get_dish(beans['id'])], lid)
+    check('black beans' in again['added'],
+          f"once it is not a staple, it gets bought — got {again}")
+
+    # And it stays fixed on the next shop.
+    storage.clear_checked_shopping_items(lid)
+    for i in storage.get_shopping_items(lid):
+        storage.delete_shopping_item(i['id'])
+    third = meals.dishes_to_shopping([storage.get_dish(beans['id'])], lid)
+    check('black beans' in third['added'], "the correction persists on the dish")
+
+
 def scenario_m5_tools_in_both_stacks():
     reset_db(); _seed_people(); _settings()
     _pantry()
@@ -1326,8 +1369,12 @@ def scenario_shopping_buys_one_platesworth_not_every_alternative():
     beans_bought = [a for a in res['added'] if 'beans' in a]
     check(len(beans_bought) == 1,
           f"one bean, not three — got {beans_bought}")
-    check('rice' in res['skipped'], "the staple is still skipped")
+    check('rice' in res['skipped_names'], "the staple is still skipped")
     check(any('chicken' in a for a in res['added']), "and the protein is bought")
+    # Every skip carries WHY — a silent one is indistinguishable from a bug.
+    rice_skip = next(x for x in res['skipped'] if x['name'] == 'rice')
+    check(rice_skip['reason'] == 'staple' and rice_skip['dish'],
+          f"reasons are reported per item, got {rice_skip}")
 
 
 def scenario_vague_dishes_are_guessed_flagged_and_refinable():

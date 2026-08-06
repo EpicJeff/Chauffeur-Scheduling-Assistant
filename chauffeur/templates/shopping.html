@@ -311,6 +311,56 @@
         </div>
     </div>
 
+    <!-- "+ List" result. A skip nobody can see reads as a bug — which is
+         exactly how this was reported — and whether beans are a staple is a
+         judgement about THIS household, so each one says why in plain words
+         and can be overridden on the spot. -->
+    <div x-show="drain" x-cloak
+        class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+        @click.self="drain = null">
+        <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-6">
+            <h3 class="text-lg font-bold text-white mb-1"
+                x-text="(drain && (drain.added || []).length)
+                    ? 'Added ' + drain.added.length + ' to ' + activeListName()
+                    : 'Nothing added'"></h3>
+            <p class="text-sm text-gray-400 mb-4"
+                x-show="drain && (drain.skipped || []).length">
+                These weren't added to the list:
+            </p>
+            <div class="space-y-2 max-h-[50vh] overflow-y-auto">
+                <template x-for="(sk, i) in ((drain && drain.skipped) || [])" :key="'sk-' + i">
+                    <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-center gap-3">
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm font-semibold text-gray-200 truncate" x-text="sk.name"></div>
+                            <div class="text-[11px] text-gray-500">
+                                <span x-text="skipReason(sk)"></span>
+                                <span class="opacity-70" x-show="sk.dish" x-text="' · ' + sk.dish"></span>
+                            </div>
+                        </div>
+                        <button x-show="sk.reason === 'staple'" @click="alwaysBuy(sk)"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
+                            Add
+                        </button>
+                        <button x-show="sk.reason === 'no ingredients recorded'"
+                            @click="drain = null; showRepertoire = true"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 shrink-0">
+                            Add ingredients
+                        </button>
+                    </div>
+                </template>
+                <div x-show="drain && !(drain.skipped || []).length" class="text-sm text-gray-400">
+                    Everything tonight needs is on the list.
+                </div>
+            </div>
+            <div class="flex justify-end mt-5">
+                <button @click="drain = null"
+                    class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold">
+                    Done
+                </button>
+            </div>
+        </div>
+    </div>
+
     {% include 'components/moments_hearth.html' %}
     {% include 'components/control_center.html' %}
 
@@ -325,6 +375,7 @@
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
                 plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
                 addDishId: '',
+                drain: null,
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -432,21 +483,56 @@
                     await this.loadRepertoire();
                 },
 
+                skipReason(sk) {
+                    return {
+                        'staple': 'assumed on hand — bought in large quantities',
+                        'already on the list': 'already on the list',
+                        'already made': 'already made',
+                        'ordered': 'takeout — nothing to buy',
+                        'no ingredients recorded': 'no ingredients recorded for it yet',
+                    }[sk.reason] || sk.reason;
+                },
+
+                activeListName() {
+                    const l = (this.lists || []).find(x => x.id === this.activeId);
+                    return l ? l.name : 'the list';
+                },
+
                 async plateToList() {
-                    // ONE request for the whole plate — the server skips
-                    // staples, already-made dishes and anything already open.
+                    // ONE request for the whole plate. The result is SHOWN
+                    // rather than reduced to a yes/no: a skip nobody can see
+                    // reads as a bug, which is exactly how this was reported.
                     try {
                         const r = await fetch(this.apiBase + 'api/meals/plate/to-list?list_id='
                             + encodeURIComponent(this.activeId || ''), { method: 'POST' });
                         if (!r.ok) { showGlobalAlert('Could not add those to the list.'); return; }
-                        const res = await r.json();
-                        const n = (res.added || []).length;
-                        if (!res.dish_count) showGlobalAlert('There is nothing on tonight yet.');
-                        else if (!n) showGlobalAlert('Everything is a staple or already on the list.');
+                        this.drain = await r.json();
+                        if (!this.drain.dish_count) showGlobalAlert('There is nothing on tonight yet.');
                         this.loadItems(true);
                     } catch (e) {
                         showGlobalAlert('Could not reach the server.');
                     }
+                },
+
+                async alwaysBuy(sk) {
+                    // Flip the guess permanently AND put it on the list now.
+                    // Bulk buyers restock rice and beans; other households
+                    // assume they are in the cupboard. Only this family knows.
+                    if (sk.dish_id) {
+                        await fetch(this.apiBase + 'api/meals/dishes/' + sk.dish_id + '/ingredient', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: sk.name, kind: 'fresh' })
+                        });
+                    }
+                    await fetch(this.apiBase + 'api/shopping/items', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: sk.name, list_id: this.activeId,
+                                               added_via: 'meal' })
+                    });
+                    this.drain.skipped = (this.drain.skipped || []).filter(x => x !== sk);
+                    this.drain.added = [...(this.drain.added || []), sk.name];
+                    await this.loadRepertoire();
+                    this.loadItems(true);
                 },
 
                 dishBlurb(d) {
