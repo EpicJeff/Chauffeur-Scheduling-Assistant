@@ -88,10 +88,31 @@
                                 <div class="min-w-0 flex-1">
                                     <div class="font-semibold text-white truncate" x-text="m.name"></div>
                                     <div class="text-[11px] text-gray-500" x-text="mealBlurb(m)"></div>
-                                    <!-- A plate is one meal; showing its parts is
-                                         what makes that legible rather than opaque. -->
+                                    <!-- Dish chips: tonight's actual plate. Tap to
+                                         swap within a pool, ✓ to mark already made
+                                         (its own minutes come off), ? to answer what
+                                         the model was unsure about. -->
+                                    <div class="flex flex-wrap gap-1.5 mt-1.5" x-show="(m.dishes || []).length">
+                                        <template x-for="d in (m.dishes || [])" :key="'dc-' + m.id + '-' + d.id">
+                                            <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
+                                                :class="(m.leftover_dish_ids || []).includes(d.id)
+                                                    ? 'bg-gray-900 border-gray-700 text-gray-600 line-through'
+                                                    : 'bg-gray-800 border-gray-700 text-gray-300'">
+                                                <button @click="swapDish(m, d)" :disabled="d._pool < 2"
+                                                    :title="d._pool > 1 ? 'Swap for another option' : d.name"
+                                                    :class="d._pool > 1 ? 'hover:text-white' : 'cursor-default'"
+                                                    x-text="d.short_name || d.name"></button>
+                                                <button @click="dishLeftover(m, d)" title="Already made"
+                                                    class="text-gray-600 hover:text-pink-300">✓</button>
+                                                <button x-show="d.needs_detail" @click="refineDish(m, d)"
+                                                    :title="d.detail_question || 'Which kind?'"
+                                                    class="text-amber-400 hover:text-amber-300 font-bold">?</button>
+                                            </span>
+                                        </template>
+                                    </div>
+                                    <!-- Legacy M3 entries (no dishes) still show their parts. -->
                                     <div class="text-[11px] text-gray-600 truncate"
-                                        x-show="mealParts(m)" x-text="mealParts(m)"></div>
+                                        x-show="!(m.dishes || []).length && mealParts(m)" x-text="mealParts(m)"></div>
                                 </div>
                                 <button @click="mealToList(m)"
                                     class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white shrink-0">
@@ -380,6 +401,38 @@
                     } catch (e) {
                         showGlobalAlert('Could not add that meal');
                     } finally { this.mealBusy = false; }
+                },
+
+                async swapDish(m, d) {
+                    // Cycle to the next option in this slot's pool. The slot is
+                    // the unit of choice, so only its own alternatives are offered.
+                    if ((d._pool || 1) < 2) return;
+                    const r = await fetch(this.apiBase + 'api/meals/repertoire/' + m.id
+                        + '/plate?swap=' + encodeURIComponent(d._slot)
+                        + '&after=' + encodeURIComponent(d.id), { method: 'POST' });
+                    if (r.ok) await this.loadSuggestions();
+                },
+
+                async dishLeftover(m, d) {
+                    await fetch(this.apiBase + 'api/meals/leftovers', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ meal_id: m.id, dish_ids: [d.id],
+                                               label: m.name })
+                    });
+                    await this.loadSuggestions();
+                },
+
+                async refineDish(m, d) {
+                    const answer = await promptInput(d.short_name || d.name,
+                        d.detail_question || 'Which kind, and how is it cooked?',
+                        { placeholder: 'e.g. russet, roasted' });
+                    if (!answer || !answer.trim()) return;
+                    await fetch(this.apiBase + 'api/meals/dishes/' + d.id + '/refine', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ description: answer.trim() })
+                    });
+                    await this.loadSuggestions();
+                    await this.loadRepertoire();
                 },
 
                 async renameMeal(m) {

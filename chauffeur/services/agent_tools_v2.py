@@ -1268,9 +1268,22 @@ def add_meal_to_repertoire(name: str, acting_member: dict = None) -> Dict[str, A
     if existing:
         return {"status": "success",
                 "message": f"{existing['name']} is already in the repertoire."}
-    meal = meals.create_meal(name)
-    hands = int(meal.get('prep_ahead_mins') or 0) + int(meal.get('finish_mins') or 0)
+    meal = meals.create_meal_from_dishes(name)
+    from services import storage as _st
+    plate = meals.compose_meal(meal)
+    hands = int(plate.get('prep_ahead_mins') or 0) + int(plate.get('finish_mins') or 0)
+    parts = [d.get('short_name') or d.get('name') for d in plate.get('dishes') or []]
+    vague = [d for d in plate.get('dishes') or [] if d.get('needs_detail')]
     fresh = [i['name'] for i in meal.get('ingredients') or [] if i.get('kind') == 'fresh']
+    if parts:
+        bits = [f"about {hands} min hands-on"] if hands else []
+        msg = f"Added {meal['name']} — " + ", ".join(parts) + "."
+        if bits:
+            msg += f" I've got it at {bits[0]}."
+        if vague:
+            q = vague[0].get('detail_question') or f"What kind of {vague[0].get('short_name')}?"
+            msg += f" One thing: {q}"
+        return {"status": "success", "message": msg}
     bits = []
     if hands:
         bits.append(f"about {hands} min hands-on")
@@ -1312,6 +1325,20 @@ def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
             "message": f"Added for {meal['name']}: " + ", ".join(res['added']) + "."}
 
 
+def refine_meal_dish(dish_name: str, detail: str, acting_member: dict = None) -> Dict[str, Any]:
+    """Answer a "which potatoes, and how?" question so the times and the
+    shopping line get accurate."""
+    from services import storage, meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error", "message": f"I don't have a dish called '{dish_name}'."}
+    updated = meals.refine_dish(dish['id'], detail)
+    hands = int(updated.get('prep_ahead_mins') or 0) + int(updated.get('finish_mins') or 0)
+    tail = f" — about {hands} min hands-on" if hands else ""
+    return {"status": "success",
+            "message": f"Got it: {updated['name']}{tail}."}
+
+
 def mark_leftovers(what: str = "", target_date: str = "today", parts: str = "",
                    acting_member: dict = None) -> Dict[str, Any]:
     """'We're having leftovers tonight' / 'the rice is already made'. Stops the
@@ -1324,10 +1351,18 @@ def mark_leftovers(what: str = "", target_date: str = "today", parts: str = "",
     part_list = [p.strip() for p in (parts or '').replace(' and ', ',').split(',')
                  if p.strip()]
     meal = storage.find_meal_by_name(what) if what else None
+    # Resolve named parts to real DISHES where we can: a dish carries its own
+    # times, so "the rice is made" subtracts the rice's actual minutes rather
+    # than a proportional guess.
+    dish_ids = []
+    for p in part_list:
+        d = storage.find_dish_by_name(p)
+        if d:
+            dish_ids.append(d['id'])
     rec = Leftover(date=day.isoformat(),
                    meal_id=meal['id'] if meal else None,
                    label=(meal['name'] if meal else (what or '').strip() or None),
-                   parts=part_list).model_dump()
+                   parts=part_list, dish_ids=dish_ids).model_dump()
     storage.add_leftover(rec)
 
     when = "tonight" if day == __import__('datetime').date.today() else day.strftime('%A')
@@ -1792,6 +1827,18 @@ def get_available_tools() -> List[Dict]:
             }
         },
         {
+            "name": "refine_meal_dish",
+            "description": "Answers a question about a vague part of a meal ('the potatoes are russet, roasted', 'we mash them'). Makes that dish's cook time and shopping line accurate. Use whenever the family clarifies WHICH kind of something or HOW it is cooked.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "The vague dish, e.g. 'potatoes'."},
+                    "detail": {"type": "string", "description": "What they said, e.g. 'russet, roasted'."}
+                },
+                "required": ["dish_name", "detail"]
+            }
+        },
+        {
             "name": "mark_leftovers",
             "description": "Records that food is ALREADY MADE for a day ('we're having leftovers tonight', 'we're finishing Sunday's chili', 'the rice is already made'). This stops the app holding cook time for work nobody is going to do, and keeps those ingredients off the shopping list. Use `parts` when only some of a meal is left over.",
             "parameters": {
@@ -1799,7 +1846,7 @@ def get_available_tools() -> List[Dict]:
                 "properties": {
                     "what": {"type": "string", "description": "What the leftovers are, e.g. 'chili'. Matches a meal in the repertoire when it can; free text otherwise. Omit for plain 'we have leftovers'."},
                     "target_date": {"type": "string", "description": "Which day: 'today' (default), 'tomorrow', a weekday name, or YYYY-MM-DD."},
-                    "parts": {"type": "string", "description": "Only if PART of a meal is left over, e.g. 'rice' or 'rice and beans'. Omit when the whole meal is leftovers."}
+                    "parts": {"type": "string", "description": "Only if PART of a meal is left over, e.g. 'rice' or 'rice and beans'. Name the dishes; each one recognised subtracts its own real cook time. Omit when the whole meal is leftovers."}
                 },
                 "required": []
             }

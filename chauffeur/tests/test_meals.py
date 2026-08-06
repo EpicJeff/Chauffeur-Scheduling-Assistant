@@ -867,6 +867,250 @@ def scenario_a_model_that_echoes_the_description_is_ignored():
           "and no description is stored when nothing was shortened")
 
 
+# --- M4: dishes are the unit of work ----------------------------------------
+
+def _dish(name, **kw):
+    from models.schemas import Dish
+    d = Dish(name=name, **kw).model_dump()
+    storage.add_dish(d)
+    return d
+
+
+def _plate_meal():
+    """The family's actual plate, as dishes: chicken + rice + one of three
+    beans + one of two vegetables + an optional salad."""
+    from models.schemas import Meal, MealSlot
+    chicken = _dish("roasted chicken thighs", short_name="chicken", role="protein",
+                    prep_ahead_mins=5, finish_mins=5, unattended_mins=40,
+                    needs_ahead='thaw', holds_well=True, portability='utensils_ok',
+                    ingredients=[{'name': 'chicken thighs', 'kind': 'fresh'}])
+    rice = _dish("white rice", short_name="rice", role="starch",
+                 prep_ahead_mins=2, finish_mins=0, unattended_mins=20,
+                 holds_well=True, portability='utensils_ok',
+                 ingredients=[{'name': 'rice', 'kind': 'staple'}])
+    beans = [_dish(f"{k} beans", short_name="beans", role="side",
+                   finish_mins=5, holds_well=True, portability='utensils_ok',
+                   ingredients=[{'name': f'{k} beans', 'kind': 'fresh'}])
+             for k in ("black", "red", "pinto")]
+    veg = [_dish(f"steamed {v}", short_name="vegetable", role="vegetable",
+                 finish_mins=8, holds_well=True, portability='utensils_ok',
+                 ingredients=[{'name': v, 'kind': 'fresh'}])
+           for v in ("broccoli", "carrots")]
+    salad = _dish("green salad", short_name="salad", role="side",
+                  finish_mins=10, holds_well=False, portability='utensils_ok',
+                  ingredients=[{'name': 'lettuce', 'kind': 'fresh'}])
+    meal = Meal(name="Chicken plate", slots=[
+        MealSlot(label="chicken", dish_ids=[chicken['id']]),
+        MealSlot(label="rice", dish_ids=[rice['id']]),
+        MealSlot(label="beans", dish_ids=[b['id'] for b in beans]),
+        MealSlot(label="vegetable", dish_ids=[v['id'] for v in veg]),
+        MealSlot(label="salad", dish_ids=[salad['id']], optional=True),
+    ]).model_dump()
+    storage.add_meal(meal)
+    return meal, {'chicken': chicken, 'rice': rice, 'beans': beans,
+                  'veg': veg, 'salad': salad}
+
+
+def scenario_a_plate_is_one_dish_per_slot_not_every_option():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    plate = meals.compose_meal(meal)
+    names = [x['short_name'] for x in plate['dishes']]
+    check(names == ["chicken", "rice", "beans", "vegetable", "salad"],
+          f"one dish per slot — got {names}")
+    check(len(storage.get_meals()) == 1 and len(storage.get_dishes()) == 8,
+          "3 beans x 2 veg is 6 dinners but never 6 meal rows — dishes are stored, "
+          f"combinations are not (meals={len(storage.get_meals())}, "
+          f"dishes={len(storage.get_dishes())})")
+
+
+def scenario_timing_aggregates_hands_on_but_not_the_oven():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    plate = meals.compose_meal(meal)
+    # prep 5+2, finish 5+0+5+8+10 — one cook, one pair of hands.
+    check(plate['prep_ahead_mins'] == 7, f"prep sums, got {plate['prep_ahead_mins']}")
+    check(plate['finish_mins'] == 28, f"finish sums, got {plate['finish_mins']}")
+    # The oven runs while the rice sits: 40 and 20 overlap, they do not add.
+    check(plate['unattended_mins'] == 40,
+          f"unattended takes the MAX, not the sum — got {plate['unattended_mins']}")
+    check(plate['needs_ahead'] == 'thaw',
+          "the strongest lead-time requirement among the dishes wins")
+
+
+def scenario_a_plate_is_only_as_portable_as_its_worst_dish():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    check(meals.compose_meal(meal)['portability'] == 'utensils_ok',
+          "all parts travel, so the plate travels")
+    storage.update_dish(d['rice']['id'], {'portability': 'none'})
+    check(meals.compose_meal(meal)['portability'] == 'none',
+          "one dish that cannot travel grounds the whole plate — weakest link")
+    check(not meals.compose_meal(meal)['holds_well'],
+          "and holds_well is an AND across the dishes (the salad never held)")
+
+
+def scenario_per_dish_leftovers_are_exact():
+    """The payoff. M3 had to guess proportionally by component count; a dish
+    carries its own minutes, so "the rice is made" subtracts exactly the
+    rice."""
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    before = meals.compose_meal(meal)
+    _leftover(meal_id=meal['id'], dish_ids=[d['rice']['id']])
+    after = meals.compose_meal(meal, leftovers=storage.get_leftovers(DAY))
+
+    check(after['prep_ahead_mins'] == before['prep_ahead_mins'] - 2,
+          f"exactly the rice's 2 prep minutes came off, got {after['prep_ahead_mins']}")
+    check(after['leftover_dish_ids'] == [d['rice']['id']], "and it says which")
+    check(after['unattended_mins'] == 40,
+          "the chicken still needs its oven time — only the rice was made")
+
+    res = meals.ingredients_to_shopping(meal)
+    check(not any('rice' == a for a in res['added']),
+          f"and nothing is bought for the made dish, got {res['added']}")
+
+
+def scenario_an_already_made_option_is_the_one_chosen():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    # Pinto beans are in the fridge — that is obviously tonight's bean.
+    _leftover(meal_id=meal['id'], dish_ids=[d['beans'][2]['id']])
+    plate = meals.compose_meal(meal, leftovers=storage.get_leftovers(DAY))
+    bean = next(x for x in plate['dishes'] if x['short_name'] == 'beans')
+    check(bean['id'] == d['beans'][2]['id'],
+          "a leftover inside a pool is the obvious pick for that slot")
+
+
+def scenario_pools_rotate_on_their_own():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    import time as _t
+    storage.update_dish(d['beans'][0]['id'], {'last_served_at': _t.time()})
+    storage.update_dish(d['beans'][1]['id'], {'last_served_at': _t.time() - 9 * 86400})
+    plate = meals.compose_meal(meal)
+    bean = next(x for x in plate['dishes'] if x['short_name'] == 'beans')
+    check(bean['id'] == d['beans'][2]['id'],
+          "the never-served bean comes up first; pools rotate without maintenance")
+
+
+def scenario_shopping_buys_one_platesworth_not_every_alternative():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    res = meals.ingredients_to_shopping(meal)
+    beans_bought = [a for a in res['added'] if 'beans' in a]
+    check(len(beans_bought) == 1,
+          f"one bean, not three — got {beans_bought}")
+    check('rice' in res['skipped'], "the staple is still skipped")
+    check(any('chicken' in a for a in res['added']), "and the protein is bought")
+
+
+def scenario_vague_dishes_are_guessed_flagged_and_refinable():
+    """Entry must never be gated on answering questions — that is how a
+    repertoire stays empty. The model guesses, marks the guess, and the
+    family sharpens it later."""
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",
+                                    "home_location": HOME}
+    split = {"name": "Chicken plate", "slots": [
+        {"label": "potatoes", "optional": False, "dishes": [
+            {"name": "roasted potatoes", "short_name": "potatoes", "role": "starch",
+             "prep_ahead_mins": 10, "finish_mins": 5, "unattended_mins": 35,
+             "portability": "utensils_ok", "holds_well": True,
+             "ingredients": [{"name": "potatoes", "kind": "fresh"}],
+             "needs_detail": True,
+             "detail_question": "Which potatoes, and roasted or mashed?"}]}]}
+    with mock.patch('services.model_pools.call_pool_json', return_value=split):
+        meal = meals.create_meal_from_dishes("chicken plate with potatoes")
+    check(meal['slots'], "the meal saved despite the vagueness — never a gate")
+    vague = storage.dishes_needing_detail()
+    check(len(vague) == 1 and vague[0]['detail_question'],
+          f"the guess is flagged with the question that would fix it, got {vague}")
+
+    refined = {"name": "x", "slots": [{"label": "potatoes", "dishes": [
+        {"name": "mashed russet potatoes", "short_name": "potatoes",
+         "prep_ahead_mins": 5, "finish_mins": 20, "unattended_mins": 0,
+         "portability": "utensils_ok", "holds_well": True,
+         "ingredients": [{"name": "russet potatoes", "kind": "fresh"},
+                         {"name": "butter", "kind": "staple"}]}]}]}
+    with mock.patch('services.model_pools.call_pool_json', return_value=refined):
+        out = meals.refine_dish(vague[0]['id'], "russet, mashed")
+    check(out['name'] == "mashed russet potatoes" and not out['needs_detail'],
+          f"refining re-derives the dish and clears the flag, got {out['name']}")
+    check(out['finish_mins'] == 20 and out['unattended_mins'] == 0,
+          "and the TIMES change with the cooking method — the reason to ask")
+    items = [i['name'] for i in out['ingredients']]
+    check("russet potatoes" in items, f"as does the shopping line, got {items}")
+
+
+def scenario_dish_split_falls_back_rather_than_losing_the_meal():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key"}
+    with mock.patch('services.model_pools.call_pool_json',
+                    side_effect=RuntimeError("boom")):
+        meal = meals.create_meal_from_dishes("chicken, rice, salad")
+    check(meal and meal['name'], "a model failure still saves something")
+    check(storage.find_meal_by_name("chicken, rice, salad"),
+          "falling back to the flat M3 entry beats losing what they typed")
+
+
+def scenario_dishes_are_reused_across_meals():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key"}
+    rice_slot = {"label": "rice", "optional": False, "dishes": [
+        {"name": "white rice", "short_name": "rice", "finish_mins": 2,
+         "unattended_mins": 20, "portability": "utensils_ok",
+         "ingredients": [{"name": "rice", "kind": "staple"}]}]}
+    for desc in ("chicken and rice", "beef and rice"):
+        with mock.patch('services.model_pools.call_pool_json',
+                        return_value={"name": desc.title(), "slots": [rice_slot]}):
+            meals.create_meal_from_dishes(desc)
+    rices = [d for d in storage.get_dishes() if d['name'] == 'white rice']
+    check(len(rices) == 1,
+          f"rice is rice — defined once and shared, got {len(rices)} copies")
+    check(len(storage.get_meals()) == 2, "but they are still two meals")
+
+
+def scenario_swapping_a_chip_sticks_for_the_day_only():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    import main
+    first = meals.compose_meal(meal)
+    bean = next(x for x in first['dishes'] if x['short_name'] == 'beans')
+
+    swapped = main.swap_plate_dish(meal['id'], swap='beans', after=bean['id'], date=DAY)
+    new_bean = next(x for x in swapped['dishes'] if x['short_name'] == 'beans')
+    check(new_bean['id'] != bean['id'], "tapping the chip moves to the next option")
+    check(new_bean['id'] in [b['id'] for b in d['beans']],
+          "and stays inside that slot's own pool")
+
+    again = meals.compose_meal(meal, prefer=meals.get_choices(DAY, meal['id']))
+    check(next(x for x in again['dishes'] if x['short_name'] == 'beans')['id']
+          == new_bean['id'], "the pick sticks for the day")
+    check(not meals.get_choices("2099-01-01", meal['id']),
+          "but it is a same-day preference, not a permanent edit")
+
+    # Wraps around rather than dead-ending on the last option.
+    cur = new_bean['id']
+    for _ in range(len(d['beans'])):
+        cur = meals.next_in_pool(meal, 'beans', cur)
+    check(cur == new_bean['id'], "cycling the pool returns to where it started")
+
+
+def scenario_deleting_a_dish_does_not_leave_a_dangling_slot():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    import main
+    main.remove_dish(d['salad']['id'])
+    after = storage.get_meal(meal['id'])
+    labels = [s['label'] for s in after['slots']]
+    check('salad' not in labels,
+          f"the emptied slot goes with the dish, got {labels}")
+    check(all(s['dish_ids'] for s in after['slots']),
+          "and no slot is left pointing at nothing")
+    check(meals.compose_meal(after)['dishes'], "the meal still composes")
+
+
 def scenario_metadata_comes_from_the_name_alone():
     reset_db(); _seed_people()
     storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",

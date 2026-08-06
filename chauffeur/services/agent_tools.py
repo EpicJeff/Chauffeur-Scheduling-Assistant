@@ -512,6 +512,13 @@ class MarkMealServedTool(BaseModel):
     """
     meal_name: str = Field(..., description="What they ate.")
 
+class RefineMealDishTool(BaseModel):
+    """
+    Answers a question about a vague part of a meal ("the potatoes are russet, roasted"), making that dish's cook time and shopping line accurate.
+    """
+    dish_name: str = Field(..., description="The vague dish, e.g. 'potatoes'.")
+    detail: str = Field(..., description="What they said, e.g. 'russet, roasted'.")
+
 class MarkLeftoversTool(BaseModel):
     """
     Records that food is ALREADY MADE for a day ("we're having leftovers tonight", "the rice is already made"), so the app stops holding cook time for work nobody will do and keeps those ingredients off the shopping list.
@@ -614,6 +621,7 @@ TOOL_SCHEMAS = {
     "mark_meal_served": MarkMealServedTool.model_json_schema(),
     "mark_leftovers": MarkLeftoversTool.model_json_schema(),
     "clear_leftovers": ClearLeftoversTool.model_json_schema(),
+    "refine_meal_dish": RefineMealDishTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1750,6 +1758,10 @@ def handle_mark_meal_served(args: dict) -> dict:
     from services.agent_tools_v2 import mark_meal_served
     return mark_meal_served(args.get("meal_name") or "")
 
+def handle_refine_meal_dish(args: dict) -> dict:
+    from services.agent_tools_v2 import refine_meal_dish
+    return refine_meal_dish(args.get("dish_name") or "", args.get("detail") or "")
+
 def handle_mark_leftovers(args: dict) -> dict:
     from services.agent_tools_v2 import mark_leftovers
     return mark_leftovers(args.get("what") or "",
@@ -1849,6 +1861,7 @@ TOOL_HANDLERS = {
     "mark_meal_served": handle_mark_meal_served,
     "mark_leftovers": handle_mark_leftovers,
     "clear_leftovers": handle_clear_leftovers,
+    "refine_meal_dish": handle_refine_meal_dish,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

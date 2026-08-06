@@ -54,6 +54,7 @@ INDEX_SPEC = {
     "shopping_items": [["id"], ["list_id"]],
     "meals": [["id"]],
     "leftovers": [["id"], ["date"]],
+    "dishes": [["id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

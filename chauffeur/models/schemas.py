@@ -736,6 +736,60 @@ class MealIngredient(BaseModel):
     role: Optional[str] = None
     optional: bool = False             # the salad nobody minds skipping
 
+class Dish(BaseModel):
+    # Meals & provisioning arc M4. THE DISH IS THE UNIT OF WORK — roasted
+    # potatoes and mashed potatoes are different jobs with different times and
+    # different shopping, and a plate's timing is the aggregate of its dishes.
+    # M3 carried one set of times for a whole plate, which is the same
+    # "one number cannot express a weeknight" mistake the four-number split
+    # already fixed once, made again a level down.
+    #
+    # Dishes are REUSED across meals (rice is rice), which is also what makes
+    # per-dish leftovers exact instead of a proportional guess.
+    #
+    # Still no steps, ever. A dish is (name, times, ingredients, portability)
+    # — "roasted russet potatoes" is a dish; how to roast them is not our
+    # business. That line does not move.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    name: str                          # "roasted russet potatoes"
+    short_name: Optional[str] = None   # "potatoes" — what the family calls it
+    role: Optional[str] = None         # protein | starch | vegetable | side | ...
+
+    prep_ahead_mins: int = 0
+    finish_mins: int = 0
+    unattended_mins: int = 0
+    needs_ahead: str = 'none'          # none | thaw | marinate | slow_cooker
+
+    holds_well: bool = False
+    portability: str = 'none'          # none | handheld | utensils_ok
+
+    source: str = 'prep'               # prep | ordered (a dish can be bought:
+    vendor: Optional[str] = None       # rotisserie chicken alongside a salad
+    order_lead_mins: int = 0           # you make)
+
+    ingredients: List[MealIngredient] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+
+    # "Potatoes" is too vague to time or shop for — which kind, cooked how?
+    # The model GUESSES rather than interrogating (entry must stay one
+    # sentence), flags the guess here, and the family refines when they feel
+    # like it. A gate at entry time is how a repertoire never gets filled.
+    needs_detail: bool = False
+    detail_question: Optional[str] = None
+
+    last_served_at: Optional[float] = None
+    is_active: bool = True
+    created_at: float = Field(default_factory=time.time)
+
+class MealSlot(BaseModel):
+    # One position on the plate, filled by exactly ONE of its dishes. A fixed
+    # part is simply a slot with a single option, so there is no separate
+    # notion of "fixed vs substitutable" to keep straight.
+    label: Optional[str] = None        # "beans", "vegetable"
+    dish_ids: List[str] = Field(default_factory=list)
+    optional: bool = False             # the salad nobody minds skipping
+
 class Meal(BaseModel):
     # Meals & provisioning arc M3 — the REPERTOIRE, not a recipe box. A recipe
     # answers "how do I make this"; an entry here answers "can we have this
@@ -743,9 +797,15 @@ class Meal(BaseModel):
     # any business storing. Nobody in this family reads instructions to make
     # tacos. THERE ARE NO STEPS, EVER — that is the line between this and a
     # recipe box; `notes`/`link` cover the twice-a-year meal nobody remembers.
+    #
+    # M4: a meal is now a COMPOSITION of dish slots. Its own timing fields
+    # below are the fallback for legacy entries with no slots — a composed
+    # meal derives everything from its chosen dishes. The combinations are
+    # never persisted: 3 beans x 5 vegetables is 15 dinners, not 15 rows.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     doc_id: Optional[int] = None
     name: str
+    slots: List[MealSlot] = Field(default_factory=list)
     # What the family actually typed, when the model shortened it into `name`
     # ("chicken, rice, beans (black/red/pinto), veggies…" -> "Chicken plate").
     # Kept so they can check the model read their plate correctly.
@@ -795,8 +855,12 @@ class Leftover(BaseModel):
     label: Optional[str] = None          # free-form ("Sunday's chili")
     # Component names that are already made. EMPTY means the WHOLE meal is
     # leftovers — the common case, and the only one where the time saved is
-    # exactly known.
+    # exactly known. (Legacy M3 path; `dish_ids` is the exact one.)
     parts: List[str] = Field(default_factory=list)
+    # M4: leftovers by DISH. Because a dish carries its own times, marking the
+    # rice as already made subtracts the rice's actual minutes instead of the
+    # proportional-by-count estimate M3 had to guess with.
+    dish_ids: List[str] = Field(default_factory=list)
     reheat_mins: int = 10
     created_at: float = Field(default_factory=time.time)
 

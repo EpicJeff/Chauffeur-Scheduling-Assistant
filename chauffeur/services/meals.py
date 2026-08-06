@@ -541,6 +541,131 @@ def _eater_diet(plan: dict) -> tuple:
     return avoid, dislike
 
 
+# --- M4: a meal is a composition of dishes ----------------------------------
+# The DISH is the unit of work. A plate's timing is the aggregate of the
+# dishes actually chosen for it, which is both more accurate than one set of
+# numbers per plate and what makes per-dish leftovers exact.
+
+def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> list:
+    """One dish per slot — the plate as it would actually be made today.
+
+    Choice order: an explicit preference, then anything already made (a
+    leftover in the pool is the obvious pick), then least-recently-served so
+    the pools rotate on their own.
+    """
+    prefer = prefer or {}
+    done = set()
+    for l in leftovers or []:
+        done.update(l.get('dish_ids') or [])
+
+    chosen = []
+    for idx, slot in enumerate(meal.get('slots') or []):
+        pool = storage.get_dishes_by_ids(slot.get('dish_ids') or [])
+        if not pool:
+            continue
+        key = slot.get('label') or f"slot{idx}"
+        pick = next((d for d in pool if d['id'] == prefer.get(key)), None)
+        if pick is None:
+            pick = next((d for d in pool if d['id'] in done), None)
+        if pick is None:
+            pick = min(pool, key=lambda d: d.get('last_served_at') or 0)
+        chosen.append({**pick, '_slot': key, '_optional': bool(slot.get('optional')),
+                       '_pool': len(pool)})
+    return chosen
+
+
+def compose(meal: dict, dishes: list, leftovers: list = None) -> dict:
+    """Roll a set of dishes up into the timing shape the fit filter reads.
+
+    Hands-on time SUMS (one cook, one pair of hands) while unattended time
+    takes the MAX (the oven runs while the rice sits). Portability and
+    holds_well take the weakest link — a plate travels only as well as its
+    worst dish. Anything already made contributes nothing at all, which is
+    the exactness M3's proportional guess could not reach.
+    """
+    done = set()
+    for l in leftovers or []:
+        done.update(l.get('dish_ids') or [])
+
+    prep = finish = 0
+    unattended = 0
+    holds, port_rank = True, 9
+    ahead = 'none'
+    ahead_rank = {'none': 0, 'thaw': 1, 'marinate': 2, 'slow_cooker': 3}
+    for d in dishes:
+        if d['id'] in done:
+            continue                      # already made: costs nothing
+        prep += int(d.get('prep_ahead_mins') or 0)
+        finish += int(d.get('finish_mins') or 0)
+        unattended = max(unattended, int(d.get('unattended_mins') or 0))
+        holds = holds and bool(d.get('holds_well'))
+        port_rank = min(port_rank, _PORTABILITY_RANK.get(
+            str(d.get('portability') or 'none').lower(), 0))
+        if ahead_rank.get(d.get('needs_ahead') or 'none', 0) > ahead_rank.get(ahead, 0):
+            ahead = d.get('needs_ahead') or 'none'
+
+    port = 'none'
+    for k, v in _PORTABILITY_RANK.items():
+        if v == (port_rank if port_rank < 9 else 0):
+            port = k
+    return {
+        **meal,
+        'prep_ahead_mins': prep, 'finish_mins': finish,
+        'unattended_mins': unattended, 'needs_ahead': ahead,
+        'holds_well': holds if dishes else bool(meal.get('holds_well')),
+        'portability': port if dishes else str(meal.get('portability') or 'none'),
+        'dishes': dishes,
+        'leftover_dish_ids': sorted(done & {d['id'] for d in dishes}),
+    }
+
+
+_CHOICES_KEY = 'meal_slot_choices'
+
+
+def get_choices(date_str: str, meal_id: str = None) -> dict:
+    """Which option the family picked per slot, for one day. Kept in app_state
+    rather than its own table because it is a same-day preference, not a
+    record worth keeping — and it is pruned on every write."""
+    all_ch = storage.get_app_state(_CHOICES_KEY) or {}
+    day = all_ch.get(date_str) or {}
+    return (day.get(meal_id) or {}) if meal_id else day
+
+
+def set_choice(date_str: str, meal_id: str, slot: str, dish_id: str):
+    all_ch = storage.get_app_state(_CHOICES_KEY) or {}
+    # Yesterday's pick is not today's dinner.
+    all_ch = {d: v for d, v in all_ch.items() if d >= date_str}
+    all_ch.setdefault(date_str, {}).setdefault(meal_id, {})[slot] = dish_id
+    storage.set_app_state(_CHOICES_KEY, all_ch)
+
+
+def next_in_pool(meal: dict, slot_label: str, after_dish_id: str) -> Optional[str]:
+    """The next option in a slot's pool, wrapping — what a tap on the chip
+    should land on."""
+    for idx, slot in enumerate(meal.get('slots') or []):
+        key = slot.get('label') or f"slot{idx}"
+        if key != slot_label:
+            continue
+        ids = list(slot.get('dish_ids') or [])
+        if len(ids) < 2:
+            return None
+        try:
+            i = ids.index(after_dish_id)
+        except ValueError:
+            return ids[0]
+        return ids[(i + 1) % len(ids)]
+    return None
+
+
+def compose_meal(meal: dict, prefer: dict = None, leftovers: list = None) -> dict:
+    """`choose_dishes` + `compose`. Legacy meals with no slots pass through on
+    their own stored numbers, so nothing breaks mid-migration."""
+    if not (meal.get('slots') or []):
+        return {**meal, 'dishes': []}
+    dishes = choose_dishes(meal, prefer, leftovers)
+    return compose(meal, dishes, leftovers)
+
+
 def leftover_for(meal: dict, leftovers: list) -> Optional[dict]:
     """The leftover record covering this meal, if any."""
     for l in leftovers or []:
@@ -634,8 +759,18 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
             continue
         # Leftovers are applied BEFORE the window check — the whole point is
         # that the app stops holding time for work already done.
-        lo = leftover_for(meal, leftovers)
-        meal = apply_leftovers(meal, lo) if lo else meal
+        if meal.get('slots'):
+            # M4: composition already excludes already-made dishes, exactly.
+            meal = compose_meal(meal,
+                                prefer=get_choices(plan.get('date') or _today_iso(),
+                                                   meal.get('id')),
+                                leftovers=leftovers)
+            if meal.get('leftover_dish_ids'):
+                meal['leftover'] = True
+                meal['leftover_exact'] = True
+        else:
+            lo = leftover_for(meal, leftovers)
+            meal = apply_leftovers(meal, lo) if lo else meal
         if binding:
             ok, why = meal_fits_slot(meal, binding)
             if not ok:
@@ -662,6 +797,10 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
 def _now_ts() -> float:
     import time as _t
     return _t.time()
+
+
+def _today_iso() -> str:
+    return datetime.date.today().isoformat()
 
 
 # --- population: the human supplies the NAME, the model supplies the rest ----
@@ -803,6 +942,162 @@ def suggest_meal_metadata(description: str) -> dict:
     return out
 
 
+_DISH_SYSTEM = (
+    "You break a family's description of a meal into DISHES. Reply with "
+    "STRICT JSON only, no prose, no code fences. You are NOT writing recipes "
+    "— never return steps, instructions or quantities.\n\n"
+    "Schema: {\"name\": str, \"slots\": [{\"label\": str, \"optional\": bool, "
+    "\"dishes\": [{\"name\": str, \"short_name\": str, \"role\": str, "
+    "\"prep_ahead_mins\": int, \"finish_mins\": int, \"unattended_mins\": int, "
+    "\"needs_ahead\": \"none|thaw|marinate|slow_cooker\", \"holds_well\": bool, "
+    "\"portability\": \"none|handheld|utensils_ok\", "
+    "\"source\": \"prep|ordered\", \"tags\": [str], "
+    "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}], "
+    "\"needs_detail\": bool, \"detail_question\": str|null}]}]}\n\n"
+    "How to split:\n"
+    "- name: a SHORT label for the whole meal, 2-4 words ('Chicken plate'). "
+    "Never echo the description back.\n"
+    "- Each part of the plate is a SLOT. A part with alternatives becomes ONE "
+    "slot holding one dish PER ALTERNATIVE: 'beans (black, red, or pinto)' is "
+    "a slot labelled 'beans' with THREE dishes — black beans, red beans, "
+    "pinto beans. A fixed part is a slot with a single dish.\n"
+    "- optional: true for a part the family would happily skip (a side salad).\n\n"
+    "Each DISH is a unit of cooking work, timed on its own:\n"
+    "- prep_ahead_mins is work that can be done earlier and set aside; "
+    "finish_mins must happen near eating; unattended_mins is oven or "
+    "slow-cooker time needing nobody at the stove. Rice is a little prep and "
+    "a lot of unattended; a salad is all finish.\n"
+    "- name is SPECIFIC enough to time and shop for ('roasted russet "
+    "potatoes'), short_name is what the family says ('potatoes').\n"
+    "- ingredients: kind='staple' for things a kitchen always has (salt, oil, "
+    "common spices, rice, pasta, flour), 'fresh' for what must be bought. No "
+    "quantities.\n"
+    "- needs_detail: TRUE when the family was too vague to time or shop "
+    "accurately — 'potatoes' does not say which kind or how cooked, and "
+    "roasted vs mashed are different jobs. GUESS a sensible common version "
+    "anyway and put it in `name`; never refuse and never leave it blank. Set "
+    "detail_question to the single short question that would resolve it "
+    "('Which potatoes, and roasted or mashed?').\n"
+    "- Be realistic about a weeknight home kitchen."
+)
+
+
+def _clean_dish(raw: dict) -> Optional[dict]:
+    from models.schemas import Dish
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get('name') or '').strip()[:70]
+    if not name:
+        return None
+
+    def _int(key, hi=600):
+        try:
+            return max(0, min(hi, int(raw.get(key) or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _choice(key, allowed, default):
+        v = str(raw.get(key) or '').strip().lower()
+        return v if v in allowed else default
+
+    ings, seen = [], set()
+    for i in (raw.get('ingredients') or [])[:15]:
+        if not isinstance(i, dict):
+            continue
+        nm = str(i.get('name') or '').strip()[:60]
+        if not nm or nm.lower() in seen:
+            continue
+        seen.add(nm.lower())
+        ings.append({'name': nm,
+                     'kind': 'staple' if str(i.get('kind') or '').lower() == 'staple'
+                             else 'fresh'})
+    return Dish(
+        name=name,
+        short_name=str(raw.get('short_name') or '').strip()[:40] or None,
+        role=str(raw.get('role') or '').strip()[:24] or None,
+        prep_ahead_mins=_int('prep_ahead_mins'), finish_mins=_int('finish_mins'),
+        unattended_mins=_int('unattended_mins'),
+        needs_ahead=_choice('needs_ahead',
+                            ('none', 'thaw', 'marinate', 'slow_cooker'), 'none'),
+        holds_well=bool(raw.get('holds_well')),
+        portability=_choice('portability', ('none', 'handheld', 'utensils_ok'), 'none'),
+        source=_choice('source', ('prep', 'ordered'), 'prep'),
+        ingredients=ings,
+        tags=[str(t).strip().lower()[:24] for t in (raw.get('tags') or [])[:6]
+              if str(t).strip()],
+        needs_detail=bool(raw.get('needs_detail')),
+        detail_question=str(raw.get('detail_question') or '').strip()[:120] or None,
+    ).model_dump()
+
+
+def split_into_dishes(description: str) -> dict:
+    """One interactive-tier call turning the family's words into a meal name
+    plus slots of dishes. Returns {} on failure so the caller can still save
+    something."""
+    from services import model_pools
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key or not (description or '').strip():
+        return {}
+    try:
+        res = model_pools.call_pool_json(
+            'interactive', api_key, _DISH_SYSTEM,
+            f"The family describes one of their meals as: {description.strip()}",
+            temperature=0.2, timeout_s=45, settings=settings)
+        if not isinstance(res, dict) or res.get('error'):
+            return {}
+    except Exception as e:
+        print(f"[meals] dish split failed for {description!r}: {e}")
+        return {}
+
+    slots = []
+    for raw_slot in (res.get('slots') or [])[:10]:
+        if not isinstance(raw_slot, dict):
+            continue
+        dishes = [d for d in (_clean_dish(x) for x in (raw_slot.get('dishes') or [])[:8])
+                  if d]
+        if not dishes:
+            continue
+        slots.append({'label': str(raw_slot.get('label') or '').strip()[:40] or None,
+                      'optional': bool(raw_slot.get('optional')),
+                      'dishes': dishes})
+    if not slots:
+        return {}
+    name = str(res.get('name') or '').strip()[:60]
+    return {'name': name if name and len(name) < len(description.strip()) else '',
+            'slots': slots}
+
+
+def create_meal_from_dishes(description: str) -> dict:
+    """The M4 entry path: type a plate however you say it, get one meal whose
+    parts are real dishes — and reuse the dishes already defined, so the rice
+    in a second meal is the same rice."""
+    from models.schemas import Meal
+    raw = (description or '').strip()
+    split = split_into_dishes(raw)
+    if not split:
+        return create_meal(raw)          # extraction unavailable — M3 fallback
+
+    slots = []
+    for s in split['slots']:
+        ids = []
+        for d in s['dishes']:
+            existing = storage.find_dish_by_name(d['name'])
+            if existing:
+                ids.append(existing['id'])
+                continue
+            storage.add_dish(d)
+            ids.append(d['id'])
+        slots.append({'label': s['label'], 'dish_ids': ids,
+                      'optional': s['optional']})
+
+    name = split['name'] or raw[:60]
+    meal = Meal(name=name, slots=slots,
+                description=raw if name != raw else None).model_dump()
+    storage.add_meal(meal)
+    return meal
+
+
 def create_meal(description: str, enrich: bool = True) -> dict:
     """Add a repertoire entry from the family's own words.
 
@@ -841,6 +1136,70 @@ def _category_already_open(list_id: str, name: str, options: list) -> bool:
     return False
 
 
+def refine_dish(dish_id: str, description: str) -> Optional[dict]:
+    """Re-derive a vague dish from a more specific answer ("russet, roasted").
+
+    This is what makes the guess safe: the model never blocks entry, and the
+    family sharpens it when they feel like it — which fixes the timing AND
+    the shopping line in one move.
+    """
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return None
+    fresh = split_into_dishes(description) or {}
+    picked = None
+    for s in fresh.get('slots') or []:
+        for d in s.get('dishes') or []:
+            picked = d
+            break
+        if picked:
+            break
+    if not picked:
+        # No model: at least record what they said and stop asking.
+        storage.update_dish(dish_id, {'name': (description or dish['name']).strip()[:70],
+                                      'needs_detail': False, 'detail_question': None})
+        return storage.get_dish(dish_id)
+    patch = {k: v for k, v in picked.items()
+             if k not in ('id', 'doc_id', 'created_at', 'last_served_at', 'is_active')}
+    patch['needs_detail'] = False
+    patch['detail_question'] = None
+    patch['short_name'] = dish.get('short_name') or patch.get('short_name')
+    storage.update_dish(dish_id, patch)
+    return storage.get_dish(dish_id)
+
+
+def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
+                       skip_dish_ids: list = None) -> dict:
+    """Shop for the dishes actually chosen — one plate's worth, not every
+    alternative in every pool. Already-made dishes buy nothing."""
+    from models.schemas import ShoppingItem
+    skip = set(skip_dish_ids or [])
+    lst_id = list_id or storage.ensure_default_shopping_list()['id']
+    added, skipped = [], []
+    for d in dishes:
+        if d.get('id') in skip:
+            skipped.append(d.get('short_name') or d.get('name'))
+            continue
+        if str(d.get('source') or 'prep') == 'ordered':
+            skipped.append(d.get('name'))
+            continue
+        for ing in d.get('ingredients') or []:
+            name = (ing.get('name') or '').strip()
+            if not name:
+                continue
+            if (ing.get('kind') or 'fresh') == 'staple':
+                skipped.append(name)
+                continue
+            if storage.find_open_shopping_item(lst_id, name):
+                skipped.append(name)
+                continue
+            storage.add_shopping_item(ShoppingItem(
+                list_id=lst_id, name=name, added_via='meal',
+                source_meal_id=d.get('id'), added_by=added_by).model_dump())
+            added.append(name)
+    return {'added': added, 'skipped': skipped, 'list_id': lst_id}
+
+
 def ingredients_to_shopping(meal: dict, list_id: str = None,
                             added_by: str = None) -> dict:
     """Drain a meal's FRESH ingredients onto the shopping list.
@@ -851,6 +1210,14 @@ def ingredients_to_shopping(meal: dict, list_id: str = None,
     hybrid contributes only its prepped part.
     """
     from models.schemas import ShoppingItem
+    # M4: a composed meal shops from the dishes actually chosen.
+    if meal.get('slots'):
+        today = _today_iso()
+        leftovers = storage.get_leftovers(today)
+        composed = compose_meal(meal, prefer=get_choices(today, meal.get('id')),
+                                leftovers=leftovers)
+        return dishes_to_shopping(composed.get('dishes') or [], list_id, added_by,
+                                  skip_dish_ids=composed.get('leftover_dish_ids'))
     if str(meal.get('source') or 'prep') == 'ordered':
         return {'added': [], 'skipped': [], 'reason': 'ordered — nothing to buy'}
     # Already-made food is not shopping. A whole-meal leftover buys nothing;

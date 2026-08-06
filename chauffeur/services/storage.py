@@ -402,6 +402,7 @@ with db_lock:
     shopping_items_table = db.table('shopping_items')
     meals_table = db.table('meals')
     leftovers_table = db.table('leftovers')
+    dishes_table = db.table('dishes')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1742,6 +1743,59 @@ def mark_meal_served(meal_id: str, when: float = None) -> Optional[dict]:
     if not update_meal(meal_id, {'last_served_at': when or _time.time()}):
         return None
     return get_meal(meal_id)
+
+# --- Dishes (meals arc M4) ---
+# The unit of WORK. Reused across meals, so they are stored once and
+# referenced by MealSlot.dish_ids. See models.schemas.Dish.
+
+def get_dishes(include_inactive: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(d) for d in dishes_table.all()]
+    if not include_inactive:
+        rows = [d for d in rows if d.get('is_active', True)]
+    rows.sort(key=lambda d: ((d.get('role') or 'zzz'), (d.get('name') or '').lower()))
+    return rows
+
+def get_dish(dish_id: str) -> Optional[dict]:
+    with db_lock:
+        res = dishes_table.search(Query().id == dish_id)
+        return dict(res[0]) if res else None
+
+def get_dishes_by_ids(dish_ids: List[str]) -> List[dict]:
+    by_id = {d['id']: d for d in get_dishes(include_inactive=True)}
+    return [by_id[i] for i in (dish_ids or []) if i in by_id]
+
+def find_dish_by_name(name: str) -> Optional[dict]:
+    """Dishes are reused, so a name match is how a second meal picks up the
+    rice the first one already defined."""
+    low = (name or '').strip().lower()
+    if not low:
+        return None
+    rows = get_dishes(include_inactive=True)
+    for key in ('name', 'short_name'):
+        for d in rows:
+            if (d.get(key) or '').strip().lower() == low:
+                return d
+    for d in rows:
+        if low in (d.get('name') or '').strip().lower():
+            return d
+    return None
+
+def add_dish(data: dict) -> str:
+    with db_lock:
+        dishes_table.insert(data)
+        return data['id']
+
+def update_dish(dish_id: str, data: dict) -> bool:
+    with db_lock:
+        return bool(dishes_table.update(data, Query().id == dish_id))
+
+def delete_dish(dish_id: str):
+    with db_lock:
+        dishes_table.remove(Query().id == dish_id)
+
+def dishes_needing_detail() -> List[dict]:
+    return [d for d in get_dishes() if d.get('needs_detail')]
 
 # --- Leftovers (meals arc M3) ---
 # Date-scoped so they expire on their own; nobody has to remember to clear a

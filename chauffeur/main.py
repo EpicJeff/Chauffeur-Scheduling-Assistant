@@ -4988,7 +4988,11 @@ def create_meal_api(req: MealRequest):
     existing = storage.find_meal_by_name(req.name)
     if existing:
         return {**existing, 'existing': True}
-    return _meals.create_meal(req.name, enrich=req.enrich)
+    # M4: split into real dishes (falls back to the M3 single-entry path when
+    # the model is unavailable, so a meal is still saved).
+    if req.enrich:
+        return _meals.create_meal_from_dishes(req.name)
+    return _meals.create_meal(req.name, enrich=False)
 
 @app.patch("/api/meals/repertoire/{meal_id}")
 def patch_meal(meal_id: str, req: MealPatch):
@@ -5028,6 +5032,7 @@ class LeftoverRequest(BaseModel):
     meal_id: Optional[str] = None
     label: Optional[str] = None
     parts: List[str] = []
+    dish_ids: List[str] = []
     reheat_mins: int = 10
 
 @app.get("/api/meals/leftovers")
@@ -5050,7 +5055,8 @@ def create_leftover(req: LeftoverRequest):
             raise HTTPException(status_code=404, detail="Meal not found")
         label = meal.get('name')
     rec = Leftover(date=day, meal_id=req.meal_id, label=label,
-                   parts=req.parts, reheat_mins=req.reheat_mins).model_dump()
+                   parts=req.parts, dish_ids=req.dish_ids,
+                   reheat_mins=req.reheat_mins).model_dump()
     storage.add_leftover(rec)
     return rec
 
@@ -5058,6 +5064,96 @@ def create_leftover(req: LeftoverRequest):
 def remove_leftover(leftover_id: str):
     storage.delete_leftover(leftover_id)
     return {"status": "ok"}
+
+class DishPatch(BaseModel):
+    name: Optional[str] = None
+    short_name: Optional[str] = None
+    role: Optional[str] = None
+    prep_ahead_mins: Optional[int] = None
+    finish_mins: Optional[int] = None
+    unattended_mins: Optional[int] = None
+    needs_ahead: Optional[str] = None
+    holds_well: Optional[bool] = None
+    portability: Optional[str] = None
+    source: Optional[str] = None
+    ingredients: Optional[List[Dict[str, Any]]] = None
+    tags: Optional[List[str]] = None
+    needs_detail: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+class DishRefineRequest(BaseModel):
+    description: str          # "russet, roasted" / "mashed with butter"
+
+@app.get("/api/meals/dishes")
+def list_dishes(needs_detail: bool = False):
+    return storage.dishes_needing_detail() if needs_detail else storage.get_dishes()
+
+@app.patch("/api/meals/dishes/{dish_id}")
+def patch_dish(dish_id: str, req: DishPatch):
+    if not storage.get_dish(dish_id):
+        raise HTTPException(status_code=404, detail="Dish not found")
+    patch = {k: v for k, v in req.model_dump().items() if v is not None}
+    if patch:
+        storage.update_dish(dish_id, patch)
+    return storage.get_dish(dish_id)
+
+@app.post("/api/meals/dishes/{dish_id}/refine")
+def refine_dish_api(dish_id: str, req: DishRefineRequest):
+    """Answer the "which potatoes, and how?" question — re-derives the dish's
+    times and ingredients from the sharper description."""
+    from services import meals as _meals
+    dish = _meals.refine_dish(dish_id, req.description)
+    if not dish:
+        raise HTTPException(status_code=404, detail="Dish not found")
+    return dish
+
+@app.delete("/api/meals/dishes/{dish_id}")
+def remove_dish(dish_id: str):
+    """Drops the dish and any slot reference to it; a slot left empty goes
+    with it, so a meal never points at nothing."""
+    storage.delete_dish(dish_id)
+    for meal in storage.get_meals(include_inactive=True):
+        slots = meal.get('slots') or []
+        if not slots:
+            continue
+        pruned = []
+        for s in slots:
+            ids = [i for i in (s.get('dish_ids') or []) if i != dish_id]
+            if ids:
+                pruned.append({**s, 'dish_ids': ids})
+        if pruned != slots:
+            storage.update_meal(meal['id'], {'slots': pruned})
+    return {"status": "ok"}
+
+@app.get("/api/meals/repertoire/{meal_id}/plate")
+def meal_plate(meal_id: str, date: Optional[str] = None):
+    """Tonight's version of this meal: one dish per slot, with the aggregate
+    timing and which parts are already made."""
+    import datetime as _dt
+    from services import meals as _meals
+    meal = storage.get_meal(meal_id)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    day = date or _dt.date.today().isoformat()
+    return _meals.compose_meal(meal, prefer=_meals.get_choices(day, meal_id),
+                               leftovers=storage.get_leftovers(day))
+
+@app.post("/api/meals/repertoire/{meal_id}/plate")
+def swap_plate_dish(meal_id: str, swap: str, after: str, date: Optional[str] = None):
+    """Tap a chip to move to the next option in that slot's pool. The pick is
+    a same-day preference, so it expires on its own."""
+    import datetime as _dt
+    from services import meals as _meals
+    meal = storage.get_meal(meal_id)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    nxt = _meals.next_in_pool(meal, swap, after)
+    if not nxt:
+        raise HTTPException(status_code=400, detail="Nothing else in that slot")
+    day = date or _dt.date.today().isoformat()
+    _meals.set_choice(day, meal_id, swap, nxt)
+    return _meals.compose_meal(meal, prefer=_meals.get_choices(day, meal_id),
+                               leftovers=storage.get_leftovers(day))
 
 @app.get("/api/meals/suggestions")
 def meal_suggestions(date: Optional[str] = None, limit: int = 5):
