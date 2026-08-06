@@ -403,6 +403,7 @@ with db_lock:
     meals_table = db.table('meals')
     leftovers_table = db.table('leftovers')
     dishes_table = db.table('dishes')
+    plates_table = db.table('plates')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1811,6 +1812,40 @@ def update_dish(dish_id: str, data: dict) -> bool:
 def delete_dish(dish_id: str):
     with db_lock:
         dishes_table.remove(Query().id == dish_id)
+
+def get_dishes_by_type(dish_type: str, side_type: str = None) -> List[dict]:
+    rows = [d for d in get_dishes() if (d.get('type') or 'side') == dish_type]
+    if side_type:
+        rows = [d for d in rows if (d.get('side_type') or 'other') == side_type]
+    return rows
+
+
+# --- Tonight's plate (meals arc M5) ---
+# Composed by rule, then edited freely. Dated, so it expires on its own.
+
+def get_plate(date_str: str) -> Optional[dict]:
+    with db_lock:
+        res = plates_table.search(Query().date == date_str)
+        return dict(res[0]) if res else None
+
+def save_plate(data: dict) -> dict:
+    with db_lock:
+        plates_table.upsert(data, Query().date == data['date'])
+    return data
+
+def delete_plate(date_str: str):
+    with db_lock:
+        plates_table.remove(Query().date == date_str)
+
+def prune_plates(before_date: str) -> int:
+    with db_lock:
+        rows = [dict(p) for p in plates_table.all()]
+    doomed = [p for p in rows if (p.get('date') or '') < before_date]
+    with db_lock:
+        for p in doomed:
+            plates_table.remove(Query().date == p['date'])
+    return len(doomed)
+
 
 def dishes_needing_detail() -> List[dict]:
     return [d for d in get_dishes() if d.get('needs_detail')]

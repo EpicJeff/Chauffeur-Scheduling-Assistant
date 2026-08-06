@@ -497,6 +497,11 @@ class Settings(BaseModel):
     # none | snack | handheld | full
     car_dining: str = "full"
     venue_dining: str = "full"
+    # How a plate is built when nobody has said otherwise (meals arc M5).
+    # A knob, not a rule: tonight's plate is editable, so this is only the
+    # starting proposal.
+    sides_per_meal: int = 2
+    include_dessert: bool = True
     # School calendar (services/school.py): what a "school day" is. All
     # empty = plain weekday behavior. The designated calendar's all-day
     # events matching a no-school keyword mark school out; the year bounds
@@ -754,7 +759,19 @@ class Dish(BaseModel):
     doc_id: Optional[int] = None
     name: str                          # "roasted russet potatoes"
     short_name: Optional[str] = None   # "potatoes" — what the family calls it
-    role: Optional[str] = None         # protein | starch | vegetable | side | ...
+
+    # M5: what this dish IS, which is what lets a plate be COMPOSED by rule
+    # instead of enumerated. A family does not eat 15-20 unrelated meals; they
+    # eat combinations of maybe 25 dishes, so storing the combinations was
+    # both lossy (the count froze at whatever was typed) and misleading (one
+    # "meal" standing for a dozen dinners).
+    #   meal    — complete on its own (tacos, spaghetti and meatballs)
+    #   entree  — the main; needs sides
+    #   side    — see `side_type`
+    #   dessert — optional on any plate (fresh fruit here, a cookie elsewhere)
+    type: str = 'side'
+    side_type: Optional[str] = None    # vegetable | starch | salad | other
+    role: Optional[str] = None         # legacy free-text label (pre-M5)
 
     prep_ahead_mins: int = 0
     finish_mins: int = 0
@@ -780,6 +797,25 @@ class Dish(BaseModel):
 
     last_served_at: Optional[float] = None
     is_active: bool = True
+    created_at: float = Field(default_factory=time.time)
+
+class PlateItem(BaseModel):
+    # One dish on ONE evening's plate. Tonight's plate is composed by rule and
+    # then edited freely — only one veg tonight, three tomorrow — so it is a
+    # dated record like Leftover rather than structure on a stored meal.
+    dish_id: str
+    added_by: Optional[str] = None     # member id, when a person chose it
+    source: str = 'auto'               # auto | manual | agent
+
+class Plate(BaseModel):
+    # The evening's actual dinner. Absent = nothing decided yet, and the
+    # composer proposes one on demand; present = the family has touched it and
+    # it holds still (the same pin-on-touch rule the slot swaps used).
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    date: str                          # YYYY-MM-DD
+    items: List[PlateItem] = Field(default_factory=list)
+    edited: bool = False
     created_at: float = Field(default_factory=time.time)
 
 class MealSlot(BaseModel):

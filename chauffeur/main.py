@@ -4991,7 +4991,8 @@ def create_meal_api(req: MealRequest):
     # M4: split into real dishes (falls back to the M3 single-entry path when
     # the model is unavailable, so a meal is still saved).
     if req.enrich:
-        return _meals.create_meal_from_dishes(req.name)
+        # M5: typed dishes, not a stored combination.
+        return _meals.add_dishes_from_text(req.name)
     return _meals.create_meal(req.name, enrich=False)
 
 @app.patch("/api/meals/repertoire/{meal_id}")
@@ -5166,6 +5167,61 @@ def swap_plate_dish(meal_id: str, swap: str, after: str, date: Optional[str] = N
     _meals.set_choices(day, meal_id, pinned)
     return _meals.compose_meal(meal, prefer=_meals.get_choices(day, meal_id),
                                leftovers=storage.get_leftovers(day))
+
+class PlateEdit(BaseModel):
+    dish_id: str
+    date: Optional[str] = None
+
+@app.get("/api/meals/plate")
+def tonights_plate(date: Optional[str] = None):
+    """Tonight's dinner: an entree plus sides (or a one-dish meal), with a
+    dessert if the family keeps them — proposed by rule, then editable."""
+    import datetime as _dt
+    from services import meals as _meals
+    date_str = date or _dt.date.today().isoformat()
+    plan = _meals.eating_plan(date_str, 'dinner')
+    plate = _meals.get_or_compose_plate(date_str, plan)
+    totals = _meals.plate_totals(plate['dishes'], date_str)
+    sides_n, dessert = _meals.plate_settings()
+    return {'date': date_str, 'edited': plate['edited'], 'dishes': plate['dishes'],
+            'prep_ahead_mins': totals.get('prep_ahead_mins'),
+            'finish_mins': totals.get('finish_mins'),
+            'unattended_mins': totals.get('unattended_mins'),
+            'needs_ahead': totals.get('needs_ahead'),
+            'leftover_dish_ids': totals.get('leftover_dish_ids'),
+            'sides_per_meal': sides_n, 'include_dessert': dessert,
+            'cook_window_mins': plan.get('cook_window_mins'),
+            'split': plan.get('split'), 'packed_count': plan.get('packed_count'),
+            'nobody_can_eat': plan.get('nobody_can_eat'),
+            'lines': _meals.plan_summary_lines(plan)}
+
+@app.post("/api/meals/plate/add")
+def plate_add(req: PlateEdit):
+    import datetime as _dt
+    from services import meals as _meals
+    res = _meals.add_to_plate(req.date or _dt.date.today().isoformat(), req.dish_id)
+    if res.get('error'):
+        raise HTTPException(status_code=404, detail=res['error'])
+    return res
+
+@app.post("/api/meals/plate/remove")
+def plate_remove(req: PlateEdit):
+    import datetime as _dt
+    from services import meals as _meals
+    return _meals.remove_from_plate(req.date or _dt.date.today().isoformat(),
+                                    req.dish_id)
+
+@app.post("/api/meals/plate/reset")
+def plate_reset(date: Optional[str] = None):
+    import datetime as _dt
+    from services import meals as _meals
+    return _meals.reset_plate(date or _dt.date.today().isoformat())
+
+@app.post("/api/meals/migrate-dishes")
+def migrate_dishes():
+    """One-shot: type M4's dishes and retire the slot-meals they belonged to."""
+    from services import meals as _meals
+    return _meals.migrate_slot_meals()
 
 @app.get("/api/meals/suggestions")
 def meal_suggestions(date: Optional[str] = None, limit: int = 5):

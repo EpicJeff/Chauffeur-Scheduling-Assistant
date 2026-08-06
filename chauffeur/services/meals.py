@@ -546,6 +546,201 @@ def _eater_diet(plan: dict) -> tuple:
 # dishes actually chosen for it, which is both more accurate than one set of
 # numbers per plate and what makes per-dish leftovers exact.
 
+# --- M5: plates are COMPOSED from typed dishes ------------------------------
+# A family does not eat 15-20 unrelated meals; they eat combinations of maybe
+# 25 dishes. Storing the combinations was both lossy (the number of sides
+# froze at whatever was typed) and misleading (one "meal" standing in for a
+# dozen dinners). So the repertoire is DISHES, and a plate is a rule:
+# a `meal` dish on its own, or an entree plus N sides — with a dessert if the
+# family keeps them. Propose, then let it be edited: that is the same
+# propose→approve grammar the intake queue and the car stops already use, and
+# it is what keeps this from being a nightly assembly chore.
+
+SIDE_TYPES = ('vegetable', 'starch', 'salad', 'other')
+DISH_TYPES = ('meal', 'entree', 'side', 'dessert')
+
+
+def plate_settings(settings: dict = None) -> tuple:
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        sides = max(0, min(6, int(settings.get('sides_per_meal', 2))))
+    except (TypeError, ValueError):
+        sides = 2
+    dessert = settings.get('include_dessert')
+    return sides, (True if dessert is None else bool(dessert))
+
+
+def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set) -> bool:
+    """Hard filters only. An already-made dish skips the portability check —
+    it exists, and it is going in a container either way."""
+    tags = {str(t).strip().lower() for t in (dish.get('tags') or [])}
+    if tags & avoid:
+        return False
+    if binding_slot and dish['id'] not in leftover_ids:
+        ok, _ = meal_fits_slot(dish, binding_slot)
+        if not ok:
+            return False
+    return True
+
+
+def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set) -> float:
+    score = 0.0
+    if dish['id'] in leftover_ids:
+        score += 100.0                        # already made — obviously tonight
+    tags = {str(t).strip().lower() for t in (dish.get('tags') or [])}
+    if tags & dislike:
+        score -= 2.0
+    if affinity and (tags & affinity):
+        score += 1.5                          # soft coherence, not a rule
+    score -= {'easy': 0.0, 'normal': 0.3, 'project': 1.5}.get(
+        str(dish.get('effort') or 'normal'), 0.3)
+    last = dish.get('last_served_at') or 0
+    score += min((_now_ts() - last) / 86400.0, 21) / 21.0
+    return score
+
+
+def compose_plate(date_str: str, plan: dict = None, settings: dict = None) -> list:
+    """Propose tonight's dishes. Nothing is stored — this is the suggestion.
+
+    Coherence is handled with a SOFT tag affinity to the entree rather than a
+    modelled "goes with" relation: getting salmon and tortillas occasionally
+    is a much smaller cost than making the family maintain a compatibility
+    matrix, and swapping a chip is one tap.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    sides_n, want_dessert = plate_settings(settings)
+    plan = plan or eating_plan(date_str, 'dinner')
+    avoid, dislike = _eater_diet(plan)
+    leftovers = storage.get_leftovers(date_str)
+    leftover_ids = set()
+    for l in leftovers:
+        leftover_ids.update(l.get('dish_ids') or [])
+
+    slots = [p['first'] for p in (plan.get('people') or []) if p.get('first')]
+    binding = next((s for s in slots if s['modality'] in ('in_car', 'at_venue')), None)
+
+    def pick(pool, affinity=frozenset(), exclude=()):
+        cands = [d for d in pool
+                 if d['id'] not in exclude
+                 and _dish_ok(d, avoid, binding, leftover_ids)]
+        if not cands:
+            return None
+        return max(cands, key=lambda d: _rank(d, leftover_ids, affinity, dislike))
+
+    chosen = []
+    # A `meal` dish is the whole plate. It only wins outright when it is
+    # already made; otherwise it competes with the entree on rank so the
+    # family's one-pot meals stay in rotation without dominating it.
+    meals_pool = storage.get_dishes_by_type('meal')
+    entrees = storage.get_dishes_by_type('entree')
+    best_meal = pick(meals_pool)
+    best_entree = pick(entrees)
+    # Strictly greater, not >=: on a tie the entree path wins. Everything ties
+    # while nothing has been served yet, and a >= here let one-dish meals take
+    # every plate on a fresh repertoire.
+    use_meal = best_meal and (
+        not best_entree
+        or _rank(best_meal, leftover_ids, frozenset(), dislike)
+        > _rank(best_entree, leftover_ids, frozenset(), dislike))
+
+    if use_meal:
+        chosen.append(best_meal)
+    else:
+        if best_entree:
+            chosen.append(best_entree)
+        affinity = {str(t).strip().lower()
+                    for t in ((best_entree or {}).get('tags') or [])}
+        # Spread the sides across kinds — a starch and a vegetable is the usual
+        # shape — but as a PREFERENCE, not a filter. Filtering by side_type
+        # first meant an already-made dish of the "wrong" kind never entered
+        # the running, so leftover potatoes lost to a fresh vegetable. Using up
+        # what exists is the stronger signal; variety is a tiebreak.
+        sides_pool = storage.get_dishes_by_type('side')
+        used_types = set()
+        for _ in range(sides_n):
+            taken_ids = {d['id'] for d in chosen}
+            cands = [d for d in sides_pool
+                     if d['id'] not in taken_ids
+                     and _dish_ok(d, avoid, binding, leftover_ids)]
+            if not cands:
+                break
+            got = max(cands, key=lambda d: (
+                _rank(d, leftover_ids, affinity, dislike)
+                + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)))
+            used_types.add(got.get('side_type') or 'other')
+            chosen.append(got)
+
+    if want_dessert:
+        sweet = pick(storage.get_dishes_by_type('dessert'),
+                     exclude={d['id'] for d in chosen})
+        if sweet:
+            chosen.append(sweet)
+    return chosen
+
+
+def get_or_compose_plate(date_str: str, plan: dict = None,
+                         settings: dict = None) -> dict:
+    """Tonight's plate: what the family edited, or a fresh proposal.
+
+    An edited plate is never re-proposed under them — the same hold-still rule
+    that swapping a chip already followed.
+    """
+    saved = storage.get_plate(date_str)
+    if saved and saved.get('edited'):
+        dishes = storage.get_dishes_by_ids([i['dish_id'] for i in saved.get('items') or []])
+        by_id = {d['id']: d for d in dishes}
+        items = [by_id[i['dish_id']] for i in (saved.get('items') or [])
+                 if i['dish_id'] in by_id]
+        return {'date': date_str, 'dishes': items, 'edited': True}
+    return {'date': date_str,
+            'dishes': compose_plate(date_str, plan, settings), 'edited': False}
+
+
+def _persist_plate(date_str: str, dishes: list) -> dict:
+    from models.schemas import Plate, PlateItem
+    storage.prune_plates(date_str)
+    rec = Plate(date=date_str, edited=True,
+                items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
+    storage.save_plate(rec)
+    return rec
+
+
+def add_to_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
+    """Add a dish to tonight — "we've got corn too"."""
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'error': 'no such dish'}
+    cur = get_or_compose_plate(date_str, plan)['dishes']
+    if any(d['id'] == dish_id for d in cur):
+        return {'dishes': cur, 'unchanged': True}
+    cur = cur + [dish]
+    _persist_plate(date_str, cur)
+    return {'dishes': cur}
+
+
+def remove_from_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
+    """Drop a dish — "no salad tonight"."""
+    cur = get_or_compose_plate(date_str, plan)['dishes']
+    kept = [d for d in cur if d['id'] != dish_id]
+    if len(kept) == len(cur):
+        return {'dishes': cur, 'unchanged': True}
+    _persist_plate(date_str, kept)
+    return {'dishes': kept}
+
+
+def reset_plate(date_str: str) -> dict:
+    """Back to the proposal — plans change."""
+    storage.delete_plate(date_str)
+    return get_or_compose_plate(date_str)
+
+
+def plate_totals(dishes: list, date_str: str = None) -> dict:
+    """The aggregate timing for a plate, same rules as the slot version:
+    hands-on sums, the oven overlaps, weakest link wins."""
+    leftovers = storage.get_leftovers(date_str or _today_iso())
+    return compose({'name': 'plate'}, dishes, leftovers)
+
+
 def slot_detail_is_moot(pool: list) -> bool:
     """Does this slot's own set of options already answer the question?
 
@@ -1069,6 +1264,51 @@ def suggest_meal_metadata(description: str) -> dict:
     return out
 
 
+_DISH_SYSTEM_V5 = (
+    "You turn a family's description of what they eat into a flat list of "
+    "DISHES. Reply with STRICT JSON only, no prose, no code fences. You are "
+    "NOT writing recipes — never return steps, instructions or quantities.\n\n"
+    "Schema: {\"dishes\": [{\"name\": str, \"short_name\": str, "
+    "\"type\": \"meal|entree|side|dessert\", "
+    "\"side_type\": \"vegetable|starch|salad|other|null\", "
+    "\"prep_ahead_mins\": int, \"finish_mins\": int, \"unattended_mins\": int, "
+    "\"needs_ahead\": \"none|thaw|marinate|slow_cooker\", \"holds_well\": bool, "
+    "\"portability\": \"none|handheld|utensils_ok\", "
+    "\"source\": \"prep|ordered\", \"tags\": [str], "
+    "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}], "
+    "\"needs_detail\": bool, \"detail_question\": str|null}]}\n\n"
+    "ONE DISH PER THING THEY WOULD ACTUALLY COOK OR SERVE:\n"
+    "- Every alternative is its OWN dish. 'beans (black, red, or pinto)' is "
+    "THREE dishes; 'roasted potatoes (red, russet, yellow)' is THREE dishes, "
+    "each already specific ('roasted russet potatoes').\n"
+    "- IGNORE quantities like 'veggies x 2' — that is how many sides they "
+    "want on a plate, not a property of any dish. Just emit the vegetables.\n"
+    "- type: 'meal' only when the dish is a whole dinner by itself (tacos, "
+    "spaghetti and meatballs, chili). 'entree' for a main that needs sides "
+    "(roast chicken, baked salmon). 'side' for everything alongside. "
+    "'dessert' for something sweet after.\n"
+    "- side_type: 'vegetable', 'starch' (rice, potatoes, pasta, bread, "
+    "beans served as a starch), 'salad', or 'other'. Null for non-sides.\n"
+    "- tags: short lowercase words that say what a dish goes WITH as much as "
+    "what it is ('mexican', 'chicken', 'asian', 'comfort'). These are used to "
+    "keep a proposed plate coherent.\n\n"
+    "Each dish is timed on its own: prep_ahead_mins is work that can be done "
+    "earlier and set aside, finish_mins must happen near eating, "
+    "unattended_mins is oven or slow-cooker time needing nobody at the stove. "
+    "Rice is a little prep and a lot of unattended; a salad is all finish.\n"
+    "- name is SPECIFIC enough to time and shop for; short_name is what the "
+    "family says ('potatoes').\n"
+    "- ingredients: kind='staple' for what a kitchen always has (salt, oil, "
+    "common spices, rice, pasta, flour), 'fresh' for what must be bought. No "
+    "quantities.\n"
+    "- needs_detail: TRUE only when they were too vague to time or shop for — "
+    "bare 'potatoes' says neither which kind nor how cooked. GUESS a sensible "
+    "version anyway and put it in `name`; never refuse. FALSE whenever they "
+    "already told you: 'roasted potatoes (red, russet, yellow)' gives both "
+    "the method and the varieties, so all three are fully specified.\n"
+    "- Be realistic about a weeknight home kitchen."
+)
+
 _DISH_SYSTEM = (
     "You break a family's description of a meal into DISHES. Reply with "
     "STRICT JSON only, no prose, no code fences. You are NOT writing recipes "
@@ -1208,6 +1448,89 @@ def split_into_dishes(description: str) -> dict:
     name = str(res.get('name') or '').strip()[:60]
     return {'name': name if name and len(name) < len(description.strip()) else '',
             'slots': slots}
+
+
+_ROLE_TO_TYPE = {
+    'protein': ('entree', None),
+    'main': ('entree', None),
+    'entree': ('entree', None),
+    'starch': ('side', 'starch'),
+    'vegetable': ('side', 'vegetable'),
+    'veg': ('side', 'vegetable'),
+    'salad': ('side', 'salad'),
+    'side': ('side', 'other'),
+    'dessert': ('dessert', None),
+}
+
+
+def migrate_slot_meals() -> dict:
+    """Bring M4's slot-meals across to M5's typed dishes.
+
+    The dishes already exist and are already right — only their TYPE was
+    implicit (in `role`) and their grouping lived on `Meal.slots`. So this
+    types them and retires the meal rows; nothing the family entered is lost,
+    and their combinations become emergent instead of frozen.
+    """
+    typed, retired = 0, 0
+    for d in storage.get_dishes(include_inactive=True):
+        if d.get('type') and d.get('type') != 'side':
+            continue
+        if d.get('side_type'):
+            continue
+        role = str(d.get('role') or '').strip().lower()
+        dish_type, side_type = _ROLE_TO_TYPE.get(role, ('side', 'other'))
+        storage.update_dish(d['id'], {'type': dish_type, 'side_type': side_type})
+        typed += 1
+    for meal in storage.get_meals(include_inactive=True):
+        if not (meal.get('slots') or []):
+            continue
+        storage.update_meal(meal['id'], {'is_active': False})
+        retired += 1
+    return {'typed': typed, 'retired_meals': retired}
+
+
+def add_dishes_from_text(description: str) -> dict:
+    """M5 entry: type what you eat, get typed DISHES in the repertoire.
+
+    No slots, no option pools, no "x 2" — every alternative is simply its own
+    dish, and how many sides go on a plate is a setting rather than something
+    baked into a stored combination.
+    """
+    from services import model_pools
+    raw = (description or '').strip()
+    settings = storage.get_settings() or {}
+    api_key = settings.get('llm_gemini_api_key', '')
+    if not api_key or not raw:
+        return {'added': [], 'existing': [], 'error': 'no LLM API key configured'
+                if not api_key else 'nothing to add'}
+    try:
+        res = model_pools.call_pool_json(
+            'interactive', api_key, _DISH_SYSTEM_V5,
+            f"The family describes what they eat as: {raw}",
+            temperature=0.2, timeout_s=45, settings=settings)
+        if not isinstance(res, dict) or res.get('error'):
+            raise RuntimeError(res.get('error') if isinstance(res, dict) else 'bad response')
+    except Exception as e:
+        print(f"[meals] dish extraction failed for {raw!r}: {e}")
+        return {'added': [], 'existing': [], 'error': 'could not read that'}
+
+    added, existing = [], []
+    for raw_dish in (res.get('dishes') or [])[:30]:
+        d = _clean_dish(raw_dish)
+        if not d:
+            continue
+        d['type'] = (str(raw_dish.get('type') or '').strip().lower()
+                     if str(raw_dish.get('type') or '').strip().lower() in DISH_TYPES
+                     else 'side')
+        st = str(raw_dish.get('side_type') or '').strip().lower()
+        d['side_type'] = st if st in SIDE_TYPES else ('other' if d['type'] == 'side' else None)
+        prior = storage.find_dish_for_reuse(d['name'])
+        if prior:
+            existing.append(prior)
+            continue
+        storage.add_dish(d)
+        added.append(d)
+    return {'added': added, 'existing': existing, 'error': None}
 
 
 def create_meal_from_dishes(description: str) -> dict:

@@ -512,6 +512,26 @@ class MarkMealServedTool(BaseModel):
     """
     meal_name: str = Field(..., description="What they ate.")
 
+class GetTonightsPlateTool(BaseModel):
+    """
+    Answers "what's for dinner?" with the actual plate - entree, sides and any dessert - composed against today's schedule.
+    """
+    target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
+
+class ChangeTonightsPlateTool(BaseModel):
+    """
+    Adds or drops ONE dish for ONE evening ("we've got corn too", "no salad tonight"). Changes only that evening's plate; the family's list of what they cook is untouched.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. corn.")
+    action: Optional[str] = Field(None, description="add (default) or remove.")
+    target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
+
+class AddDishesTool(BaseModel):
+    """
+    Adds things the family COOKS to their repertoire, in their own words. Every alternative becomes its own dish, typed as a whole meal, entree, side or dessert. Not for what is being eaten tonight.
+    """
+    description: str = Field(..., description="Their description, verbatim.")
+
 class RefineMealDishTool(BaseModel):
     """
     Answers a question about a vague part of a meal ("the potatoes are russet, roasted"), making that dish's cook time and shopping line accurate.
@@ -622,6 +642,9 @@ TOOL_SCHEMAS = {
     "mark_leftovers": MarkLeftoversTool.model_json_schema(),
     "clear_leftovers": ClearLeftoversTool.model_json_schema(),
     "refine_meal_dish": RefineMealDishTool.model_json_schema(),
+    "get_tonights_plate": GetTonightsPlateTool.model_json_schema(),
+    "change_tonights_plate": ChangeTonightsPlateTool.model_json_schema(),
+    "add_dishes": AddDishesTool.model_json_schema(),
 }
 
 def get_openai_tools() -> List[Dict[str, Any]]:
@@ -1758,6 +1781,20 @@ def handle_mark_meal_served(args: dict) -> dict:
     from services.agent_tools_v2 import mark_meal_served
     return mark_meal_served(args.get("meal_name") or "")
 
+def handle_get_tonights_plate(args: dict) -> dict:
+    from services.agent_tools_v2 import get_tonights_plate
+    return get_tonights_plate(args.get("target_date") or "today")
+
+def handle_change_tonights_plate(args: dict) -> dict:
+    from services.agent_tools_v2 import change_tonights_plate
+    return change_tonights_plate(args.get("dish_name") or "",
+                                 action=args.get("action") or "add",
+                                 target_date=args.get("target_date") or "today")
+
+def handle_add_dishes(args: dict) -> dict:
+    from services.agent_tools_v2 import add_dishes
+    return add_dishes(args.get("description") or "")
+
 def handle_refine_meal_dish(args: dict) -> dict:
     from services.agent_tools_v2 import refine_meal_dish
     return refine_meal_dish(args.get("dish_name") or "", args.get("detail") or "")
@@ -1862,6 +1899,9 @@ TOOL_HANDLERS = {
     "mark_leftovers": handle_mark_leftovers,
     "clear_leftovers": handle_clear_leftovers,
     "refine_meal_dish": handle_refine_meal_dish,
+    "get_tonights_plate": handle_get_tonights_plate,
+    "change_tonights_plate": handle_change_tonights_plate,
+    "add_dishes": handle_add_dishes,
 }
 
 def execute_tool(name: str, args: dict) -> dict:

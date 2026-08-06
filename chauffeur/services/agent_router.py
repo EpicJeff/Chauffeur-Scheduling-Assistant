@@ -293,7 +293,8 @@ sending or claiming, and never pass from_member/member_name for them.
                              "get_eating_plan", "suggest_dinner",
                              "add_meal_to_repertoire", "add_meal_ingredients_to_list",
                              "mark_meal_served", "mark_leftovers", "clear_leftovers",
-                             "refine_meal_dish"}
+                             "refine_meal_dish", "get_tonights_plate",
+                             "change_tonights_plate", "add_dishes"}
 
     def _is_terminal_success(func_name, res):
         return (func_name in TERMINAL_ACTION_TOOLS and isinstance(res, dict)
@@ -558,6 +559,27 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.complete_kid_task(args.get("task_title", "") or "",
                                                       member_name=args.get("member_name", "") or "",
                                                       acting_member=actor)
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name in ("get_tonights_plate", "change_tonights_plate",
+                                   "add_dishes"):
+                    from services import agent_tools_v2 as _atv2
+                    actor = acting_member
+                    if actor is None and driver:
+                        from services import storage as _st
+                        actor = _st.get_member_by_driver_id(driver_id)
+                    if func_name == "get_tonights_plate":
+                        res = _atv2.get_tonights_plate(
+                            args.get("target_date", "today") or "today",
+                            acting_member=actor)
+                    elif func_name == "change_tonights_plate":
+                        res = _atv2.change_tonights_plate(
+                            args.get("dish_name", "") or "",
+                            action=args.get("action", "add") or "add",
+                            target_date=args.get("target_date", "today") or "today",
+                            acting_member=actor)
+                    else:
+                        res = _atv2.add_dishes(args.get("description", "") or "",
+                                               acting_member=actor)
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "refine_meal_dish":
                     from services import agent_tools_v2 as _atv2

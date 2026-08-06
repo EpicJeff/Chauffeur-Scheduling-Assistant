@@ -1325,6 +1325,77 @@ def add_meal_ingredients_to_list(meal_name: str, list_name: str = "",
             "message": f"Added for {meal['name']}: " + ", ".join(res['added']) + "."}
 
 
+def get_tonights_plate(target_date: str = "today", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: what's actually planned for dinner — the entree, the sides and
+    any dessert, composed against today's schedule."""
+    import datetime as _dt
+    from services import meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    plan = meals.eating_plan(day.isoformat(), 'dinner')
+    plate = meals.get_or_compose_plate(day.isoformat(), plan)
+    when = "Tonight" if day == _dt.date.today() else day.strftime('%A')
+    if not plate['dishes']:
+        return {"status": "success",
+                "message": f"{when} there's nothing to build a plate from yet — "
+                           "tell me a few things you cook and I'll add them."}
+    totals = meals.plate_totals(plate['dishes'], day.isoformat())
+    hands = int(totals.get('prep_ahead_mins') or 0) + int(totals.get('finish_mins') or 0)
+    names = [d.get('short_name') or d['name'] for d in plate['dishes']]
+    tail = f" About {hands} min hands-on" if hands else ""
+    if totals.get('unattended_mins'):
+        tail += f", {totals['unattended_mins']} in the oven"
+    verb = "You've set" if plate['edited'] else "I'd suggest"
+    return {"status": "success",
+            "message": f"{when}: {verb} " + ", ".join(names) + f".{tail}."}
+
+
+def change_tonights_plate(dish_name: str, action: str = "add",
+                          target_date: str = "today",
+                          acting_member: dict = None) -> Dict[str, Any]:
+    """Add or drop a dish for one evening ("we've got corn too", "no salad
+    tonight"). Adjusts THIS evening only — the repertoire is untouched."""
+    import datetime as _dt
+    from services import storage, meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error",
+                "message": f"I don't have a dish called '{dish_name}'. Want me to add it?"}
+    when = "tonight" if day == _dt.date.today() else day.strftime('%A')
+    if str(action or 'add').lower().startswith('rem') or str(action).lower() in ('drop', 'no'):
+        res = meals.remove_from_plate(day.isoformat(), dish['id'])
+        if res.get('unchanged'):
+            return {"status": "success",
+                    "message": f"{dish['name']} wasn't on {when}'s plate anyway."}
+        left = [d.get('short_name') or d['name'] for d in res['dishes']]
+        return {"status": "success",
+                "message": f"Dropped {dish.get('short_name') or dish['name']}. "
+                           f"{when.capitalize()}: " + ", ".join(left) + "."}
+    res = meals.add_to_plate(day.isoformat(), dish['id'])
+    if res.get('error'):
+        return {"status": "error", "message": "I couldn't add that."}
+    names = [d.get('short_name') or d['name'] for d in res['dishes']]
+    return {"status": "success",
+            "message": f"Added {dish.get('short_name') or dish['name']}. "
+                       f"{when.capitalize()}: " + ", ".join(names) + "."}
+
+
+def add_dishes(description: str, acting_member: dict = None) -> Dict[str, Any]:
+    """Add things the family cooks to the repertoire, from their own words.
+    Every alternative becomes its own dish."""
+    from services import meals
+    if not (description or '').strip():
+        return {"status": "error", "message": "What do you make?"}
+    res = meals.add_dishes_from_text(description)
+    if res.get('error'):
+        return {"status": "error", "message": "I couldn't work that out."}
+    added = [d.get('short_name') or d['name'] for d in res['added']]
+    if not added:
+        return {"status": "success", "message": "I already had all of those."}
+    return {"status": "success",
+            "message": "Added " + ", ".join(added) + " to what you cook."}
+
+
 def refine_meal_dish(dish_name: str, detail: str, acting_member: dict = None) -> Dict[str, Any]:
     """Answer a "which potatoes, and how?" question so the times and the
     shopping line get accurate."""
@@ -1824,6 +1895,41 @@ def get_available_tools() -> List[Dict]:
                     "list_name": {"type": "string", "description": "Which list or store; omit for the default list."}
                 },
                 "required": ["meal_name"]
+            }
+        },
+        {
+            "name": "get_tonights_plate",
+            "description": "Answers what's for dinner / what's the plan tonight with the actual plate - the entree, the sides and any dessert - composed against today's schedule. Prefer this over suggest_dinner.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "change_tonights_plate",
+            "description": "Adds or drops ONE dish for ONE evening (we have got corn too, no salad tonight, add rice, skip the potatoes). Changes only that evening's plate - the family's list of what they cook is untouched. Use this for anything about what is being eaten TODAY.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish, e.g. corn or salad."},
+                    "action": {"type": "string", "enum": ["add", "remove"], "description": "add (default) or remove."},
+                    "target_date": {"type": "string", "description": "Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD."}
+                },
+                "required": ["dish_name"]
+            }
+        },
+        {
+            "name": "add_dishes",
+            "description": "Adds things the family COOKS to their repertoire, in their own words (we make roast chicken, rice, and beans - black, red or pinto). Every alternative becomes its own dish, and each is typed as a whole meal, an entree, a side or a dessert so plates can be built from them. Use this for what they cook in general, NOT for what is being eaten tonight.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "Their description, verbatim."}
+                },
+                "required": ["description"]
             }
         },
         {

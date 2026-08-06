@@ -60,70 +60,72 @@
                 <div class="bg-gray-800 rounded-2xl border border-pink-400/40 p-5">
                     <div class="flex items-baseline justify-between mb-3">
                         <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">🍽️ Tonight</h4>
+                        <button x-show="plate.edited" @click="resetPlate()"
+                            class="text-xs text-gray-500 hover:text-white">Reset</button>
                     </div>
-                    <template x-for="(line, i) in suggest.lines" :key="'sl-' + i">
+
+                    <!-- The schedule's own read on the evening (M2). -->
+                    <template x-for="(line, i) in plate.lines" :key="'pl-' + i">
                         <div class="text-sm text-gray-300 mb-1.5" x-text="line"></div>
                     </template>
-                    <div x-show="suggest.nobody_can_eat" class="text-sm text-gray-400">
-                        Nothing fits a gap tonight — worth picking something up on the way.
-                    </div>
-                    <!-- Seed state: the repertoire is empty and nothing can be
-                         filtered until it isn't. Entry cost is one sentence. -->
+
                     <div x-show="!repertoire.length" class="text-sm text-gray-400">
-                        Name a few things you make on a weeknight and I'll work out the
-                        times and ingredients — then this shows what actually fits the day.
+                        Tell me a few things you cook — "roast chicken, rice, beans
+                        (black, red or pinto), broccoli, salad, fresh fruit" — and I'll
+                        build plates from them.
                         <button @click="showRepertoire = true"
-                            class="ml-1 font-bold text-pink-300 hover:text-pink-200">Add one →</button>
+                            class="ml-1 font-bold text-pink-300 hover:text-pink-200">Add some →</button>
                     </div>
-                    <!-- Populated, but the day rules everything out. Say why rather
-                         than rendering an empty box. -->
-                    <div x-show="repertoire.length && !suggest.fits.length && !suggest.nobody_can_eat"
-                        class="text-sm text-gray-400">
-                        Nothing in your meals fits today — might be a night to pick
-                        something up.
-                    </div>
-                    <div class="space-y-2 mt-3">
-                        <template x-for="m in suggest.fits" :key="'sf-' + m.id">
-                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-3 flex items-center gap-3">
-                                <div class="min-w-0 flex-1">
-                                    <div class="font-semibold text-white truncate" x-text="m.name"></div>
-                                    <div class="text-[11px] text-gray-500" x-text="mealBlurb(m)"></div>
-                                    <!-- Dish chips: tonight's actual plate. Tap to
-                                         swap within a pool, ✓ to mark already made
-                                         (its own minutes come off), ? to answer what
-                                         the model was unsure about. -->
-                                    <div class="flex flex-wrap gap-1.5 mt-1.5" x-show="(m.dishes || []).length">
-                                        <template x-for="d in (m.dishes || [])" :key="'dc-' + m.id + '-' + d._slot">
-                                            <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
-                                                :class="(m.leftover_dish_ids || []).includes(d.id)
-                                                    ? 'bg-gray-900 border-gray-700 text-gray-600 line-through'
-                                                    : 'bg-gray-800 border-gray-700 text-gray-300'">
-                                                <button @click="swapDish(m, d)" :disabled="d._pool < 2"
-                                                    :title="d.name + (d._pool > 1 ? ' — tap to swap (' + d._pool + ' options)' : '')"
-                                                    :class="d._pool > 1 ? 'hover:text-white' : 'cursor-default'"
-                                                    x-text="d._chip || d.short_name || d.name"></button>
-                                                <button @click="dishLeftover(m, d)" title="Already made"
-                                                    class="text-gray-600 hover:text-pink-300">✓</button>
-                                                <button x-show="d.needs_detail" @click="refineDish(m, d)"
-                                                    :title="d.detail_question || 'Which kind?'"
-                                                    class="text-amber-400 hover:text-amber-300 font-bold">?</button>
-                                            </span>
-                                        </template>
-                                    </div>
-                                    <!-- Legacy M3 entries (no dishes) still show their parts. -->
-                                    <div class="text-[11px] text-gray-600 truncate"
-                                        x-show="!(m.dishes || []).length && mealParts(m)" x-text="mealParts(m)"></div>
-                                </div>
-                                <button @click="mealToList(m)"
-                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white shrink-0">
-                                    + List
-                                </button>
-                                <button @click="mealServed(m)" title="Records it so the rotation stays honest"
-                                    class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
-                                    We had this
-                                </button>
-                            </div>
-                        </template>
+
+                    <!-- The plate itself: an entree plus sides (or a one-dish meal),
+                         proposed by rule and then edited freely. Chips are the whole
+                         interaction — remove what you don't have, add what you do. -->
+                    <div x-show="repertoire.length" class="mt-2">
+                        <div class="flex flex-wrap gap-1.5">
+                            <template x-for="d in (plate.dishes || [])" :key="'pd-' + d.id">
+                                <span class="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border flex items-center gap-2"
+                                    :class="(plate.leftover_dish_ids || []).includes(d.id)
+                                        ? 'bg-gray-900 border-gray-700 text-gray-600 line-through'
+                                        : (d.type === 'dessert'
+                                            ? 'bg-gray-900 border-gray-700 text-gray-400'
+                                            : 'bg-gray-800 border-gray-700 text-gray-200')">
+                                    <span :title="d.name + ' · ' + (d.side_type || d.type)"
+                                        x-text="d.short_name || d.name"></span>
+                                    <button @click="dishLeftoverOnPlate(d)" title="Already made"
+                                        class="text-gray-600 hover:text-pink-300">✓</button>
+                                    <button x-show="d.needs_detail" @click="refinePlateDish(d)"
+                                        :title="d.detail_question || 'Which kind?'"
+                                        class="text-amber-400 hover:text-amber-300 font-bold">?</button>
+                                    <button @click="dropFromPlate(d)" title="Not tonight"
+                                        class="text-gray-600 hover:text-red-400">✕</button>
+                                </span>
+                            </template>
+                            <span x-show="!(plate.dishes || []).length" class="text-xs text-gray-500">
+                                Nothing composed — add a dish below.
+                            </span>
+                        </div>
+
+                        <div class="text-[11px] text-gray-500 mt-2" x-text="plateBlurb()"></div>
+
+                        <!-- Add anything from the repertoire that isn't on already. -->
+                        <div class="flex items-center gap-2 mt-3">
+                            <select x-model="addDishId"
+                                class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-300 max-w-[60%]">
+                                <option value="">Add a dish…</option>
+                                <template x-for="d in addableDishes()" :key="'ad-' + d.id">
+                                    <option :value="d.id"
+                                        x-text="(d.short_name || d.name) + ' · ' + (d.side_type || d.type)"></option>
+                                </template>
+                            </select>
+                            <button @click="addToPlate()" :disabled="!addDishId"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40">
+                                Add
+                            </button>
+                            <button @click="plateToList()"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white ml-auto">
+                                + List
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -137,7 +139,7 @@
                     class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
                     <div class="flex gap-2 mb-3">
                         <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
-                            placeholder="e.g. tacos — or write the whole plate out"
+                            placeholder="what you cook — one thing or a whole list"
                             class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
                         <button @click="addMeal()" :disabled="!mealDraft.trim() || mealBusy"
                             class="px-4 py-2.5 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
@@ -145,9 +147,10 @@
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
                         Write it however you say it — "chicken, rice, beans (black, red,
-                        or pinto), veggies, salad" is ONE meal. It gets a short name and
-                        the parts become its components, with the alternatives kept as
-                        choices so you pick at the store.
+                        or pinto), broccoli, salad, fresh fruit" becomes one dish per
+                        thing you'd actually cook — every alternative its own — each
+                        typed as a whole meal, a main, a side or a dessert. Plates get
+                        built from these; how many sides is a setting, not a rule.
                     </p>
                     <!-- Corrections are the point of this editor, so the parts the
                          model guessed have to be visible and the name editable. -->
@@ -155,22 +158,20 @@
                         <template x-for="m in repertoire" :key="'rp-' + m.id">
                             <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
                                 <div class="min-w-0 flex-1">
-                                    <button @click="renameMeal(m)"
+                                    <button @click="renameDish(m)"
                                         class="text-sm font-semibold text-gray-200 hover:text-white text-left"
                                         title="Rename">
                                         <span x-text="m.name"></span>
                                     </button>
                                     <div class="text-[11px] text-gray-600 truncate"
-                                        x-show="mealParts(m)" x-text="mealParts(m)"></div>
-                                    <div class="text-[11px] text-gray-700 truncate"
-                                        x-show="m.description" x-text="'you said: ' + m.description"></div>
+                                        x-text="dishBlurb(m)"></div>
                                 </div>
-                                <button @click="deleteMeal(m)"
+                                <button @click="deleteDish(m)"
                                     class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                             </div>
                         </template>
                         <span x-show="!repertoire.length" class="text-xs text-gray-500">
-                            Nothing yet — name a few things you make on a weeknight.
+                            Nothing yet — describe what you cook and I'll sort it out.
                         </span>
                     </div>
                 </div>
@@ -319,7 +320,8 @@
                     (params.get('title') || '').toLowerCase()),
                 lists: [], activeId: null, items: [], members: {},
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
-                suggest: { lines: [], fits: [], nobody_can_eat: false },
+                plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
+                addDishId: '',
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -331,7 +333,7 @@
                     await this.loadMembers();
                     await this.loadLists();
                     await this.loadItems();
-                    this.loadSuggestions();   // non-blocking: derived, may take a beat
+                    this.loadPlate();   // non-blocking: derived, may take a beat
                     this.loadRepertoire();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
@@ -343,86 +345,62 @@
                     if (this.isKiosk) setInterval(() => this.loadItems(true), 60000);
                 },
 
-                async loadSuggestions() {
+                async loadPlate() {
                     try {
-                        const r = await fetch(this.apiBase + 'api/meals/suggestions');
-                        if (!r.ok) return;
-                        const d = await r.json();
-                        this.suggest = {
-                            lines: d.lines || [], fits: d.fits || [],
-                            nobody_can_eat: !!d.nobody_can_eat
-                        };
+                        const r = await fetch(this.apiBase + 'api/meals/plate');
+                        if (r.ok) this.plate = await r.json();
                     } catch (e) { }
                 },
 
-                async loadRepertoire() {
-                    try {
-                        const r = await fetch(this.apiBase + 'api/meals/repertoire');
-                        this.repertoire = r.ok ? await r.json() : [];
-                    } catch (e) { this.repertoire = []; }
-                },
-
-                mealParts(m) {
-                    // A plate's components, with their alternatives collapsed:
-                    // "chicken · beans (black/red/pinto) · vegetable (…)".
-                    return (m.ingredients || [])
-                        .filter(i => i.role || (i.options || []).length)
-                        .map(i => i.name + ((i.options || []).length
-                            ? ' (' + i.options.slice(0, 3).join('/')
-                              + (i.options.length > 3 ? '…' : '') + ')' : ''))
-                        .join(' · ');
-                },
-
-                mealBlurb(m) {
-                    const hands = (m.prep_ahead_mins || 0) + (m.finish_mins || 0);
-                    const bits = [hands ? hands + ' min hands-on' : 'nothing to make'];
-                    if (m.unattended_mins) bits.push(m.unattended_mins + ' min in the oven');
-                    if (m.needs_ahead && m.needs_ahead !== 'none')
-                        bits.push('needs a ' + m.needs_ahead.replace('_', ' ') + ' head start');
-                    if (m.source === 'ordered') bits.push('ordered');
+                plateBlurb() {
+                    const p = this.plate || {};
+                    const hands = (p.prep_ahead_mins || 0) + (p.finish_mins || 0);
+                    const bits = [];
+                    if (hands) bits.push(hands + ' min hands-on');
+                    if (p.unattended_mins) bits.push(p.unattended_mins + ' min in the oven');
+                    if (p.needs_ahead && p.needs_ahead !== 'none')
+                        bits.push('needs a ' + p.needs_ahead.replace('_', ' ') + ' head start');
+                    if (p.edited) bits.push('yours');
                     return bits.join(' · ');
                 },
 
-                async addMeal() {
-                    const name = this.mealDraft.trim();
-                    if (!name) return;
-                    this.mealBusy = true;
-                    try {
-                        // One sentence in; the model fills cook times, portability
-                        // and ingredients. Asking for those up front is how a
-                        // repertoire never reaches critical mass.
-                        await fetch(this.apiBase + 'api/meals/repertoire', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ name })
-                        });
-                        this.mealDraft = '';
-                        await this.loadRepertoire();
-                        await this.loadSuggestions();
-                    } catch (e) {
-                        showGlobalAlert('Could not add that meal');
-                    } finally { this.mealBusy = false; }
+                addableDishes() {
+                    const on = new Set((this.plate.dishes || []).map(d => d.id));
+                    return (this.repertoire || []).filter(d => !on.has(d.id));
                 },
 
-                async swapDish(m, d) {
-                    // Cycle to the next option in this slot's pool. The slot is
-                    // the unit of choice, so only its own alternatives are offered.
-                    if ((d._pool || 1) < 2) return;
-                    const r = await fetch(this.apiBase + 'api/meals/repertoire/' + m.id
-                        + '/plate?swap=' + encodeURIComponent(d._slot)
-                        + '&after=' + encodeURIComponent(d.id), { method: 'POST' });
-                    if (r.ok) await this.loadSuggestions();
+                async addToPlate() {
+                    if (!this.addDishId) return;
+                    await fetch(this.apiBase + 'api/meals/plate/add', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dish_id: this.addDishId })
+                    });
+                    this.addDishId = '';
+                    await this.loadPlate();
                 },
 
-                async dishLeftover(m, d) {
+                async dropFromPlate(d) {
+                    await fetch(this.apiBase + 'api/meals/plate/remove', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dish_id: d.id })
+                    });
+                    await this.loadPlate();
+                },
+
+                async resetPlate() {
+                    await fetch(this.apiBase + 'api/meals/plate/reset', { method: 'POST' });
+                    await this.loadPlate();
+                },
+
+                async dishLeftoverOnPlate(d) {
                     await fetch(this.apiBase + 'api/meals/leftovers', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ meal_id: m.id, dish_ids: [d.id],
-                                               label: m.name })
+                        body: JSON.stringify({ dish_ids: [d.id], label: d.name })
                     });
-                    await this.loadSuggestions();
+                    await this.loadPlate();
                 },
 
-                async refineDish(m, d) {
+                async refinePlateDish(d) {
                     const answer = await promptInput(d.short_name || d.name,
                         d.detail_question || 'Which kind, and how is it cooked?',
                         { placeholder: 'e.g. russet, roasted' });
@@ -431,50 +409,85 @@
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ description: answer.trim() })
                     });
-                    await this.loadSuggestions();
+                    await this.loadPlate();
                     await this.loadRepertoire();
                 },
 
-                async renameMeal(m) {
+                async plateToList() {
+                    // Shop for tonight's plate, skipping staples and anything
+                    // already made.
+                    let added = 0;
+                    for (const d of (this.plate.dishes || [])) {
+                        if ((this.plate.leftover_dish_ids || []).includes(d.id)) continue;
+                        const r = await fetch(this.apiBase + 'api/meals/dishes/'
+                            + d.id + '/to-list?list_id='
+                            + encodeURIComponent(this.activeId || ''), { method: 'POST' });
+                        if (r.ok) added += ((await r.json()).added || []).length;
+                    }
+                    if (!added) showGlobalAlert('Everything is a staple or already on the list.');
+                    this.loadItems(true);
+                },
+
+                dishBlurb(d) {
+                    const hands = (d.prep_ahead_mins || 0) + (d.finish_mins || 0);
+                    const bits = [d.side_type || d.type];
+                    if (hands) bits.push(hands + ' min hands-on');
+                    if (d.unattended_mins) bits.push(d.unattended_mins + ' min oven');
+                    if (d.needs_ahead && d.needs_ahead !== 'none')
+                        bits.push(d.needs_ahead.replace('_', ' '));
+                    if (d.needs_detail) bits.push('needs detail');
+                    return bits.join(' · ');
+                },
+
+                async addMeal() {
+                    const name = this.mealDraft.trim();
+                    if (!name) return;
+                    this.mealBusy = true;
+                    try {
+                        // One sentence in; the model splits it into typed dishes
+                        // and fills their times and ingredients. Asking for those
+                        // up front is how a repertoire never reaches critical mass.
+                        await fetch(this.apiBase + 'api/meals/repertoire', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name })
+                        });
+                        this.mealDraft = '';
+                        await this.loadRepertoire();
+                        await this.loadPlate();
+                    } catch (e) {
+                        showGlobalAlert('Could not add that');
+                    } finally { this.mealBusy = false; }
+                },
+
+
+
+
+                async renameDish(m) {
                     const name = await promptInput('Rename meal',
                         'What should this be called on the list?',
                         { value: m.name });
                     if (!name || !name.trim() || name.trim() === m.name) return;
-                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id, {
+                    await fetch(this.apiBase + 'api/meals/dishes/' + m.id, {
                         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ name: name.trim() })
                     });
                     await this.loadRepertoire();
-                    await this.loadSuggestions();
+                    await this.loadPlate();
                 },
 
-                async deleteMeal(m) {
+                async deleteDish(m) {
                     // promptConfirm is (title, message, okText) — passing only a
                     // title leaves message undefined, and the modal throws on
                     // message.replace() so the promise never resolves and the
                     // button silently does nothing.
-                    if (!await promptConfirm('Remove meal',
-                        `Take "${m.name}" out of your meals?`, 'Remove')) return;
-                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id, { method: 'DELETE' });
+                    if (!await promptConfirm('Remove dish',
+                        `Take "${m.name}" out of what you cook?`, 'Remove')) return;
+                    await fetch(this.apiBase + 'api/meals/dishes/' + m.id, { method: 'DELETE' });
                     await this.loadRepertoire();
-                    await this.loadSuggestions();
+                    await this.loadPlate();
                 },
 
-                async mealToList(m) {
-                    const r = await fetch(this.apiBase + 'api/meals/repertoire/' + m.id
-                        + '/to-list?list_id=' + encodeURIComponent(this.activeId || ''), { method: 'POST' });
-                    const d = r.ok ? await r.json() : {};
-                    if (d.reason) showGlobalAlert(m.name + ' is takeout — nothing to buy.');
-                    else if (!(d.added || []).length)
-                        showGlobalAlert('Everything it needs is a staple or already on the list.');
-                    this.loadItems(true);
-                },
 
-                async mealServed(m) {
-                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id + '/served',
-                        { method: 'POST' });
-                    await this.loadSuggestions();
-                },
 
                 async loadMembers() {
                     try {

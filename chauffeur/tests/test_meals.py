@@ -867,6 +867,257 @@ def scenario_a_model_that_echoes_the_description_is_ignored():
           "and no description is stored when nothing was shortened")
 
 
+# --- M5: plates are composed from typed dishes ------------------------------
+
+def _pantry():
+    """What this family actually keeps: a handful of dishes, not 15 meals."""
+    ent = _dish("roasted chicken thighs", short_name="chicken", type='entree',
+                prep_ahead_mins=5, finish_mins=5, unattended_mins=40,
+                holds_well=True, portability='utensils_ok', tags=['chicken'],
+                ingredients=[{'name': 'chicken thighs', 'kind': 'fresh'}])
+    starches = [_dish(n, short_name=s, type='side', side_type='starch',
+                      finish_mins=5, holds_well=True, portability='utensils_ok',
+                      ingredients=[{'name': n, 'kind': 'fresh'}])
+                for n, s in (("white rice", "rice"),
+                             ("roasted russet potatoes", "potatoes"))]
+    vegs = [_dish(f"steamed {v}", short_name=v, type='side', side_type='vegetable',
+                  finish_mins=8, holds_well=True, portability='utensils_ok',
+                  ingredients=[{'name': v, 'kind': 'fresh'}])
+            for v in ("carrots", "broccoli", "corn")]
+    salad = _dish("green salad", short_name="salad", type='side', side_type='salad',
+                  finish_mins=10, portability='utensils_ok',
+                  ingredients=[{'name': 'lettuce', 'kind': 'fresh'}])
+    fruit = _dish("fresh fruit", short_name="fruit", type='dessert',
+                  finish_mins=5, portability='utensils_ok', holds_well=True,
+                  ingredients=[{'name': 'fruit', 'kind': 'fresh'}])
+    tacos = _dish("tacos", short_name="tacos", type='meal',
+                  finish_mins=25, holds_well=True, portability='handheld',
+                  tags=['mexican'],
+                  ingredients=[{'name': 'tortillas', 'kind': 'fresh'}])
+    return {'entree': ent, 'starches': starches, 'vegs': vegs, 'salad': salad,
+            'fruit': fruit, 'tacos': tacos}
+
+
+def scenario_a_plate_is_an_entree_plus_sides_plus_dessert():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=True)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    dishes = meals.compose_plate(DAY)
+    types = [d['type'] for d in dishes]
+    check(types.count('side') == 2, f"two sides, as configured — got {types}")
+    check(types.count('dessert') == 1, "and the fruit this family always has")
+    check(types[0] in ('entree', 'meal'), f"led by a main, got {types}")
+    kinds = [d.get('side_type') for d in dishes if d['type'] == 'side']
+    check(len(set(kinds)) == 2,
+          f"sides spread across kinds rather than two of the same — got {kinds}")
+
+
+def scenario_the_side_count_is_a_knob_not_a_stored_shape():
+    """The old model froze the count at whatever was typed. "Only one veggie
+    tonight" and "we want three" both have to be expressible."""
+    reset_db(); _seed_people()
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    for n in (0, 1, 3):
+        s = _settings(sides_per_meal=n, include_dessert=False)
+        got = [d for d in meals.compose_plate(DAY, settings=s) if d['type'] == 'side']
+        check(len(got) == n, f"asked for {n} sides, got {len(got)}")
+
+
+def scenario_a_meal_dish_stands_alone():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    # Only tacos and sides exist — no entree, so the one-dish meal wins and
+    # brings nothing with it.
+    tacos = _dish("tacos", type='meal', finish_mins=25, holds_well=True,
+                  portability='handheld')
+    _dish("green salad", type='side', side_type='salad', finish_mins=10,
+          portability='utensils_ok')
+    dishes = meals.compose_plate(DAY)
+    check([d['id'] for d in dishes] == [tacos['id']],
+          f"a 'meal' dish IS the plate — no sides bolted on, got "
+          f"{[d['name'] for d in dishes]}")
+
+
+def scenario_dessert_is_a_family_setting():
+    reset_db(); _seed_people()
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    on = _settings(sides_per_meal=1, include_dessert=True)
+    off = _settings(sides_per_meal=1, include_dessert=False)
+    check(any(d['type'] == 'dessert' for d in meals.compose_plate(DAY, settings=on)),
+          "families who always have fruit get it")
+    check(not any(d['type'] == 'dessert' for d in meals.compose_plate(DAY, settings=off)),
+          "families who have nothing after dinner are not offered any")
+
+
+def scenario_tonight_is_editable_and_then_holds_still():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    first = meals.get_or_compose_plate(DAY)
+    check(not first['edited'], "an untouched plate is a proposal")
+
+    corn = next(v for v in p['vegs'] if v['short_name'] == 'corn')
+    after_add = meals.add_to_plate(DAY, corn['id'])
+    check(any(d['id'] == corn['id'] for d in after_add['dishes']),
+          "'we've got corn too' adds it")
+
+    drop = after_add['dishes'][1]['id']
+    after_rm = meals.remove_from_plate(DAY, drop)
+    check(not any(d['id'] == drop for d in after_rm['dishes']),
+          "'no salad tonight' removes it")
+
+    again = meals.get_or_compose_plate(DAY)
+    check(again['edited'] and [d['id'] for d in again['dishes']]
+          == [d['id'] for d in after_rm['dishes']],
+          "an edited plate is never re-proposed under the family")
+
+    meals.reset_plate(DAY)
+    check(not meals.get_or_compose_plate(DAY)['edited'],
+          "and it can be handed back to the composer")
+
+
+def scenario_leftovers_and_allergies_still_govern_the_plate():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    add = _member("Addison")
+    storage.update_member(add['id'], {'dietary_avoid': ['mexican']})
+    _leftover(dish_ids=[p['starches'][1]['id']])          # the potatoes are made
+
+    dishes = meals.compose_plate(DAY)
+    ids = [d['id'] for d in dishes]
+    check(p['starches'][1]['id'] in ids,
+          "an already-made dish is the obvious thing to serve")
+    check(p['tacos']['id'] not in ids,
+          "and an allergy still removes a dish outright")
+
+
+def scenario_plate_timing_uses_the_same_aggregation():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    dishes = meals.compose_plate(DAY)
+    totals = meals.plate_totals(dishes, DAY)
+    hands = sum((d.get('prep_ahead_mins') or 0) + (d.get('finish_mins') or 0)
+                for d in dishes)
+    check(totals['prep_ahead_mins'] + totals['finish_mins'] == hands,
+          "hands-on still sums across the plate")
+    check(totals['unattended_mins'] == max((d.get('unattended_mins') or 0)
+                                           for d in dishes),
+          "and the oven still overlaps rather than adding")
+
+
+def scenario_migration_types_m4_dishes_and_retires_slot_meals():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()            # an M4 slot-meal with role-tagged dishes
+    res = meals.migrate_slot_meals()
+    check(res['retired_meals'] == 1, "the stored combination is retired")
+    check(storage.get_dish(d['chicken']['id'])['type'] == 'entree',
+          "role=protein became type=entree")
+    veg = storage.get_dish(d['veg'][0]['id'])
+    check(veg['type'] == 'side' and veg['side_type'] == 'vegetable',
+          f"role=vegetable became a vegetable side, got {veg.get('side_type')}")
+    check(storage.get_dish(d['rice']['id'])['side_type'] == 'starch',
+          "and role=starch became a starch side")
+    check(all(dd['id'] for dd in storage.get_dishes()),
+          "no dish the family entered is lost — only the grouping goes")
+
+
+def scenario_extraction_emits_one_dish_per_alternative():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",
+                                    "home_location": HOME}
+    payload = {"dishes": [
+        {"name": "roasted chicken thighs", "short_name": "chicken",
+         "type": "entree", "finish_mins": 10, "portability": "utensils_ok"},
+        {"name": "black beans", "short_name": "beans", "type": "side",
+         "side_type": "starch", "finish_mins": 5, "portability": "utensils_ok"},
+        {"name": "pinto beans", "short_name": "beans", "type": "side",
+         "side_type": "starch", "finish_mins": 5, "portability": "utensils_ok"},
+        {"name": "steamed carrots", "short_name": "carrots", "type": "side",
+         "side_type": "vegetable", "finish_mins": 8, "portability": "utensils_ok"},
+        {"name": "fresh fruit", "short_name": "fruit", "type": "dessert",
+         "finish_mins": 5, "portability": "utensils_ok"},
+    ]}
+    with mock.patch('services.model_pools.call_pool_json', return_value=payload):
+        res = meals.add_dishes_from_text(
+            "chicken, beans (black or pinto), veggies x 2 (carrots), fruit")
+    check(len(res['added']) == 5,
+          f"every alternative is its own dish — got {len(res['added'])}")
+    check(not storage.get_meals(), "and nothing stores a combination any more")
+    by_type = {d['type'] for d in storage.get_dishes()}
+    check(by_type == {'entree', 'side', 'dessert'}, f"typed on the way in, got {by_type}")
+
+    # Re-entering the same text reuses rather than duplicating.
+    with mock.patch('services.model_pools.call_pool_json', return_value=payload):
+        again = meals.add_dishes_from_text("same again")
+    check(not again['added'] and len(again['existing']) == 5,
+          f"re-entry reuses every dish, got added={len(again['added'])}")
+
+
+def scenario_the_plate_is_adjustable_by_talking():
+    """"We've got corn too" / "no salad tonight" — the intended path is
+    Argyle, and it must change TONIGHT without touching the repertoire."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    p = _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    from services.agent_tools_v2 import (get_tonights_plate, change_tonights_plate)
+
+    before = len(storage.get_dishes())
+    said = change_tonights_plate("corn", action="add", target_date=DAY)
+    check(said['status'] == 'success' and 'corn' in said['message'].lower(),
+          f"adding by name works, got {said['message']}")
+    plate = meals.get_or_compose_plate(DAY)
+    check(any('corn' in (d.get('short_name') or '') for d in plate['dishes']),
+          "and it lands on tonight's plate")
+    check(len(storage.get_dishes()) == before,
+          "the repertoire is untouched — this is one evening, not a new dish")
+
+    drop = change_tonights_plate("salad", action="remove", target_date=DAY)
+    check(drop['status'] == 'success', f"dropping works too, got {drop['message']}")
+    plate = meals.get_or_compose_plate(DAY)
+    check(not any('salad' in (d.get('short_name') or '') for d in plate['dishes']),
+          "salad is off tonight")
+
+    read = get_tonights_plate(DAY)
+    check("corn" in read['message'], f"and the read reflects it: {read['message']}")
+
+    missing = change_tonights_plate("caviar", target_date=DAY)
+    check(missing['status'] == 'error' and 'caviar' in missing['message'],
+          "an unknown dish asks rather than inventing one")
+
+
+def scenario_m5_tools_in_both_stacks():
+    reset_db(); _seed_people(); _settings()
+    _pantry()
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    from services import agent_tools, agent_tools_v2
+    want = {"get_tonights_plate", "change_tonights_plate", "add_dishes"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    out = agent_tools.execute_tool("get_tonights_plate", {"target_date": DAY})
+    check(out.get('status') == 'success', f"the v1 bridge reaches it, got {out}")
+
+
 # --- M4: dishes are the unit of work ----------------------------------------
 
 def _dish(name, **kw):

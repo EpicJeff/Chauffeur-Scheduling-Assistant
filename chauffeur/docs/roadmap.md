@@ -3,7 +3,7 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-05 (v2.75.0 — meals arc M1–M4;
+up cold. Last updated: 2026-08-05 (v2.76.0 — meals arc M1–M5;
 the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
@@ -256,6 +256,12 @@ won't eat in the car at all).
   (thaw) creates a morning touchpoint on K5's launch line. Ordered/hybrid
   meals route via C3's min-detour machinery, and **delivery is a presence
   constraint the solver can check** ("nobody is home 6:00–6:40").
+- **M5 — plates composed from typed dishes. SHIPPED v2.76.0 (2026-08-05).**
+  From the family: they don't eat 15-20 different meals, they eat combinations
+  of ~25 dishes, so storing combinations was the wrong shape. Dishes carry a
+  type (meal/entree/side/dessert); a plate is composed by rule (entree + N
+  sides + dessert) and then edited for the evening. Retires `Meal.slots`.
+  Details in system_capabilities.md.
 - **M4 — dishes as the unit of work. SHIPPED v2.75.0 (2026-08-05).** From the
   family: a meal should break into DISHES (one per option), and a suggestion
   pulls one dish from each pool. Dishes carry their own times, are reused
