@@ -2037,6 +2037,117 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+# --- K1: the kiosk board ----------------------------------------------------
+
+import contextlib
+
+
+@contextlib.contextmanager
+def _stock_image(fn):
+    """Swap the network lookup out and PUT IT BACK. A leaked monkeypatch here
+    would silently decide the outcome of whatever scenario sorted after it."""
+    original = meals.fetch_stock_image
+    meals.fetch_stock_image = fn
+    try:
+        yield
+    finally:
+        meals.fetch_stock_image = original
+
+def scenario_staples_are_the_we_are_out_of_grid():
+    """Staples never reach a list on their own — that IS the classification —
+    so running out of one had no gesture except the "+ List" dialog's Add,
+    which permanently reclassifies it. The grid is the missing verb."""
+    reset_db(); _seed_people(); _settings()
+    _dish('rice bowl', type='entree', ingredients=[
+        {'name': 'rice', 'kind': 'staple'}, {'name': 'olive oil', 'kind': 'staple'},
+        {'name': 'chicken', 'kind': 'fresh'}])
+    _dish('stir fry', type='entree', ingredients=[
+        {'name': 'Rice', 'kind': 'staple'}, {'name': 'soy sauce', 'kind': 'staple'},
+        {'name': 'peppers', 'kind': 'fresh'}])
+
+    st = meals.household_staples()
+    names = [s['name'].lower() for s in st]
+    check('chicken' not in names and 'peppers' not in names,
+          f"fresh things are not staples — they get bought by the plan, got {names}")
+    check(names[0] == 'rice' and st[0]['dish_count'] == 2,
+          f"ranked by how many dishes depend on it, got {st[:2]}")
+    check(len([n for n in names if n == 'rice']) == 1,
+          f"'rice' and 'Rice' are one entry, got {names}")
+
+
+def scenario_being_out_of_a_staple_does_not_reclassify_it():
+    """The load-bearing distinction. "We're out of rice this week" says nothing
+    about whether rice is a staple — that is a standing fact about the
+    household, and only the family can change it."""
+    reset_db(); _seed_people(); _settings()
+    d = _dish('rice bowl', type='entree', ingredients=[
+        {'name': 'rice', 'kind': 'staple'}, {'name': 'chicken', 'kind': 'fresh'}])
+    lst = storage.ensure_default_shopping_list()
+
+    from models.schemas import ShoppingItem
+    storage.add_shopping_item(ShoppingItem(list_id=lst['id'], name='rice',
+                                           added_via='kiosk').model_dump())
+
+    fresh = storage.get_dish(d['id'])
+    kinds = {i['name']: i['kind'] for i in fresh['ingredients']}
+    check(kinds['rice'] == 'staple',
+          f"rice is still a staple after being bought once, got {kinds}")
+    check('rice' in [s['name'] for s in meals.household_staples()],
+          "and still appears in the grid next week")
+
+
+def scenario_a_dish_image_prefers_the_familys_own_photo():
+    reset_db(); _seed_people(); _settings()
+    d = _dish('tacos', type='meal')
+    check(not storage.get_dish(d['id']).get('image_url'), "no picture to begin with")
+
+    meals.set_dish_image(d['id'], 'https://example.com/our-tacos.jpg', 'family')
+    got = storage.get_dish(d['id'])
+    check(got['image_url'].endswith('our-tacos.jpg') and got['image_source'] == 'family',
+          f"the family's photo is stored, got {got.get('image_source')}")
+
+    # A backfill must never paint over it.
+    with _stock_image(lambda dish: 'https://stock.example/generic.jpg'):
+        res = meals.backfill_dish_images()
+    check(storage.get_dish(d['id'])['image_url'].endswith('our-tacos.jpg'),
+          "backfill never overwrites the family's own picture")
+    check(res['skipped'] >= 1, f"and says it skipped it, got {res}")
+
+
+def scenario_stock_images_search_for_a_cooked_dish_not_an_ingredient():
+    """Searching the bare name finds raw meat and anatomical diagrams — worse
+    than no picture for the child who needed it."""
+    reset_db(); _seed_people(); _settings()
+    q = meals.dish_image_query({'name': 'chicken thighs'})
+    check('chicken thighs' in q and 'cooked' in q and 'dish' in q,
+          f"the query is biased toward a plated meal, got {q!r}")
+
+
+def scenario_backfill_fills_only_what_is_missing_and_is_capped():
+    reset_db(); _seed_people(); _settings()
+    for n in ('a', 'b', 'c', 'd'):
+        _dish(n, type='entree')
+    calls = []
+    with _stock_image(lambda dish: (calls.append(dish['name'])
+                                    or f"https://stock/{dish['name']}.jpg")):
+        res = meals.backfill_dish_images(limit=2)
+        check(len(res['filled']) == 2 and len(calls) == 2,
+              f"capped — a board that stalls fetching pictures is worse than "
+              f"one with none, got {res}")
+        res2 = meals.backfill_dish_images(limit=10)
+    check(len(res2['filled']) == 2 and res2['skipped'] == 2,
+          f"the two already done are skipped, got {res2}")
+
+
+def scenario_no_image_is_a_normal_state_not_a_failure():
+    reset_db(); _seed_people(); _settings()
+    _dish('mystery casserole', type='meal')
+    with _stock_image(lambda dish: None):           # no key configured
+        res = meals.backfill_dish_images()
+    check(res['status'] == 'success' and not res['filled'] and res['failed'] == 1,
+          f"reported, not raised — the board renders fine without pictures, got {res}")
+
+
 def scenario_m6_tools_in_both_stacks():
     reset_db(); _seed_people()
     _settings(sides_per_meal=1, include_dessert=False)

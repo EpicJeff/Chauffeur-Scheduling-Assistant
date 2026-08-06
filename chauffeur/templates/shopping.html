@@ -38,6 +38,49 @@
                 <h2 class="text-3xl font-bold text-white">Shopping &amp; Meals</h2>
             </header>
 
+            <!-- ===== KIOSK BOARD (K1) =====
+                 The kiosk used to hide Meals wholesale, so the week was simply
+                 absent from the surface the family actually walks past. This is
+                 the read-only twin of the week strip below: same data, same
+                 endpoint, no editing. The NO-IMAGE state is designed first —
+                 it is day one for everyone and forever for anyone without an
+                 Unsplash key, so it has to look deliberate rather than broken. -->
+            <section x-show="isKiosk" class="mb-10">
+                <div class="grid gap-4"
+                    :class="week.length > 4 ? 'grid-cols-2 xl:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'">
+                    <template x-for="day in week" :key="'kb-' + day.date">
+                        <div class="relative rounded-2xl overflow-hidden border h-52 flex flex-col justify-end"
+                            :class="isToday(day) ? 'border-pink-400/70 ring-2 ring-pink-400/30' : 'border-gray-700'">
+                            <img x-show="dayImage(day)" :src="dayImage(day)" alt=""
+                                class="absolute inset-0 w-full h-full object-cover">
+                            <div x-show="!dayImage(day)" class="absolute inset-0"
+                                :class="dayTint(day)"></div>
+                            <div x-show="!dayImage(day)"
+                                class="absolute inset-0 flex items-center justify-center text-6xl opacity-30"
+                                x-text="dayGlyph(day)"></div>
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
+                            <div class="relative p-4">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="text-xs font-black uppercase tracking-widest"
+                                        :class="isToday(day) ? 'text-pink-300' : 'text-gray-400'"
+                                        x-text="isToday(day) ? 'Tonight' : day.weekday"></span>
+                                    <span class="text-[11px] text-gray-400"
+                                        x-show="day.cook_window_mins != null"
+                                        x-text="day.cook_window_mins + ' min'"></span>
+                                </div>
+                                <div class="text-white font-bold leading-tight mt-0.5"
+                                    x-text="dayHeadline(day)"></div>
+                                <div class="text-[11px] text-gray-300 truncate"
+                                    x-show="daySides(day)" x-text="daySides(day)"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="!week.length" class="text-gray-500 text-sm">
+                    Nothing planned yet.
+                </div>
+            </section>
+
             <!-- ===== MEALS =====
                  Meals come first because they GENERATE the shopping: what the
                  family is eating decides what has to be bought. The page read
@@ -305,6 +348,32 @@
                 </div>
             </div>
 
+            <!-- "We're out of this" (K1). Staples never reach a list on their
+                 own — that is the whole point of the classification — so until
+                 now running out of one had NO gesture except the "+ List"
+                 dialog's Add, which permanently reclassifies it as fresh.
+                 Tapping here says "we're out this week" and changes nothing
+                 about what the ingredient IS. Tap again to undo; adding a line
+                 to a list is cheap and reversible, which is why this is safe on
+                 a panel the kids can reach. Anything not in the grid is one
+                 sentence to Argyle, whose bar is already on this page. -->
+            <div x-show="isKiosk && staples.length" class="mb-8">
+                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
+                    We're out of…
+                </h3>
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="s in staples" :key="'st-' + s.name">
+                        <button @click="outOf(s.name)" :disabled="stapleBusy === s.name"
+                            class="px-4 py-3 rounded-xl text-sm font-bold border transition-colors disabled:opacity-50"
+                            :class="isOnList(s.name)
+                                ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'">
+                            <span x-show="isOnList(s.name)">✓ </span><span x-text="s.name"></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+
             <!-- ===== Add row ===== -->
             <div class="flex gap-2 mb-6" x-show="!isKiosk">
                 <input x-model="draft" @keydown.enter="addItem()" type="text"
@@ -522,6 +591,7 @@
                 week: [], weekWindow: null, weekBusy: false, dayAdd: {},
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
+                staples: [], stapleBusy: null,
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -538,6 +608,7 @@
                     this.loadWeek();
                     this.loadTrip();
                     this.loadWalmart();
+                    if (this.isKiosk) this.loadStaples();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
@@ -545,7 +616,13 @@
                         const es = new EventSource(this.apiBase + 'api/stream');
                         es.onmessage = () => this.loadItems(true);
                     } catch (e) { /* stream is a nicety, not a requirement */ }
-                    if (this.isKiosk) setInterval(() => this.loadItems(true), 60000);
+                    if (this.isKiosk) {
+                        setInterval(() => this.loadItems(true), 60000);
+                        // The board must roll over on its own: a wall panel
+                        // nobody touches would otherwise still show Tuesday's
+                        // dinner on Wednesday.
+                        setInterval(() => { this.loadWeek(); this.loadStaples(); }, 900000);
+                    }
                 },
 
                 async loadRepertoire() {
@@ -562,6 +639,95 @@
                         const r = await fetch(this.apiBase + 'api/meals/plate');
                         if (r.ok) this.plate = await r.json();
                     } catch (e) { }
+                },
+
+                // --- kiosk board helpers (K1) ---
+                // The entree carries the block: it is what the question "what's
+                // for dinner" is actually asking, and sides read as a subtitle.
+                mainDish(day) {
+                    const ds = day.dishes || [];
+                    return ds.find(d => d.type === 'meal')
+                        || ds.find(d => d.type === 'entree') || ds[0] || null;
+                },
+                dayHeadline(day) {
+                    const m = this.mainDish(day);
+                    return m ? (m.short_name || m.name) : 'Not planned';
+                },
+                daySides(day) {
+                    const m = this.mainDish(day);
+                    return (day.dishes || []).filter(d => d !== m)
+                        .map(d => d.short_name || d.name).join(' · ');
+                },
+                dayImage(day) {
+                    const m = this.mainDish(day);
+                    return (m && m.image_url) || null;
+                },
+                // No picture is the DEFAULT state, not a failure state — so it
+                // gets a deliberate look rather than a broken-image icon.
+                dayTint(day) {
+                    const m = this.mainDish(day);
+                    const t = (m && (m.side_type || m.type)) || 'other';
+                    return {
+                        meal: 'bg-gradient-to-br from-purple-900 to-gray-900',
+                        entree: 'bg-gradient-to-br from-rose-900 to-gray-900',
+                        vegetable: 'bg-gradient-to-br from-emerald-900 to-gray-900',
+                        starch: 'bg-gradient-to-br from-amber-900 to-gray-900',
+                        salad: 'bg-gradient-to-br from-lime-900 to-gray-900',
+                        dessert: 'bg-gradient-to-br from-fuchsia-900 to-gray-900',
+                    }[t] || 'bg-gradient-to-br from-slate-800 to-gray-900';
+                },
+                dayGlyph(day) {
+                    const m = this.mainDish(day);
+                    const t = (m && (m.side_type || m.type)) || 'other';
+                    return { meal: '🍲', entree: '🍗', vegetable: '🥦', starch: '🍚',
+                             salad: '🥗', dessert: '🍰' }[t] || '🍽️';
+                },
+                isToday(day) {
+                    const d = new Date();
+                    const iso = d.getFullYear() + '-'
+                        + String(d.getMonth() + 1).padStart(2, '0') + '-'
+                        + String(d.getDate()).padStart(2, '0');
+                    return day.date === iso;
+                },
+
+                async outOf(name) {
+                    // "We're out of rice" — onto the list for THIS shop only.
+                    // Never reclassifies the ingredient: whether rice is a
+                    // staple is a standing fact about the household, and
+                    // running out this week says nothing about it.
+                    if (this.stapleBusy) return;
+                    this.stapleBusy = name;
+                    try {
+                        const open = this.open.find(i =>
+                            i.name.trim().toLowerCase() === name.trim().toLowerCase());
+                        if (open) {                       // tapped twice — undo
+                            await fetch(this.apiBase + 'api/shopping/items/' + open.id,
+                                        { method: 'DELETE' });
+                        } else {
+                            await fetch(this.apiBase + 'api/shopping/items', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name: name, list_id: this.activeId,
+                                                       added_via: 'kiosk' })
+                            });
+                        }
+                        await this.loadItems(true);
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.stapleBusy = null;
+                    }
+                },
+
+                isOnList(name) {
+                    return this.open.some(i =>
+                        i.name.trim().toLowerCase() === name.trim().toLowerCase());
+                },
+
+                async loadStaples() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/shopping/staples');
+                        this.staples = r.ok ? (await r.json()).staples || [] : [];
+                    } catch (e) { this.staples = []; }
                 },
 
                 async buildCart() {

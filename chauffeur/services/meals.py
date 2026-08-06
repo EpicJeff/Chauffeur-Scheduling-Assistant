@@ -2315,3 +2315,121 @@ def plan_summary_lines(plan: dict) -> list:
         names = ", ".join(a['name'] for a in plan['away'])
         lines.append(f"✈️ {names} away — not counted in.")
     return lines
+
+
+# --- Dish images (kiosk board, arc K1) --------------------------------------
+# Images earn their place for ONE reason: a child who cannot read fluently yet
+# can still see what is for dinner. That makes accuracy matter more than
+# polish, which is why generated art is not used — an uncanny or wrong-looking
+# dish defeats the only case that justified having a picture.
+
+STOCK_QUERY_SUFFIX = "food dish cooked meal"
+
+
+def dish_image_query(dish: dict) -> str:
+    """Bias the search toward a plated, cooked dish. Searching the bare name
+    finds raw ingredients and diagrams — a photograph of uncooked chicken
+    thighs is worse than no picture for the reader who needs it most."""
+    name = (dish.get('name') or dish.get('short_name') or '').strip()
+    return f"{name} {STOCK_QUERY_SUFFIX}".strip()
+
+
+def unsplash_key() -> str:
+    import json as _json
+    import os as _os
+    try:
+        if _os.path.exists('/data/options.json'):
+            with open('/data/options.json') as f:
+                k = (_json.load(f).get('unsplash_api_key') or '').strip()
+                if k:
+                    return k
+    except Exception:
+        pass
+    return (_os.environ.get('UNSPLASH_API_KEY') or '').strip() or None
+
+
+def fetch_stock_image(dish: dict) -> str:
+    """Unsplash only — deliberately NOT the Wikidata/Wikipedia chain the trip
+    backgrounds use, which returns anatomical diagrams for things like
+    'chicken thighs'."""
+    import urllib.parse
+    import requests
+    key = unsplash_key()
+    if not key:
+        return None
+    try:
+        q = urllib.parse.quote(dish_image_query(dish))
+        r = requests.get(
+            f"https://api.unsplash.com/search/photos?query={q}"
+            "&orientation=landscape&per_page=1&content_filter=high",
+            headers={"Authorization": f"Client-ID {key}"}, timeout=6)
+        if r.ok:
+            hits = (r.json() or {}).get('results') or []
+            if hits:
+                return hits[0]['urls'].get('small') or hits[0]['urls'].get('regular')
+    except Exception as ex:
+        print(f"dish image lookup failed: {ex}")
+    return None
+
+
+def set_dish_image(dish_id: str, url: str = None, source: str = 'family') -> dict:
+    """A family photo always wins and is never overwritten by a stock one."""
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    storage.update_dish(dish_id, {'image_url': (url or '').strip() or None,
+                                  'image_source': source if url else None})
+    return {'status': 'success', 'dish': storage.get_dish(dish_id)}
+
+
+def backfill_dish_images(limit: int = 12, only_missing: bool = True) -> dict:
+    """Fill in stock images for dishes that have none.
+
+    Explicit and rate-limited rather than lazy-on-render: a board that stalls
+    while it fetches pictures is worse than a board with none, and the
+    no-image state is designed to look intentional anyway.
+    """
+    done, skipped, failed = [], 0, 0
+    for d in storage.get_dishes():
+        if len(done) >= max(1, limit):
+            break
+        if only_missing and (d.get('image_url') or '').strip():
+            skipped += 1
+            continue
+        if d.get('image_source') == 'family':
+            skipped += 1          # never paint over the family's own photo
+            continue
+        url = fetch_stock_image(d)
+        if not url:
+            failed += 1
+            continue
+        storage.update_dish(d['id'], {'image_url': url, 'image_source': 'stock'})
+        done.append(d.get('short_name') or d.get('name'))
+    return {'status': 'success', 'filled': done, 'skipped': skipped,
+            'failed': failed, 'configured': bool(unsplash_key())}
+
+
+def household_staples(limit: int = 40) -> list:
+    """Everything the family's dishes treat as always-on-hand.
+
+    These are exactly the things that never reach a shopping list on their own
+    and that you only buy when you RUN OUT — and until now the only way to get
+    one onto a list was the "+ List" skip dialog's Add, which permanently
+    reclassifies it as fresh. "We're out of rice this week" had no gesture at
+    all. Ranked by how many dishes depend on it, because that is the closest
+    honest proxy for how much it matters when it is gone.
+    """
+    counts, labels = {}, {}
+    for d in storage.get_dishes():
+        for ing in (d.get('ingredients') or []):
+            if (ing.get('kind') or 'fresh') != 'staple':
+                continue
+            raw = (ing.get('name') or '').strip()
+            if not raw:
+                continue
+            key = raw.lower()
+            counts[key] = counts.get(key, 0) + 1
+            labels.setdefault(key, raw)
+    out = [{'name': labels[k], 'dish_count': v} for k, v in counts.items()]
+    out.sort(key=lambda x: (-x['dish_count'], x['name'].lower()))
+    return out[:limit]

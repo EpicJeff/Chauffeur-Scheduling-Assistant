@@ -5382,6 +5382,45 @@ def create_shopping_list_errand(list_id: str, background_tasks: BackgroundTasks,
         _touch_stream()
     return res
 
+class DishImage(BaseModel):
+    url: Optional[str] = None
+    source: str = 'family'
+
+@app.get("/api/shopping/staples")
+def shopping_staples(limit: int = 40):
+    """What the household treats as always-on-hand — the kiosk's "we're out of
+    this" grid. These never reach a list on their own, so running out of one
+    had no gesture until now."""
+    from services import meals as _meals
+    return {'staples': _meals.household_staples(limit)}
+
+@app.post("/api/meals/dishes/{dish_id}/image")
+def set_dish_image(dish_id: str, req: DishImage):
+    from services import meals as _meals
+    res = _meals.set_dish_image(dish_id, req.url, req.source)
+    _touch_stream()
+    return res
+
+@app.post("/api/meals/dishes/{dish_id}/image/auto")
+def auto_dish_image(dish_id: str):
+    """One dish, looked up now — the "try again" for a picture that came back
+    wrong."""
+    from services import meals as _meals
+    dish = storage.get_dish(dish_id)
+    if not dish:
+        return {'status': 'error', 'message': 'No such dish.'}
+    url = _meals.fetch_stock_image(dish)
+    if not url:
+        return {'status': 'error',
+                'message': "No picture found. Add an Unsplash key, or take a "
+                           "photo of it yourself — that one's better anyway."}
+    return _meals.set_dish_image(dish_id, url, 'stock')
+
+@app.post("/api/meals/dishes/images/backfill")
+def backfill_dish_images(limit: int = 12):
+    from services import meals as _meals
+    return _meals.backfill_dish_images(limit)
+
 @app.get("/api/meals/grocery-day")
 def grocery_day_suggestion():
     """Which weekday actually has room for a shopping trip, and why — ranked by

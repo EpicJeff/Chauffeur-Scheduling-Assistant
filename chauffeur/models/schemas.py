@@ -791,6 +791,14 @@ class Dish(BaseModel):
     side_type: Optional[str] = None    # vegetable | starch | salad | other
     role: Optional[str] = None         # legacy free-text label (pre-M5)
 
+    # Kiosk board (arc K1). An image is NOT decoration here: a child who
+    # cannot read fluently yet learns what is for dinner from the picture, and
+    # that is the only argument that justifies carrying images at all. So the
+    # family's OWN photo outranks a stock one — it is their food, and it also
+    # answers "what does this look like when it's done".
+    image_url: Optional[str] = None
+    image_source: Optional[str] = None   # family | stock
+
     prep_ahead_mins: int = 0
     finish_mins: int = 0
     unattended_mins: int = 0
