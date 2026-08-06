@@ -315,32 +315,27 @@
                             placeholder="In your words — e.g. meat about once a week"
                             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 mb-2">
 
-                        <!-- Dishes are PICKED, never typed. The old single
-                             "applies to" box guessed whether a word was a tag
-                             or a dish name, matched only the full name, and
-                             silently fell back to a tag when it missed — so
-                             naming three beans produced three meaningless tags
-                             and a rule that governed nobody. -->
-                        <label class="block text-[11px] text-gray-500 mb-1">Applies to these dishes</label>
-                        <div class="flex flex-wrap gap-1.5 mb-2 max-h-32 overflow-y-auto">
-                            <template x-for="d in ruleDishes()" :key="'rd-' + d.id">
-                                <button @click="toggleRuleDish(d)"
-                                    class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors"
-                                    :class="ruleDraft.dish_ids.includes(d.id)
-                                        ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
-                                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-pink-400/40'"
-                                    x-text="d.name"></button>
+                        <!-- Dishes are PICKED, never typed, and picked through
+                             the SAME dialog used everywhere else on this page.
+                             Inlining two long chip lists here is what turned
+                             this form into a wall of controls. -->
+                        <div class="flex flex-wrap items-center gap-2 mb-2">
+                            <button @click="openDishMultiPicker('dish_ids')"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white">
+                                Choose dishes…
+                            </button>
+                            <template x-for="d in draftDishes('dish_ids')" :key="'sd-' + d.id">
+                                <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold
+                                             bg-pink-500/20 border border-pink-400/60 text-pink-200"
+                                    x-text="d.name"></span>
                             </template>
-                            <span x-show="!ruleDishes().length" class="text-[11px] text-gray-600">
-                                No dishes yet.
-                            </span>
                         </div>
 
                         <div class="flex flex-wrap items-end gap-3">
                             <div class="flex-1 min-w-[180px]">
                                 <label class="block text-[11px] text-gray-500 mb-1">…or by tag</label>
                                 <input x-model="ruleDraft.tags" type="text"
-                                    placeholder="e.g. beans — leave blank if you picked dishes"
+                                    placeholder="e.g. beans -baked"
                                     class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500">
                             </div>
                             <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer pb-2">
@@ -375,18 +370,19 @@
                              selecting — with dishes picked by hand there is
                              nothing to subtract from. -->
                         <div x-show="(ruleDraft.tags || '').trim() || ruleDraft.takeout"
-                            class="mt-3 pt-3 border-t border-gray-700">
-                            <label class="block text-[11px] text-gray-500 mb-1">…except these</label>
-                            <div class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                                <template x-for="d in ruleDishes()" :key="'rx-' + d.id">
-                                    <button @click="toggleRuleExclude(d)"
-                                        class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors"
-                                        :class="ruleDraft.exclude_dish_ids.includes(d.id)
-                                            ? 'bg-amber-500/20 border-amber-400/60 text-amber-200 line-through'
-                                            : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-amber-400/40'"
-                                        x-text="d.name"></button>
-                                </template>
-                            </div>
+                            class="mt-3 pt-3 border-t border-gray-700 flex flex-wrap items-center gap-2">
+                            <button @click="openDishMultiPicker('exclude_dish_ids')"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
+                                …except these
+                            </button>
+                            <template x-for="d in draftDishes('exclude_dish_ids')" :key="'sx-' + d.id">
+                                <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold line-through
+                                             bg-amber-500/20 border border-amber-400/60 text-amber-200"
+                                    x-text="d.name"></span>
+                            </template>
+                            <span class="text-[11px] text-gray-600">
+                                or type <span class="font-mono">-word</span> in the tag box
+                            </span>
                         </div>
 
                         <p class="text-[11px] text-gray-500 mt-3" x-text="rulePreview()"></p>
@@ -768,19 +764,38 @@
              typeable, because scanning a 40-dish list for the one you want is
              the work this was supposed to remove.
              MUST stay inside the x-data root above (see the "+ List" dialog). -->
-        <div x-show="pickerDate" x-cloak
+        <div x-show="pickerOpen" x-cloak
             class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
-            @click.self="pickerDate = null" @keydown.escape.window="pickerDate = null">
+            @click.self="closePicker()" @keydown.escape.window="closePicker()">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
                 <h3 class="text-sm font-bold text-white mb-3" x-text="pickerTitle()"></h3>
+
+                <!-- Chosen pills, above the list, matching the trip page's
+                     Link Existing Event dialog: picking something lifts it OUT
+                     of the list and into a pill, so what is chosen and what is
+                     left are never the same visual thing. -->
+                <div x-show="pickerMode === 'multi' && pickerSelected.length"
+                    class="flex flex-wrap gap-1.5 mb-3">
+                    <template x-for="d in pickerPills()" :key="'pp-' + d.id">
+                        <button @click="unpickDish(d)"
+                            class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
+                            :class="pickerTarget === 'exclude_dish_ids'
+                                ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
+                                : 'bg-pink-500/20 border-pink-400/60 text-pink-200'">
+                            <span x-text="d.name"></span>
+                            <span class="opacity-60">✕</span>
+                        </button>
+                    </template>
+                </div>
+
                 <input x-model="pickerQuery" x-ref="pickerInput" type="text"
-                    @keydown.enter="pickerFirst() && addPickedDish(pickerFirst())"
+                    @keydown.enter="pickerFirst() && pickDish(pickerFirst())"
                     placeholder="Type to filter — pizza, rice, chicken…"
                     class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white
                            placeholder-gray-500 focus:outline-none focus:border-pink-400/60 mb-3">
-                <div class="space-y-1.5 max-h-[50vh] overflow-y-auto">
+                <div class="space-y-1.5 max-h-[45vh] overflow-y-auto">
                     <template x-for="d in pickerResults()" :key="'pk-' + d.id">
-                        <button @click="addPickedDish(d)"
+                        <button @click="pickDish(d)"
                             class="w-full text-left bg-gray-900 rounded-xl border border-gray-700
                                    px-4 py-2.5 hover:border-pink-400/60 flex items-baseline gap-2">
                             <span class="text-sm font-semibold text-gray-200 flex-1 min-w-0"
@@ -790,13 +805,17 @@
                         </button>
                     </template>
                     <div x-show="!pickerResults().length" class="text-sm text-gray-500 px-1 py-2"
-                        x-text="repertoire.length ? 'Nothing matches that.'
-                                                 : 'No dishes yet — add some under Our meals.'"></div>
+                        x-text="repertoire.length
+                            ? (pickerQuery ? 'Nothing matches that.' : 'All of them are chosen.')
+                            : 'No dishes yet — add some under Our meals.'"></div>
                 </div>
-                <div class="flex justify-end mt-4">
-                    <button @click="pickerDate = null"
-                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold">
-                        Close
+                <div class="flex justify-end gap-2 mt-4">
+                    <button @click="closePicker()"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold"
+                        x-text="pickerMode === 'multi' ? 'Cancel' : 'Close'"></button>
+                    <button x-show="pickerMode === 'multi'" @click="commitPicker()"
+                        class="px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold">
+                        Done
                     </button>
                 </div>
             </div>
@@ -863,6 +882,8 @@
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
                 pickerDate: null, pickerQuery: '', occasionDate: '',
+                pickerOpen: false, pickerMode: 'single', pickerTarget: null,
+                pickerSelected: [],
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
                 ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
                              takeout: false, max_servings: 1, window_days: 7,
@@ -1051,21 +1072,35 @@
                              max_servings: 1, window_days: 7, dwell_days: 3 };
                 },
 
-                ruleDishes() {
-                    return [...(this.repertoire || [])]
-                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                draftDishes(field) {
+                    return (this.ruleDraft[field] || [])
+                        .map(id => (this.repertoire || []).find(x => x.id === id))
+                        .filter(Boolean);
                 },
 
-                toggleRuleDish(d) {
-                    const on = this.ruleDraft.dish_ids;
-                    const i = on.indexOf(d.id);
-                    if (i >= 0) on.splice(i, 1); else on.push(d.id);
+                // "beans -baked" — reported as something that FEELS like it
+                // should work, and it is three lines. A leading minus subtracts
+                // by word: any dish whose name, short name or tag carries it
+                // drops out. Technical, so it is never the advertised path —
+                // the "…except these" picker is — but the people who reach for
+                // it are right that it should work.
+                parseTagField(raw) {
+                    const parts = String(raw || '').split(/[,\s]+/)
+                        .map(t => t.trim().toLowerCase()).filter(Boolean);
+                    return {
+                        tags: parts.filter(t => !t.startsWith('-')),
+                        minus: parts.filter(t => t.startsWith('-') && t.length > 1)
+                                    .map(t => t.slice(1)),
+                    };
                 },
 
-                toggleRuleExclude(d) {
-                    const off = this.ruleDraft.exclude_dish_ids;
-                    const i = off.indexOf(d.id);
-                    if (i >= 0) off.splice(i, 1); else off.push(d.id);
+                minusMatches(minus) {
+                    if (!minus.length) return [];
+                    return (this.repertoire || []).filter(d => {
+                        const hay = [(d.name || ''), (d.short_name || ''),
+                                     ...(d.tags || [])].join(' ').toLowerCase();
+                        return minus.some(m => hay.includes(m));
+                    });
                 },
 
                 // What this rule would catch, worked out in the browser exactly
@@ -1074,12 +1109,13 @@
                 // than reported after.
                 ruleWouldMatch() {
                     const d = this.ruleDraft;
-                    const tags = (d.tags || '').split(',').map(t => t.trim().toLowerCase())
-                        .filter(Boolean);
+                    const { tags, minus } = this.parseTagField(d.tags);
                     const hasClause = d.dish_ids.length || tags.length || d.takeout;
                     if (!hasClause) return [];
+                    const dropped = new Set([...d.exclude_dish_ids,
+                                             ...this.minusMatches(minus).map(x => x.id)]);
                     return (this.repertoire || []).filter(x => {
-                        if (d.exclude_dish_ids.includes(x.id)) return false;
+                        if (dropped.has(x.id)) return false;
                         if (d.dish_ids.length && !d.dish_ids.includes(x.id)) return false;
                         if (tags.length && !(x.tags || [])
                             .some(t => tags.includes(String(t).toLowerCase()))) return false;
@@ -1090,10 +1126,17 @@
 
                 rulePreview() {
                     const hit = this.ruleWouldMatch();
-                    if (!hit.length) return 'Right now this matches no dish — it would do nothing.';
+                    const { minus } = this.parseTagField(this.ruleDraft.tags);
+                    const cut = this.minusMatches(minus);
+                    const tail = cut.length
+                        ? '  ·  minus ' + cut.map(x => x.name).join(', ')
+                        : '';
+                    if (!hit.length) {
+                        return 'Right now this matches no dish — it would do nothing.' + tail;
+                    }
                     const names = hit.slice(0, 8).map(x => x.name).join(', ');
                     return 'Covers ' + hit.length + ': ' + names
-                        + (hit.length > 8 ? '…' : '');
+                        + (hit.length > 8 ? '…' : '') + tail;
                 },
 
                 newRule() {
@@ -1127,13 +1170,17 @@
 
                 async saveRule() {
                     const d = this.ruleDraft;
-                    const tags = (d.tags || '').split(',').map(t => t.trim())
-                        .filter(Boolean);
+                    const { tags, minus } = this.parseTagField(d.tags);
                     if (!d.dish_ids.length && !tags.length && !d.takeout) {
                         showGlobalAlert('What does this apply to? Pick the dishes, '
                             + 'type a tag, or tick Takeout.');
                         return;
                     }
+                    // `-word` is resolved to real dish ids HERE rather than
+                    // stored as syntax, so the rule means the same thing to the
+                    // server, the agent and anyone reading it later.
+                    const excl = [...new Set([...d.exclude_dish_ids,
+                        ...this.minusMatches(minus).map(x => x.id)])];
                     this.ruleBusy = true;
                     try {
                         const body = {
@@ -1141,7 +1188,7 @@
                                   || (d.takeout ? 'takeout' : 'rule'),
                             kind: d.kind, tags: tags,
                             dish_ids: [...d.dish_ids],
-                            exclude_dish_ids: [...d.exclude_dish_ids],
+                            exclude_dish_ids: excl,
                             sources: d.takeout ? ['ordered'] : [],
                             max_servings: parseInt(d.max_servings) || 1,
                             window_days: parseInt(d.window_days) || 7,
@@ -1388,16 +1435,75 @@
                 },
 
                 // --- dish picker ---
+                // ONE picker for every "which dishes?" question on this page:
+                // adding to a night (single — pick and it lands) and choosing
+                // a set for a rule (multi — pills at the top, Done commits).
+                // The rules form previously inlined its own chip lists, which
+                // is how it grew into a wall of controls.
                 openDishPicker(dateStr) {
+                    this.pickerMode = 'single';
+                    this.pickerTarget = null;
+                    this.pickerSelected = [];
                     this.pickerDate = dateStr
                         || this.plate.date
                         || new Date().toISOString().slice(0, 10);
                     this.pickerQuery = '';
+                    this.pickerOpen = true;
                     this.$nextTick(() => this.$refs.pickerInput
                         && this.$refs.pickerInput.focus());
                 },
 
+                openDishMultiPicker(target) {
+                    this.pickerMode = 'multi';
+                    this.pickerTarget = target;
+                    this.pickerSelected = [...(this.ruleDraft[target] || [])];
+                    this.pickerDate = null;
+                    this.pickerQuery = '';
+                    this.pickerOpen = true;
+                    this.$nextTick(() => this.$refs.pickerInput
+                        && this.$refs.pickerInput.focus());
+                },
+
+                closePicker() {
+                    this.pickerOpen = false;
+                    this.pickerSelected = [];
+                    this.pickerTarget = null;
+                    this.pickerDate = null;
+                },
+
+                commitPicker() {
+                    if (this.pickerTarget) {
+                        this.ruleDraft[this.pickerTarget] = [...this.pickerSelected];
+                    }
+                    this.closePicker();
+                },
+
+                pickerPills() {
+                    return this.pickerSelected
+                        .map(id => (this.repertoire || []).find(x => x.id === id))
+                        .filter(Boolean);
+                },
+
+                pickDish(d) {
+                    if (this.pickerMode === 'multi') {
+                        if (!this.pickerSelected.includes(d.id)) this.pickerSelected.push(d.id);
+                        this.pickerQuery = '';
+                        return;
+                    }
+                    this.addPickedDish(d);
+                },
+
+                unpickDish(d) {
+                    const i = this.pickerSelected.indexOf(d.id);
+                    if (i >= 0) this.pickerSelected.splice(i, 1);
+                },
+
                 pickerTitle() {
+                    if (this.pickerMode === 'multi') {
+                        return this.pickerTarget === 'exclude_dish_ids'
+                            ? 'Which dishes should this rule NOT cover?'
+                            : 'Which dishes does this rule cover?';
+                    }
                     if (!this.pickerDate) return 'Add a dish';
                     const day = (this.week || []).find(w => w.date === this.pickerDate);
                     if (this.pickerDate === this.plate.date) return 'Add a dish to tonight';
@@ -1418,10 +1524,15 @@
                     // variants onto a compact chip — using it here made three
                     // different pizzas indistinguishable at the one moment you
                     // are choosing between them.
-                    const on = new Set(this.pickerDate === this.plate.date
-                        ? (this.plate.dishes || []).map(d => d.id)
-                        : (((this.week || []).find(w => w.date === this.pickerDate)
-                            || {}).dishes || []).map(d => d.id));
+                    // Anything already taken (on the plate, or lifted into a
+                    // pill) drops OUT of the list rather than sitting there
+                    // looking pickable.
+                    const on = new Set(this.pickerMode === 'multi'
+                        ? this.pickerSelected
+                        : (this.pickerDate === this.plate.date
+                            ? (this.plate.dishes || []).map(d => d.id)
+                            : (((this.week || []).find(w => w.date === this.pickerDate)
+                                || {}).dishes || []).map(d => d.id)));
                     const q = (this.pickerQuery || '').trim().toLowerCase();
                     return (this.repertoire || [])
                         .filter(d => !on.has(d.id))
@@ -1439,7 +1550,7 @@
                 async addPickedDish(dish) {
                     if (!dish) return;
                     const date = this.pickerDate;
-                    this.pickerDate = null;
+                    this.closePicker();
                     await fetch(this.apiBase + 'api/meals/plate/add', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ dish_id: dish.id, date: date })
