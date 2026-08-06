@@ -5147,11 +5147,23 @@ def swap_plate_dish(meal_id: str, swap: str, after: str, date: Optional[str] = N
     meal = storage.get_meal(meal_id)
     if not meal:
         raise HTTPException(status_code=404, detail="Meal not found")
-    nxt = _meals.next_in_pool(meal, swap, after)
-    if not nxt:
-        raise HTTPException(status_code=400, detail="Nothing else in that slot")
+    meal = _meals.ensure_slot_ids(meal)
     day = date or _dt.date.today().isoformat()
-    _meals.set_choice(day, meal_id, swap, nxt)
+    # Don't cycle onto a dish another slot is already showing — two "veggies"
+    # slots should land on two different vegetables.
+    current = _meals.compose_meal(meal, prefer=_meals.get_choices(day, meal_id),
+                                  leftovers=storage.get_leftovers(day))
+    siblings = {d['id'] for d in current.get('dishes') or []
+                if d.get('_slot') != swap}
+    nxt = _meals.next_in_pool(meal, swap, after, exclude=siblings)
+    if not nxt:
+        raise HTTPException(status_code=400, detail="Nothing else free in that slot")
+    # Pin the WHOLE plate, then move the tapped slot. Untouched slots pick
+    # automatically by avoiding what is taken, so without pinning, moving one
+    # vegetable would shuffle the other one under the family's hand.
+    pinned = {d['_slot']: d['id'] for d in current.get('dishes') or []}
+    pinned[swap] = nxt
+    _meals.set_choices(day, meal_id, pinned)
     return _meals.compose_meal(meal, prefer=_meals.get_choices(day, meal_id),
                                leftovers=storage.get_leftovers(day))
 

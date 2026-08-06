@@ -1071,6 +1071,103 @@ def scenario_dishes_are_reused_across_meals():
     check(len(storage.get_meals()) == 2, "but they are still two meals")
 
 
+def _two_veg_meal():
+    """"veggies x 2 (carrots, green beans, broccoli)" — TWO slots sharing one
+    pool, which is where identity-by-label fell apart."""
+    from models.schemas import Meal, MealSlot
+    veg = [_dish(f"steamed {v}", short_name="vegetable", role="vegetable",
+                 finish_mins=8, holds_well=True, portability='utensils_ok',
+                 ingredients=[{'name': v, 'kind': 'fresh'}])
+           for v in ("carrots", "green beans", "broccoli")]
+    ids = [v['id'] for v in veg]
+    meal = Meal(name="Two-veg plate", slots=[
+        MealSlot(label="vegetable", dish_ids=list(ids)),
+        MealSlot(label="vegetable", dish_ids=list(ids)),
+    ]).model_dump()
+    storage.add_meal(meal)
+    return meal, veg
+
+
+def scenario_two_slots_sharing_a_label_stay_independent():
+    """Regression (reported 2026-08-05): "veggies x 2" gave two chips that
+    fought — one pick moved both, one wouldn't cycle, and sometimes a chip
+    vanished. Slot identity was the LABEL, and both slots were 'vegetable'."""
+    reset_db(); _seed_people(); _settings()
+    meal, veg = _two_veg_meal()
+    import main
+
+    plate = meals.compose_meal(meal)
+    check(len(plate['dishes']) == 2,
+          f"both helpings render — neither disappears, got {len(plate['dishes'])}")
+    slots = [d['_slot'] for d in plate['dishes']]
+    check(len(set(slots)) == 2,
+          f"the two slots have DISTINCT identities, got {slots}")
+    check(plate['dishes'][0]['id'] != plate['dishes'][1]['id'],
+          "and they pick two DIFFERENT vegetables, not the same one twice")
+
+    # Cycling the first must not move the second.
+    first, second = plate['dishes'][0], plate['dishes'][1]
+    after = main.swap_plate_dish(meal['id'], swap=first['_slot'],
+                                 after=first['id'], date=DAY)
+    a, b = after['dishes'][0], after['dishes'][1]
+    check(a['id'] != first['id'], "the tapped chip moved")
+    check(b['id'] == second['id'], "the other chip did NOT move")
+    check(a['id'] != b['id'], "and they still differ")
+
+
+def scenario_cycling_skips_what_the_sibling_slot_is_showing():
+    reset_db(); _seed_people(); _settings()
+    meal, veg = _two_veg_meal()
+    import main
+    plate = meals.compose_meal(meal)
+    first, second = plate['dishes'][0], plate['dishes'][1]
+
+    # Cycle the first slot through every option; it must never land on
+    # whatever the second slot is currently showing.
+    cur = first['id']
+    for _ in range(len(veg) + 1):
+        out = main.swap_plate_dish(meal['id'], swap=first['_slot'], after=cur, date=DAY)
+        got = next(d for d in out['dishes'] if d['_slot'] == first['_slot'])
+        other = next(d for d in out['dishes'] if d['_slot'] != first['_slot'])
+        check(got['id'] != other['id'],
+              "cycling never lands on the dish the other helping is using")
+        check(other['id'] == second['id'], "and the other helping stays put")
+        cur = got['id']
+
+
+def scenario_a_single_option_slot_reports_nothing_to_cycle():
+    reset_db(); _seed_people(); _settings()
+    meal, d = _plate_meal()
+    plate = meals.compose_meal(meal)
+    chicken = next(x for x in plate['dishes'] if x['_slot'])
+    solo = next(x for x in plate['dishes'] if x['_pool'] == 1)
+    check(meals.next_in_pool(meal, solo['_slot'], solo['id']) is None,
+          "a slot with one dish has nothing to cycle to")
+
+
+def scenario_legacy_slots_get_ids_backfilled():
+    """Meals saved before slots had ids are exactly the rows most likely to
+    hit the collision, so they are migrated on first read."""
+    reset_db(); _seed_people(); _settings()
+    from models.schemas import Meal
+    veg = [_dish(f"steamed {v}", short_name="vegetable", finish_mins=8,
+                 portability='utensils_ok', holds_well=True) for v in ("a", "b")]
+    meal = Meal(name="Legacy").model_dump()
+    # Hand-write slots the old way: no ids, duplicate labels.
+    meal['slots'] = [{'label': 'vegetable', 'dish_ids': [v['id'] for v in veg],
+                      'optional': False},
+                     {'label': 'vegetable', 'dish_ids': [v['id'] for v in veg],
+                      'optional': False}]
+    storage.add_meal(meal)
+
+    plate = meals.compose_meal(storage.get_meal(meal['id']))
+    check(len({d['_slot'] for d in plate['dishes']}) == 2,
+          "the legacy rows get distinct slot identities")
+    stored = storage.get_meal(meal['id'])
+    check(all(s.get('id') for s in stored['slots']),
+          "and the backfill is PERSISTED, not recomputed every read")
+
+
 def scenario_swapping_a_chip_sticks_for_the_day_only():
     reset_db(); _seed_people(); _settings()
     meal, d = _plate_meal()
@@ -1078,8 +1175,10 @@ def scenario_swapping_a_chip_sticks_for_the_day_only():
     first = meals.compose_meal(meal)
     bean = next(x for x in first['dishes'] if x['short_name'] == 'beans')
 
-    swapped = main.swap_plate_dish(meal['id'], swap='beans', after=bean['id'], date=DAY)
-    new_bean = next(x for x in swapped['dishes'] if x['short_name'] == 'beans')
+    # Swap by SLOT ID, not label — labels repeat ("veggies x 2").
+    swapped = main.swap_plate_dish(meal['id'], swap=bean['_slot'],
+                                   after=bean['id'], date=DAY)
+    new_bean = next(x for x in swapped['dishes'] if x['_slot'] == bean['_slot'])
     check(new_bean['id'] != bean['id'], "tapping the chip moves to the next option")
     check(new_bean['id'] in [b['id'] for b in d['beans']],
           "and stays inside that slot's own pool")
@@ -1093,7 +1192,7 @@ def scenario_swapping_a_chip_sticks_for_the_day_only():
     # Wraps around rather than dead-ending on the last option.
     cur = new_bean['id']
     for _ in range(len(d['beans'])):
-        cur = meals.next_in_pool(meal, 'beans', cur)
+        cur = meals.next_in_pool(meal, bean['_slot'], cur)
     check(cur == new_bean['id'], "cycling the pool returns to where it started")
 
 

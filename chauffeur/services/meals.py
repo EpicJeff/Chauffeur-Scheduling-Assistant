@@ -546,31 +546,54 @@ def _eater_diet(plan: dict) -> tuple:
 # dishes actually chosen for it, which is both more accurate than one set of
 # numbers per plate and what makes per-dish leftovers exact.
 
+def slot_key(slot: dict, idx: int = 0) -> str:
+    """Stable identity for a slot. Falls back to position for rows written
+    before slots had ids — NEVER to the label, which repeats ("veggies x 2")
+    and caused two slots to share one choice."""
+    return str(slot.get('id') or f"slot{idx}")
+
+
 def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> list:
     """One dish per slot — the plate as it would actually be made today.
 
     Choice order: an explicit preference, then anything already made (a
     leftover in the pool is the obvious pick), then least-recently-served so
     the pools rotate on their own.
+
+    Two slots drawing on the SAME pool ("veggies x 2") must not land on the
+    same dish, so anything a sibling slot already took is skipped — that is
+    what makes it two vegetables rather than the same one twice.
     """
     prefer = prefer or {}
     done = set()
     for l in leftovers or []:
         done.update(l.get('dish_ids') or [])
 
-    chosen = []
-    for idx, slot in enumerate(meal.get('slots') or []):
+    chosen, taken = [], set()
+    slots = meal.get('slots') or []
+    # Explicit picks are honoured first so a later slot's auto-choice cannot
+    # steal a dish the family deliberately selected for an earlier one.
+    order = sorted(range(len(slots)),
+                   key=lambda i: 0 if prefer.get(slot_key(slots[i], i)) else 1)
+    picks = {}
+    for i in order:
+        slot = slots[i]
         pool = storage.get_dishes_by_ids(slot.get('dish_ids') or [])
         if not pool:
             continue
-        key = slot.get('label') or f"slot{idx}"
+        key = slot_key(slot, i)
+        free = [d for d in pool if d['id'] not in taken] or pool
         pick = next((d for d in pool if d['id'] == prefer.get(key)), None)
         if pick is None:
-            pick = next((d for d in pool if d['id'] in done), None)
+            pick = next((d for d in free if d['id'] in done), None)
         if pick is None:
-            pick = min(pool, key=lambda d: d.get('last_served_at') or 0)
-        chosen.append({**pick, '_slot': key, '_optional': bool(slot.get('optional')),
-                       '_pool': len(pool)})
+            pick = min(free, key=lambda d: d.get('last_served_at') or 0)
+        taken.add(pick['id'])
+        picks[i] = {**pick, '_slot': key, '_label': slot.get('label'),
+                    '_optional': bool(slot.get('optional')), '_pool': len(pool)}
+    for i in range(len(slots)):
+        if i in picks:
+            chosen.append(picks[i])
     return chosen
 
 
@@ -631,30 +654,68 @@ def get_choices(date_str: str, meal_id: str = None) -> dict:
     return (day.get(meal_id) or {}) if meal_id else day
 
 
-def set_choice(date_str: str, meal_id: str, slot: str, dish_id: str):
+def set_choices(date_str: str, meal_id: str, mapping: dict):
+    """Pin several slots at once.
+
+    Swapping one chip PINS the whole plate, because the other slots' automatic
+    picks avoid whatever is already taken — so without pinning, moving one
+    vegetable would shuffle the other one under the family's hand. Once you
+    touch a plate, it holds still.
+    """
     all_ch = storage.get_app_state(_CHOICES_KEY) or {}
     # Yesterday's pick is not today's dinner.
     all_ch = {d: v for d, v in all_ch.items() if d >= date_str}
-    all_ch.setdefault(date_str, {}).setdefault(meal_id, {})[slot] = dish_id
+    slot_map = all_ch.setdefault(date_str, {}).setdefault(meal_id, {})
+    slot_map.update({k: v for k, v in (mapping or {}).items() if k and v})
     storage.set_app_state(_CHOICES_KEY, all_ch)
 
 
-def next_in_pool(meal: dict, slot_label: str, after_dish_id: str) -> Optional[str]:
-    """The next option in a slot's pool, wrapping — what a tap on the chip
-    should land on."""
+def set_choice(date_str: str, meal_id: str, slot: str, dish_id: str):
+    set_choices(date_str, meal_id, {slot: dish_id})
+
+
+def next_in_pool(meal: dict, slot_id: str, after_dish_id: str,
+                 exclude: set = None) -> Optional[str]:
+    """The next option in THIS slot's pool, wrapping — what a tap on the chip
+    should land on.
+
+    Matched by slot id, not label: two "vegetable" slots have their own pools
+    and their own cycles. Dishes a sibling slot is currently showing are
+    skipped, so cycling one veg never lands on the other one.
+    """
+    exclude = set(exclude or ())
     for idx, slot in enumerate(meal.get('slots') or []):
-        key = slot.get('label') or f"slot{idx}"
-        if key != slot_label:
+        if slot_key(slot, idx) != str(slot_id):
             continue
         ids = list(slot.get('dish_ids') or [])
         if len(ids) < 2:
             return None
         try:
-            i = ids.index(after_dish_id)
+            start = ids.index(after_dish_id)
         except ValueError:
-            return ids[0]
-        return ids[(i + 1) % len(ids)]
+            start = -1
+        for step in range(1, len(ids) + 1):
+            cand = ids[(start + step) % len(ids)]
+            if cand != after_dish_id and cand not in exclude:
+                return cand
+        return None
     return None
+
+
+def ensure_slot_ids(meal: dict) -> dict:
+    """Backfill ids onto slots written before slots had them, and persist.
+
+    Without this, meals already in the family's repertoire keep colliding on
+    their labels — the very rows most likely to hit the bug are the ones that
+    predate the fix.
+    """
+    slots = meal.get('slots') or []
+    if not slots or all(s.get('id') for s in slots):
+        return meal
+    import uuid as _uuid
+    patched = [{**s, 'id': s.get('id') or _uuid.uuid4().hex} for s in slots]
+    storage.update_meal(meal['id'], {'slots': patched})
+    return {**meal, 'slots': patched}
 
 
 def compose_meal(meal: dict, prefer: dict = None, leftovers: list = None) -> dict:
@@ -662,6 +723,7 @@ def compose_meal(meal: dict, prefer: dict = None, leftovers: list = None) -> dic
     their own stored numbers, so nothing breaks mid-migration."""
     if not (meal.get('slots') or []):
         return {**meal, 'dishes': []}
+    meal = ensure_slot_ids(meal)
     dishes = choose_dishes(meal, prefer, leftovers)
     return compose(meal, dishes, leftovers)
 

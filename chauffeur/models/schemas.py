@@ -786,7 +786,13 @@ class MealSlot(BaseModel):
     # One position on the plate, filled by exactly ONE of its dishes. A fixed
     # part is simply a slot with a single option, so there is no separate
     # notion of "fixed vs substitutable" to keep straight.
-    label: Optional[str] = None        # "beans", "vegetable"
+    #
+    # `id` is load-bearing: "veggies x 2" produces TWO slots with the SAME
+    # label, and keying choices/swaps off the label made them collide — one
+    # pick moved both, and when both resolved to the same dish the duplicate
+    # render key dropped a chip. Labels are for display only; identity is id.
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    label: Optional[str] = None        # "beans", "vegetable" — may repeat
     dish_ids: List[str] = Field(default_factory=list)
     optional: bool = False             # the salad nobody minds skipping
 

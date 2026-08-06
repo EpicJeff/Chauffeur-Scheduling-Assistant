@@ -93,7 +93,7 @@
                                          (its own minutes come off), ? to answer what
                                          the model was unsure about. -->
                                     <div class="flex flex-wrap gap-1.5 mt-1.5" x-show="(m.dishes || []).length">
-                                        <template x-for="d in (m.dishes || [])" :key="'dc-' + m.id + '-' + d.id">
+                                        <template x-for="d in (m.dishes || [])" :key="'dc-' + m.id + '-' + d._slot">
                                             <span class="px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
                                                 :class="(m.leftover_dish_ids || []).includes(d.id)
                                                     ? 'bg-gray-900 border-gray-700 text-gray-600 line-through'
