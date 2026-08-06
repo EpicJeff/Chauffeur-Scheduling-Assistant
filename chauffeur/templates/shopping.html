@@ -479,6 +479,48 @@
                                             + prep ahead
                                         </button>
                                     </div>
+                                    <!-- Dishes that come as a set (M9). This
+                                         shipped with an API and agent tools and
+                                         no way to say it by hand — the same gap
+                                         the rules engine had. It lives HERE
+                                         because a pairing is a property of a
+                                         dish, not a rule; the label carries the
+                                         direction, because "with" and "only
+                                         with" are opposite claims. -->
+                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                        <template x-for="p in partnerDishes(m, 'always_with')"
+                                            :key="'aw-' + m.id + '-' + p.id">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-emerald-500/15 border border-emerald-500/40 text-emerald-300
+                                                         flex items-center gap-1.5">
+                                                <span class="opacity-60">with</span>
+                                                <span x-text="p.short_name || p.name"></span>
+                                                <button @click="dropPairing(m, p, 'always_with')"
+                                                    class="text-emerald-500/70 hover:text-red-400"
+                                                    title="They don't always come together">✕</button>
+                                            </span>
+                                        </template>
+                                        <template x-for="p in partnerDishes(m, 'only_with')"
+                                            :key="'ow-' + m.id + '-' + p.id">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-sky-500/15 border border-sky-500/40 text-sky-300
+                                                         flex items-center gap-1.5">
+                                                <span class="opacity-60">only with</span>
+                                                <span x-text="p.short_name || p.name"></span>
+                                                <button @click="dropPairing(m, p, 'only_with')"
+                                                    class="text-sky-500/70 hover:text-red-400"
+                                                    title="Drop this restriction">✕</button>
+                                            </span>
+                                        </template>
+                                        <button @click="openPairingPicker(m, 'always_with')"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-emerald-300">
+                                            + comes with
+                                        </button>
+                                        <button @click="openPairingPicker(m, 'only_with')"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
+                                            + only with
+                                        </button>
+                                    </div>
                                 </div>
                                 <button @click="deleteDish(m)"
                                     class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
@@ -768,7 +810,13 @@
             class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
             @click.self="closePicker()" @keydown.escape.window="closePicker()">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
-                <h3 class="text-sm font-bold text-white mb-3" x-text="pickerTitle()"></h3>
+                <h3 class="text-sm font-bold text-white"
+                    :class="pickerHint() ? 'mb-1' : 'mb-3'" x-text="pickerTitle()"></h3>
+                <!-- A pairing is DIRECTED, and a picker that doesn't say so
+                     reads as a symmetric goes-with grid — the exact thing M9
+                     refused to build. -->
+                <p x-show="pickerHint()" class="text-[11px] text-gray-500 mb-3"
+                    x-text="pickerHint()"></p>
 
                 <!-- Chosen pills, above the list, matching the trip page's
                      Link Existing Event dialog: picking something lifts it OUT
@@ -779,7 +827,7 @@
                     <template x-for="d in pickerPills()" :key="'pp-' + d.id">
                         <button @click="unpickDish(d)"
                             class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
-                            :class="pickerTarget === 'exclude_dish_ids'
+                            :class="pickerFor && pickerFor.field === 'exclude_dish_ids'
                                 ? 'bg-amber-500/20 border-amber-400/60 text-amber-200'
                                 : 'bg-pink-500/20 border-pink-400/60 text-pink-200'">
                             <span x-text="d.name"></span>
@@ -881,8 +929,11 @@
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
-                pickerDate: null, pickerQuery: '', occasionDate: '',
-                pickerOpen: false, pickerTarget: null,
+                pickerQuery: '', occasionDate: '',
+                // What the picker is currently answering FOR. One object
+                // rather than a nullable per caller: {kind:'night',date} |
+                // {kind:'rule',field} | {kind:'pairing',dishId,mode}.
+                pickerOpen: false, pickerFor: null,
                 pickerSelected: [], pickerBusy: false,
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
                 ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
@@ -1439,49 +1490,78 @@
                 // and it is multi-select everywhere: pills at the top, Done
                 // commits. Adding to a night used to close on the first click,
                 // which made the normal case — a main AND a side — two full
-                // open/pick/reload rounds. `pickerTarget` is the only thing
-                // that differs now: a rule field to fill, or null for a night.
-                openDishPicker(dateStr) {
-                    this.pickerTarget = null;
-                    this.pickerSelected = [];
-                    this.pickerDate = dateStr
-                        || this.plate.date
-                        || new Date().toISOString().slice(0, 10);
+                // open/pick/reload rounds. `pickerFor` says what is being
+                // answered — a night, a rule field, or one side of a pairing —
+                // and only the commit differs.
+                openPicker(forWhat, selected) {
+                    this.pickerFor = forWhat;
+                    this.pickerSelected = [...(selected || [])];
                     this.pickerQuery = '';
                     this.pickerOpen = true;
                     this.$nextTick(() => this.$refs.pickerInput
                         && this.$refs.pickerInput.focus());
                 },
 
-                openDishMultiPicker(target) {
-                    this.pickerTarget = target;
-                    this.pickerSelected = [...(this.ruleDraft[target] || [])];
-                    this.pickerDate = null;
-                    this.pickerQuery = '';
-                    this.pickerOpen = true;
-                    this.$nextTick(() => this.$refs.pickerInput
-                        && this.$refs.pickerInput.focus());
+                openDishPicker(dateStr) {
+                    this.openPicker({ kind: 'night', date: dateStr
+                        || this.plate.date
+                        || new Date().toISOString().slice(0, 10) }, []);
+                },
+
+                openDishMultiPicker(field) {
+                    this.openPicker({ kind: 'rule', field: field },
+                                    this.ruleDraft[field] || []);
+                },
+
+                openPairingPicker(dish, mode) {
+                    this.openPicker({ kind: 'pairing', dishId: dish.id, mode: mode,
+                                      dishName: dish.short_name || dish.name },
+                                    dish[mode] || []);
                 },
 
                 closePicker() {
                     this.pickerOpen = false;
                     this.pickerSelected = [];
-                    this.pickerTarget = null;
-                    this.pickerDate = null;
+                    this.pickerFor = null;
                 },
 
                 async commitPicker() {
-                    if (this.pickerTarget) {
-                        this.ruleDraft[this.pickerTarget] = [...this.pickerSelected];
+                    const f = this.pickerFor;
+                    if (!f) { this.closePicker(); return; }
+                    const ids = [...this.pickerSelected];
+
+                    if (f.kind === 'rule') {
+                        this.ruleDraft[f.field] = ids;
                         this.closePicker();
                         return;
                     }
+
+                    if (f.kind === 'pairing') {
+                        // replace, not append — an empty selection has to MEAN
+                        // "none", or the picker could add partners and never
+                        // take one away.
+                        this.pickerBusy = true;
+                        try {
+                            await fetch(this.apiBase + 'api/meals/dishes/'
+                                + f.dishId + '/pairing', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ partner_ids: ids,
+                                                       mode: f.mode, replace: true })
+                            });
+                        } finally {
+                            this.pickerBusy = false;
+                        }
+                        this.closePicker();
+                        await this.loadRepertoire();
+                        this.loadPlate(); this.loadWeek();
+                        return;
+                    }
+
                     // A night. The dialog stays up until every dish has landed,
                     // so a half-written night can't be mistaken for the whole
                     // choice, and the week reloads ONCE at the end rather than
                     // once per dish.
-                    const date = this.pickerDate;
-                    const ids = [...this.pickerSelected];
                     if (!ids.length) { this.closePicker(); return; }
                     this.pickerBusy = true;
                     try {
@@ -1489,7 +1569,7 @@
                             await fetch(this.apiBase + 'api/meals/plate/add', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ dish_id: id, date: date })
+                                body: JSON.stringify({ dish_id: id, date: f.date })
                             });
                         }
                     } finally {
@@ -1497,7 +1577,7 @@
                     }
                     this.closePicker();
                     await this.loadWeek();
-                    if (date === this.plate.date) await this.loadPlate();
+                    if (f.date === this.plate.date) await this.loadPlate();
                 },
 
                 pickerPills() {
@@ -1517,15 +1597,31 @@
                 },
 
                 pickerTitle() {
-                    if (this.pickerTarget) {
-                        return this.pickerTarget === 'exclude_dish_ids'
+                    const f = this.pickerFor;
+                    if (!f) return 'Add dishes';
+                    if (f.kind === 'rule') {
+                        return f.field === 'exclude_dish_ids'
                             ? 'Which dishes should this rule NOT cover?'
                             : 'Which dishes does this rule cover?';
                     }
-                    if (!this.pickerDate) return 'Add dishes';
-                    const day = (this.week || []).find(w => w.date === this.pickerDate);
-                    if (this.pickerDate === this.plate.date) return 'Add dishes to tonight';
-                    return 'Add dishes to ' + (day ? day.weekday : this.pickerDate);
+                    if (f.kind === 'pairing') {
+                        return f.mode === 'only_with'
+                            ? f.dishName + ' is only ever served with…'
+                            : 'What always comes with ' + f.dishName + '?';
+                    }
+                    const day = (this.week || []).find(w => w.date === f.date);
+                    if (f.date === this.plate.date) return 'Add dishes to tonight';
+                    return 'Add dishes to ' + (day ? day.weekday : f.date);
+                },
+
+                pickerHint() {
+                    const f = this.pickerFor;
+                    if (!f || f.kind !== 'pairing') return '';
+                    return f.mode === 'only_with'
+                        ? f.dishName + " won't be proposed unless one of these is "
+                          + 'already on the plate. Nothing stops you adding it by hand.'
+                        : f.dishName + ' brings these along whenever it is chosen. '
+                          + 'They stay free to appear beside anything else.';
                 },
 
                 dishPickerMeta(d) {
@@ -1546,14 +1642,17 @@
                     // sitting there looking pickable — and for a night that is
                     // the UNION of what is on the night already and what has
                     // been lifted into a pill, not one or the other.
+                    const f = this.pickerFor || {};
                     const on = new Set(this.pickerSelected);
-                    if (!this.pickerTarget && this.pickerDate) {
-                        const already = this.pickerDate === this.plate.date
+                    if (f.kind === 'night') {
+                        const already = f.date === this.plate.date
                             ? (this.plate.dishes || [])
-                            : (((this.week || []).find(w => w.date === this.pickerDate)
+                            : (((this.week || []).find(w => w.date === f.date)
                                 || {}).dishes || []);
                         already.forEach(d => on.add(d.id));
                     }
+                    // A dish cannot come with itself.
+                    if (f.kind === 'pairing') on.add(f.dishId);
                     const q = (this.pickerQuery || '').trim().toLowerCase();
                     return (this.repertoire || [])
                         .filter(d => !on.has(d.id))
@@ -1797,6 +1896,20 @@
                     await fetch(this.apiBase + 'api/meals/dishes/' + dish.id
                         + '/prep?step_id=' + encodeURIComponent(step.id || ''),
                         { method: 'DELETE' });
+                    await this.loadRepertoire();
+                    this.loadPlate(); this.loadWeek();
+                },
+
+                partnerDishes(dish, mode) {
+                    return (dish[mode] || [])
+                        .map(id => (this.repertoire || []).find(x => x.id === id))
+                        .filter(Boolean);
+                },
+
+                async dropPairing(dish, partner, mode) {
+                    await fetch(this.apiBase + 'api/meals/dishes/' + dish.id
+                        + '/pairing?partner_id=' + encodeURIComponent(partner.id)
+                        + '&mode=' + encodeURIComponent(mode), { method: 'DELETE' });
                     await this.loadRepertoire();
                     this.loadPlate(); this.loadWeek();
                 },
