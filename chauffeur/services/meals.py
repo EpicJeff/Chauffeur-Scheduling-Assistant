@@ -670,10 +670,13 @@ def _now_ts() -> float:
 # has nothing to filter. Entry cost must be one sentence.
 
 _META_SYSTEM = (
-    "You turn the NAME of a family meal into scheduling metadata. Reply with "
+    "You turn a family's own description of a meal they make into scheduling "
+    "metadata. The description may be a bare name ('tacos') or a full plate "
+    "written out however they say it ('chicken, rice, beans (black, red, or "
+    "pinto), veggies (carrots, green beans, broccoli), salad'). Reply with "
     "STRICT JSON only, no prose, no code fences. You are NOT writing a recipe "
     "— never return steps or instructions.\n\n"
-    "Schema: {\"prep_ahead_mins\": int, \"finish_mins\": int, "
+    "Schema: {\"name\": str, \"prep_ahead_mins\": int, \"finish_mins\": int, "
     "\"unattended_mins\": int, \"needs_ahead\": \"none|thaw|marinate|slow_cooker\", "
     "\"holds_well\": bool, \"portability\": \"none|handheld|utensils_ok\", "
     "\"source\": \"prep|ordered|hybrid\", \"effort\": \"easy|normal|project\", "
@@ -681,6 +684,10 @@ _META_SYSTEM = (
     "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\", "
     "\"options\": [str], \"role\": str|null, \"optional\": bool}]}\n\n"
     "Definitions that matter:\n"
+    "- name: a SHORT label the family would actually say out loud — 2-4 words, "
+    "e.g. 'Chicken plate', 'Tacos', 'Pizza night'. NEVER echo back the whole "
+    "description. If they listed a plate's parts, name the plate after its "
+    "protein or its character, and put the parts in `ingredients`.\n"
     "- prep_ahead_mins: hands-on work that can be done EARLIER in the day and "
     "set aside (chopping, browning, cooking rice).\n"
     "- finish_mins: hands-on work that must happen close to eating.\n"
@@ -716,25 +723,28 @@ _META_SYSTEM = (
 )
 
 
-def suggest_meal_metadata(name: str) -> dict:
-    """One LLM call on the INTERACTIVE tier (someone is waiting) turning a bare
-    name into a full entry. Returns {} on any failure — the caller falls back
-    to a plain entry the family can correct, because failing to save a meal
-    someone just named is worse than saving a rough one."""
+def suggest_meal_metadata(description: str) -> dict:
+    """One LLM call on the INTERACTIVE tier (someone is waiting) turning the
+    family's own words into a full entry — including a SHORT display name, so
+    they can type a whole plate out the way they say it instead of having to
+    pre-digest it into a title. Returns {} on any failure: the caller falls
+    back to a plain entry, because failing to save a meal someone just named
+    is worse than saving a rough one."""
     from services import model_pools
     settings = storage.get_settings() or {}
     api_key = settings.get('llm_gemini_api_key', '')
-    if not api_key or not (name or '').strip():
+    if not api_key or not (description or '').strip():
         return {}
     try:
         res = model_pools.call_pool_json(
             'interactive', api_key, _META_SYSTEM,
-            f"Meal name: {name.strip()}", temperature=0.2, timeout_s=45,
+            f"The family describes one of their meals as: {description.strip()}",
+            temperature=0.2, timeout_s=45,
             settings=settings)
         if not isinstance(res, dict) or res.get('error'):
             return {}
     except Exception as e:
-        print(f"[meals] metadata suggestion failed for {name!r}: {e}")
+        print(f"[meals] metadata suggestion failed for {description!r}: {e}")
         return {}
 
     def _int(key, lo=0, hi=600):
@@ -769,7 +779,7 @@ def suggest_meal_metadata(name: str) -> dict:
                      'options': opts,
                      'role': role,
                      'optional': bool(i.get('optional'))})
-    return {
+    out = {
         'prep_ahead_mins': _int('prep_ahead_mins'),
         'finish_mins': _int('finish_mins'),
         'unattended_mins': _int('unattended_mins'),
@@ -785,14 +795,30 @@ def suggest_meal_metadata(name: str) -> dict:
                  if str(t).strip()],
         'ingredients': ings,
     }
+    # A short name only counts if it is actually shorter than what they typed —
+    # a model that echoes the description back has not helped.
+    short = str(res.get('name') or '').strip()[:60]
+    if short and len(short) < len(description.strip()):
+        out['name'] = short
+    return out
 
 
-def create_meal(name: str, enrich: bool = True) -> dict:
-    """Add a repertoire entry from just a name."""
+def create_meal(description: str, enrich: bool = True) -> dict:
+    """Add a repertoire entry from the family's own words.
+
+    `description` may be a bare name ("tacos") or a whole plate written out
+    the way they say it ("chicken, rice, beans (black, red, or pinto),
+    veggies (…), salad"). The model derives a short display name and the
+    components; without enrichment the raw text becomes the name, truncated,
+    and can be renamed in the editor.
+    """
     from models.schemas import Meal
-    data = {'name': (name or '').strip()}
+    raw = (description or '').strip()
+    data = {'name': raw[:60]}
     if enrich:
-        data.update(suggest_meal_metadata(name))
+        data.update(suggest_meal_metadata(raw))
+    if data['name'] != raw:
+        data['description'] = raw
     meal = Meal(**data).model_dump()
     storage.add_meal(meal)
     return meal

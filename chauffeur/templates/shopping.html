@@ -116,18 +116,37 @@
                     class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
                     <div class="flex gap-2 mb-3">
                         <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
-                            placeholder="Something you make — just the name"
+                            placeholder="e.g. tacos — or write the whole plate out"
                             class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
                         <button @click="addMeal()" :disabled="!mealDraft.trim() || mealBusy"
                             class="px-4 py-2.5 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
                             x-text="mealBusy ? 'Adding…' : 'Add'"></button>
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <p class="text-xs text-gray-500 mb-3">
+                        Write it however you say it — "chicken, rice, beans (black, red,
+                        or pinto), veggies, salad" is ONE meal. It gets a short name and
+                        the parts become its components, with the alternatives kept as
+                        choices so you pick at the store.
+                    </p>
+                    <!-- Corrections are the point of this editor, so the parts the
+                         model guessed have to be visible and the name editable. -->
+                    <div class="space-y-2">
                         <template x-for="m in repertoire" :key="'rp-' + m.id">
-                            <span class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-900 border border-gray-700 text-gray-400 flex items-center gap-2">
-                                <span x-text="m.name"></span>
-                                <button @click="deleteMeal(m)" class="text-gray-600 hover:text-red-400">✕</button>
-                            </span>
+                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <button @click="renameMeal(m)"
+                                        class="text-sm font-semibold text-gray-200 hover:text-white text-left"
+                                        title="Rename">
+                                        <span x-text="m.name"></span>
+                                    </button>
+                                    <div class="text-[11px] text-gray-600 truncate"
+                                        x-show="mealParts(m)" x-text="mealParts(m)"></div>
+                                    <div class="text-[11px] text-gray-700 truncate"
+                                        x-show="m.description" x-text="'you said: ' + m.description"></div>
+                                </div>
+                                <button @click="deleteMeal(m)"
+                                    class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
+                            </div>
                         </template>
                         <span x-show="!repertoire.length" class="text-xs text-gray-500">
                             Nothing yet — name a few things you make on a weeknight.
@@ -361,6 +380,19 @@
                     } catch (e) {
                         showGlobalAlert('Could not add that meal');
                     } finally { this.mealBusy = false; }
+                },
+
+                async renameMeal(m) {
+                    const name = await promptInput('Rename meal',
+                        'What should this be called on the list?',
+                        { value: m.name });
+                    if (!name || !name.trim() || name.trim() === m.name) return;
+                    await fetch(this.apiBase + 'api/meals/repertoire/' + m.id, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: name.trim() })
+                    });
+                    await this.loadRepertoire();
+                    await this.loadSuggestions();
                 },
 
                 async deleteMeal(m) {

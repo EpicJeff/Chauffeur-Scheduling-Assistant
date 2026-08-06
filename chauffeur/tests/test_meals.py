@@ -809,6 +809,64 @@ def scenario_leftovers_tools_in_both_stacks():
     check(storage.get_leftovers(DAY), "the v1 bridge writes through")
 
 
+def scenario_a_plate_can_be_typed_the_way_the_family_says_it():
+    """Asked 2026-08-05: "how do I enter my full plate — just like I typed it?"
+    Before this, the whole sentence became the meal's NAME. Now the model
+    derives a short label and the parts become components."""
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",
+                                    "home_location": HOME}
+    typed = ("chicken, rice, beans (black, red, or pinto), veggies (carrots, "
+             "green beans, broccoli, cauliflower, corn), potatoes, salad")
+    payload = {
+        "name": "Chicken plate",
+        "prep_ahead_mins": 10, "finish_mins": 25, "unattended_mins": 0,
+        "needs_ahead": "thaw", "holds_well": True, "portability": "utensils_ok",
+        "source": "prep", "effort": "normal", "serves": 4, "tags": ["chicken"],
+        "ingredients": [
+            {"name": "chicken", "kind": "fresh", "role": "protein"},
+            {"name": "rice", "kind": "staple", "role": "starch"},
+            {"name": "beans", "kind": "fresh", "role": "side",
+             "options": ["black", "red", "pinto"]},
+            {"name": "vegetable", "kind": "fresh", "role": "vegetable",
+             "options": ["carrots", "green beans", "broccoli", "cauliflower", "corn"]},
+            {"name": "potatoes", "kind": "fresh", "role": "starch"},
+            {"name": "salad", "kind": "fresh", "role": "side", "optional": True},
+        ],
+    }
+    with mock.patch('services.model_pools.call_pool_json', return_value=payload):
+        meal = meals.create_meal(typed)
+
+    check(meal['name'] == "Chicken plate",
+          f"the sentence becomes a short label, not the title — got {meal['name']!r}")
+    check(meal['description'] == typed,
+          "what they actually typed is kept so they can check it was read right")
+    check(len(storage.get_meals()) == 1, "ONE meal, not six")
+    beans = next(i for i in meal['ingredients'] if i['name'] == 'beans')
+    check(beans['options'] == ["black", "red", "pinto"],
+          f"the bracketed alternatives become options, got {beans}")
+
+    res = meals.ingredients_to_shopping(meal)
+    check('rice' in res['skipped'], "the staple is skipped")
+    check(res['added'].count('beans') == 1 and 'black' not in res['added'],
+          f"one beans line, not three — got {res['added']}")
+
+
+def scenario_a_model_that_echoes_the_description_is_ignored():
+    reset_db(); _seed_people()
+    storage.get_settings = lambda: {"llm_gemini_api_key": "test-key"}
+    typed = "chicken, rice, beans, veggies, salad"
+    # A model that just parrots the input has not helped; the guard keeps the
+    # raw text rather than pretending a "short name" was produced.
+    with mock.patch('services.model_pools.call_pool_json',
+                    return_value={"name": typed + " and more", "serves": 4}):
+        meal = meals.create_meal(typed)
+    check(meal['name'] == typed,
+          f"an echo longer than the input is rejected, got {meal['name']!r}")
+    check(meal['description'] is None,
+          "and no description is stored when nothing was shortened")
+
+
 def scenario_metadata_comes_from_the_name_alone():
     reset_db(); _seed_people()
     storage.get_settings = lambda: {"llm_gemini_api_key": "test-key",

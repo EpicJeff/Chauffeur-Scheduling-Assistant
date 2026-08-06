@@ -495,9 +495,9 @@ class SuggestDinnerTool(BaseModel):
 
 class AddMealToRepertoireTool(BaseModel):
     """
-    Adds one of the family's regular meals by NAME. Cook times, portability and ingredients are filled in automatically — never ask for them.
+    Adds one of the family's regular meals in their OWN WORDS — a bare name ("tacos") or a whole plate written out ("chicken, rice, beans black red or pinto, veggies, salad"). A short name, cook times, portability and components (including substitutable options) are all derived. Never ask for cook times or ingredients. A plate is ONE meal, not one per component.
     """
-    name: str = Field(..., description="What the family calls the meal, e.g. 'tacos'.")
+    name: str = Field(..., description="The family's description of the meal, verbatim — a name or a full plate.")
 
 class AddMealIngredientsToListTool(BaseModel):
     """

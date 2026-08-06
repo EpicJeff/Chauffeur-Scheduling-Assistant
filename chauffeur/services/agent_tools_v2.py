@@ -1256,8 +1256,10 @@ def suggest_dinner(target_date: str = "today", acting_member: dict = None) -> Di
 
 
 def add_meal_to_repertoire(name: str, acting_member: dict = None) -> Dict[str, Any]:
-    """Add one of the family's meals by NAME; the metadata is filled in
-    automatically and can be corrected later."""
+    """Add one of the family's meals from their OWN WORDS — a bare name
+    ("tacos") or a whole plate written out ("chicken, rice, beans (black, red,
+    or pinto), veggies, salad"). A short display name and the components are
+    derived; everything is correctable later."""
     from services import storage, meals
     name = (name or '').strip()
     if not name:
@@ -1768,11 +1770,11 @@ def get_available_tools() -> List[Dict]:
         },
         {
             "name": "add_meal_to_repertoire",
-            "description": "Adds one of the family's regular meals by NAME ('we make tacos', 'add chicken and rice to our meals'). Cook times, portability and ingredients are filled in automatically — never ask for them. This is the family's short list of what they actually make, NOT a recipe collection.",
+            "description": "Adds one of the family's regular meals in THEIR OWN WORDS — a bare name ('we make tacos') or a whole plate written out ('chicken, rice, beans black red or pinto, veggies, salad'). Pass their description through verbatim: a short name, cook times, portability and the components (including substitutable options like the beans) are all derived automatically. NEVER ask for cook times or ingredients, and never make them shorten it first. A plate is ONE meal, not one per component.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "What the family calls the meal, e.g. 'tacos'."}
+                    "name": {"type": "string", "description": "The family's description of the meal, verbatim — a name or a full plate."}
                 },
                 "required": ["name"]
             }

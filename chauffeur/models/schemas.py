@@ -746,6 +746,10 @@ class Meal(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     doc_id: Optional[int] = None
     name: str
+    # What the family actually typed, when the model shortened it into `name`
+    # ("chicken, rice, beans (black/red/pinto), veggies…" -> "Chicken plate").
+    # Kept so they can check the model read their plate correctly.
+    description: Optional[str] = None
 
     # --- timing: four numbers, because one cannot express a real weeknight.
     # A 90-minute roast with 8 minutes hands-on is IDEAL when a parent is home
