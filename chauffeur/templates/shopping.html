@@ -696,8 +696,12 @@
                     // Flip the guess permanently AND put it on the list now.
                     // Bulk buyers restock rice and beans; other households
                     // assume they are in the cupboard. Only this family knows.
-                    if (sk.dish_id) {
-                        await fetch(this.apiBase + 'api/meals/dishes/' + sk.dish_id + '/ingredient', {
+                    // EVERY dish that wanted it gets flipped: "rice is not a
+                    // staple for us" is a statement about rice, and fixing it
+                    // on one of the four dishes that use it would leave the
+                    // other three skipping it again next week.
+                    for (const id of (sk.dish_ids || (sk.dish_id ? [sk.dish_id] : []))) {
+                        await fetch(this.apiBase + 'api/meals/dishes/' + id + '/ingredient', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ name: sk.name, kind: 'fresh' })
                         });

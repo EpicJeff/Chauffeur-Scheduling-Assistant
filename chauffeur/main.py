@@ -5289,6 +5289,17 @@ def meal_week(start: Optional[str] = None, days: Optional[int] = None):
             'sides_per_meal': _meals.plate_settings()[0],
             'week': _meals.compose_week(start_str, n)}
 
+@app.get("/api/meals/grocery-day")
+def grocery_day_suggestion():
+    """Which weekday actually has room for a shopping trip, and why — ranked by
+    the WORST week, since a standing shop day has to work most weeks."""
+    from services import meals as _meals
+    settings = storage.get_settings() or {}
+    return {'configured': settings.get('grocery_weekday'),
+            'effective': _meals.grocery_settings(settings)[0],
+            'suggestion': _meals.suggest_grocery_weekday(settings),
+            'trip_mins': _meals.SHOP_TRIP_MINS}
+
 @app.post("/api/meals/week/approve")
 def meal_week_approve(start: Optional[str] = None, days: Optional[int] = None,
                       list_id: Optional[str] = None, member_id: Optional[str] = None):

@@ -1955,6 +1955,88 @@ def scenario_an_empty_repertoire_proposes_nothing():
     check(res['status'] == 'empty_repertoire' and not sent, f"silent, got {res}")
 
 
+def scenario_one_line_per_ingredient_naming_every_dish():
+    """Rice used by four dishes produced four identical "assumed on hand"
+    lines, which reads as a broken list rather than one judgement about rice."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=0, include_dessert=False)
+    shared = [{'name': 'rice', 'kind': 'staple'},
+              {'name': 'olive oil', 'kind': 'staple'}]
+    a = _dish('chicken bowl', type='entree',
+              ingredients=shared + [{'name': 'chicken', 'kind': 'fresh'}])
+    b = _dish('bean bowl', type='entree',
+              ingredients=shared + [{'name': 'beans', 'kind': 'fresh'}])
+    c = _dish('veg bowl', type='entree',
+              ingredients=shared + [{'name': 'peppers', 'kind': 'fresh'}])
+
+    res = meals.dishes_to_shopping([a, b, c])
+    rice = [s for s in res['skipped'] if s['name'] == 'rice']
+    check(len(rice) == 1, f"ONE line for rice, got {len(rice)}")
+    check(rice[0]['dish_count'] == 3, f"naming all three dishes, got {rice[0]}")
+    check(all(n in rice[0]['dish'] for n in ('chicken bowl', 'bean bowl', 'veg bowl')),
+          f"the label lists them, got {rice[0]['dish']}")
+    check(len(rice[0]['dish_ids']) == 3,
+          "and carries every dish id — the override has to fix ALL of them, or "
+          "the other dishes skip it again next week")
+    check(len(res['skipped_names']) == len(set(res['skipped_names'])),
+          f"no repeats in the names either, got {res['skipped_names']}")
+
+
+def scenario_a_week_says_which_nights_wanted_it():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=0, include_dessert=False)
+    for n in ('monday dish', 'tuesday dish'):
+        _dish(n, type='entree', ingredients=[{'name': 'rice', 'kind': 'staple'},
+                                             {'name': n + ' meat', 'kind': 'fresh'}])
+    res = meals.approve_week('2026-08-10', 2)
+    rice = [s for s in res['skipped'] if s['name'] == 'rice']
+    check(len(rice) == 1, f"one rice line across the whole week, got {len(rice)}")
+    check('Mon' in rice[0]['dish'] and 'Tue' in rice[0]['dish'],
+          f"naming the nights that wanted it, got {rice[0]['dish']}")
+
+
+def scenario_the_shop_day_is_derived_not_guessed():
+    """The first cut hardcoded Saturday — precisely the day a family with
+    weekend activities has least room for a 90-minute trip. An unset shop day
+    is now worked out from real free blocks."""
+    reset_db(); _seed_people()
+    _settings(grocery_weekday=None)
+    storage.app_state_table.truncate()
+
+    # Saturdays are eaten by activities; Tuesdays are clear.
+    evs, assigns = [], {}
+    base = datetime.date(2026, 8, 8)          # a Saturday
+    for wk in range(3):
+        sat = base + datetime.timedelta(days=7 * wk)
+        evs.append({"id": f"sat{wk}", "title": "Tournament", "event_type": "standard",
+                    "start": f"{sat.isoformat()}T08:00:00",
+                    "end": f"{sat.isoformat()}T19:30:00",
+                    "location": "Fields", "calendar_ids": ["add@cal"]})
+        assigns[f"sat{wk}"] = "d-mom"
+    storage.set_cached_schedule({"events": evs, "assignments": assigns})
+
+    cands = meals.grocery_day_candidates(storage.get_settings(),
+                                         datetime.date(2026, 8, 6))
+    by_day = {c['weekday']: c for c in cands}
+    check(by_day[5]['worst_mins'] < by_day[1]['worst_mins'],
+          f"Saturday has less room than Tuesday, got "
+          f"{by_day[5]['worst_mins']} vs {by_day[1]['worst_mins']}")
+    check(cands[0]['weekday'] != 5,
+          f"so Saturday is not the recommendation, got {cands[0]['weekday_name']}")
+
+    sug = meals.suggest_grocery_weekday(storage.get_settings(),
+                                        datetime.date(2026, 8, 6))
+    check(sug['weekday'] == cands[0]['weekday'] and sug['reason'],
+          f"the suggestion says WHY, got {sug}")
+    gw, _ = meals.grocery_settings(storage.get_settings())
+    check(gw == sug['weekday'],
+          f"and an unset setting follows it rather than defaulting, got {gw}")
+
+    # An explicit choice always wins — this is advice, not automation.
+    check(meals.grocery_settings({'grocery_weekday': 5})[0] == 5,
+          "an explicitly chosen day is honoured")
+
+
 def scenario_m6_tools_in_both_stacks():
     reset_db(); _seed_people()
     _settings(sides_per_meal=1, include_dessert=False)

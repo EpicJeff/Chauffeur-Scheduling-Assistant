@@ -1624,11 +1624,12 @@
                         <div class="flex flex-wrap items-end gap-4">
                             <div>
                                 <label class="block text-gray-400 mb-1 text-xs">🛒 We shop on</label>
-                                <select x-model.number="groceryWeekday"
+                                <select x-model="groceryWeekday"
                                     class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
+                                    <option value="">Work it out from our schedule</option>
                                     <template x-for="(d, di) in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']"
                                         :key="'gw-' + di">
-                                        <option :value="di" x-text="d"></option>
+                                        <option :value="String(di)" x-text="d"></option>
                                     </template>
                                 </select>
                             </div>
@@ -1649,6 +1650,31 @@
                             <button @click="saveSettings()"
                                 class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
                                 Planning</button>
+                        </div>
+                        <!-- The choice has to be arguable, not asserted. These are
+                             real free blocks from the schedule, ranked by the WORST
+                             week — a standing shop day has to work most weeks. -->
+                        <div x-show="groceryDays.length" x-cloak class="mt-3">
+                            <p class="text-xs text-gray-400 mb-1.5">
+                                Room for a <span x-text="groceryTripMins"></span>-minute trip,
+                                worst week in the next three:
+                            </p>
+                            <div class="flex flex-wrap gap-1.5">
+                                <template x-for="(c, ci) in groceryDays" :key="'gd-' + ci">
+                                    <button @click="groceryWeekday = String(c.weekday); saveSettings()"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors text-left"
+                                        :class="c.fits ? 'bg-gray-900 text-teal-300 border-gray-700 hover:border-teal-500'
+                                                       : 'bg-gray-900 text-gray-500 border-gray-700 hover:border-gray-500'">
+                                        <span x-text="c.weekday_name"></span>
+                                        <span class="font-normal"
+                                            x-text="' · ' + (c.worst_mins >= 60
+                                                ? (Math.round(c.worst_mins / 6) / 10) + 'h'
+                                                : c.worst_mins + ' min')"></span>
+                                        <span x-show="!c.fits" class="font-normal text-amber-500"> · tight</span>
+                                    </button>
+                                </template>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1.5" x-text="groceryReason"></p>
                         </div>
                         <p class="text-xs text-gray-500 mt-2">Argyle posts the nights that shop has to cover to the
                             family channel and the approvals banner. Approve and the whole span's fresh ingredients
@@ -3470,7 +3496,8 @@
                 carFuelWarnPct: 25,
                 carAutoErrand: false,
                 carFuelStation: '',
-                groceryWeekday: 5, groceryPlanLeadDays: 2, mealWeekEnabled: true,
+                groceryWeekday: '', groceryPlanLeadDays: 2, mealWeekEnabled: true,
+                groceryDays: [], groceryReason: '', groceryTripMins: 90,
                 nearbyStations: [],
                 stationSearchBusy: false,
                 stationSearchError: '',
@@ -3875,10 +3902,14 @@
                     this.carFuelWarnPct = data.car_fuel_warn_pct != null ? data.car_fuel_warn_pct : 25;
                     this.carAutoErrand = data.car_auto_errand === true;
                     this.carFuelStation = data.car_fuel_station || '';
-                    this.groceryWeekday = data.grocery_weekday != null ? data.grocery_weekday : 5;
+                    // '' means "work it out from our schedule" — deliberately not
+                    // a hardcoded weekday.
+                    this.groceryWeekday = data.grocery_weekday != null
+                        ? String(data.grocery_weekday) : '';
                     this.groceryPlanLeadDays = data.grocery_plan_lead_days != null
                         ? data.grocery_plan_lead_days : 2;
                     this.mealWeekEnabled = data.meal_week_enabled !== false;
+                    this.loadGroceryDays();
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
                     this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
                     this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
@@ -4011,7 +4042,8 @@
                             car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
                             car_auto_errand: this.carAutoErrand,
                             car_fuel_station: (this.carFuelStation || '').trim(),
-                            grocery_weekday: parseInt(this.groceryWeekday, 10),
+                            grocery_weekday: this.groceryWeekday === ''
+                                ? null : parseInt(this.groceryWeekday, 10),
                             grocery_plan_lead_days: parseInt(this.groceryPlanLeadDays, 10),
                             meal_week_enabled: this.mealWeekEnabled,
                             suggested_routes_enabled: this.suggestedRoutesEnabled,
@@ -4577,6 +4609,17 @@
                 },
 
                 // --- Car alerts: home gas-station picker (map-first) ---
+                async loadGroceryDays() {
+                    try {
+                        const r = await fetch(`${this.apiBase}api/meals/grocery-day`);
+                        if (!r.ok) return;
+                        const d = await r.json();
+                        this.groceryDays = (d.suggestion || {}).candidates || [];
+                        this.groceryReason = (d.suggestion || {}).reason || '';
+                        this.groceryTripMins = d.trip_mins || 90;
+                    } catch (e) { /* advisory only — the dropdown still works */ }
+                },
+
                 async findNearbyStations() {
                     this.stationSearchBusy = true;
                     this.stationSearchError = '';

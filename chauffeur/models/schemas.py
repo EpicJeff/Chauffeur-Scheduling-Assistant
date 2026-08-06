@@ -506,7 +506,10 @@ class Settings(BaseModel):
     # days" — they plan up to the next grocery run, a day or two before it, and
     # buy for that span. Both of those are what the week plan is anchored to,
     # so the plan Argyle brings covers exactly what this trip has to buy for.
-    grocery_weekday: int = 5          # 0=Mon .. 6=Sun; the standing shop day
+    # 0=Mon .. 6=Sun. UNSET means "work it out from our schedule" — a hardcoded
+    # default here was wrong for exactly the family it shipped to (Saturday is
+    # when their activities are, so it is the worst day for a 90-min trip).
+    grocery_weekday: Optional[int] = None
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
     meal_week_enabled: bool = True
     # School calendar (services/school.py): what a "school day" is. All

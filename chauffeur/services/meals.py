@@ -740,16 +740,113 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
 
 
 def grocery_settings(settings: dict = None) -> tuple:
+    """The shop day and how early to ask. An UNSET shop day is derived from the
+    family's actual free time rather than guessed — the first cut hardcoded
+    Saturday, which is exactly the day a family with weekend activities has
+    least room for a 90-minute trip."""
     settings = settings if settings is not None else (storage.get_settings() or {})
-    try:
-        gw = max(0, min(6, int(settings.get('grocery_weekday', 5))))
-    except (TypeError, ValueError):
-        gw = 5
+    raw = settings.get('grocery_weekday')
+    if raw is None or raw == '':
+        gw = suggest_grocery_weekday(settings).get('weekday')
+        gw = 5 if gw is None else gw     # nothing to judge from yet
+    else:
+        try:
+            gw = max(0, min(6, int(raw)))
+        except (TypeError, ValueError):
+            gw = 5
     try:
         lead = max(0, min(6, int(settings.get('grocery_plan_lead_days', 2))))
     except (TypeError, ValueError):
         lead = 2
     return gw, lead
+
+
+SHOP_TRIP_MINS = 90          # a real grocery run, not a dash for milk
+
+
+def grocery_day_candidates(settings: dict = None, today: datetime.date = None,
+                           weeks: int = 3, need_mins: int = None) -> list:
+    """Which weekday actually has room for a shopping trip, from the schedule.
+
+    Ranked by the WORST occurrence in the horizon, not the average: a standing
+    shop day has to work most weeks, and a weekday that is wide open twice and
+    impossible once is worse than one that is merely adequate every time.
+
+    Uses `member_spans` — the same free-time primitive the cook window is built
+    from — restricted to at_home spans, because a gap spent parked at a game is
+    not a gap you can buy groceries in.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    need = need_mins or SHOP_TRIP_MINS
+    today = today or datetime.date.today()
+    sched = storage.get_cached_schedule() or {}
+    adults = [m for m in storage.get_all_members()
+              if m.get('role') in ('parent', 'adult') and not m.get('system')]
+    if not adults or not sched:
+        return []
+    drivers_by_event = _driver_member_ids(sched)
+
+    by_weekday = {}
+    for i in range(weeks * 7):
+        day = today + datetime.timedelta(days=i)
+        best, who = 0, None
+        for m in adults:
+            for s in member_spans(m, day.isoformat(), sched, settings, drivers_by_event):
+                if s['modality'] != 'at_home':
+                    continue
+                mins = int((s['end'] - s['start']).total_seconds() / 60.0)
+                if mins > best:
+                    best, who = mins, m.get('name')
+        by_weekday.setdefault(day.weekday(), []).append({'date': day.isoformat(),
+                                                         'free_mins': best, 'who': who})
+    out = []
+    for wd, occs in by_weekday.items():
+        mins = [o['free_mins'] for o in occs]
+        out.append({
+            'weekday': wd,
+            'weekday_name': ['Monday', 'Tuesday', 'Wednesday', 'Thursday',
+                             'Friday', 'Saturday', 'Sunday'][wd],
+            'worst_mins': min(mins),
+            'best_mins': max(mins),
+            'typical_mins': sorted(mins)[len(mins) // 2],
+            'fits': min(mins) >= need,
+            'who': next((o['who'] for o in occs if o['free_mins'] == max(mins)), None),
+            'occurrences': occs,
+        })
+    out.sort(key=lambda c: (-c['worst_mins'], -c['typical_mins'], c['weekday']))
+    return out
+
+
+def suggest_grocery_weekday(settings: dict = None, today: datetime.date = None) -> dict:
+    """The recommended shop day plus WHY, so the choice is arguable.
+
+    Cached for a day: this walks every adult's spans over three weeks and is
+    called from plan_window, which runs on every week read and every sweep.
+    """
+    key = 'grocery_day_suggestion'
+    today = today or datetime.date.today()
+    cached = storage.get_app_state(key) or {}
+    if cached.get('computed_on') == today.isoformat():
+        return cached
+    cands = grocery_day_candidates(settings, today)
+    if not cands:
+        res = {'computed_on': today.isoformat(), 'weekday': None,
+               'reason': 'no schedule to judge from yet', 'candidates': []}
+    else:
+        top = cands[0]
+        worst_h = round(top['worst_mins'] / 60.0, 1)
+        res = {'computed_on': today.isoformat(), 'weekday': top['weekday'],
+               'weekday_name': top['weekday_name'],
+               'worst_mins': top['worst_mins'], 'fits': top['fits'],
+               'reason': (f"{top['weekday_name']}s have at least {worst_h}h free "
+                          f"every week in the next three"
+                          if top['fits'] else
+                          f"nothing clears {SHOP_TRIP_MINS} min every week — "
+                          f"{top['weekday_name']}s come closest at {worst_h}h"),
+               'candidates': [{k: v for k, v in c.items() if k != 'occurrences'}
+                              for c in cands]}
+    storage.set_app_state(key, res)
+    return res
 
 
 def next_grocery_date(today: datetime.date = None, weekday: int = 5) -> datetime.date:
@@ -859,8 +956,15 @@ def approve_week(start_date: str = None, days: int = 7, list_id: str = None,
         # The day rides along on every skip: "already on the list" is the
         # normal case across a week (chicken on Monday and Thursday buys once)
         # and it is only legible if you can see which day it came from.
+        # dishes_to_shopping already grouped WITHIN the day; flatten back to
+        # one record per (ingredient, dish, night) so the cross-day pass can
+        # regroup them into a single line naming every night.
         for sk in res['skipped']:
-            skipped.append({**sk, 'date': day['date'], 'weekday': day['weekday']})
+            for d in sk['dishes'] or [{'id': None, 'name': None}]:
+                skipped.append({'name': sk['name'], 'reason': sk['reason'],
+                                'dish': d['name'], 'dish_id': d['id'],
+                                'date': day['date'], 'weekday': day['weekday']})
+    skipped = consolidate_skips(skipped)
     return {'added': added, 'skipped': skipped, 'skipped_names': [x['name'] for x in skipped],
             'list_id': lst_id, 'pinned_dates': pinned, 'day_count': len(week),
             'dish_count': sum(len(d['dishes']) for d in week)}
@@ -1940,6 +2044,48 @@ def refine_dish(dish_id: str, description: str) -> Optional[dict]:
     return storage.get_dish(dish_id)
 
 
+def consolidate_skips(records: list) -> list:
+    """One line per ingredient, naming every dish that wanted it.
+
+    Rice used by four dishes produced four identical "assumed on hand" lines,
+    which reads as a broken list rather than one judgement about rice. Grouped
+    by (ingredient, reason) — the reason must stay in the key, because "staple"
+    and "already on the list" are different statements about the same word and
+    only the first is something the family can override.
+    """
+    out, by_key = [], {}
+    for r in records:
+        key = ((r.get('name') or '').strip().lower(), r.get('reason'))
+        entry = by_key.get(key)
+        ref = {'id': r.get('dish_id'), 'name': r.get('dish')}
+        if r.get('weekday'):
+            ref['weekday'] = r['weekday']
+            ref['date'] = r.get('date')
+        if entry is None:
+            entry = {k: v for k, v in r.items() if k not in ('dish', 'dish_id')}
+            entry['name'] = r.get('name')
+            entry['dishes'] = []
+            entry['dish_ids'] = []
+            by_key[key] = entry
+            out.append(entry)
+        if ref['id'] and ref['id'] not in entry['dish_ids']:
+            entry['dish_ids'].append(ref['id'])
+        # Same dish on two nights is ONE reason to buy it, not two.
+        if ref['name'] and not any(d['name'] == ref['name'] and
+                                   d.get('weekday') == ref.get('weekday')
+                                   for d in entry['dishes']):
+            entry['dishes'].append(ref)
+    for entry in out:
+        labels = []
+        for d in entry['dishes']:
+            labels.append(f"{d['name']} ({d['weekday']})" if d.get('weekday') else d['name'])
+        # `dish` stays a plain string so every existing reader keeps working.
+        entry['dish'] = ', '.join(labels)
+        entry['dish_id'] = entry['dish_ids'][0] if entry['dish_ids'] else None
+        entry['dish_count'] = len(entry['dishes'])
+    return out
+
+
 def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
                        skip_dish_ids: list = None) -> dict:
     """Shop for the dishes actually chosen — one plate's worth, not every
@@ -1985,6 +2131,7 @@ def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
                 list_id=lst_id, name=name, added_via='meal',
                 source_meal_id=d.get('id'), added_by=added_by).model_dump())
             added.append(name)
+    skipped = consolidate_skips(skipped)
     return {'added': added, 'skipped': skipped,
             'skipped_names': [x['name'] for x in skipped],
             'list_id': lst_id}
