@@ -5266,7 +5266,8 @@ def tonights_plate(date: Optional[str] = None):
     plate = _meals.get_or_compose_plate(date_str, plan)
     totals = _meals.plate_totals(plate['dishes'], date_str)
     sides_n, dessert = _meals.plate_settings()
-    return {'date': date_str, 'edited': plate['edited'], 'dishes': plate['dishes'],
+    return {'date': date_str, 'edited': plate['edited'],
+            'dishes': _meals.with_chip_labels(plate['dishes']),
             'prep_ahead_mins': totals.get('prep_ahead_mins'),
             'finish_mins': totals.get('finish_mins'),
             'unattended_mins': totals.get('unattended_mins'),

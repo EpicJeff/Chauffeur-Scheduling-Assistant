@@ -159,7 +159,7 @@
                                             ? 'bg-gray-900 border-gray-700 text-gray-400'
                                             : 'bg-gray-800 border-gray-700 text-gray-200')">
                                     <span :title="d.name + ' · ' + (d.side_type || d.type)"
-                                        x-text="d.short_name || d.name"></span>
+                                        x-text="d.chip || d.short_name || d.name"></span>
                                     <button @click="toggleLeftover(d)"
                                         :title="isMade(d) ? 'Not made after all' : 'Already made'"
                                         :class="isMade(d)
@@ -181,17 +181,9 @@
 
                         <!-- Add anything from the repertoire that isn't on already. -->
                         <div class="flex items-center gap-2 mt-3">
-                            <select x-model="addDishId"
-                                class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-300 max-w-[60%]">
-                                <option value="">Add a dish…</option>
-                                <template x-for="d in addableDishes()" :key="'ad-' + d.id">
-                                    <option :value="d.id"
-                                        x-text="(d.short_name || d.name) + ' · ' + (d.side_type || d.type)"></option>
-                                </template>
-                            </select>
-                            <button @click="addToPlate()" :disabled="!addDishId"
-                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40">
-                                Add
+                            <button @click="openDishPicker(plate.date)"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200">
+                                + Add a dish
                             </button>
                             <button @click="plateToList()"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white ml-auto">
@@ -237,7 +229,7 @@
                                                 ? 'bg-gray-800 border-gray-700 text-gray-600 line-through'
                                                 : 'bg-gray-800 border-gray-700 text-gray-200'">
                                             <span :title="d.name + ' · ' + (d.side_type || d.type)"
-                                                x-text="d.short_name || d.name"></span>
+                                                x-text="d.chip || d.short_name || d.name"></span>
                                             <button @click="dropFromDay(day, d)" title="Not this night"
                                                 class="text-gray-600 hover:text-red-400">✕</button>
                                         </span>
@@ -245,14 +237,10 @@
                                     <span x-show="!(day.dishes || []).length" class="text-[11px] text-gray-600">
                                         Nothing to propose from — add dishes below.
                                     </span>
-                                    <select x-model="dayAdd[day.date]" @change="addToDay(day)"
-                                        class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-[11px] text-gray-400">
-                                        <option value="">+</option>
-                                        <template x-for="d in addableForDay(day)" :key="'wa-' + day.date + d.id">
-                                            <option :value="d.id"
-                                                x-text="(d.short_name || d.name) + ' · ' + (d.side_type || d.type)"></option>
-                                        </template>
-                                    </select>
+                                    <button @click="openDishPicker(day.date)"
+                                        class="px-2 py-1 rounded-lg text-[11px] font-bold border border-gray-700 text-gray-400 hover:text-white hover:border-pink-400/60">
+                                        +
+                                    </button>
                                 </div>
                             </div>
                         </template>
@@ -599,6 +587,47 @@
             </div>
         </div>
 
+        <!-- Dish picker. Was a bare <select> showing `short_name`, which is the
+             field whose whole JOB is to collapse variants — so "frozen pizza",
+             "takeout pizza" and "homemade pizza" were three identical entries
+             reading "pizza" and you had to guess. Full names, sorted, and
+             typeable, because scanning a 40-dish list for the one you want is
+             the work this was supposed to remove.
+             MUST stay inside the x-data root above (see the "+ List" dialog). -->
+        <div x-show="pickerDate" x-cloak
+            class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
+            @click.self="pickerDate = null" @keydown.escape.window="pickerDate = null">
+            <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
+                <h3 class="text-sm font-bold text-white mb-3" x-text="pickerTitle()"></h3>
+                <input x-model="pickerQuery" x-ref="pickerInput" type="text"
+                    @keydown.enter="pickerFirst() && addPickedDish(pickerFirst())"
+                    placeholder="Type to filter — pizza, rice, chicken…"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white
+                           placeholder-gray-500 focus:outline-none focus:border-pink-400/60 mb-3">
+                <div class="space-y-1.5 max-h-[50vh] overflow-y-auto">
+                    <template x-for="d in pickerResults()" :key="'pk-' + d.id">
+                        <button @click="addPickedDish(d)"
+                            class="w-full text-left bg-gray-900 rounded-xl border border-gray-700
+                                   px-4 py-2.5 hover:border-pink-400/60 flex items-baseline gap-2">
+                            <span class="text-sm font-semibold text-gray-200 flex-1 min-w-0"
+                                x-text="d.name"></span>
+                            <span class="text-[11px] text-gray-500 shrink-0"
+                                x-text="dishPickerMeta(d)"></span>
+                        </button>
+                    </template>
+                    <div x-show="!pickerResults().length" class="text-sm text-gray-500 px-1 py-2"
+                        x-text="repertoire.length ? 'Nothing matches that.'
+                                                 : 'No dishes yet — add some under Our meals.'"></div>
+                </div>
+                <div class="flex justify-end mt-4">
+                    <button @click="pickerDate = null"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Walmart cart result. The unmatched half is shown in FULL and never
              quietly dropped: a list of 30 becoming a cart of 27 with no
              explanation is the same silent-skip failure the "+ List" dialog
@@ -654,12 +683,12 @@
                 lists: [], activeId: null, items: [], members: {},
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
                 plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
-                addDishId: '',
                 drain: null,
-                week: [], weekWindow: null, weekBusy: false, dayAdd: {},
+                week: [], weekWindow: null, weekBusy: false,
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
+                pickerDate: null, pickerQuery: '',
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -719,7 +748,7 @@
                 },
                 dayHeadline(day) {
                     const m = this.mainDish(day);
-                    return m ? (m.short_name || m.name) : 'Not planned';
+                    return m ? (m.chip || m.short_name || m.name) : 'Not planned';
                 },
                 daySides(day) {
                     // Capped: a block seven-across is narrow, and a plate with
@@ -727,7 +756,7 @@
                     // · red beans") pushed the dish name out of the card.
                     const m = this.mainDish(day);
                     const names = (day.dishes || []).filter(d => d !== m)
-                        .map(d => d.short_name || d.name);
+                        .map(d => d.chip || d.short_name || d.name);
                     if (names.length <= 3) return names.join(' · ');
                     return names.slice(0, 3).join(' · ') + ' +' + (names.length - 3);
                 },
@@ -1019,21 +1048,65 @@
                     return bits.join(' · ');
                 },
 
-                addableForDay(day) {
-                    const on = new Set((day.dishes || []).map(d => d.id));
-                    return (this.repertoire || []).filter(d => !on.has(d.id));
+                // --- dish picker ---
+                openDishPicker(dateStr) {
+                    this.pickerDate = dateStr
+                        || this.plate.date
+                        || new Date().toISOString().slice(0, 10);
+                    this.pickerQuery = '';
+                    this.$nextTick(() => this.$refs.pickerInput
+                        && this.$refs.pickerInput.focus());
                 },
 
-                async addToDay(day) {
-                    const id = this.dayAdd[day.date];
-                    if (!id) return;
-                    this.dayAdd[day.date] = '';
+                pickerTitle() {
+                    if (!this.pickerDate) return 'Add a dish';
+                    const day = (this.week || []).find(w => w.date === this.pickerDate);
+                    if (this.pickerDate === this.plate.date) return 'Add a dish to tonight';
+                    return 'Add a dish to ' + (day ? day.weekday : this.pickerDate);
+                },
+
+                dishPickerMeta(d) {
+                    // The DISTINGUISHING facts, since the names may be similar.
+                    const bits = [d.side_type || d.type];
+                    if (d.source === 'ordered') bits.push('takeout');
+                    const hands = (d.prep_ahead_mins || 0) + (d.finish_mins || 0);
+                    if (hands) bits.push(hands + ' min');
+                    return bits.join(' · ');
+                },
+
+                pickerResults() {
+                    // FULL names, alphabetical. short_name exists to collapse
+                    // variants onto a compact chip — using it here made three
+                    // different pizzas indistinguishable at the one moment you
+                    // are choosing between them.
+                    const on = new Set(this.pickerDate === this.plate.date
+                        ? (this.plate.dishes || []).map(d => d.id)
+                        : (((this.week || []).find(w => w.date === this.pickerDate)
+                            || {}).dishes || []).map(d => d.id));
+                    const q = (this.pickerQuery || '').trim().toLowerCase();
+                    return (this.repertoire || [])
+                        .filter(d => !on.has(d.id))
+                        .filter(d => !q || (d.name || '').toLowerCase().includes(q)
+                            || (d.short_name || '').toLowerCase().includes(q)
+                            || (d.tags || []).some(t => String(t).toLowerCase().includes(q))
+                            || (d.side_type || d.type || '').toLowerCase().includes(q))
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                },
+
+                pickerFirst() {
+                    return this.pickerResults()[0] || null;
+                },
+
+                async addPickedDish(dish) {
+                    if (!dish) return;
+                    const date = this.pickerDate;
+                    this.pickerDate = null;
                     await fetch(this.apiBase + 'api/meals/plate/add', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ dish_id: id, date: day.date })
+                        body: JSON.stringify({ dish_id: dish.id, date: date })
                     });
                     await this.loadWeek();
-                    if (day.date === this.plate.date) this.loadPlate();
+                    if (date === this.plate.date) await this.loadPlate();
                 },
 
                 async dropFromDay(day, dish) {
@@ -1082,21 +1155,6 @@
                         bits.push('needs a ' + p.needs_ahead.replace('_', ' ') + ' head start');
                     if (p.edited) bits.push('yours');
                     return bits.join(' · ');
-                },
-
-                addableDishes() {
-                    const on = new Set((this.plate.dishes || []).map(d => d.id));
-                    return (this.repertoire || []).filter(d => !on.has(d.id));
-                },
-
-                async addToPlate() {
-                    if (!this.addDishId) return;
-                    await fetch(this.apiBase + 'api/meals/plate/add', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ dish_id: this.addDishId })
-                    });
-                    this.addDishId = '';
-                    await this.loadPlate();
                 },
 
                 async dropFromPlate(d) {

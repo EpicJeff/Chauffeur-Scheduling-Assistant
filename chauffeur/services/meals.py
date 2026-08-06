@@ -956,7 +956,7 @@ def compose_week(start_date: str = None, days: int = 7,
         out.append({
             'date': date_str,
             'weekday': datetime.date.fromisoformat(date_str).strftime('%a'),
-            'dishes': dishes,
+            'dishes': with_chip_labels(dishes),
             'pinned': pinned,
             'cook_window_mins': plan.get('cook_window_mins'),
             'cook_window_who': plan.get('cook_window_who'),
@@ -2470,6 +2470,32 @@ def household_staples(limit: int = 40) -> list:
 # reminded nobody, which is precisely the useless half.
 
 PREP_GRACE_MINS = 90          # a late nudge still helps; a stale one does not
+
+
+def with_chip_labels(dishes: list, all_dishes: list = None) -> list:
+    """Give each dish a chip label that names the OPTION, not the category.
+
+    M4 established this and built `_chip_label` for it — then M5 retired slots
+    and the plate went back to bare `short_name`, so "frozen pizza", "takeout
+    pizza" and "homemade pizza" all showed as "pizza" again. Same principle,
+    new pool: a dish is disambiguated against every OTHER dish in the
+    repertoire sharing its short name, rather than against its slot siblings.
+    """
+    if not dishes:
+        return dishes
+    all_dishes = all_dishes if all_dishes is not None else storage.get_dishes()
+    by_short = {}
+    for d in all_dishes:
+        key = (d.get('short_name') or '').strip().lower()
+        if key:
+            by_short.setdefault(key, []).append(d)
+    out = []
+    for d in dishes:
+        key = (d.get('short_name') or '').strip().lower()
+        pool = by_short.get(key) or []
+        out.append({**d, 'chip': _chip_label(d, pool) if key
+                    else (d.get('name') or '')})
+    return out
 
 
 def dish_prep_steps(dish: dict) -> list:

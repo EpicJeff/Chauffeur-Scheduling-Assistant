@@ -2037,6 +2037,43 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+def scenario_variants_of_one_dish_stay_distinguishable():
+    """Reported: "pizza made from frozen or ordered out all just show as
+    pizza". M4 built `_chip_label` for exactly this and M5 retired slots, which
+    quietly took the plate back to bare short_name — so every variant read as
+    the family's generic word at the one moment you are choosing between
+    them."""
+    reset_db(); _seed_people(); _settings()
+    frozen = _dish('frozen pizza', short_name='pizza', type='meal')
+    takeout = _dish('takeout pizza', short_name='pizza', type='meal',
+                    source='ordered')
+    homemade = _dish('homemade pizza', short_name='pizza', type='meal')
+    solo = _dish('lasagna', short_name='lasagna', type='meal')
+
+    labelled = {d['name']: d['chip'] for d in
+                meals.with_chip_labels([frozen, takeout, homemade, solo])}
+    check(len(set([labelled['frozen pizza'], labelled['takeout pizza'],
+                   labelled['homemade pizza']])) == 3,
+          f"three pizzas, three different labels, got {labelled}")
+    for name in ('frozen pizza', 'takeout pizza', 'homemade pizza'):
+        check('pizza' in labelled[name].lower(),
+              f"each still says what it IS, got {labelled[name]!r}")
+    check(labelled['lasagna'] == 'lasagna',
+          f"a dish with no siblings keeps the family's own short word, "
+          f"got {labelled['lasagna']!r}")
+
+
+def scenario_the_week_payload_carries_the_chip_label():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=0, include_dessert=False)
+    _dish('frozen pizza', short_name='pizza', type='meal')
+    _dish('takeout pizza', short_name='pizza', type='meal')
+    week = meals.compose_week('2026-09-10', 2)
+    for day in week:
+        for d in day['dishes']:
+            check(d.get('chip'), f"every dish on the board is labelled, got {d}")
+
+
 # --- M8: prep that happens outside the cook window ---------------------------
 # Reported from real use: some foods need work on a DIFFERENT DAY. Soaking rice
 # the night before is cognitive load precisely because nothing about cooking
