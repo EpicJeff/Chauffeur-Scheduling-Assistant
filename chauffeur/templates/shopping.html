@@ -345,6 +345,15 @@
                     if (this.isKiosk) setInterval(() => this.loadItems(true), 60000);
                 },
 
+                async loadRepertoire() {
+                    // Everything the family cooks, typed. Feeds the editor AND
+                    // the "add a dish" picker on tonight's plate.
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/dishes');
+                        this.repertoire = r.ok ? await r.json() : [];
+                    } catch (e) { this.repertoire = []; }
+                },
+
                 async loadPlate() {
                     try {
                         const r = await fetch(this.apiBase + 'api/meals/plate');
@@ -447,15 +456,28 @@
                         // One sentence in; the model splits it into typed dishes
                         // and fills their times and ingredients. Asking for those
                         // up front is how a repertoire never reaches critical mass.
-                        await fetch(this.apiBase + 'api/meals/repertoire', {
+                        const r = await fetch(this.apiBase + 'api/meals/repertoire', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ name })
                         });
+                        const res = r.ok ? await r.json() : {};
+                        // Report what the SERVER said. The generic catch-all
+                        // message here once claimed failure while the dishes
+                        // had saved fine — the throw was a client-side typo.
+                        if (!r.ok || res.error) {
+                            showGlobalAlert(res.error || res.detail
+                                || 'Could not read that — try naming the dishes plainly.');
+                            return;
+                        }
+                        const added = (res.added || []).length;
+                        const known = (res.existing || []).length;
+                        if (!added && known) showGlobalAlert('Already had all of those.');
+                        else if (!added) showGlobalAlert('Nothing new to add from that.');
                         this.mealDraft = '';
                         await this.loadRepertoire();
                         await this.loadPlate();
                     } catch (e) {
-                        showGlobalAlert('Could not add that');
+                        showGlobalAlert('Could not reach the server.');
                     } finally { this.mealBusy = false; }
                 },
 

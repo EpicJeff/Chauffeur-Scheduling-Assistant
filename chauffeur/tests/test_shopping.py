@@ -322,6 +322,91 @@ def scenario_tools_registered_in_both_stacks():
           "the v1 bridge writes through to the same storage as v2")
 
 
+# --- the page itself ---------------------------------------------------------
+# Every UI bug in this arc so far has been invisible to the backend suite: a
+# dead confirm dialog, an unreachable editor, and a `this.loadRepertoire()`
+# call left pointing at a function a refactor deleted (which surfaced to the
+# family as "Could not add that" while the save had actually worked). These
+# are cheap static checks against exactly that class of failure.
+
+def _shopping_html():
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(os.path.dirname(here), 'templates', 'shopping.html')
+    with open(path, encoding='utf-8') as f:
+        return f.read()
+
+
+def scenario_every_referenced_method_exists():
+    import re
+    src = _shopping_html()
+    body = src[src.index('function shoppingPage()'):]
+
+    defined = set(re.findall(r'\n\s+(?:async\s+)?(\w+)\s*\(', body))
+    defined |= set(re.findall(r'\n\s+(\w+)\s*:', body))          # data props
+    defined |= set(re.findall(r'\bget\s+(\w+)\s*\(', body))      # getters
+
+    called = set(re.findall(r'this\.(\w+)\s*\(', body))
+    missing = called - defined
+    check(not missing,
+          f"the component calls methods it does not define: {sorted(missing)}")
+
+    # Same for handlers wired from markup.
+    markup = src[:src.index('function shoppingPage()')]
+    from_markup = set(re.findall(r'[@:]?\w*click="(\w+)\(', markup))
+    from_markup |= set(re.findall(r'x-text="(\w+)\(', markup))
+    from_markup |= set(re.findall(r'x-show="(\w+)\(', markup))
+    globals_ok = {'showGlobalAlert', 'promptConfirm', 'promptInput'}
+    missing_ui = from_markup - defined - globals_ok
+    check(not missing_ui,
+          f"markup wires handlers that do not exist: {sorted(missing_ui)}")
+
+
+def scenario_dialog_helpers_are_called_with_a_message():
+    """promptConfirm/promptInput dereference `message` unconditionally, so a
+    one-argument call throws inside the promise executor: it never settles,
+    the await parks forever, and the button silently does nothing."""
+    import re
+    src = _shopping_html()
+    bad = []
+    for fn in ('promptConfirm', 'promptInput'):
+        for m in re.finditer(r'(?<![\w.])' + fn + r'\s*\(', src):
+            depth, args, in_s, esc = 0, 1, None, False
+            for ch in src[m.end() - 1:]:
+                if esc:
+                    esc = False
+                    continue
+                if ch == '\\':
+                    esc = True
+                    continue
+                if in_s:
+                    if ch == in_s:
+                        in_s = None
+                    continue
+                if ch in '"\'`':
+                    in_s = ch
+                    continue
+                if ch in '([{':
+                    depth += 1
+                elif ch in ')]}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif ch == ',' and depth == 1:
+                    args += 1
+            if args < 2:
+                bad.append(f"{fn} at offset {m.start()}")
+    check(not bad, f"single-argument dialog calls fail SILENTLY: {bad}")
+
+
+def scenario_api_calls_go_through_apibase():
+    """Bare relative fetches break under Home Assistant ingress."""
+    import re
+    src = _shopping_html()
+    bare = re.findall(r"fetch\(\s*['\"]api/", src)
+    check(not bare, f"{len(bare)} fetch call(s) skip apiBase")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
