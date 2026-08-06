@@ -287,7 +287,7 @@
                         <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">
                             ⚖️ How we eat
                         </h4>
-                        <button @click="showRuleForm = !showRuleForm"
+                        <button @click="showRuleForm ? cancelRule() : newRule()"
                             class="text-xs font-bold text-gray-500 hover:text-white shrink-0"
                             x-text="showRuleForm ? 'Cancel' : '+ Rule'"></button>
                     </div>
@@ -345,7 +345,7 @@
                             </div>
                             <button @click="saveRule()" :disabled="ruleBusy"
                                 class="text-xs font-bold px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
-                                x-text="ruleBusy ? 'Saving…' : 'Add'"></button>
+                                x-text="ruleBusy ? 'Saving…' : (ruleDraft.id ? 'Save' : 'Add')"></button>
                         </div>
                     </div>
 
@@ -365,6 +365,10 @@
                                               + (r.match_count > 6 ? ' +' + (r.match_count - 6) : '')
                                             : 'matches no dish yet — it is not doing anything'"></div>
                                 </div>
+                                <button @click="editRule(r)"
+                                    class="text-[11px] font-bold text-gray-500 hover:text-white shrink-0">
+                                    Edit
+                                </button>
                                 <button @click="toggleRule(r)"
                                     class="text-[11px] font-bold shrink-0"
                                     :class="r.is_enabled ? 'text-gray-500 hover:text-white' : 'text-pink-300'"
@@ -817,7 +821,7 @@
                 staples: [], stapleBusy: null, picsBusy: false,
                 pickerDate: null, pickerQuery: '', occasionDate: '',
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
-                ruleDraft: { kind: 'frequency_cap', name: '', applies: '',
+                ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
                              takeout: false, max_servings: 1, window_days: 7,
                              dwell_days: 3 },
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
@@ -998,6 +1002,42 @@
                     } catch (e) { this.rules = []; }
                 },
 
+                blankRule() {
+                    return { id: null, kind: 'frequency_cap', name: '', applies: '',
+                             takeout: false, max_servings: 1, window_days: 7,
+                             dwell_days: 3 };
+                },
+
+                newRule() {
+                    this.ruleDraft = this.blankRule();
+                    this.showRuleForm = true;
+                },
+
+                cancelRule() {
+                    this.ruleDraft = this.blankRule();
+                    this.showRuleForm = false;
+                },
+
+                editRule(r) {
+                    // "Applies to" has to round-trip back OUT, or editing a rule
+                    // silently drops what it applied to and quietly turns it
+                    // into a rule that governs nobody.
+                    const dishNames = (r.dish_ids || [])
+                        .map(id => (this.repertoire || []).find(x => x.id === id))
+                        .filter(Boolean).map(x => x.name);
+                    this.ruleDraft = {
+                        id: r.id,
+                        kind: r.kind || 'frequency_cap',
+                        name: r.name || '',
+                        applies: [...(r.tags || []), ...dishNames].join(', '),
+                        takeout: (r.sources || []).includes('ordered'),
+                        max_servings: r.max_servings || 1,
+                        window_days: r.window_days || 7,
+                        dwell_days: r.dwell_days || 3,
+                    };
+                    this.showRuleForm = true;
+                },
+
                 async saveRule() {
                     // "Applies to" is one field on purpose: the family types a
                     // word, and whether it lands as a tag or a dish name is our
@@ -1028,10 +1068,17 @@
                             window_days: parseInt(d.window_days) || 7,
                             dwell_days: parseInt(d.dwell_days) || 3,
                         };
-                        const r = await fetch(this.apiBase + 'api/meals/rules', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
-                        });
+                        const r = d.id
+                            ? await fetch(this.apiBase + 'api/meals/rules/' + d.id, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(body)
+                            })
+                            : await fetch(this.apiBase + 'api/meals/rules', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(body)
+                            });
                         if (!r.ok) { showGlobalAlert('Could not save that rule.'); return; }
                         const res = await r.json();
                         // A rule matching nothing is the silent failure this
@@ -1041,10 +1088,7 @@
                                 + "won't do anything. Try a tag your dishes actually "
                                 + 'carry, or name the dishes directly.');
                         }
-                        this.showRuleForm = false;
-                        this.ruleDraft = { kind: 'frequency_cap', name: '', applies: '',
-                                           takeout: false, max_servings: 1,
-                                           window_days: 7, dwell_days: 3 };
+                        this.cancelRule();
                         await this.loadRules();
                         this.loadWeek();
                     } catch (e) {
@@ -1055,9 +1099,10 @@
                 },
 
                 async toggleRule(r) {
-                    await fetch(this.apiBase + 'api/meals/rules/' + r.id
-                        + '?is_enabled=' + (r.is_enabled ? 'false' : 'true'),
-                        { method: 'PATCH' });
+                    await fetch(this.apiBase + 'api/meals/rules/' + r.id, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ is_enabled: !r.is_enabled })
+                    });
                     await this.loadRules();
                     this.loadWeek();
                 },

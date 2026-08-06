@@ -2222,7 +2222,7 @@ def scenario_the_rules_panel_gets_what_it_renders():
           f"{by_name['meat about once a week']['description']!r}")
 
     rid = by_name['meat about once a week']['id']
-    main.patch_meal_rule(rid, is_enabled=False)
+    main.patch_meal_rule(rid, main.MealRulePatch(is_enabled=False))
     check(storage.get_meal_rule(rid)['is_enabled'] is False, "pause works")
     check(rid not in [r['id'] for r in storage.get_meal_rules()],
           "a paused rule stops governing")
@@ -2230,6 +2230,73 @@ def scenario_the_rules_panel_gets_what_it_renders():
           "but is still there to resume")
     main.remove_meal_rule(rid)
     check(not storage.get_meal_rule(rid), "and delete removes it")
+
+
+def scenario_a_rule_can_be_edited_in_place():
+    """Without this, changing "once a week" to "twice" meant deleting the rule
+    and rebuilding it from memory — and the same PATCH has to carry a one-field
+    pause and a whole-rule edit, or the panel needs two endpoints for one
+    verb."""
+    reset_db(); _seed_people(); _settings()
+    import main
+    _rules_repertoire()
+    made = main.create_meal_rule(main.MealRuleReq(
+        name='meat about once a week', kind='frequency_cap', tags=['meat'],
+        max_servings=1, window_days=7))
+    rid = made['rule']['id']
+
+    edited = main.patch_meal_rule(rid, main.MealRulePatch(
+        name='meat twice a week', max_servings=2))
+    check(edited['rule']['name'] == 'meat twice a week'
+          and edited['rule']['max_servings'] == 2,
+          f"the supplied fields change, got {edited['rule']}")
+    check(edited['rule']['tags'] == ['meat'] and edited['rule']['window_days'] == 7,
+          f"and untouched ones are left alone, got {edited['rule']}")
+    check(edited['match_count'] == 3,
+          f"the edit reports what it now covers, got {edited['match_count']}")
+
+    # Normalised the same way creation is, or an edited rule quietly behaves
+    # differently from an identical created one.
+    upper = main.patch_meal_rule(rid, main.MealRulePatch(tags=['  MEAT  ']))
+    check(upper['rule']['tags'] == ['meat'],
+          f"tags are lowercased and trimmed on edit too, got {upper['rule']['tags']}")
+    floored = main.patch_meal_rule(rid, main.MealRulePatch(max_servings=0,
+                                                          window_days=0))
+    check(floored['rule']['max_servings'] == 1 and floored['rule']['window_days'] == 1,
+          f"floors apply on edit, got {floored['rule']}")
+
+    # Switching kind must carry its own number across.
+    swapped = main.patch_meal_rule(rid, main.MealRulePatch(
+        kind='batch_cycle', dwell_days=2))
+    check(swapped['rule']['kind'] == 'batch_cycle'
+          and swapped['rule']['dwell_days'] == 2,
+          f"kind can change and takes its own number with it, got {swapped['rule']}")
+    check('one at a time' in meals.describe_meal_rule(swapped['rule']),
+          f"and it now describes itself as a batch, got "
+          f"{meals.describe_meal_rule(swapped['rule'])!r}")
+
+    check(meals.edit_meal_rule('nope', {'name': 'x'})['status'] == 'error',
+          "editing a rule that does not exist is an error, not a new rule")
+
+
+def scenario_editing_keeps_what_the_rule_applies_to():
+    """The panel rebuilds "applies to" from tags + dish names. If dish_ids are
+    not returned by the list endpoint the field comes back empty, and saving
+    then turns a working rule into one that governs nobody."""
+    reset_db(); _seed_people(); _settings()
+    import main
+    _rules_repertoire()
+    tacos = storage.find_dish_by_name('beef tacos')
+    made = main.create_meal_rule(main.MealRuleReq(
+        name='tacos rarely', kind='frequency_cap', dish_ids=[tacos['id']],
+        max_servings=1, window_days=14))
+    row = next(r for r in main.list_meal_rules()['rules']
+               if r['id'] == made['rule']['id'])
+    check(row.get('dish_ids') == [tacos['id']],
+          f"the list endpoint returns dish_ids so the form can repopulate, "
+          f"got {row.get('dish_ids')}")
+    check(row.get('tags') == [] and row.get('sources') == [],
+          "and the other selector fields, so nothing is lost on a round trip")
 
 
 def scenario_rule_tools_in_both_stacks():

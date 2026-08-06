@@ -5453,12 +5453,27 @@ def create_meal_rule(req: MealRuleReq):
     _touch_stream()
     return res
 
+class MealRulePatch(BaseModel):
+    """Every field optional: the panel sends one for a pause and all of them
+    for an edit, through the same endpoint."""
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    dish_ids: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    types: Optional[List[str]] = None
+    side_types: Optional[List[str]] = None
+    sources: Optional[List[str]] = None
+    max_servings: Optional[int] = None
+    window_days: Optional[int] = None
+    dwell_days: Optional[int] = None
+    is_enabled: Optional[bool] = None
+
 @app.patch("/api/meals/rules/{rule_id}")
-def patch_meal_rule(rule_id: str, is_enabled: Optional[bool] = None):
-    if is_enabled is not None:
-        storage.update_meal_rule(rule_id, {'is_enabled': bool(is_enabled)})
+def patch_meal_rule(rule_id: str, req: MealRulePatch):
+    from services import meals as _meals
+    res = _meals.edit_meal_rule(rule_id, req.model_dump(exclude_none=True))
     _touch_stream()
-    return storage.get_meal_rule(rule_id) or {'status': 'error'}
+    return res
 
 @app.delete("/api/meals/rules/{rule_id}")
 def remove_meal_rule(rule_id: str):

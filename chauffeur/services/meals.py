@@ -621,6 +621,45 @@ def add_meal_rule(name: str, kind: str = 'frequency_cap', **kw) -> dict:
             'match_count': len(matched)}
 
 
+def edit_meal_rule(rule_id: str, patch: dict) -> dict:
+    """Change a rule in place.
+
+    Normalised exactly as `add_meal_rule` does — lowercased tags, floors on the
+    numbers — because a rule edited into a different shape than one created is
+    the sort of divergence that shows up months later as "it works if I delete
+    it and add it again". Only keys actually supplied are touched, so the panel
+    can send one field or all of them.
+    """
+    rule = storage.get_meal_rule(rule_id)
+    if not rule:
+        return {'status': 'error', 'message': 'No such rule.'}
+    clean = {}
+    if patch.get('name') is not None:
+        clean['name'] = str(patch['name']).strip() or rule.get('name') or 'rule'
+    if patch.get('kind') is not None and patch['kind'] in ('frequency_cap', 'batch_cycle'):
+        clean['kind'] = patch['kind']
+    if patch.get('is_enabled') is not None:
+        clean['is_enabled'] = bool(patch['is_enabled'])
+    if patch.get('tags') is not None:
+        clean['tags'] = [str(t).strip().lower() for t in patch['tags'] if str(t).strip()]
+    for key in ('dish_ids', 'types', 'side_types', 'sources'):
+        if patch.get(key) is not None:
+            clean[key] = [str(x) for x in patch[key]]
+    if patch.get('max_servings') is not None:
+        clean['max_servings'] = max(1, int(patch['max_servings']))
+    if patch.get('window_days') is not None:
+        clean['window_days'] = max(1, int(patch['window_days']))
+    if patch.get('dwell_days') is not None:
+        clean['dwell_days'] = max(1, int(patch['dwell_days']))
+    if clean:
+        storage.update_meal_rule(rule_id, clean)
+    out = storage.get_meal_rule(rule_id)
+    matched = [d for d in storage.get_dishes() if rule_matches(out, d)]
+    return {'status': 'success', 'rule': out,
+            'matches': [d.get('short_name') or d['name'] for d in matched],
+            'match_count': len(matched)}
+
+
 def describe_meal_rule(rule: dict) -> str:
     """Plain words, so a family can audit what they told it."""
     what = []
