@@ -518,6 +518,20 @@ class GetTonightsPlateTool(BaseModel):
     """
     target_date: Optional[str] = Field(None, description="Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD.")
 
+class PlanSpecificDinnerTool(BaseModel):
+    """
+    Sets a specific dinner on a specific date and LOCKS it ("steak Monday for Mom's birthday", "Grandma is bringing dinner Tuesday").
+    """
+    target_date: str = Field(..., description="Which day: tomorrow, Monday, or YYYY-MM-DD.")
+    dish_names: Optional[str] = Field(None, description="Comma separated dishes; omit if nobody here is cooking.")
+    note: Optional[str] = Field(None, description="Why, e.g. Mom's birthday.")
+
+class UnlockDinnerTool(BaseModel):
+    """
+    Releases a locked night back to the proposal engine.
+    """
+    target_date: str = Field(..., description="Which day.")
+
 class PairDishesTool(BaseModel):
     """
     Records that dishes always come together ("brisket always comes with beans and fries"). Directed - the partners stay free to appear elsewhere.
@@ -711,6 +725,8 @@ TOOL_SCHEMAS = {
     "get_week_dinners": GetWeekDinnersTool.model_json_schema(),
     "approve_week_dinners": ApproveWeekDinnersTool.model_json_schema(),
     "get_shopping_trip": GetShoppingTripTool.model_json_schema(),
+    "plan_specific_dinner": PlanSpecificDinnerTool.model_json_schema(),
+    "unlock_dinner": UnlockDinnerTool.model_json_schema(),
     "pair_dishes": PairDishesTool.model_json_schema(),
     "unpair_dishes": UnpairDishesTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
@@ -1857,6 +1873,16 @@ def handle_get_tonights_plate(args: dict) -> dict:
     from services.agent_tools_v2 import get_tonights_plate
     return get_tonights_plate(args.get("target_date") or "today")
 
+def handle_plan_specific_dinner(args: dict) -> dict:
+    from services.agent_tools_v2 import plan_specific_dinner
+    return plan_specific_dinner(args.get("target_date") or "",
+                                args.get("dish_names") or "",
+                                args.get("note") or "")
+
+def handle_unlock_dinner(args: dict) -> dict:
+    from services.agent_tools_v2 import unlock_dinner
+    return unlock_dinner(args.get("target_date") or "")
+
 def handle_pair_dishes(args: dict) -> dict:
     from services.agent_tools_v2 import pair_dishes
     return pair_dishes(args.get("dish_name") or "", args.get("partner_names") or "",
@@ -2019,6 +2045,8 @@ TOOL_HANDLERS = {
     "get_week_dinners": handle_get_week_dinners,
     "approve_week_dinners": handle_approve_week_dinners,
     "get_shopping_trip": handle_get_shopping_trip,
+    "plan_specific_dinner": handle_plan_specific_dinner,
+    "unlock_dinner": handle_unlock_dinner,
     "pair_dishes": handle_pair_dishes,
     "unpair_dishes": handle_unpair_dishes,
     "set_dish_prep": handle_set_dish_prep,

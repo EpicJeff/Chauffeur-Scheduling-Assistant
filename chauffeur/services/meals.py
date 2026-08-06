@@ -779,10 +779,42 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
     # in the table, pinning Thursday would have deleted Monday through
     # Wednesday on the way past.
     storage.prune_plates(_today_iso())
+    # Carry the lock and its note forward. This rebuilds the record from
+    # scratch, so without this an ordinary edit — or the week approval, which
+    # re-persists every night — would silently unlock Mom's birthday and drop
+    # the reason it was locked.
+    prior = storage.get_plate(date_str) or {}
     rec = Plate(date=date_str, edited=True,
+                locked=bool(prior.get('locked')),
+                note=prior.get('note'),
                 items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
     storage.save_plate(rec)
     return rec
+
+
+def set_plate_lock(date_str: str, locked: bool = True, note: str = None,
+                   dish_ids: list = None) -> dict:
+    """Spoken for: "steak on Monday, it's Mom's birthday".
+
+    Locking pins whatever is on the plate, so it can be used either after
+    choosing the dishes or on its own to hold a night that is already right.
+    An empty locked plate is a legitimate state — it is how "someone is
+    bringing us dinner" is said.
+    """
+    from models.schemas import Plate, PlateItem
+    if dish_ids is None:
+        cur = get_or_compose_plate(date_str)['dishes']
+    else:
+        by_id = {d['id']: d for d in storage.get_dishes_by_ids(dish_ids)}
+        cur = [by_id[i] for i in dish_ids if i in by_id]
+    prior = storage.get_plate(date_str) or {}
+    storage.prune_plates(_today_iso())
+    rec = Plate(date=date_str, edited=True, locked=bool(locked),
+                note=(note if note is not None else prior.get('note')) or None,
+                items=[PlateItem(dish_id=d['id']) for d in cur]).model_dump()
+    storage.save_plate(rec)
+    return {'status': 'success', 'date': date_str, 'locked': bool(locked),
+            'note': rec['note'], 'dishes': cur}
 
 
 def grocery_settings(settings: dict = None) -> tuple:
@@ -988,6 +1020,8 @@ def compose_week(start_date: str = None, days: int = 7,
         plan = eating_plan(date_str, 'dinner', sched=sched, settings=settings)
         saved = storage.get_plate(date_str)
         pinned = bool(saved and saved.get('edited'))
+        locked = bool(saved and saved.get('locked'))
+        note = (saved or {}).get('note')
         if pinned:
             by_id = {d['id']: d for d in storage.get_dishes_by_ids(
                 [i['dish_id'] for i in saved.get('items') or []])}
@@ -1003,7 +1037,7 @@ def compose_week(start_date: str = None, days: int = 7,
             'date': date_str,
             'weekday': datetime.date.fromisoformat(date_str).strftime('%a'),
             'dishes': with_chip_labels(dishes),
-            'pinned': pinned,
+            'pinned': pinned, 'locked': locked, 'note': note,
             'cook_window_mins': plan.get('cook_window_mins'),
             'cook_window_who': plan.get('cook_window_who'),
             # A cook window of 0 is ambiguous on its own: it is what an
@@ -1177,8 +1211,20 @@ def remove_from_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
     return {'dishes': kept}
 
 
-def reset_plate(date_str: str) -> dict:
-    """Back to the proposal — plans change."""
+def reset_plate(date_str: str, force: bool = False) -> dict:
+    """Back to the proposal — plans change.
+
+    A LOCKED night refuses unless forced: the whole point of locking is that a
+    bulk repropose cannot sweep away a birthday dinner set three weeks out. The
+    per-day reset passes force, because that one is a deliberate act on that
+    specific night.
+    """
+    saved = storage.get_plate(date_str)
+    if saved and saved.get('locked') and not force:
+        out = get_or_compose_plate(date_str)
+        out['locked'] = True
+        out['refused'] = True
+        return out
     storage.delete_plate(date_str)
     return get_or_compose_plate(date_str)
 

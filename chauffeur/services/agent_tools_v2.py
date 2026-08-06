@@ -1397,6 +1397,49 @@ def get_shopping_trip(list_name: str = "", acting_member: dict = None) -> Dict[s
                        f"{'s' if n != 1 else ''} on the list."}
 
 
+def plan_specific_dinner(target_date: str, dish_names: str = "", note: str = "",
+                         acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "steak on Monday, it's Mom's birthday", "Grandma is bringing
+    dinner Tuesday". Sets a night and LOCKS it so the composer never touches
+    it. Dishes are optional — a locked night with no dishes is exactly how
+    "someone else is feeding us" is said."""
+    import datetime as _dt
+    from services import storage, meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    wanted = [n.strip() for n in str(dish_names or '').replace(' and ', ',').split(',')
+              if n.strip()]
+    found, missing = [], []
+    for nm in wanted:
+        d = storage.find_dish_by_name(nm)
+        (found.append(d) if d else missing.append(nm))
+    if wanted and not found:
+        return {"status": "error",
+                "message": f"I don't have {', '.join(missing)} in what you cook. "
+                           "Add it and I'll set it for that night."}
+    res = meals.set_plate_lock(day.isoformat(), True, (note or '').strip() or None,
+                               [d['id'] for d in found] if found else
+                               ([] if wanted else None))
+    when = "tonight" if day == _dt.date.today() else day.strftime('%A')
+    names = ', '.join(d.get('short_name') or d['name'] for d in res['dishes'])
+    head = (f"{when.capitalize()} is set: {names}" if names
+            else f"{when.capitalize()} is spoken for")
+    tail = f" — {res['note']}" if res.get('note') else ""
+    miss = f" (I don't have {', '.join(missing)} yet.)" if missing else ""
+    return {"status": "success",
+            "message": f"{head}{tail}. I won't change it.{miss}"}
+
+
+def unlock_dinner(target_date: str, acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "never mind about Monday" — hands the night back to the composer."""
+    import datetime as _dt
+    from services import meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    meals.reset_plate(day.isoformat(), force=True)
+    when = "tonight" if day == _dt.date.today() else day.strftime('%A')
+    return {"status": "success",
+            "message": f"{when.capitalize()} is back to being proposed."}
+
+
 def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
                 acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "brisket always comes with beans and fries", "the rice only ever
@@ -2125,6 +2168,30 @@ def get_available_tools() -> List[Dict]:
                     "target_date": {"type": "string", "description": "Which day: today (default), tomorrow, a weekday name, or YYYY-MM-DD."}
                 },
                 "required": []
+            }
+        },
+        {
+            "name": "plan_specific_dinner",
+            "description": "Sets a specific dinner on a specific date and LOCKS it so the proposal engine never changes it: steak on Monday for Mom's birthday, Grandma is bringing dinner Tuesday, we are having the lasagna on the 14th. Dish names are optional - omit them when someone else is providing the food.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day: tomorrow, Monday, or YYYY-MM-DD."},
+                    "dish_names": {"type": "string", "description": "Comma separated dishes, e.g. steak, salad. Omit if nobody here is cooking."},
+                    "note": {"type": "string", "description": "Why, e.g. Mom's birthday or Grandma is bringing dinner."}
+                },
+                "required": ["target_date"]
+            }
+        },
+        {
+            "name": "unlock_dinner",
+            "description": "Releases a locked night back to the proposal engine (never mind about Monday, unlock Tuesday).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "Which day."}
+                },
+                "required": ["target_date"]
             }
         },
         {

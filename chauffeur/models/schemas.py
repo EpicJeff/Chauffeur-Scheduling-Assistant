@@ -896,6 +896,15 @@ class Plate(BaseModel):
     date: str                          # YYYY-MM-DD
     items: List[PlateItem] = Field(default_factory=list)
     edited: bool = False
+    # `edited` and `locked` are NOT the same statement. Editing is "we swapped
+    # a side", and a bulk repropose is entitled to sweep it away. Locking is
+    # "this is Mom's birthday dinner, do not touch it" — deliberate, dated, and
+    # immune to the repropose that would otherwise wipe it a week early.
+    locked: bool = False
+    # WHY the night is spoken for. An empty locked plate with a note is how
+    # "Grandma is bringing dinner" is expressed: nothing to cook, nothing to
+    # shop for, and it does not read as a night nobody has planned yet.
+    note: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class MealSlot(BaseModel):

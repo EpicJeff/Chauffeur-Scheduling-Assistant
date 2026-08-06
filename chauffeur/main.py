@@ -5562,10 +5562,26 @@ def toggle_leftover(req: PlateEdit):
     return {"status": "ok", "dish_id": req.dish_id, "leftover": marked}
 
 @app.post("/api/meals/plate/reset")
-def plate_reset(date: Optional[str] = None):
+def plate_reset(date: Optional[str] = None, force: bool = False):
+    """`force` is the per-day reset (a deliberate act on that night). The bulk
+    repropose leaves it off so a locked occasion survives."""
     import datetime as _dt
     from services import meals as _meals
-    return _meals.reset_plate(date or _dt.date.today().isoformat())
+    return _meals.reset_plate(date or _dt.date.today().isoformat(), force)
+
+class PlateLock(BaseModel):
+    date: str
+    locked: bool = True
+    note: Optional[str] = None
+    dish_ids: Optional[List[str]] = None
+
+@app.post("/api/meals/plate/lock")
+def plate_lock(req: PlateLock):
+    """Spoken for: a night the composer must never touch."""
+    from services import meals as _meals
+    res = _meals.set_plate_lock(req.date, req.locked, req.note, req.dish_ids)
+    _touch_stream()
+    return res
 
 @app.post("/api/meals/migrate-dishes")
 def migrate_dishes():

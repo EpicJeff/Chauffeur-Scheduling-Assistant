@@ -2037,6 +2037,117 @@ def scenario_the_shop_day_is_derived_not_guessed():
           "an explicitly chosen day is honoured")
 
 
+# --- M10: a night that is spoken for -----------------------------------------
+
+def scenario_a_locked_night_survives_a_bulk_repropose():
+    """The hold-still rule already pinned an edited plate — but a bulk
+    repropose is entitled to sweep an edit away, and sweeping away Mom's
+    birthday dinner set three weeks out is not the same act at all."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    steak = _dish('steak', type='entree')
+    _dish('tacos', type='entree')
+    _dish('salad', type='side', side_type='salad')
+
+    meals.set_plate_lock('2026-09-14', True, "Mom's birthday", [steak['id']])
+    day = next(d for d in meals.compose_week('2026-09-14', 1))
+    check(day['locked'] and day['note'] == "Mom's birthday",
+          f"locked and says why, got {day.get('locked')}/{day.get('note')}")
+    check([x['name'] for x in day['dishes']] == ['steak'], "with the chosen dish")
+
+    res = meals.reset_plate('2026-09-14')          # the bulk path
+    check(res.get('refused') and storage.get_plate('2026-09-14'),
+          f"an unforced reset refuses, got {res.get('refused')}")
+    meals.reset_plate('2026-09-14', force=True)    # the per-day path
+    check(not storage.get_plate('2026-09-14'),
+          "but a deliberate per-day reset releases it")
+
+
+def scenario_an_edit_does_not_silently_unlock_the_night():
+    """_persist_plate rebuilds the record from scratch, so without carrying the
+    lock forward an ordinary edit — or the week approval, which re-persists
+    every night — would quietly unlock a birthday and drop its reason."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    steak = _dish('steak', type='entree')
+    salad = _dish('salad', type='side', side_type='salad')
+    meals.set_plate_lock('2026-09-14', True, "Mom's birthday", [steak['id']])
+
+    meals.add_to_plate('2026-09-14', salad['id'])
+    rec = storage.get_plate('2026-09-14')
+    check(rec['locked'] and rec['note'] == "Mom's birthday",
+          f"still locked after an edit, got {rec.get('locked')}/{rec.get('note')}")
+
+    meals.approve_week('2026-09-14', 1)
+    rec2 = storage.get_plate('2026-09-14')
+    check(rec2['locked'] and rec2['note'] == "Mom's birthday",
+          f"and after the week approval re-persists it, got {rec2.get('locked')}")
+
+
+def scenario_a_locked_night_with_no_dishes_is_someone_else_cooking():
+    """"Grandma is bringing dinner" — nothing to cook, nothing to shop for,
+    and it must not read as a night nobody has planned."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=2, include_dessert=False)
+    _dish('tacos', type='entree', ingredients=[{'name': 'beef', 'kind': 'fresh'}])
+    _dish('salad', type='side', side_type='salad',
+          ingredients=[{'name': 'lettuce', 'kind': 'fresh'}])
+
+    meals.set_plate_lock('2026-09-15', True, "Grandma is bringing dinner", [])
+    day = meals.compose_week('2026-09-15', 1)[0]
+    check(not day['dishes'] and day['note'] == "Grandma is bringing dinner",
+          f"an empty night that says why, got {day}")
+
+    res = meals.approve_week('2026-09-15', 1)
+    check(not res['added'],
+          f"and it buys nothing — somebody else is feeding us, got {res['added']}")
+
+
+def scenario_a_far_future_night_is_not_pruned():
+    reset_db(); _seed_people(); _settings()
+    steak = _dish('steak', type='entree')
+    far = (datetime.date.today() + datetime.timedelta(days=25)).isoformat()
+    meals.set_plate_lock(far, True, "Mom's birthday", [steak['id']])
+    # Any later plate write prunes; the future one must survive it.
+    meals.add_to_plate(datetime.date.today().isoformat(), steak['id'])
+    check(storage.get_plate(far),
+          "a night set weeks out survives the prune that runs on every write")
+
+
+def scenario_lock_tools_in_both_stacks():
+    reset_db(); _seed_people(); _settings()
+    _dish('steak', type='entree')
+    from services import agent_tools, agent_tools_v2
+    want = {"plan_specific_dinner", "unlock_dinner"}
+    v2 = {t['name'] for t in agent_tools_v2.get_available_tools()}
+    check(want <= v2, f"v2 missing {want - v2}")
+    check(want <= set(agent_tools.TOOL_SCHEMAS)
+          and want <= set(agent_tools.TOOL_HANDLERS), "v1 stack incomplete")
+    import inspect
+    from services import agent_router
+    src = inspect.getsource(agent_router)
+    for name in want:
+        check(src.count(f'"{name}"') >= 2,
+              f"{name} is not both dispatched and listed terminal in the router")
+
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    res = agent_tools.execute_tool("plan_specific_dinner", {
+        "target_date": tomorrow, "dish_names": "steak", "note": "Mom's birthday"})
+    check(res['status'] == 'success' and "Mom's birthday" in res['message'],
+          f"set by voice, got {res}")
+    rec = storage.get_plate(tomorrow)
+    check(rec and rec['locked'], f"and it really locked, got {rec}")
+
+    # "Grandma is bringing dinner" — no dishes named at all.
+    day_after = (datetime.date.today() + datetime.timedelta(days=2)).isoformat()
+    res2 = agent_tools.execute_tool("plan_specific_dinner", {
+        "target_date": day_after, "note": "Grandma is bringing dinner"})
+    check(res2['status'] == 'success', f"a night with nobody here cooking, got {res2}")
+
+    agent_tools.execute_tool("unlock_dinner", {"target_date": tomorrow})
+    check(not storage.get_plate(tomorrow), "and released by voice")
+
+
 # --- M9: dishes that come as a set ------------------------------------------
 # Reported from real use: brisket (takeout) with beans and fries (home) arrived
 # together once and the family asked whether that would HOLD. Measured: it did

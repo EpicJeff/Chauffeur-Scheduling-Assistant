@@ -217,7 +217,15 @@
                                         x-text="day.weekday"></span>
                                     <span class="text-[11px] text-gray-500 flex-1 truncate"
                                         x-text="dayBlurb(day)"></span>
-                                    <span x-show="day.pinned" title="Pinned — held still"
+                                    <span x-show="day.note" class="text-[11px] text-amber-300 shrink-0"
+                                        x-text="day.note"></span>
+                                    <button @click="toggleLock(day)"
+                                        :title="day.locked ? 'Locked — the composer will not touch this'
+                                                           : 'Lock this night'"
+                                        class="text-[11px] shrink-0"
+                                        :class="day.locked ? 'text-amber-300' : 'text-gray-700 hover:text-amber-300'"
+                                        x-text="day.locked ? '🔒' : '🔓'"></button>
+                                    <span x-show="day.pinned && !day.locked" title="Edited — held still"
                                         class="text-[11px] text-pink-300 shrink-0">📌</span>
                                     <button x-show="day.pinned" @click="resetDay(day)"
                                         class="text-[11px] text-gray-600 hover:text-white shrink-0">Reset</button>
@@ -244,6 +252,19 @@
                                 </div>
                             </div>
                         </template>
+                    </div>
+
+                    <!-- A date beyond the plan window. Mom's birthday can be
+                         three weeks out, and the week strip only ever covers
+                         up to the next shop — the API always accepted any
+                         date, there was simply no way to reach one. -->
+                    <div class="flex items-center gap-2 mt-3 flex-wrap">
+                        <input type="date" x-model="occasionDate"
+                            class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-300">
+                        <button @click="planOccasion()" :disabled="!occasionDate"
+                            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white disabled:opacity-40">
+                            Plan a specific night →
+                        </button>
                     </div>
 
                     <button @click="approveWeek()" :disabled="weekBusy"
@@ -688,7 +709,7 @@
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false,
-                pickerDate: null, pickerQuery: '',
+                pickerDate: null, pickerQuery: '', occasionDate: '',
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -998,7 +1019,10 @@
                     // proposal has drifted from what the family wants.
                     try {
                         if (repropose) {
-                            for (const d of this.week.filter(x => x.pinned)) {
+                            // Locked nights are skipped: the whole point of a
+                            // lock is that a bulk repropose cannot sweep away
+                            // a birthday dinner set weeks in advance.
+                            for (const d of this.week.filter(x => x.pinned && !x.locked)) {
                                 await fetch(this.apiBase + 'api/meals/plate/reset?date='
                                     + encodeURIComponent(d.date), { method: 'POST' });
                             }
@@ -1118,8 +1142,50 @@
                     if (day.date === this.plate.date) this.loadPlate();
                 },
 
+                async toggleLock(day) {
+                    // Locking asks WHY, because a locked night with no reason
+                    // is indistinguishable next week from one nobody meant to
+                    // lock — and the note is what makes "Grandma is bringing
+                    // dinner" a plan rather than an empty evening.
+                    let note = day.note || '';
+                    if (!day.locked) {
+                        note = await promptInput('Lock this night',
+                            "What's the occasion? e.g. Mom's birthday, or "
+                            + "Grandma is bringing dinner. Leave blank if you "
+                            + "just want it held.");
+                        if (note === null) return;
+                    }
+                    await fetch(this.apiBase + 'api/meals/plate/lock', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ date: day.date, locked: !day.locked,
+                                               note: (note || '').trim() || null })
+                    });
+                    await this.loadWeek();
+                    if (day.date === this.plate.date) this.loadPlate();
+                },
+
+                async planOccasion() {
+                    if (!this.occasionDate) return;
+                    const note = await promptInput('Plan a specific night',
+                        "What's the occasion on " + this.occasionDate
+                        + "? e.g. Mom's birthday. Leave blank for none.");
+                    if (note === null) return;
+                    await fetch(this.apiBase + 'api/meals/plate/lock', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ date: this.occasionDate, locked: true,
+                                               note: (note || '').trim() || null,
+                                               dish_ids: [] })
+                    });
+                    // Straight into the picker for that date — the point is to
+                    // choose the dish, not to admire an empty locked night.
+                    this.openDishPicker(this.occasionDate);
+                    await this.loadWeek();
+                },
+
                 async resetDay(day) {
-                    await fetch(this.apiBase + 'api/meals/plate/reset?date='
+                    // force: a per-day reset is a deliberate act on THIS night,
+                    // so it may release a lock. The bulk repropose may not.
+                    await fetch(this.apiBase + 'api/meals/plate/reset?force=true&date='
                         + encodeURIComponent(day.date), { method: 'POST' });
                     await this.loadWeek();
                     if (day.date === this.plate.date) this.loadPlate();
