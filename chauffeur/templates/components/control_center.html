@@ -960,21 +960,47 @@ function closeChatHelpModal() {
         }, 12000);
     };
 
+    // What to ask, ON THE PAGE YOU ARE ON. This widget rides on every page,
+    // and for most of them the example was "What is my driving schedule
+    // today?" — true on the dashboard, useless while you are standing in
+    // Shopping & Meals. Every entry below names something Argyle can really
+    // do from a tool in agent_tools_v2; an example that doesn't work is worse
+    // than none, because the family learns the chat is for show.
+    //
+    // ORDERED, first match wins, and `includes` rather than `===` because HA
+    // ingress serves these under a path prefix. Longer fragments come first:
+    // '/trips' must be tested before '/trip' or the list page gets the single
+    // trip's example.
+    const CHAT_EXAMPLES = [
+        ['/trips',    "When is our next trip?"],
+        ['/trip',     "Add dinner at Chef Mickey's on Thursday"],
+        ['/shopping', "Steak on Friday, it's Mom's birthday"],
+        ['/errands',  "I need to go to Home Depot this afternoon"],
+        ['/calendar', "Have Dad take Ben to practice on Thursday"],
+        ['/chores',   "I'll take the trash out tonight"],
+        ['/moments',  "Tell everyone we're on our way home"],
+        ['/routines', "How are we doing this week?"],
+        ['/intake',   "Soccer photos are Saturday at 9 at the high school"],
+        ['/config',   "Who is driving Ben on Thursday?"],
+    ];
+    // Every page that includes this component has an entry, except the
+    // dashboard, which is the fallback. /app and /map are not here on purpose:
+    // the driver PWA carries its own chat input, and the map has none.
+
+    function chatExampleFor(path) {
+        const hit = CHAT_EXAMPLES.find(([frag]) => (path || '').includes(frag));
+        // The dashboard is the fallback, and the driving schedule is genuinely
+        // the right question there.
+        return hit ? hit[1] : "What is my driving schedule today?";
+    }
+    window.chatExampleFor = chatExampleFor;
+
     // Initialize chat
     document.addEventListener('DOMContentLoaded', () => {
-        // Set dynamic placeholder based on context
         const input = document.getElementById('chat-input');
         if (input) {
-            const path = window.location.pathname;
-            if (path.includes('/trip')) {
-                input.placeholder = "Ask Argyle... (e.g. 'Add dinner at Chef Mickey\'s tonight')";
-            } else if (path.includes('/errands')) {
-                input.placeholder = "Ask Argyle... (e.g. 'I need to go to Home Depot this afternoon')";
-            } else if (path.includes('/calendar')) {
-                input.placeholder = "Ask Argyle... (e.g. 'Move James\'s piano lesson to 4pm')";
-            } else {
-                input.placeholder = "Ask Argyle... (e.g. 'What is my driving schedule today?')";
-            }
+            input.placeholder = "Ask Argyle... (e.g. '"
+                + chatExampleFor(window.location.pathname) + "')";
         }
     });
 
