@@ -1662,13 +1662,52 @@ def check_shopping_item(item_id: str, checked: bool = True,
         res = shopping_items_table.search(Query().id == item_id)
         if not res:
             return None
+        was_checked = bool(res[0].get('is_checked'))
         patch = {'is_checked': bool(checked),
                  'checked_at': _time.time() if checked else None,
                  'checked_by': by_member_id if checked else None}
         shopping_items_table.update(patch, Query().id == item_id)
         out = dict(res[0])
         out.update(patch)
+    # Checking off is the ONLY moment the app learns what this household
+    # actually buys — and clear_checked_shopping_items then deletes the row, so
+    # without a tally here the history is destroyed every shop. Counted outside
+    # the lock, and only on the false->true edge so re-checking a row that two
+    # phones both tapped does not inflate it.
+    if checked and not was_checked:
+        record_purchase(out.get('name'))
         return out
+
+def record_purchase(name: str, when: float = None) -> None:
+    """Tally what the household really buys, by normalized name.
+
+    Kept in app_state rather than as rows: this is a small, bounded frequency
+    table (a family buys ~50 things), it is never joined against anything, and
+    it has to outlive the shopping items themselves — which are deleted on
+    every post-shop sweep.
+    """
+    import time as _time
+    key = ' '.join((name or '').strip().lower().split())
+    if not key:
+        return
+    tally = dict(get_app_state('purchase_tally') or {})
+    row = dict(tally.get(key) or {})
+    row['count'] = int(row.get('count') or 0) + 1
+    row['last_at'] = when or _time.time()
+    row['label'] = (name or '').strip()
+    tally[key] = row
+    # Bounded: keep the 200 most recently bought so a decade of one-offs never
+    # crowds out the weekly staples.
+    if len(tally) > 200:
+        keep = sorted(tally.items(), key=lambda kv: kv[1].get('last_at') or 0,
+                      reverse=True)[:200]
+        tally = dict(keep)
+    set_app_state('purchase_tally', tally)
+
+
+def get_purchase_tally() -> dict:
+    return dict(get_app_state('purchase_tally') or {})
+
 
 def clear_checked_shopping_items(list_id: str) -> int:
     """Sweep after a shop. Returns how many went."""

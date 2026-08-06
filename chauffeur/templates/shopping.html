@@ -25,6 +25,21 @@
     <style>
         body { background-color: #111827; color: #e5e7eb; }
         [x-cloak] { display: none !important; }
+
+        /* The kiosk forces the HA theme, and `body.ha-theme .text-white` is
+           rewritten to the HA PRIMARY TEXT colour — which on a light dashboard
+           is dark. That is why board text over a dark photo came out grey and
+           unreadable. These blocks are always dark (photo or gradient), so
+           their ink is pinned here and must not go through Tailwind's
+           theme-swappable colour classes. */
+        .board-ink { color: #fff !important; }
+        .board-ink-dim { color: rgba(255, 255, 255, .82) !important; }
+        .board-ink-faint { color: rgba(255, 255, 255, .62) !important; }
+        .board-accent { color: #fbcfe8 !important; }
+        .board-warn { color: #fcd34d !important; }
+        /* Text sits on photography of unknown brightness, so it carries its own
+           legibility rather than trusting the image. */
+        .board-shadow { text-shadow: 0 1px 3px rgba(0, 0, 0, .95), 0 0 12px rgba(0, 0, 0, .7); }
     </style>
 </head>
 
@@ -46,38 +61,43 @@
                  it is day one for everyone and forever for anyone without an
                  Unsplash key, so it has to look deliberate rather than broken. -->
             <section x-show="isKiosk" class="mb-10">
-                <div class="grid gap-4"
-                    :class="week.length > 4 ? 'grid-cols-2 xl:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'">
+                <!-- Columns track the VIEWPORT, not the number of days. Sizing
+                     the grid by week.length meant a 4-day window rendered two
+                     enormous half-screen blocks on a wall panel. A whole week
+                     fits across a large display and wraps down as it narrows. -->
+                <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3
+                            lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7">
                     <template x-for="day in week" :key="'kb-' + day.date">
-                        <div class="relative rounded-2xl overflow-hidden border h-52 flex flex-col justify-end"
-                            :class="isToday(day) ? 'border-pink-400/70 ring-2 ring-pink-400/30' : 'border-gray-700'">
+                        <div class="relative rounded-2xl overflow-hidden border aspect-[4/5] flex flex-col justify-end"
+                            :class="isToday(day) ? 'border-pink-400/70 ring-2 ring-pink-400/40' : 'border-black/20'">
                             <img x-show="dayImage(day)" :src="dayImage(day)" alt=""
                                 class="absolute inset-0 w-full h-full object-cover">
+                            <!-- No picture is the normal state, not a failure:
+                                 a flat tint reads as a deliberate colour card,
+                                 whereas the giant ghost emoji it replaced read
+                                 as a rendering artifact. -->
                             <div x-show="!dayImage(day)" class="absolute inset-0"
                                 :class="dayTint(day)"></div>
-                            <div x-show="!dayImage(day)"
-                                class="absolute inset-0 flex items-center justify-center text-6xl opacity-30"
-                                x-text="dayGlyph(day)"></div>
-                            <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
-                            <div class="relative p-4">
-                                <div class="flex items-baseline gap-2">
-                                    <span class="text-xs font-black uppercase tracking-widest"
-                                        :class="isToday(day) ? 'text-pink-300' : 'text-gray-400'"
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/10"></div>
+                            <div class="relative p-3">
+                                <div class="flex items-baseline gap-1.5 flex-wrap">
+                                    <span class="text-[11px] font-black uppercase tracking-widest board-shadow"
+                                        :class="isToday(day) ? 'board-accent' : 'board-ink-dim'"
                                         x-text="isToday(day) ? 'Tonight' : day.weekday"></span>
-                                    <span class="text-[11px] text-gray-400"
+                                    <span class="text-[10px] board-ink-faint board-shadow"
                                         x-show="dayEffort(day)" x-text="dayEffort(day)"></span>
-                                    <span class="text-[11px] font-bold text-amber-300"
-                                        x-show="daySqueeze(day)" x-text="daySqueeze(day)"></span>
                                 </div>
-                                <div class="text-white font-bold leading-tight mt-0.5"
+                                <div class="board-ink board-shadow font-bold text-lg leading-tight mt-0.5 break-words"
                                     x-text="dayHeadline(day)"></div>
-                                <div class="text-[11px] text-gray-300 truncate"
+                                <div class="text-[11px] board-ink-dim board-shadow leading-snug mt-0.5"
                                     x-show="daySides(day)" x-text="daySides(day)"></div>
+                                <div class="text-[10px] font-bold board-warn board-shadow mt-1"
+                                    x-show="daySqueeze(day)" x-text="daySqueeze(day)"></div>
                             </div>
                         </div>
                     </template>
                 </div>
-                <div x-show="!week.length" class="text-gray-500 text-sm">
+                <div x-show="!week.length" class="text-sm opacity-60">
                     Nothing planned yet.
                 </div>
             </section>
@@ -88,11 +108,16 @@
                  as "shopping, with meals wedged in" when the list blurb sat
                  above this. -->
             <section class="mb-10" x-show="!isKiosk">
-                <div class="flex items-baseline justify-between mb-3">
+                <div class="flex items-baseline justify-between mb-3 gap-3">
                     <h3 class="text-lg font-bold text-white">Meals</h3>
-                    <button @click="showRepertoire = !showRepertoire"
-                        class="text-xs font-bold text-gray-500 hover:text-white"
-                        x-text="showRepertoire ? 'Hide our meals' : 'Our meals'"></button>
+                    <div class="flex items-baseline gap-3 shrink-0">
+                        <button @click="getPictures()" :disabled="picsBusy"
+                            class="text-xs font-bold text-gray-500 hover:text-white disabled:opacity-40"
+                            x-text="picsBusy ? 'Looking…' : 'Get pictures'"></button>
+                        <button @click="showRepertoire = !showRepertoire"
+                            class="text-xs font-bold text-gray-500 hover:text-white"
+                            x-text="showRepertoire ? 'Hide our meals' : 'Our meals'"></button>
+                    </div>
                 </div>
 
                 <!-- 🍽️ Tonight — the repertoire as a FILTER RESULT. Deliberately
@@ -359,20 +384,41 @@
                  a panel the kids can reach. Anything not in the grid is one
                  sentence to Argyle, whose bar is already on this page. -->
             <div x-show="isKiosk && staples.length" class="mb-8">
-                <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
-                    We're out of…
+                <h3 class="text-xs font-black uppercase tracking-widest opacity-60 mb-1">
+                    🛒 Drop in the cart
                 </h3>
+                <p class="text-xs opacity-50 mb-3">
+                    Tap what you've run out of and it goes on the list. Tap again to undo.
+                </p>
                 <div class="flex flex-wrap gap-2">
                     <template x-for="s in staples" :key="'st-' + s.name">
+                        <!-- Reads as a BUTTON, not a label. The first cut was a
+                             row of quiet pills under the heading "We're out
+                             of…", which described them as a list of things the
+                             family was already out of rather than as the way to
+                             say so. The heading is now the ACTION and the chips
+                             carry a + until they are on the list. -->
                         <button @click="outOf(s.name)" :disabled="stapleBusy === s.name"
-                            class="px-4 py-3 rounded-xl text-sm font-bold border transition-colors disabled:opacity-50"
+                            class="px-4 py-3 rounded-xl text-sm font-bold border-2 shadow-sm transition-all
+                                   disabled:opacity-50 active:scale-95 flex items-center gap-2"
                             :class="isOnList(s.name)
-                                ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
-                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'">
-                            <span x-show="isOnList(s.name)">✓ </span><span x-text="s.name"></span>
+                                ? 'bg-pink-500/20 border-pink-400 text-pink-300'
+                                : 'border-gray-600 hover:border-pink-400'">
+                            <span class="text-base leading-none"
+                                x-text="isOnList(s.name) ? '✓' : '+'"></span>
+                            <span x-text="s.name"></span>
                         </button>
                     </template>
                 </div>
+            </div>
+
+            <!-- The kiosk hides the page's own heading, so the list below had
+                 nothing naming it — it read as loose text under the chips. -->
+            <div x-show="isKiosk" class="flex items-baseline gap-2 mb-3">
+                <h3 class="text-xs font-black uppercase tracking-widest opacity-60"
+                    x-text="'📝 ' + activeListName()"></h3>
+                <span class="text-xs opacity-50"
+                    x-text="open.length ? open.length + ' to buy' : 'nothing to buy'"></span>
             </div>
 
             <!-- ===== Add row ===== -->
@@ -592,7 +638,7 @@
                 week: [], weekWindow: null, weekBusy: false, dayAdd: {},
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
-                staples: [], stapleBusy: null,
+                staples: [], stapleBusy: null, picsBusy: false,
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -655,9 +701,14 @@
                     return m ? (m.short_name || m.name) : 'Not planned';
                 },
                 daySides(day) {
+                    // Capped: a block seven-across is narrow, and a plate with
+                    // five sides ("roasted potatoes · broccoli · rice · carrots
+                    // · red beans") pushed the dish name out of the card.
                     const m = this.mainDish(day);
-                    return (day.dishes || []).filter(d => d !== m)
-                        .map(d => d.short_name || d.name).join(' · ');
+                    const names = (day.dishes || []).filter(d => d !== m)
+                        .map(d => d.short_name || d.name);
+                    if (names.length <= 3) return names.join(' · ');
+                    return names.slice(0, 3).join(' · ') + ' +' + (names.length - 3);
                 },
                 dayImage(day) {
                     const m = this.mainDish(day);
@@ -744,6 +795,9 @@
                             });
                         }
                         await this.loadItems(true);
+                        // Checking off is what teaches the shortcut what this
+                        // household buys, so its ranking is refreshed here.
+                        this.loadStaples();
                     } catch (e) {
                         showGlobalAlert('Could not reach the server.');
                     } finally {
@@ -754,6 +808,36 @@
                 isOnList(name) {
                     return this.open.some(i =>
                         i.name.trim().toLowerCase() === name.trim().toLowerCase());
+                },
+
+                async getPictures() {
+                    // Explicit, capped, and honest about the two ways it can
+                    // come back empty: no Unsplash key at all, versus a key
+                    // that simply found nothing for these dishes.
+                    this.picsBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/dishes/images/backfill',
+                                              { method: 'POST' });
+                        if (!r.ok) { showGlobalAlert('Could not fetch pictures.'); return; }
+                        const res = await r.json();
+                        if (!res.configured) {
+                            showGlobalAlert('No Unsplash key is set, so I can\'t look pictures '
+                                + 'up. Add one in the add-on options — or take photos of your '
+                                + 'own dishes, which look better anyway.');
+                        } else if (res.filled.length) {
+                            showGlobalAlert('Found pictures for ' + res.filled.join(', ')
+                                + '. Run it again for more.');
+                        } else {
+                            showGlobalAlert('Nothing new to illustrate.');
+                        }
+                        await this.loadRepertoire();
+                        await this.loadWeek();
+                        this.loadPlate();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.picsBusy = false;
+                    }
                 },
 
                 async loadStaples() {

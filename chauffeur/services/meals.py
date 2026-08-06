@@ -2418,16 +2418,28 @@ def backfill_dish_images(limit: int = 12, only_missing: bool = True) -> dict:
 
 
 def household_staples(limit: int = 40) -> list:
-    """Everything the family's dishes treat as always-on-hand.
+    """One-tap things to drop in the cart, ranked by what this household
+    ACTUALLY buys.
 
-    These are exactly the things that never reach a shopping list on their own
-    and that you only buy when you RUN OUT — and until now the only way to get
-    one onto a list was the "+ List" skip dialog's Add, which permanently
-    reclassifies it as fresh. "We're out of rice this week" had no gesture at
-    all. Ranked by how many dishes depend on it, because that is the closest
-    honest proxy for how much it matters when it is gone.
+    Two sources, and the order between them matters. What the family has really
+    bought (the check-off tally) outranks what the recipes merely mention,
+    because "how many dishes list black pepper" is a fact about the recipes and
+    "we buy milk every week" is a fact about the household. Staples still seed
+    the grid on a fresh install — otherwise the shortcut is empty exactly when
+    the family has no history for it to learn from — but they sink below
+    anything with a real purchase behind it as soon as one exists.
+
+    Staples are here at all because they never reach a list on their own (that
+    IS the classification), so running out of one had no gesture except the
+    "+ List" skip dialog's Add, which permanently reclassifies it as fresh.
     """
-    counts, labels = {}, {}
+    tally = storage.get_purchase_tally()
+    rows, labels = {}, {}
+    for key, t in tally.items():
+        rows[key] = {'buys': int(t.get('count') or 0),
+                     'last_at': t.get('last_at') or 0, 'dish_count': 0}
+        labels[key] = t.get('label') or key
+
     for d in storage.get_dishes():
         for ing in (d.get('ingredients') or []):
             if (ing.get('kind') or 'fresh') != 'staple':
@@ -2435,9 +2447,15 @@ def household_staples(limit: int = 40) -> list:
             raw = (ing.get('name') or '').strip()
             if not raw:
                 continue
-            key = raw.lower()
-            counts[key] = counts.get(key, 0) + 1
+            key = ' '.join(raw.lower().split())
+            row = rows.setdefault(key, {'buys': 0, 'last_at': 0, 'dish_count': 0})
+            row['dish_count'] += 1
             labels.setdefault(key, raw)
-    out = [{'name': labels[k], 'dish_count': v} for k, v in counts.items()]
-    out.sort(key=lambda x: (-x['dish_count'], x['name'].lower()))
+
+    out = [{'name': labels[k], 'buys': v['buys'], 'dish_count': v['dish_count'],
+            'known': v['buys'] > 0} for k, v in rows.items()]
+    # Bought-before first (by how often, then how recently), then recipe
+    # staples by how many dishes want them.
+    out.sort(key=lambda x: (-x['buys'], -rows[' '.join(x['name'].lower().split())]['last_at'],
+                            -x['dish_count'], x['name'].lower()))
     return out[:limit]

@@ -2075,6 +2075,67 @@ def scenario_staples_are_the_we_are_out_of_grid():
           f"'rice' and 'Rice' are one entry, got {names}")
 
 
+def scenario_the_cart_shortcut_learns_what_the_family_actually_buys():
+    """Reported: the grid should reflect real habits, not recipe trivia.
+    Ranking by how many dishes mention an ingredient is a fact about the
+    RECIPES; how often the family buys it is a fact about the household."""
+    reset_db(); _seed_people(); _settings()
+    # black pepper is in everything and bought almost never; milk is in no
+    # recipe at all and bought every week.
+    for n in ('a', 'b', 'c', 'd'):
+        _dish(n, type='entree', ingredients=[
+            {'name': 'black pepper', 'kind': 'staple'},
+            {'name': n + ' meat', 'kind': 'fresh'}])
+
+    first = meals.household_staples()
+    check(first[0]['name'] == 'black pepper',
+          f"with no history, recipe staples seed the grid, got {first[0]}")
+    check('milk' not in [s['name'] for s in first], "milk is in no recipe")
+
+    lst = storage.ensure_default_shopping_list()
+    from models.schemas import ShoppingItem
+    for _ in range(3):
+        it = ShoppingItem(list_id=lst['id'], name='Milk').model_dump()
+        storage.add_shopping_item(it)
+        storage.check_shopping_item(it['id'], True)
+
+    after = meals.household_staples()
+    check(after[0]['name'].lower() == 'milk' and after[0]['buys'] == 3,
+          f"what is really bought outranks what recipes mention, got {after[:2]}")
+    check(after[0]['known'] is True and
+          next(s for s in after if s['name'] == 'black pepper')['known'] is False,
+          "and the grid can tell a learned item from a seeded guess")
+
+
+def scenario_the_purchase_tally_outlives_the_shop():
+    """clear_checked_shopping_items DELETES the rows, so a tally kept only in
+    the items table would be wiped every single shop."""
+    reset_db(); _seed_people(); _settings()
+    lst = storage.ensure_default_shopping_list()
+    from models.schemas import ShoppingItem
+    it = ShoppingItem(list_id=lst['id'], name='eggs').model_dump()
+    storage.add_shopping_item(it)
+    storage.check_shopping_item(it['id'], True)
+
+    storage.clear_checked_shopping_items(lst['id'])
+    check(not storage.get_shopping_items(lst['id']), "the row is gone after the sweep")
+    check(storage.get_purchase_tally().get('eggs', {}).get('count') == 1,
+          f"but the tally survives it, got {storage.get_purchase_tally()}")
+
+    # Two phones tapping the same row must not inflate the count.
+    it2 = ShoppingItem(list_id=lst['id'], name='eggs').model_dump()
+    storage.add_shopping_item(it2)
+    storage.check_shopping_item(it2['id'], True)
+    storage.check_shopping_item(it2['id'], True)
+    check(storage.get_purchase_tally()['eggs']['count'] == 2,
+          f"counted on the false->true edge only, got {storage.get_purchase_tally()}")
+
+    # Unchecking is a correction, not a purchase.
+    storage.check_shopping_item(it2['id'], False)
+    check(storage.get_purchase_tally()['eggs']['count'] == 2,
+          "putting something back does not count as buying it")
+
+
 def scenario_being_out_of_a_staple_does_not_reclassify_it():
     """The load-bearing distinction. "We're out of rice this week" says nothing
     about whether rice is a staple — that is a standing fact about the
