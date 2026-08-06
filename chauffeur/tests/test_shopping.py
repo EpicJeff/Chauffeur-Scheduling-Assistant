@@ -440,6 +440,75 @@ def scenario_every_fetched_endpoint_exists():
     check(not bad, f"the page fetches endpoints that do not exist: {bad}")
 
 
+def _alpine_orphans(src):
+    """Elements carrying an Alpine directive with no x-data ancestor.
+
+    Alpine only walks the DOM under an x-data root. A directive outside one is
+    never evaluated and its x-cloak is never removed, so the element is
+    permanently display:none -- with no console error and with the tags
+    perfectly balanced, which is why the balanced-tag check sails past it.
+    """
+    import re
+    from html.parser import HTMLParser
+
+    # Jinja braces confuse the tag parser; blank them, preserving line count.
+    src = re.sub(r'\{[%{].*?[%}]\}', lambda m: '\n' * m.group(0).count('\n'), src, flags=re.S)
+
+    VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+            'link', 'meta', 'param', 'source', 'track', 'wbr'}
+    DIRECTIVE = re.compile(r'^(x-(show|text|html|model|for|if|init|effect|bind)|[@:])')
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack = []          # (tag, has_x_data_at_or_above)
+            self.orphans = []
+            self.in_script = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'script':
+                self.in_script = True
+            names = [a for a, _ in attrs]
+            covered = bool(self.stack and self.stack[-1][1]) or 'x-data' in names
+            # x-for/x-if live on <template>; :key rides along and is not a root.
+            if not covered and not self.in_script:
+                hit = [n for n in names if DIRECTIVE.match(n) and n != ':key']
+                if hit:
+                    self.orphans.append((tag, sorted(hit)[:3], self.getpos()[0]))
+            if tag not in VOID:
+                self.stack.append((tag, covered))
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+            if tag not in VOID and self.stack:
+                self.stack.pop()
+
+        def handle_endtag(self, tag):
+            if tag == 'script':
+                self.in_script = False
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tag:
+                    del self.stack[i:]
+                    return
+
+    p = P()
+    p.feed(src)
+    return p.orphans
+
+
+def scenario_alpine_directives_have_a_data_root():
+    """The "+ List" skip dialog shipped OUTSIDE `x-data="shoppingPage()"`, so
+    `x-show="drain"` bound to nothing and the dialog could not open at all --
+    the whole feature was inert while the server half worked perfectly. Nothing
+    caught it: the tags were balanced, the methods all existed, the route
+    existed. The only observable symptom was items landing on the list with no
+    explanation, i.e. indistinguishable from the bug it was written to fix."""
+    orphans = _alpine_orphans(_shopping_html())
+    where = [f"line {ln}: <{tag} {' '.join(attrs)}>" for tag, attrs, ln in orphans]
+    check(not orphans,
+          f"{len(orphans)} Alpine directive(s) outside any x-data root: {where[:5]}")
+
+
 def scenario_api_calls_go_through_apibase():
     """Bare relative fetches break under Home Assistant ingress."""
     import re
