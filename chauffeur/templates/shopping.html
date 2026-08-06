@@ -433,18 +433,20 @@
                 },
 
                 async plateToList() {
-                    // Shop for tonight's plate, skipping staples and anything
-                    // already made.
-                    let added = 0;
-                    for (const d of (this.plate.dishes || [])) {
-                        if ((this.plate.leftover_dish_ids || []).includes(d.id)) continue;
-                        const r = await fetch(this.apiBase + 'api/meals/dishes/'
-                            + d.id + '/to-list?list_id='
+                    // ONE request for the whole plate — the server skips
+                    // staples, already-made dishes and anything already open.
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/plate/to-list?list_id='
                             + encodeURIComponent(this.activeId || ''), { method: 'POST' });
-                        if (r.ok) added += ((await r.json()).added || []).length;
+                        if (!r.ok) { showGlobalAlert('Could not add those to the list.'); return; }
+                        const res = await r.json();
+                        const n = (res.added || []).length;
+                        if (!res.dish_count) showGlobalAlert('There is nothing on tonight yet.');
+                        else if (!n) showGlobalAlert('Everything is a staple or already on the list.');
+                        this.loadItems(true);
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
                     }
-                    if (!added) showGlobalAlert('Everything is a staple or already on the list.');
-                    this.loadItems(true);
                 },
 
                 dishBlurb(d) {

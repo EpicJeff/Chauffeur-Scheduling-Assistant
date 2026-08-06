@@ -399,6 +399,47 @@ def scenario_dialog_helpers_are_called_with_a_message():
     check(not bad, f"single-argument dialog calls fail SILENTLY: {bad}")
 
 
+def scenario_every_fetched_endpoint_exists():
+    """The page called `api/meals/dishes/{id}/to-list`, which was never
+    written — every request 404'd, so "+ List" silently reported that
+    everything was a staple. A missing route is invisible to the backend
+    suite AND to the handler check, because both halves are individually
+    fine."""
+    import re
+    import main
+    src = _shopping_html()
+
+    def segs(path):
+        return [s for s in path.split('?')[0].strip('/').split('/') if s]
+
+    routes = [segs(getattr(r, 'path', '')) for r in main.app.routes
+              if getattr(r, 'path', '').startswith('/api/')]
+
+    # Every literal that follows `this.apiBase +`. A URL built by
+    # concatenation only contributes its literal HEAD, so matching is a
+    # segment-wise PREFIX test — enough to catch a path that exists nowhere,
+    # without pretending to know the id in the middle.
+    called = set()
+    for m in re.finditer(r"""this\.apiBase\s*\+\s*['"]([^'"]*)""", src):
+        lit = m.group(1)
+        if lit.startswith('api/'):
+            called.add(lit)
+
+    def known(call):
+        cs = segs(call)
+        if not cs:
+            return True
+        for rs in routes:
+            if len(cs) > len(rs):
+                continue
+            if all(r.startswith('{') or c == r for c, r in zip(cs, rs)):
+                return True
+        return False
+
+    bad = sorted(c for c in called if not known(c))
+    check(not bad, f"the page fetches endpoints that do not exist: {bad}")
+
+
 def scenario_api_calls_go_through_apibase():
     """Bare relative fetches break under Home Assistant ingress."""
     import re

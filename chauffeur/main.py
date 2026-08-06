@@ -5211,6 +5211,23 @@ def plate_remove(req: PlateEdit):
     return _meals.remove_from_plate(req.date or _dt.date.today().isoformat(),
                                     req.dish_id)
 
+@app.post("/api/meals/plate/to-list")
+def plate_to_list(list_id: Optional[str] = None, date: Optional[str] = None):
+    """Shop for tonight's plate in ONE request: the fresh ingredients of every
+    dish on it, skipping staples, already-made dishes and anything already
+    open on the list."""
+    import datetime as _dt
+    from services import meals as _meals
+    day = date or _dt.date.today().isoformat()
+    plan = _meals.eating_plan(day, 'dinner')
+    plate = _meals.get_or_compose_plate(day, plan)
+    totals = _meals.plate_totals(plate['dishes'], day)
+    res = _meals.dishes_to_shopping(plate['dishes'], list_id,
+                                    skip_dish_ids=totals.get('leftover_dish_ids'))
+    _touch_stream()
+    res['dish_count'] = len(plate['dishes'])
+    return res
+
 @app.post("/api/meals/leftovers/toggle")
 def toggle_leftover(req: PlateEdit):
     """Flip one dish between already-made and not. Marking has to be
