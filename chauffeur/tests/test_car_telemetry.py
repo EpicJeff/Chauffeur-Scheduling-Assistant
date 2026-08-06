@@ -182,6 +182,75 @@ def scenario_sweep_away_push_targets_parents_without_default():
     check(sorted(sent) == ['m1', 'm2'], f"no default driver -> both parents, never the kid, got {sent}")
 
 
+def scenario_no_datetime_class_module_confusion():
+    """STATIC. The C2 sweep never ran once in production: its caller in
+    push_notification_loop said `datetime.datetime.now()`, but main.py binds
+    `datetime` to the CLASS (`from datetime import datetime`), so the block
+    raised AttributeError on its first line every 30s for a day and the
+    except printed it. Both spellings are legal in the same file -- a nested
+    `import datetime` re-shadows the name back to the module -- so this is
+    invisible to the eye and to import. Every scenario above calls run_sweep
+    DIRECTLY, which is precisely why none of them saw it.
+
+    Scans main.py and services/ for `datetime.<class-attr>` at a point where
+    `datetime` is the class and no enclosing scope re-imported the module."""
+    import ast
+    import os
+
+    class_only = {'datetime', 'timedelta', 'timezone', 'date', 'time'}
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def binds_class(tree):
+        # Last top-level binding of the bare name `datetime` wins.
+        out = False
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.module == 'datetime':
+                if any(a.name == 'datetime' and not a.asname for a in node.names):
+                    out = True
+            elif isinstance(node, ast.Import):
+                if any(a.name == 'datetime' and not a.asname for a in node.names):
+                    out = False
+        return out
+
+    def scan(node, module_bound, path, bad):
+        """module_bound: a local `import datetime` re-shadowed the name back to
+        the module for the rest of this scope. Functions inherit a copy, so a
+        later sibling's local import cannot vouch for an earlier caller."""
+        state = {'bound': module_bound}
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                scan(child, state['bound'], path, bad)
+                continue
+            if isinstance(child, ast.Import):
+                if any(a.name == 'datetime' and not a.asname for a in child.names):
+                    state['bound'] = True
+                continue
+            if isinstance(child, ast.ImportFrom) and child.module == 'datetime':
+                if any(a.name == 'datetime' and not a.asname for a in child.names):
+                    state['bound'] = False
+                continue
+            if (isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == 'datetime'
+                    and child.attr in class_only
+                    and not state['bound']):
+                bad.append(f"{os.path.basename(path)}:{child.lineno}: "
+                           f"datetime.{child.attr} but `datetime` is the class here")
+            scan(child, state['bound'], path, bad)
+
+    targets = [os.path.join(root, 'main.py')]
+    svc = os.path.join(root, 'services')
+    targets += [os.path.join(svc, f) for f in sorted(os.listdir(svc)) if f.endswith('.py')]
+
+    bad = []
+    for path in targets:
+        with open(path, encoding='utf-8') as fh:
+            tree = ast.parse(fh.read())
+        if binds_class(tree):
+            scan(tree, False, path, bad)
+    check(not bad, "datetime class/module confusion: " + '; '.join(bad))
+
+
 SCENARIOS = [
     scenario_inert_without_ha_fields,
     scenario_level_parsing,
@@ -192,6 +261,7 @@ SCENARIOS = [
     scenario_fuel_errand_dedupe,
     scenario_sweep_proposes_and_dedupes,
     scenario_sweep_away_push_targets_parents_without_default,
+    scenario_no_datetime_class_module_confusion,
 ]
 
 if __name__ == "__main__":

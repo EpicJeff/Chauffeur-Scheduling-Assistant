@@ -238,7 +238,7 @@ async def push_notification_loop():
             # pushes; time-gated to 30 min with the marker set FIRST.
             try:
                 from services import family_digest
-                now_dt = datetime.datetime.now()
+                now_dt = datetime.now()
                 if not family_digest.in_kid_quiet_hours(now_dt, storage.get_settings() or {}):
                     last = float(storage.get_app_state("car_readiness_last_run") or 0)
                     if time.time() - last >= 1800:
