@@ -513,6 +513,13 @@ class Settings(BaseModel):
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none
+    # Walmart cart (arc W1). The store id localizes the cart; the Impact
+    # Radius trio is only used by families who have actually onboarded as
+    # affiliates — the plain cart URL needs none of it and is the default.
+    walmart_store_id: str = ""
+    walmart_impact_publisher_id: str = ""
+    walmart_impact_ad_id: str = ""
+    walmart_impact_campaign_id: str = ""
     # School calendar (services/school.py): what a "school day" is. All
     # empty = plain weekday behavior. The designated calendar's all-day
     # events matching a no-school keyword mark school out; the year bounds

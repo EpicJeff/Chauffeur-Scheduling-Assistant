@@ -56,6 +56,8 @@ INDEX_SPEC = {
     "leftovers": [["id"], ["date"]],
     "dishes": [["id"], ["type"]],
     "plates": [["date"]],
+    # Looked up by normalized name on every list read that builds a cart.
+    "walmart_items": [["name_key"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

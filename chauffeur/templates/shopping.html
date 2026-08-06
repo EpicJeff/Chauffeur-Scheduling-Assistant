@@ -291,6 +291,18 @@
                         class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
                         x-text="tripBusy ? 'Adding…' : 'Schedule a trip'"></button>
                 </div>
+
+                <!-- Walmart cart (W1). Building the cart is an unauthenticated
+                     URL, so this works for any family — what each item needs is
+                     a Walmart item id behind the family's own word for it,
+                     stored once and reused forever. -->
+                <div class="mt-2 flex items-center gap-2 flex-wrap" x-show="open.length">
+                    <button @click="buildCart()" :disabled="cartBusy"
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white disabled:opacity-40"
+                        x-text="cartBusy ? 'Building…' : '🛒 Walmart cart'"></button>
+                    <span class="text-[11px] text-gray-500" x-show="cart"
+                        x-text="cart ? cart.matched_count + ' of ' + (cart.matched_count + cart.unmatched_count) + ' matched' : ''"></span>
+                </div>
             </div>
 
             <!-- ===== Add row ===== -->
@@ -449,6 +461,47 @@
                 </div>
             </div>
         </div>
+
+        <!-- Walmart cart result. The unmatched half is shown in FULL and never
+             quietly dropped: a list of 30 becoming a cart of 27 with no
+             explanation is the same silent-skip failure the "+ List" dialog
+             already had to be fixed for once. -->
+        <div x-show="cart" x-cloak
+            class="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4"
+            @click.self="cart = null">
+            <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-6">
+                <h3 class="text-lg font-bold text-white mb-1"
+                    x-text="cart && cart.matched_count
+                        ? cart.matched_count + ' item' + (cart.matched_count === 1 ? '' : 's') + ' ready for the cart'
+                        : 'Nothing matched yet'"></h3>
+                <p class="text-sm text-gray-400 mb-4" x-show="cart && cart.unmatched_count">
+                    These need a Walmart item behind them first — paste the product
+                    link and it sticks for good:
+                </p>
+                <div class="space-y-2 max-h-[45vh] overflow-y-auto">
+                    <template x-for="(u, i) in ((cart && cart.unmatched) || [])" :key="'um-' + i">
+                        <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-center gap-3">
+                            <div class="min-w-0 flex-1 text-sm font-semibold text-gray-200 truncate"
+                                x-text="u.name"></div>
+                            <button @click="matchItem(u)"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 shrink-0">
+                                Match
+                            </button>
+                        </div>
+                    </template>
+                </div>
+                <div class="flex justify-end gap-2 mt-5">
+                    <button @click="cart = null"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-bold">
+                        Close
+                    </button>
+                    <a x-show="cart && cart.url" :href="cart && cart.url" target="_blank" rel="noopener"
+                        class="px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold">
+                        Open cart at Walmart →
+                    </a>
+                </div>
+            </div>
+        </div>
     </div>
 
     {% include 'components/moments_hearth.html' %}
@@ -468,6 +521,7 @@
                 drain: null,
                 week: [], weekWindow: null, weekBusy: false, dayAdd: {},
                 trip: null, tripBusy: false,
+                cart: null, cartBusy: false, walmart: null,
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
@@ -483,6 +537,7 @@
                     this.loadRepertoire();
                     this.loadWeek();
                     this.loadTrip();
+                    this.loadWalmart();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
                     // every item write (REST and agent), so both views converge.
@@ -507,6 +562,61 @@
                         const r = await fetch(this.apiBase + 'api/meals/plate');
                         if (r.ok) this.plate = await r.json();
                     } catch (e) { }
+                },
+
+                async buildCart() {
+                    this.cartBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/walmart/cart?list_id='
+                            + encodeURIComponent(this.activeId || ''));
+                        if (!r.ok) { showGlobalAlert('Could not build the cart.'); return; }
+                        this.cart = await r.json();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.cartBusy = false;
+                    }
+                },
+
+                async matchItem(u) {
+                    // Search needs credentials AND an approved access request;
+                    // the pasted link needs neither, so it is offered first and
+                    // is the path that always works.
+                    let candidates = [];
+                    if (this.walmart && this.walmart.search_available) {
+                        try {
+                            const r = await fetch(this.apiBase + 'api/walmart/search?q='
+                                + encodeURIComponent(u.name));
+                            if (r.ok) candidates = (await r.json()).items || [];
+                        } catch (e) { /* fall through to the paste path */ }
+                    }
+                    let body = `Paste the Walmart product link for "${u.name}" `
+                        + '(the item number at the end of the URL is what I keep).';
+                    if (candidates.length) {
+                        body += '\n\nOr one of these:\n'
+                            + candidates.slice(0, 5).map(c =>
+                                `${c.item_id} — ${c.title}${c.price ? ' ($' + c.price + ')' : ''}`
+                            ).join('\n');
+                    }
+                    const answer = await promptInput('Match to a Walmart item', body);
+                    if (!answer) return;
+                    const r = await fetch(this.apiBase + 'api/walmart/map', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: u.name, url: answer.trim() })
+                    });
+                    const res = await r.json();
+                    if (res.status !== 'success') {
+                        showGlobalAlert(res.message || 'That did not look like a Walmart item.');
+                        return;
+                    }
+                    await this.buildCart();
+                },
+
+                async loadWalmart() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/walmart/status');
+                        this.walmart = r.ok ? await r.json() : null;
+                    } catch (e) { this.walmart = null; }
                 },
 
                 async loadTrip() {

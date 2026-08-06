@@ -5295,6 +5295,70 @@ def meal_week(start: Optional[str] = None, days: Optional[int] = None):
             'sides_per_meal': _meals.plate_settings()[0],
             'week': _meals.compose_week(start_str, n)}
 
+class WalmartMap(BaseModel):
+    name: str
+    item_id: Optional[str] = None
+    url: Optional[str] = None
+    title: Optional[str] = None
+    price: Optional[float] = None
+    thumbnail: Optional[str] = None
+
+@app.get("/api/walmart/status")
+def walmart_status():
+    """Whether search is available. The CART never needs credentials — that
+    split is the whole point, so the page can offer the cart regardless."""
+    from services import walmart as _wm
+    creds = _wm.get_credentials()
+    return {'search_available': creds['configured'],
+            'consumer_id_set': bool(creds['consumer_id']),
+            'private_key_set': bool(creds['private_key']),
+            'mapped_count': len(storage.get_walmart_items())}
+
+@app.get("/api/walmart/search")
+def walmart_search(q: str, limit: int = 8):
+    from services import walmart as _wm
+    if not _wm.is_configured():
+        return {'status': 'not_configured', 'items': [],
+                'message': "Walmart search isn't set up — paste a product URL instead."}
+    try:
+        return {'status': 'success', 'items': _wm.search(q, limit)}
+    except PermissionError as pe:
+        return {'status': 'error', 'items': [], 'message': str(pe)}
+    except Exception as ex:
+        return {'status': 'error', 'items': [],
+                'message': f"Walmart search failed: {ex}"}
+
+@app.post("/api/walmart/map")
+def walmart_map(req: WalmartMap):
+    """Stick a Walmart item to one of the family's words, forever."""
+    from services import walmart as _wm
+    item_id = (req.item_id or '').strip() or _wm.item_id_from_url(req.url or '')
+    if not item_id:
+        return {'status': 'error',
+                'message': "I couldn't find an item id in that. Paste the "
+                           "Walmart product link, or the number at the end of it."}
+    rec = _wm.set_mapping(req.name, item_id, req.title, req.price, req.thumbnail)
+    _touch_stream()
+    return {'status': 'success', 'mapping': rec}
+
+@app.delete("/api/walmart/map")
+def walmart_unmap(name: str):
+    from services import walmart as _wm
+    storage.delete_walmart_item(_wm.name_key(name))
+    return {'status': 'success'}
+
+@app.get("/api/walmart/mappings")
+def walmart_mappings():
+    return storage.get_walmart_items()
+
+@app.get("/api/walmart/cart")
+def walmart_cart(list_id: Optional[str] = None, store_id: Optional[str] = None):
+    """The cart URL for everything open on the list, plus exactly what could
+    not be matched — never a silently shorter cart."""
+    from services import walmart as _wm
+    lid = list_id or storage.ensure_default_shopping_list()['id']
+    return _wm.cart_for_list(lid, store_id)
+
 @app.get("/api/shopping/lists/{list_id}/errand")
 def shopping_list_errand(list_id: str):
     """The trip this list is bound to, and when it's actually scheduled."""

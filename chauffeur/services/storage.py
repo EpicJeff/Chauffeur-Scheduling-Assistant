@@ -404,6 +404,7 @@ with db_lock:
     leftovers_table = db.table('leftovers')
     dishes_table = db.table('dishes')
     plates_table = db.table('plates')
+    walmart_items_table = db.table('walmart_items')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1836,6 +1837,31 @@ def save_plate(data: dict) -> dict:
 def delete_plate(date_str: str):
     with db_lock:
         plates_table.remove(Query().date == date_str)
+
+# --- Walmart item mapping (arc W1) ---
+# Keyed by NORMALIZED NAME, not by shopping item id: the family buys roughly
+# the same fifty things forever, so the map is written once and reused by every
+# future list, whether the line came from a meal, a photo or someone's voice.
+
+def get_walmart_item(name_key: str) -> Optional[dict]:
+    with db_lock:
+        res = walmart_items_table.search(Query().name_key == name_key)
+        return dict(res[0]) if res else None
+
+def save_walmart_item(data: dict) -> dict:
+    with db_lock:
+        walmart_items_table.upsert(data, Query().name_key == data['name_key'])
+    return data
+
+def delete_walmart_item(name_key: str):
+    with db_lock:
+        walmart_items_table.remove(Query().name_key == name_key)
+
+def get_walmart_items() -> List[dict]:
+    with db_lock:
+        return sorted([dict(r) for r in walmart_items_table.all()],
+                      key=lambda r: (r.get('name') or '').lower())
+
 
 def get_plates_between(start_date: str, end_date: str) -> List[dict]:
     """Every pinned plate in an inclusive date range (meals arc M6)."""

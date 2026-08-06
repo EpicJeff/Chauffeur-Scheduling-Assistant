@@ -1,6 +1,6 @@
 ﻿name: "Chauffeur"
 description: "A smart Graph-based Calendar Assistant for mapping overlapping family driving routes."
-version: "2.78.0"
+version: "2.79.0"
 slug: "chauffeur"
 init: false
 arch:
@@ -35,6 +35,12 @@ options:
   # addresses; they do not go stale. A short TTL only re-buys identical
   # numbers - at 10 minutes this blew past the 100k/month Matrix allowance.
   route_cache_duration_mins: 43200
+  # Walmart I/O (arc W1). Only needed for SEARCH — building the cart itself is
+  # an unauthenticated URL and works without any of this. The private key is
+  # the PEM text of the key whose public half you uploaded to walmart.io.
+  walmart_consumer_id: ""
+  walmart_key_version: "1"
+  walmart_private_key: ""
 schema:
   google_service_account_json: str
   mapbox_api_key: str?
@@ -42,6 +48,9 @@ schema:
   serpapi_api_key: str?
   route_cache_duration_mins: int
   media_root: str?
+  walmart_consumer_id: str?
+  walmart_key_version: str?
+  walmart_private_key: str?
 ingress: true
 ingress_port: 8000
 panel_icon: mdi:car-multiple
