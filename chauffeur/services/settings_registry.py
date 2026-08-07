@@ -92,6 +92,14 @@ ENTRIES: List[dict] = [
        'Which buttons appear on the wall panel bottom shelf. Six or seven fit '
        'at a size a thumb can hit.',
        page='home', anchor='panel-setup'),
+    _e('panel_tile_spans', 'panel', 'Tile sizes',
+       'How much room each tile gets on the home board — one column or two, '
+       'one row or two. The map and the calendar usually earn more than a count.',
+       page='home', anchor='panel-setup'),
+    _e('panel_theme', 'panel', 'Panel theme',
+       'Light, dark, or follow the device. Auto matches Home Assistant when '
+       'the panel is embedded in it.',
+       page='home', anchor='panel-setup'),
     _e('panel_idle_return_seconds', 'panel', 'Return home when idle',
        'How long the wall panel sits untouched on some other page before it '
        'goes back to the home board. Zero leaves it wherever it was left.',

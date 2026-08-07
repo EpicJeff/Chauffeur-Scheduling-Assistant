@@ -369,6 +369,11 @@ with db_lock:
     ai_feedback_table = db.table('ai_feedback')
     overrides_table = db.table('overrides')
     cache_table = db.table('schedule_cache')
+    # Trips as /api/trips last computed them. That endpoint reads Google live,
+    # which a wall panel polling every 60 seconds must never do — so the
+    # answer is written down each time somebody loads the trips page and the
+    # home board reads the snapshot instead.
+    trips_cache_table = db.table('trips_cache')
     custom_schedules_table = db.table('custom_schedules')
     daily_schedules_table = db.table('daily_schedules')
     settings_table = db.table('settings')
@@ -3616,6 +3621,18 @@ def set_cached_schedule(schedule_data: dict):
     with db_lock:
         cache_table.truncate()
         cache_table.insert(schedule_data)
+
+def set_cached_trips(trips: List[dict]):
+    """Snapshot of the assembled trips list (id/title/start/end/location/
+    background_url), written whenever /api/trips runs."""
+    with db_lock:
+        trips_cache_table.truncate()
+        trips_cache_table.insert({'trips': trips, 'at': time.time()})
+
+def get_cached_trips() -> dict:
+    with db_lock:
+        rows = trips_cache_table.all()
+        return dict(rows[0]) if rows else {}
 
 def save_custom_schedule(start_date: str, end_date: str, schedule_data: dict, events_hash: str):
     with db_lock:

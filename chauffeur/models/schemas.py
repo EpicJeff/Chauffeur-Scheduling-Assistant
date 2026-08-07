@@ -682,6 +682,13 @@ class Settings(BaseModel):
     # somebody wandered off into, the wall goes back to being the wall.
     # 0 disables it.
     panel_idle_return_seconds: int = 180
+    # Per-tile size on the board: {'map': {'cols': 2, 'rows': 2}}. Absent means
+    # 1x1. A wall board is a LAYOUT, not a list — the map and the calendar earn
+    # more room than the intake counter, and only the household knows which.
+    panel_tile_spans: Dict[str, Any] = Field(default_factory=dict)
+    # light | dark | auto. `auto` follows the device, which under Home
+    # Assistant means following the HA theme the panel is embedded in.
+    panel_theme: str = 'dark'
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

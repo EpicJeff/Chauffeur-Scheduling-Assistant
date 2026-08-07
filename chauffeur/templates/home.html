@@ -19,12 +19,54 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <style>
-        body { background-color: #0b1020; color: #e5e7eb; }
+        /* Light and dark as REAL variables rather than a pile of Tailwind
+           overrides. The board is the one surface built after the light-theme
+           mapping in ha_theme.html turned out to be incomplete, so it does not
+           inherit that debt: three tokens, both themes, and `auto` follows the
+           device (which under Home Assistant means following HA). */
+        :root {
+            --panel-bg: #0b1020;
+            --panel-card: rgb(17 24 39 / 0.7);
+            --panel-line: #1f2937;
+            --panel-fg: #e5e7eb;
+            --panel-dim: #9ca3af;
+        }
+        html[data-panel-theme="light"] {
+            --panel-bg: #f3f4f6;
+            --panel-card: #ffffff;
+            --panel-line: #e5e7eb;
+            --panel-fg: #111827;
+            --panel-dim: #6b7280;
+        }
+        @media (prefers-color-scheme: light) {
+            html[data-panel-theme="auto"] {
+                --panel-bg: #f3f4f6;
+                --panel-card: #ffffff;
+                --panel-line: #e5e7eb;
+                --panel-fg: #111827;
+                --panel-dim: #6b7280;
+            }
+        }
+        body { background-color: var(--panel-bg); color: var(--panel-fg); }
         [x-cloak] { display: none !important; }
+        .panel-text { color: var(--panel-fg); }
+        .panel-dim { color: var(--panel-dim); }
+        .panel-card {
+            background: var(--panel-card);
+            border: 1px solid var(--panel-line);
+            color: var(--panel-fg);
+            text-decoration: none;
+        }
+        .panel-card:hover { border-color: rgb(59 130 246 / 0.55); }
         /* The clock is the one thing read from across the room. It scales with
            the viewport rather than the root font size so it stays enormous on
            a wall panel and stays sane in a browser tab. */
         .hero-clock { font-size: clamp(2.75rem, 9vw, 6rem); line-height: 0.95; }
+        .panel-chip {
+            background: rgb(59 130 246 / 0.14);
+            border: 1px solid rgb(59 130 246 / 0.3);
+            color: var(--panel-fg);
+        }
     </style>
 </head>
 
@@ -43,13 +85,28 @@
                     <div class="text-lg md:text-xl font-bold text-gray-300" x-text="board.date_label || ''"></div>
                 </div>
             </div>
-            <div class="pb-2 text-right">
-                <div class="text-xl md:text-2xl font-semibold text-gray-200" x-text="board.weather || ''"></div>
-                <template x-for="s in (board.statuses || [])" :key="s.label">
-                    <div class="text-base text-indigo-200/90 mt-0.5">
-                        <span x-text="s.emoji"></span> <span x-text="s.label"></span>
-                    </div>
-                </template>
+            <!-- Weather belongs beside the clock, not down in the grid: it is
+                 the other thing you read on the way past without asking. -->
+            <div class="pb-2 flex items-end gap-6">
+                <div class="text-right">
+                    <div class="text-xl md:text-2xl font-semibold panel-text" x-text="board.weather || ''"></div>
+                    <template x-for="s in (board.statuses || [])" :key="s.label">
+                        <div class="text-base text-indigo-300 mt-0.5">
+                            <span x-text="s.emoji"></span> <span x-text="s.label"></span>
+                        </div>
+                    </template>
+                </div>
+                <div class="flex gap-3" x-show="forecast().length">
+                    <template x-for="d in forecast()" :key="d.day">
+                        <div class="text-center">
+                            <div class="text-[0.65rem] font-bold panel-dim uppercase" x-text="d.day"></div>
+                            <div class="text-2xl leading-none my-0.5" x-text="d.emoji"></div>
+                            <div class="text-xs font-semibold panel-text tabular-nums">
+                                <span x-text="d.hi !== null ? d.hi + '°' : ''"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
             </div>
         </div>
 
@@ -113,17 +170,39 @@
                     </div>
                 </template>
             </div>
+
+            <!-- A column per child, inside the hero band rather than in a tile
+                 of its own. The band is full width and was spending it
+                 restating the drives tile; this is what a family actually
+                 walks up to the panel to read. -->
+            <div class="border-t border-gray-800 grid gap-px bg-gray-800"
+                x-show="(hero.kids || []).length"
+                :style="'grid-template-columns: repeat(' + Math.min((hero.kids||[]).length, 4) + ', minmax(0, 1fr))'">
+                <template x-for="k in (hero.kids || [])" :key="k.name">
+                    <a :href="link('routines')" class="block px-4 py-3 min-w-0 panel-card">
+                        <div class="text-sm font-black mb-1 truncate"
+                            :style="'color:' + (k.color_code || '#a5b4fc')" x-text="k.name"></div>
+                        <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
+                            <div class="text-sm panel-dim truncate" x-text="line"></div>
+                        </template>
+                    </a>
+                </template>
+            </div>
         </div>
 
         <!-- ── The glances. Tiles for features this household has actually set
              up; a quiet one says what it is quiet about rather than vanishing,
              because a hidden tile and a broken tile look identical on a wall. -->
         <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-            <template x-for="t in (board.tiles || [])" :key="t.key">
-                <div class="bg-gray-900/70 border border-gray-800 rounded-2xl p-4 md:p-5 min-w-0">
+            <template x-for="t in tiles()" :key="t.key">
+                <!-- Every tile is a door. A wall panel you cannot touch is a
+                     poster; tapping a tile takes you to the page it summarises,
+                     and the shelf brings you back (as does the idle return). -->
+                <a :href="link(t.key)" :style="spanStyle(t.key)"
+                    class="panel-card block rounded-2xl p-4 md:p-5 min-w-0 transition-transform active:scale-[0.985]">
                     <div class="flex items-center gap-2 mb-3">
                         <span class="text-lg" x-text="t.icon"></span>
-                        <span class="text-xs font-black uppercase tracking-[0.15em] text-gray-500"
+                        <span class="text-xs font-black uppercase tracking-[0.15em] panel-dim"
                             x-text="t.label"></span>
                     </div>
 
@@ -190,14 +269,25 @@
                         </div>
                     </template>
 
-                    <!-- lists -->
+                    <!-- lists: the THINGS, as chips. "Groceries — 12" tells you
+                         nothing you can act on walking past. -->
                     <template x-if="t.key === 'shopping' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="l in t.data.lists" :key="l.name">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="text-base text-gray-300 truncate" x-text="l.name"></span>
-                                    <span class="text-xl font-black tabular-nums text-amber-300"
-                                        x-text="l.open"></span>
+                        <div class="space-y-3">
+                            <template x-for="l in t.data.lists" :key="l.id || l.name">
+                                <div>
+                                    <div class="flex items-baseline gap-2 mb-1.5">
+                                        <span class="text-sm font-bold panel-text" x-text="l.name"></span>
+                                        <span class="text-xs panel-dim" x-text="l.open + ' open'"></span>
+                                    </div>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <template x-for="(it, i) in l.items" :key="i">
+                                            <span class="panel-chip text-sm rounded-full px-2.5 py-1"
+                                                x-text="it"></span>
+                                        </template>
+                                        <span class="text-sm panel-dim px-1 py-1"
+                                            x-show="l.open > l.items.length"
+                                            x-text="'+' + (l.open - l.items.length)"></span>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -238,9 +328,11 @@
                             <template x-for="o in t.data.occasions" :key="o.title + o.date">
                                 <div class="flex items-baseline justify-between gap-3">
                                     <span class="text-base text-gray-300 truncate" x-text="o.title"></span>
+                                    <!-- "111 days" alone left you to guess what
+                                         the number counted. -->
                                     <span class="text-sm font-bold shrink-0"
-                                        :class="o.days <= 3 ? 'text-pink-300' : 'text-gray-500'"
-                                        x-text="o.days === 0 ? 'today' : (o.days === 1 ? 'tomorrow' : o.days + ' days')"></span>
+                                        :class="o.days <= 3 ? 'text-pink-300' : 'panel-dim'"
+                                        x-text="o.days === 0 ? 'today' : (o.days === 1 ? 'tomorrow' : 'in ' + o.days + ' days')"></span>
                                 </div>
                             </template>
                         </div>
@@ -309,19 +401,26 @@
                         </div>
                     </template>
 
-                    <!-- next trip -->
+                    <!-- trips as a mosaic, the soonest one leading -->
                     <template x-if="t.key === 'trips' && !t.data.empty">
-                        <div class="space-y-2">
+                        <div class="grid grid-cols-2 gap-2" style="grid-auto-rows: 4.75rem">
                             <template x-for="(tr, i) in t.data.trips" :key="i">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="min-w-0">
-                                        <span class="text-base text-gray-200 truncate" x-text="tr.title"></span>
-                                        <span class="block text-xs text-gray-500 truncate" x-show="tr.location"
-                                            x-text="tr.location"></span>
-                                    </span>
-                                    <span class="text-sm font-bold shrink-0"
-                                        :class="tr.days <= 7 ? 'text-sky-300' : 'text-gray-500'"
-                                        x-text="tr.days === 0 ? 'today' : (tr.days === 1 ? 'tomorrow' : tr.days + ' days')"></span>
+                                <div class="relative rounded-xl overflow-hidden border"
+                                    :class="tr.live ? 'border-emerald-500/60' : 'border-gray-700'"
+                                    style="background: rgb(31 41 55 / .6)"
+                                    :style="collageSpan(i, t.data.trips.length, 2)">
+                                    <img x-show="tr.image" :src="tr.image" alt=""
+                                        class="absolute inset-0 w-full h-full object-cover opacity-70">
+                                    <div class="absolute inset-0 flex flex-col justify-end p-2"
+                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent 70%)">
+                                        <span class="text-sm font-black text-white truncate"
+                                            x-text="tr.title"></span>
+                                        <span class="text-xs font-bold"
+                                            :class="tr.live ? 'text-emerald-300' : 'text-sky-300'"
+                                            x-text="tr.live ? 'under way now'
+                                                : (tr.draft ? 'draft · ' : '') + (tr.days === 0 ? 'today'
+                                                : (tr.days === 1 ? 'tomorrow' : 'in ' + tr.days + ' days'))"></span>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -352,7 +451,7 @@
                                         : 'things waiting for a parent'"></span>
                         </div>
                     </template>
-                </div>
+                </a>
             </template>
         </div>
 
@@ -392,6 +491,23 @@
                                     <span class="block text-[0.7rem] text-gray-500 truncate"
                                         x-text="widgetMeta(key).blurb"></span>
                                 </span>
+                                <!-- Size, per tile. A wall board is a layout,
+                                     not a list — the map earns two columns and
+                                     the intake counter does not. -->
+                                <select :value="spanOf(key, 'cols')"
+                                    @change="setSpan(key, 'cols', $event.target.value)"
+                                    class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                    <option value="1">1 col</option>
+                                    <option value="2">2 col</option>
+                                    <option value="3">3 col</option>
+                                </select>
+                                <select :value="spanOf(key, 'rows')"
+                                    @change="setSpan(key, 'rows', $event.target.value)"
+                                    class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                    <option value="1">1 row</option>
+                                    <option value="2">2 row</option>
+                                    <option value="3">3 row</option>
+                                </select>
                                 <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
                                 <button @click="move(draft.panel_widgets, i, 1)"
@@ -438,6 +554,20 @@
                     </div>
 
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                        Theme
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        Auto follows the device, which under Home Assistant means following
+                        the dashboard the panel is embedded in.
+                    </p>
+                    <select x-model="draft.panel_theme"
+                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white mb-6">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                        <option value="auto">Auto</option>
+                    </select>
+
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
                         Return home when idle
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
@@ -475,9 +605,32 @@
                 board: {}, hero: {}, catalog: {},
                 clock: '', meridiem: '', countdown: '', countdownClass: '',
                 saving: false,
-                draft: { panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180 },
+                draft: {
+                    panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
+                    panel_tile_spans: {}, panel_theme: 'dark'
+                },
+
+                // Theme first, before anything paints: a board that flashes
+                // dark and settles light is worse than either.
+                async applyTheme() {
+                    try {
+                        const p = await fetch(this.apiBase + 'api/panel/profile')
+                            .then(r => r.ok ? r.json() : null);
+                        document.documentElement.setAttribute(
+                            'data-panel-theme', (p && p.theme) || 'dark');
+                    } catch (e) {
+                        document.documentElement.setAttribute('data-panel-theme', 'dark');
+                    }
+                },
+
+                // Weather rides in the clock strip, so it does not also take a
+                // box in the grid.
+                tiles() {
+                    return (this.board.tiles || []).filter(t => t.key !== 'weather');
+                },
 
                 start() {
+                    this.applyTheme();
                     this.tick();
                     // The clock ticks LOCALLY. Refetching the board to move a
                     // minute hand would be 1,440 requests a day to render a
@@ -547,6 +700,39 @@
                     }
                 },
 
+                // Where a tile takes you. Slugs match the nav, so the shelf and
+                // the board agree about what each word means.
+                PAGES: {
+                    drives: 'dashboard_v2', calendar: 'calendar', meals: 'shopping',
+                    shopping: 'shopping', chores: 'chores', routines: 'routines',
+                    occasions: 'occasions', errands: 'errands', trips: 'trips',
+                    map: 'map', moments: 'moments', intake: 'intake',
+                    weather: 'calendar', kids: 'routines'
+                },
+
+                link(key) {
+                    const page = this.PAGES[key] || key;
+                    return this.apiBase + page + window.location.search;
+                },
+
+                // Layout is the household's call, not mine: a map earns two
+                // columns, an intake counter does not. Inline grid spans so a
+                // value typed in setup needs no matching Tailwind class.
+                spanStyle(key) {
+                    const s = (this.board.spans || {})[key] || {};
+                    const c = Math.min(3, Math.max(1, parseInt(s.cols, 10) || 1));
+                    const r = Math.min(3, Math.max(1, parseInt(s.rows, 10) || 1));
+                    return (c > 1 ? `grid-column: span ${c};` : '')
+                        + (r > 1 ? `grid-row: span ${r};` : '');
+                },
+
+                // The forecast rides in the clock strip now, so the tile's data
+                // is reused rather than fetched twice.
+                forecast() {
+                    const t = (this.board.tiles || []).find(x => x.key === 'weather');
+                    return (t && !t.data.empty && t.data.days) ? t.data.days.slice(0, 4) : [];
+                },
+
                 // Mosaic sizing, as inline grid spans rather than Tailwind
                 // classes: these are computed in JS and the CDN build only
                 // reliably generates classes it can see in the markup.
@@ -578,7 +764,9 @@
                             panel_tabs: (s.panel_tabs || []).slice(),
                             panel_idle_return_seconds:
                                 s.panel_idle_return_seconds === undefined
-                                    ? 180 : s.panel_idle_return_seconds
+                                    ? 180 : s.panel_idle_return_seconds,
+                            panel_tile_spans: { ...(s.panel_tile_spans || {}) },
+                            panel_theme: s.panel_theme || 'dark'
                         };
                     } catch (e) { /* setup stays on defaults */ }
                 },
@@ -591,6 +779,24 @@
                 unpickedWidgets() {
                     return (this.catalog.widgets || [])
                         .filter(w => !this.draft.panel_widgets.includes(w.key));
+                },
+
+                spanOf(key, axis) {
+                    return String((this.draft.panel_tile_spans[key] || {})[axis] || 1);
+                },
+
+                setSpan(key, axis, value) {
+                    const n = Math.min(3, Math.max(1, parseInt(value, 10) || 1));
+                    const cur = { ...(this.draft.panel_tile_spans[key] || {}) };
+                    cur[axis] = n;
+                    // 1x1 is the default, so a tile back at its normal size
+                    // stops being stored at all rather than persisting a row
+                    // of ones nobody chose.
+                    if ((cur.cols || 1) === 1 && (cur.rows || 1) === 1) {
+                        delete this.draft.panel_tile_spans[key];
+                    } else {
+                        this.draft.panel_tile_spans[key] = cur;
+                    }
                 },
 
                 move(arr, i, delta) {
@@ -614,7 +820,9 @@
                                 panel_widgets: this.draft.panel_widgets,
                                 panel_tabs: this.draft.panel_tabs,
                                 panel_idle_return_seconds:
-                                    Number(this.draft.panel_idle_return_seconds) || 0
+                                    Number(this.draft.panel_idle_return_seconds) || 0,
+                                panel_tile_spans: this.draft.panel_tile_spans,
+                                panel_theme: this.draft.panel_theme
                             })
                         });
                         if (!r.ok) throw new Error(await r.text());

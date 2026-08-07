@@ -245,7 +245,8 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
     live = next((r for r in upcoming if r['live']), None)
     nxt = live or (upcoming[0] if upcoming else None)
 
-    hero = {'next': None, 'remaining': len(upcoming), 'later': [], 'all_done': False}
+    hero = {'next': None, 'remaining': len(upcoming), 'later': [], 'all_done': False,
+            'kids': []}
     if nxt:
         start = _parse(nxt['start']) or now
         hero['next'] = {**nxt,
@@ -337,14 +338,22 @@ def _tile_shopping(now, **_):
         lists = []
         for l in all_lists:
             items = storage.get_shopping_items(l['id'])
-            open_n = sum(1 for i in items if not i.get('is_checked'))
-            if open_n:
-                lists.append({'name': l.get('name') or 'List', 'open': open_n,
-                              'store': l.get('store')})
+            open_items = [i for i in items if not i.get('is_checked')]
+            if open_items:
+                lists.append({
+                    'id': l.get('id'),
+                    'name': l.get('name') or 'List',
+                    'store': l.get('store'),
+                    'open': len(open_items),
+                    # The THINGS, not the count. "Groceries — 12" tells you
+                    # nothing you can act on walking past; "milk, eggs, bread…"
+                    # is the entire reason a list is on the wall.
+                    'items': [i.get('name') or '' for i in open_items[:12]],
+                })
         if not lists:
             return {'empty': "Nothing on the lists."}
         lists.sort(key=lambda x: -x['open'])
-        return {'lists': lists[:4], 'total': sum(l['open'] for l in lists)}
+        return {'lists': lists[:3], 'total': sum(l['open'] for l in lists)}
     except Exception as e:
         print(f"[home_board] shopping failed: {e}")
         return None
@@ -522,34 +531,97 @@ def _tile_errands(now, **_):
         return None
 
 
+def _trip_rows(now) -> List[dict]:
+    """Trips this install can know about WITHOUT calling Google, newest-first.
+
+    Three sources, because no single one is complete:
+
+    1. The `/api/trips` snapshot — the only place a real trip's dates and title
+       exist, since both live on its Google calendar event. Written whenever
+       somebody loads the trips page.
+    2. Draft trips from `trip_metadata`, which carry their own mock dates and
+       never touch Google at all.
+    3. Spans derived from the cached schedule by grouping scheduled activities
+       on `trip_id`. This is the safety net for the case that actually bit: a
+       trip whose snapshot is stale or was never taken still shows up, because
+       its POIs are sitting in the schedule cache with real dates on them.
+    """
+    seen, rows = set(), []
+
+    def add(tid, title, start, end, location=None, image=None, draft=False):
+        if not start or (tid and tid in seen):
+            return
+        if tid:
+            seen.add(tid)
+        end = end or start
+        # background_url is not always a URL — older trips stored a search
+        # phrase ("disney world") in it, which as an <img src> is a broken
+        # image on the kitchen wall.
+        img = str(image or '')
+        img = img if img.startswith(('http://', 'https://', '/', 'data:')) else None
+        rows.append({
+            'id': tid, 'title': title or 'Trip', 'location': location or None,
+            'image': img, 'draft': bool(draft),
+            'start': start.isoformat(), 'end': end.isoformat(),
+            # NEGATIVE days would mean "already started", so an in-progress
+            # trip reports 0 and says so. The first version filtered anything
+            # starting before today, which is precisely how a trip the family
+            # was ON showed as "No trips planned".
+            'days': max(0, (start - now.date()).days),
+            'live': start <= now.date() <= end,
+        })
+
+    def as_date(val):
+        if val in (None, ''):
+            return None
+        try:
+            return datetime.datetime.fromisoformat(str(val).replace('Z', '+00:00')).date()
+        except (TypeError, ValueError):
+            pass
+        try:
+            return datetime.datetime.fromtimestamp(float(val)).date()
+        except (TypeError, ValueError, OSError):
+            return None
+
+    for t in (storage.get_cached_trips() or {}).get('trips') or []:
+        s, e = as_date(t.get('start')), as_date(t.get('end'))
+        if s and e and e >= now.date():
+            add(t.get('id'), t.get('title'), s, e, t.get('location'),
+                t.get('background_url'), t.get('is_draft'))
+
+    for t in storage.get_all_trip_metadata() or []:
+        if not t.get('is_draft'):
+            continue
+        s, e = as_date(t.get('mock_start_date')), as_date(t.get('mock_end_date'))
+        if s and (e or s) >= now.date():
+            add(t.get('event_id'), t.get('title') or 'Draft trip', s, e,
+                t.get('location'), t.get('background_url'), True)
+
+    spans = {}
+    for ev in (storage.get_cached_schedule() or {}).get('events') or []:
+        tid = ev.get('trip_id')
+        s, e = _parse(ev.get('start')), _parse(ev.get('end'))
+        if not tid or not s:
+            continue
+        lo, hi = spans.get(tid, (s, e or s))
+        spans[tid] = (min(lo, s), max(hi, e or s))
+    for tid, (lo, hi) in spans.items():
+        if hi.date() < now.date():
+            continue
+        meta = storage.get_trip_metadata(tid) or {}
+        add(tid, meta.get('title'), lo.date(), hi.date(),
+            meta.get('location'), meta.get('background_url'), meta.get('is_draft'))
+
+    rows.sort(key=lambda r: (not r['live'], r['start']))
+    return rows
+
+
 def _tile_trips(now, **_):
-    """The next trip, counted down in days. Drafts are excluded — a trip
-    nobody has committed to is not news."""
     try:
-        every = storage.get_all_trip_metadata() or []
-        if not every:
+        if not (storage.get_all_trip_metadata() or storage.get_cached_trips()):
             return None                       # no trips ever: feature unused
-        rows = []
-        for t in every:
-            if t.get('is_draft'):
-                continue
-            ts = t.get('mock_start_date')
-            start = None
-            if ts:
-                try:
-                    start = datetime.datetime.fromtimestamp(float(ts)).date()
-                except (TypeError, ValueError, OSError):
-                    start = None
-            if not start or start < now.date():
-                continue
-            rows.append({'title': t.get('title') or 'Trip',
-                         'location': t.get('location') or None,
-                         'date': start.isoformat(),
-                         'days': (start - now.date()).days})
-        if not rows:
-            return {'empty': "No trips planned."}
-        rows.sort(key=lambda r: r['days'])
-        return {'trips': rows[:2]}
+        rows = _trip_rows(now)
+        return {'trips': rows[:4]} if rows else {'empty': "No trips planned."}
     except Exception as e:
         print(f"[home_board] trips failed: {e}")
         return None
@@ -714,8 +786,11 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
         idle = 180 if raw is None else int(raw)
     except (TypeError, ValueError):
         idle = 180
+    theme = str(settings.get('panel_theme') or 'dark').lower()
     return {'tabs': resolve_tabs(tabs, settings),
             'widgets': resolve_widgets(widgets, settings),
+            'spans': settings.get('panel_tile_spans') or {},
+            'theme': theme if theme in ('light', 'dark', 'auto') else 'dark',
             'idle_seconds': max(0, idle)}
 
 
@@ -751,6 +826,17 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
             tiles.append({'key': key, 'icon': meta['icon'], 'label': meta['label'],
                           'data': payload})
 
+    # The kids belong in the hero, not in a tile of their own. The hero band is
+    # full width and was spending it restating the drives tile; a column per
+    # child is the thing a family actually walks up to the panel to read, and
+    # "Each Kid" was never a phrase anybody says out loud.
+    hero = _hero(now, runs)
+    kid_tile = next((t for t in tiles if t['key'] == 'kids'), None)
+    if kid_tile:
+        hero['kids'] = kid_tile['data'].get('kids') or []
+        hero['kids_empty'] = kid_tile['data'].get('empty')
+        tiles = [t for t in tiles if t['key'] != 'kids']
+
     try:
         weather = family_digest.weather_line(now.date())
     except Exception:
@@ -771,9 +857,10 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         'statuses': [{'label': s.get('label') or s.get('name'),
                       'emoji': s.get('emoji'), 'note': s.get('note')}
                      for s in statuses][:2],
-        'hero': _hero(now, runs),
+        'hero': hero,
         'tiles': tiles,
         'widgets': keys,
+        'spans': (settings.get('panel_tile_spans') or {}),
     }
     _CACHE.update(key=cache_key, at=time.time(), data=data)
     return data

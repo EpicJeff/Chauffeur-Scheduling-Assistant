@@ -983,6 +983,13 @@ def get_all_trips_api():
 
     trips_list = list(trips_map.values())
     trips_list.sort(key=lambda x: x['start'] if x['start'] else '')
+    # Write it down. A trip's real dates live on its Google event, and this is
+    # the only place they are ever assembled — so the home board, which cannot
+    # call Google on a 60-second timer, reads the snapshot this leaves behind.
+    try:
+        storage.set_cached_trips(trips_list)
+    except Exception as e:
+        print(f"trips snapshot failed: {e}")
     return {"trips": trips_list}
 
 from models.schemas import CreateTripRequest

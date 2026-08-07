@@ -373,6 +373,113 @@ def scenario_the_board_is_cached_so_a_second_panel_costs_nothing():
         _clear_cache()
 
 
+def scenario_a_trip_you_are_currently_on_is_not_hidden():
+    """The bug: the panel said "No trips planned" while the family was ON a
+    trip, with another six days out and a draft after that.
+
+    Two causes. A real trip's dates live on its Google calendar event, not on
+    its TripMetadata — the tile was reading `mock_start_date`, which only
+    drafts have. And it filtered out anything starting before today, which is
+    exactly what a trip you are in the middle of looks like."""
+    orig = (storage.get_cached_trips, storage.get_all_trip_metadata,
+            storage.get_cached_schedule, storage.get_trip_metadata)
+    try:
+        today = datetime.date.today()
+        storage.get_cached_trips = lambda: {'trips': [
+            {'id': 't1', 'title': 'Disney', 'location': 'Orlando',
+             'start': (today - datetime.timedelta(days=2)).isoformat(),
+             'end': (today + datetime.timedelta(days=3)).isoformat()},
+            {'id': 't2', 'title': 'Grandma',
+             'start': (today + datetime.timedelta(days=5)).isoformat(),
+             'end': (today + datetime.timedelta(days=7)).isoformat()},
+        ]}
+        storage.get_all_trip_metadata = lambda: [
+            {'event_id': 't3', 'is_draft': True, 'title': 'Paris',
+             'mock_start_date': None, 'mock_end_date': None}]
+        storage.get_cached_schedule = lambda: {}
+        storage.get_trip_metadata = lambda tid: {}
+
+        tile = home_board._tile_trips(datetime.datetime.now())
+        got = {t['title']: t for t in tile['trips']}
+        check('Disney' in got, f"the trip we are ON must appear, got {tile}")
+        check(got['Disney']['live'], "and be flagged as under way")
+        check(got['Disney']['days'] == 0, "never a negative countdown")
+        check(list(got)[0] == 'Disney', "the live one leads")
+        check('Grandma' in got, "the upcoming one appears too")
+    finally:
+        (storage.get_cached_trips, storage.get_all_trip_metadata,
+         storage.get_cached_schedule, storage.get_trip_metadata) = orig
+
+
+def scenario_a_trip_is_found_without_calling_google():
+    """The safety net: no snapshot yet, but the trip's activities are sitting
+    in the schedule cache with real dates on them. /api/trips reads Google
+    live and a board polling every 60s can never do that."""
+    orig = (storage.get_cached_trips, storage.get_all_trip_metadata,
+            storage.get_cached_schedule, storage.get_trip_metadata)
+    try:
+        soon = datetime.datetime.combine(
+            datetime.date.today() + datetime.timedelta(days=6), datetime.time(12))
+        storage.get_cached_trips = lambda: {}
+        storage.get_all_trip_metadata = lambda: [{'event_id': 'tX'}]
+        storage.get_cached_schedule = lambda: {'events': [
+            {'id': 'a', 'trip_id': 'tX', 'start': soon.isoformat(),
+             'end': (soon + datetime.timedelta(hours=2)).isoformat()},
+            {'id': 'b', 'trip_id': 'tX',
+             'start': (soon + datetime.timedelta(days=2)).isoformat(),
+             'end': (soon + datetime.timedelta(days=2, hours=1)).isoformat()},
+        ]}
+        storage.get_trip_metadata = lambda tid: {'title': 'Disney'}
+        tile = home_board._tile_trips(datetime.datetime.now())
+        check(tile.get('trips') and tile['trips'][0]['days'] == 6,
+              f"span derived from the cached activities, got {tile}")
+    finally:
+        (storage.get_cached_trips, storage.get_all_trip_metadata,
+         storage.get_cached_schedule, storage.get_trip_metadata) = orig
+
+
+def scenario_a_search_phrase_is_not_used_as_an_image():
+    """`background_url` has held things like "disney world" since long before
+    this board existed. As an <img src> that is a broken image on the wall."""
+    orig = (storage.get_cached_trips, storage.get_all_trip_metadata,
+            storage.get_cached_schedule, storage.get_trip_metadata)
+    try:
+        storage.get_cached_trips = lambda: {'trips': [
+            {'id': 't1', 'title': 'Disney', 'background_url': 'disney world',
+             'start': datetime.date.today().isoformat(),
+             'end': datetime.date.today().isoformat()}]}
+        storage.get_all_trip_metadata = lambda: []
+        storage.get_cached_schedule = lambda: {}
+        storage.get_trip_metadata = lambda tid: {}
+        tile = home_board._tile_trips(datetime.datetime.now())
+        check(tile['trips'][0]['image'] is None,
+              f"a bare phrase is not an image src, got {tile['trips'][0]['image']!r}")
+    finally:
+        (storage.get_cached_trips, storage.get_all_trip_metadata,
+         storage.get_cached_schedule, storage.get_trip_metadata) = orig
+
+
+def scenario_the_kids_ride_in_the_hero_not_a_tile():
+    """The hero band is full width and was spending it restating the drives
+    tile. The kids move into it as columns, and must not also remain a tile —
+    the same content twice is how the board got called wasted space."""
+    _clear_cache()
+    orig = storage.get_cached_schedule
+    try:
+        storage.get_cached_schedule = lambda: {}
+        board = home_board.build(
+            requested='kids,calendar',
+            kid_digest_fn=lambda: {'label': 'Today', 'kids': {
+                'k1': {'name': 'Addison', 'lines': ['5:00 PM — practice']}}})
+        check(board['hero']['kids'] and board['hero']['kids'][0]['name'] == 'Addison',
+              f"kids ride in the hero, got {board['hero'].get('kids')}")
+        check('kids' not in [t['key'] for t in board['tiles']],
+              "and are not repeated as a tile")
+    finally:
+        storage.get_cached_schedule = orig
+        _clear_cache()
+
+
 def scenario_every_page_in_the_nav_can_be_a_tile():
     """The panel is the whole app on a wall, so every destination on the shelf
     has to have a glance on the board — otherwise the board quietly says some
