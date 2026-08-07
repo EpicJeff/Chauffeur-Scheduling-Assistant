@@ -1655,6 +1655,38 @@ def get_occasion_gaps(occasion_name: str = "", acting_member: dict = None) -> Di
     return {"status": "success", "message": msg}
 
 
+def set_occasion_attendance(occasion_name: str, who: str, coming: bool = True,
+                            acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "Grandad isn't coming to Thanksgiving this year", "Sarah's away
+    for the party", "actually Marta is joining us for Christmas".
+
+    Household members only — anybody outside the family is `add_occasion_guests`.
+    Answers with the new headcount, because that is the number that changes
+    every plate in the window.
+    """
+    from services import storage, occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "error",
+                "message": f"I don't have an occasion called '{occasion_name}'."}
+    low = (who or '').strip().lower()
+    member = next((m for m in storage.get_all_members()
+                   if (m.get('name') or '').strip().lower() == low), None)
+    if not member:
+        member = next((m for m in storage.get_all_members()
+                       if low and low in (m.get('name') or '').strip().lower()), None)
+    if not member:
+        return {"status": "error",
+                "message": f"'{who}' isn't in the family — if they're a guest, "
+                           "tell me who's coming instead and I'll add them."}
+    _occ.set_attendance(o['id'], member['id'], coming)
+    n = _occ.headcount(o['id'])
+    verb = "is coming to" if coming else "is not coming to"
+    return {"status": "success",
+            "message": f"Noted — {member['name']} {verb} {o['title']}. "
+                       f"That's {n} eating now."}
+
+
 def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
                         cannot_eat: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "the Wilsons are coming, there are four of them", "Grandma's
@@ -2588,6 +2620,19 @@ def get_available_tools() -> List[Dict]:
                     "occasion_name": {"type": "string", "description": "Which one; omit for the next one coming up."}
                 },
                 "required": []
+            }
+        },
+        {
+            "name": "set_occasion_attendance",
+            "description": "Records whether someone in the FAMILY is coming to an occasion: Grandad is not coming to Thanksgiving this year, Sarah is away for the party, actually Marta is joining us for Christmas. Everyone in the household is assumed in except helpers, and this is how that is corrected either way. For people outside the family use add_occasion_guests.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which occasion."},
+                    "who": {"type": "string", "description": "A family member's name."},
+                    "coming": {"type": "boolean", "description": "true if they are coming, false if not."}
+                },
+                "required": ["occasion_name", "who", "coming"]
             }
         },
         {

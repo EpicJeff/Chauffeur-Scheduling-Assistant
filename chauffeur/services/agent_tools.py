@@ -589,6 +589,14 @@ class GetOccasionGapsTool(BaseModel):
     """
     occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
 
+class SetOccasionAttendanceTool(BaseModel):
+    """
+    Records whether someone in the FAMILY is coming to an occasion ("Grandad is not coming to Thanksgiving this year"). Everyone in the household is assumed in except helpers. For people outside the family use add_occasion_guests.
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    who: str = Field(..., description="A family member's name.")
+    coming: bool = Field(..., description="true if they are coming, false if not.")
+
 class AddOccasionGuestsTool(BaseModel):
     """
     Adds people to an occasion's guest list ("the Wilsons are coming, there are four of them"). Allergies bind like a family member's.
@@ -826,6 +834,7 @@ TOOL_SCHEMAS = {
     "get_occasion_gaps": GetOccasionGapsTool.model_json_schema(),
     "get_occasion_insights": GetOccasionInsightsTool.model_json_schema(),
     "add_occasion_guests": AddOccasionGuestsTool.model_json_schema(),
+    "set_occasion_attendance": SetOccasionAttendanceTool.model_json_schema(),
     "source_for_occasion": SourceForOccasionTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
@@ -2024,6 +2033,12 @@ def handle_get_occasion_gaps(args: dict) -> dict:
     from services.agent_tools_v2 import get_occasion_gaps
     return get_occasion_gaps(args.get("occasion_name") or "")
 
+def handle_set_occasion_attendance(args: dict) -> dict:
+    from services.agent_tools_v2 import set_occasion_attendance
+    return set_occasion_attendance(args.get("occasion_name") or "",
+                                   args.get("who") or "",
+                                   bool(args.get("coming", True)))
+
 def handle_add_occasion_guests(args: dict) -> dict:
     from services.agent_tools_v2 import add_occasion_guests
     return add_occasion_guests(args.get("occasion_name") or "",
@@ -2220,6 +2235,7 @@ TOOL_HANDLERS = {
     "get_occasion_gaps": handle_get_occasion_gaps,
     "get_occasion_insights": handle_get_occasion_insights,
     "add_occasion_guests": handle_add_occasion_guests,
+    "set_occasion_attendance": handle_set_occasion_attendance,
     "source_for_occasion": handle_source_for_occasion,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,

@@ -128,15 +128,68 @@ def find_prior(kind: str, title: str, anchor: datetime.date) -> Optional[dict]:
     return best
 
 
+def attends_by_default(member: dict) -> bool:
+    """Whether a household member is assumed in until somebody says otherwise.
+
+    Role is the only signal the app has: `helper` is external by definition (a
+    hired driver or nanny — driving surfaces only), so they start OUT; everyone
+    else starts IN. It is deliberately a DEFAULT and not a rule — a helper who
+    is genuinely invited to the party is one tap away, and so is a parent who
+    will be travelling that week.
+
+    What role cannot tell us is who lives elsewhere: an `adult` grandparent
+    five hundred miles away looks exactly like a resident adult. That is
+    precisely why every member is individually togglable rather than derived.
+    """
+    return (member.get('role') or 'adult') != 'helper'
+
+
+def attendance(occasion_id: str) -> List[dict]:
+    """Every household member with their attendance for this occasion.
+
+    Returns the whole roster, not just the attendees: a list you can only add
+    to cannot express "Grandad isn't coming this year", and that absence was
+    the original defect.
+    """
+    o = storage.get_occasion(occasion_id) or {}
+    saved = o.get('attendance') or {}
+    out = []
+    for m in storage.get_all_members():
+        default = attends_by_default(m)
+        decided = m['id'] in saved
+        out.append({'member_id': m['id'], 'name': m.get('name') or 'Someone',
+                    'role': m.get('role') or 'adult',
+                    'attending': bool(saved[m['id']]) if decided else default,
+                    'decided': decided, 'default': default})
+    out.sort(key=lambda r: (not r['attending'], r['name'].lower()))
+    return out
+
+
+def set_attendance(occasion_id: str, member_id: str, attending: bool) -> List[dict]:
+    """One member, in or out. Recorded explicitly even when it matches the
+    default, because "we thought about it and yes" and "nobody has said" are
+    different states — the second one is what the gap report is allowed to ask
+    about."""
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return []
+    saved = dict(o.get('attendance') or {})
+    saved[member_id] = bool(attending)
+    storage.update_occasion(occasion_id, {'attendance': saved})
+    return attendance(occasion_id)
+
+
 def headcount(occasion_id: str) -> int:
-    """Everyone eating: the family plus every guest's own count.
+    """Everyone eating: the household members coming, plus every guest's count.
 
     Guests carry a headcount rather than one row each because "the Wilsons, 4"
-    is how people actually answer, and making somebody type four rows to say
-    it is the data entry this arc exists to avoid.
+    is how people actually answer, and making somebody type four rows to say it
+    is the data entry this arc exists to avoid.
+
+    A guest row that names a `member_id` is that member, so it must not be
+    counted twice — the roster already has them.
     """
-    fam = len([m for m in storage.get_all_members()
-               if (m.get('role') or '') != 'helper'])
+    fam = len([a for a in attendance(occasion_id) if a['attending']])
     guests = sum(max(1, int(g.get('headcount') or 1))
                  for g in storage.get_occasion_guests(occasion_id)
                  if not g.get('member_id'))
@@ -213,6 +266,7 @@ def contents(occasion_id: str) -> dict:
         'days_away': (_d(o['anchor_date']) - _today()).days if _d(o['anchor_date']) else None,
         'lists': lists, 'loose_items': loose, 'errands': errands,
         'trips': trips, 'guests': guests,
+        'attendance': attendance(occasion_id),
         'headcount': headcount(occasion_id),
     }
 

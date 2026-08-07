@@ -305,6 +305,33 @@
                         <span class="text-gray-500 font-bold normal-case tracking-normal ml-1"
                             x-text="'· ' + (detail[o.id] ? detail[o.id].headcount : 0) + ' eating'"></span>
                     </div>
+
+                    <!-- The household roster, every member togglable. The first
+                         cut counted every non-helper automatically with no way
+                         to say otherwise, which is wrong the moment a family has
+                         an adult living elsewhere, a parent away that week, or a
+                         helper who IS invited. Role only decides the DEFAULT:
+                         helpers start out, everyone else starts in, and role can
+                         never tell a resident adult from a grandparent five
+                         hundred miles away — which is exactly why these are taps
+                         rather than something derived. -->
+                    <div class="flex flex-wrap gap-1.5 mb-2">
+                        <template x-for="a in ((detail[o.id] || {}).attendance || [])"
+                            :key="'at-' + a.member_id">
+                            <button @click="toggleAttending(o, a)"
+                                class="px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5"
+                                :class="a.attending
+                                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                                    : 'bg-gray-900 border-gray-700 text-gray-600 line-through'"
+                                :title="a.attending ? 'Coming — tap if they are not'
+                                                    : 'Not coming — tap if they are'">
+                                <span x-text="a.attending ? '✓' : '–'"></span>
+                                <span x-text="a.name"></span>
+                                <span class="opacity-50" x-show="a.role === 'helper'">helper</span>
+                            </button>
+                        </template>
+                    </div>
+
                     <div class="flex flex-wrap gap-1.5 mb-2">
                         <template x-for="g in ((detail[o.id] || {}).guests || [])" :key="g.id">
                             <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-900 border border-gray-700 text-gray-300 flex items-center gap-1.5">
@@ -315,7 +342,7 @@
                             </span>
                         </template>
                         <button @click="addGuest(o)" class="text-[11px] font-bold text-gray-600 hover:text-pink-300">
-                            + guest
+                            + someone else
                         </button>
                     </div>
 
@@ -594,6 +621,21 @@
                 await fetch(this.apiBase + 'api/occasions/' + o.id, { method: 'DELETE' });
                 delete this.detail[o.id];
                 await this.load();
+            },
+
+            async toggleAttending(o, a) {
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id + '/attendance', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ member_id: a.member_id, attending: !a.attending })
+                });
+                if (!r.ok) { showGlobalAlert('Could not save that just now.'); return; }
+                const res = await r.json();
+                // Headcount drives the scaling on every plate in the window, so
+                // the whole detail is refreshed rather than the chip patched.
+                if (this.detail[o.id]) {
+                    this.detail[o.id].attendance = res.attendance;
+                    this.detail[o.id].headcount = res.headcount;
+                }
             },
 
             async addGuest(o) {

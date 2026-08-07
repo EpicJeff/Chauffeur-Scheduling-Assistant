@@ -5784,6 +5784,29 @@ def remove_occasion(occasion_id: str):
     storage.delete_occasion(occasion_id)
     return {"status": "ok"}
 
+class AttendanceRequest(BaseModel):
+    member_id: str
+    attending: bool
+
+@app.get("/api/occasions/{occasion_id}/attendance")
+def occasion_attendance(occasion_id: str):
+    """The whole household roster with who is coming — not just the attendees.
+    A list you can only add to cannot say "Grandad isn't coming this year"."""
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return {'attendance': _occ.attendance(occasion_id),
+            'headcount': _occ.headcount(occasion_id)}
+
+@app.post("/api/occasions/{occasion_id}/attendance")
+def set_occasion_attendance(occasion_id: str, req: AttendanceRequest):
+    from services import occasions as _occ
+    rows = _occ.set_attendance(occasion_id, req.member_id, req.attending)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    _touch_stream()
+    return {'attendance': rows, 'headcount': _occ.headcount(occasion_id)}
+
 @app.post("/api/occasions/{occasion_id}/guests")
 def add_occasion_guest(occasion_id: str, req: GuestRequest):
     from services import occasions as _occ

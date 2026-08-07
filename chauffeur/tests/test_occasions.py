@@ -45,9 +45,12 @@ def _settings(**over):
     return base
 
 
-def _members():
+def _members(with_helper=False):
     from models.schemas import FamilyMember
-    for name, role in (('Dad', 'parent'), ('Mum', 'parent'), ('Ellie', 'child')):
+    roster = [('Dad', 'parent'), ('Mum', 'parent'), ('Ellie', 'child')]
+    if with_helper:
+        roster.append(('Marta', 'helper'))
+    for name, role in roster:
         storage.add_member(FamilyMember(name=name, role=role).model_dump())
 
 
@@ -58,6 +61,10 @@ def _occasion(**kw):
                             kw.pop('window_start', WIN_START),
                             kw.pop('window_end', WIN_END),
                             kw.pop('dish_tags', ['thanksgiving']), **kw)
+
+
+def _member_id(name):
+    return next(m['id'] for m in storage.get_all_members() if m['name'] == name)
 
 
 def _dish(name, **kw):
@@ -624,6 +631,97 @@ def scenario_clearing_a_menu_releases_the_night_but_keeps_the_dishes():
     occasions.clear_menu(o['id'])
     check(not storage.get_plate(DAY), "the night is released")
     check(storage.get_dish(turkey['id']), "and the dish is untouched")
+
+
+# --- Attendance: the roster is a decision, not a property -------------------
+
+def scenario_the_whole_roster_is_listed_not_just_the_attendees():
+    """The original defect: every non-helper was counted automatically with no
+    way to say otherwise. A list you can only ADD to cannot express "Grandad
+    isn't coming this year"."""
+    reset_db(); _members(with_helper=True); _settings()
+    o = _occasion()
+    rows = occasions.attendance(o['id'])
+    check({r['name'] for r in rows} == {'Dad', 'Mum', 'Ellie', 'Marta'},
+          f"every household member is offered, got {[r['name'] for r in rows]}")
+    check(all(not r['decided'] for r in rows),
+          "and none of them counts as decided until somebody says so")
+
+
+def scenario_helpers_start_out_and_everyone_else_starts_in():
+    """Role decides the DEFAULT only. A helper is external by definition, so
+    they start out — and are one tap from being in."""
+    reset_db(); _members(with_helper=True); _settings()
+    o = _occasion()
+    by = {r['name']: r for r in occasions.attendance(o['id'])}
+    check(by['Dad']['attending'] and by['Ellie']['attending'],
+          "the household is in by default")
+    check(not by['Marta']['attending'],
+          "the helper is not, until invited")
+    check(occasions.headcount(o['id']) == 3,
+          f"so the count is the three of them, got {occasions.headcount(o['id'])}")
+
+
+def scenario_anyone_can_be_toggled_either_way():
+    """Role cannot tell a resident adult from a grandparent five hundred miles
+    away, which is exactly why these are taps rather than something derived."""
+    reset_db(); _members(with_helper=True); _settings()
+    o = _occasion()
+    occasions.set_attendance(o['id'], _member_id('Dad'), False)
+    occasions.set_attendance(o['id'], _member_id('Marta'), True)
+    by = {r['name']: r for r in occasions.attendance(o['id'])}
+    check(not by['Dad']['attending'], "a parent can be away that week")
+    check(by['Marta']['attending'], "and a helper can be genuinely invited")
+    check(by['Dad']['decided'] and by['Marta']['decided'],
+          "both now read as decided rather than defaulted")
+    check(occasions.headcount(o['id']) == 3,
+          f"one out, one in, still three, got {occasions.headcount(o['id'])}")
+
+
+def scenario_a_new_member_takes_the_default_on_occasions_already_booked():
+    """Storing only the DECISIONS is what makes this work — a stored attendee
+    list would leave somebody added next month silently missing from every
+    occasion already on the books."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    occasions.set_attendance(o['id'], _member_id('Dad'), False)
+    from models.schemas import FamilyMember
+    storage.add_member(FamilyMember(name='Baby', role='child').model_dump())
+    by = {r['name']: r for r in occasions.attendance(o['id'])}
+    check(by['Baby']['attending'] and not by['Baby']['decided'],
+          f"the new arrival is in by default, got {by.get('Baby')}")
+    check(not by['Dad']['attending'], "and the earlier decision is untouched")
+
+
+def scenario_attendance_and_guests_both_feed_the_headcount_once():
+    """A guest row naming a member must not be counted twice — the roster
+    already has them."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    occasions.add_guest(o['id'], 'the Wilsons', 4)
+    occasions.add_guest(o['id'], 'Ellie', 1, member_id=_member_id('Ellie'))
+    check(occasions.headcount(o['id']) == 7,
+          f"three of us plus four of them, got {occasions.headcount(o['id'])}")
+    occasions.set_attendance(o['id'], _member_id('Mum'), False)
+    check(occasions.headcount(o['id']) == 6,
+          f"and one fewer when somebody drops out, got {occasions.headcount(o['id'])}")
+
+
+def scenario_attendance_is_sayable_in_both_stacks():
+    reset_db(); _members(with_helper=True); _settings()
+    from services import agent_tools, agent_tools_v2
+    check('set_occasion_attendance' in {t['name'] for t in agent_tools_v2.get_available_tools()}
+          and 'set_occasion_attendance' in agent_tools.TOOL_HANDLERS,
+          "the tool is in both stacks")
+    _occasion()
+    res = agent_tools.execute_tool('set_occasion_attendance', {
+        'occasion_name': 'Thanksgiving', 'who': 'Dad', 'coming': False})
+    check('not coming' in res['message'] and '2 eating' in res['message'],
+          f"it answers with the new headcount, got {res['message']}")
+
+    miss = agent_tools_v2.set_occasion_attendance('Thanksgiving', 'Aunt Jo', False)
+    check(miss['status'] == 'error' and 'guest' in miss['message'],
+          f"and points a non-member at the guest path, got {miss}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

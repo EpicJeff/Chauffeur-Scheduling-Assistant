@@ -1156,6 +1156,16 @@ class Occasion(BaseModel):
     # Without this the gap report nags forever about a deliberate decision,
     # which is how a report stops being read.
     dismissed: List[str] = Field(default_factory=list)
+    # Who from the household is actually coming: {member_id: bool}, and ONLY
+    # for members somebody has decided about. Absent means "the default for
+    # that role", which is what lets a member added next month behave sensibly
+    # instead of silently missing from every occasion already on the books.
+    #
+    # The first cut counted every non-helper member automatically with no way
+    # to say otherwise, which is wrong the moment a family has an adult who
+    # lives elsewhere, a parent away that week, or a helper who IS invited to
+    # the party. Attendance is a decision, not a property of the roster.
+    attendance: Dict[str, bool] = Field(default_factory=dict)
     created_at: float = Field(default_factory=time.time)
 
 
