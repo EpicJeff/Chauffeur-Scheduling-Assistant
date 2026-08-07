@@ -46,6 +46,7 @@ def reset_db():
             if name.endswith("_table"):
                 val.truncate()
     storage._distance_mem_cache = None
+    seed_categories()
     # Offline, deterministic travel: 15 min between any two different places.
     maps.get_travel_time_minutes = lambda a, b, *args, **kw: (
         0 if (a or "").lower() == (b or "").lower() else 15)
@@ -898,20 +899,30 @@ def _pantry():
             'fruit': fruit, 'tacos': tacos}
 
 
-def scenario_a_plate_is_an_entree_plus_sides_plus_dessert():
+def scenario_a_plate_is_composed_from_the_familys_own_blocks():
+    """What used to be "an entree plus two sides plus a dessert" is now
+    whatever the family said their plate is. Same shape here, said in their
+    words: one protein, one vegetable, one starch, something sweet."""
     reset_db(); _seed_people()
-    _settings(sides_per_meal=2, include_dessert=True)
+    cats = {c['name']: c for c in storage.get_dish_categories()}
+    cats['something sweet']['min_per_plate'] = 1
+    storage.save_dish_category(cats['something sweet'])
     p = _pantry()
     storage.set_cached_schedule({"events": [], "assignments": {},
                                  "matched_rules": {}, "scheduled_errands": []})
     dishes = meals.compose_plate(DAY)
-    types = [d['type'] for d in dishes]
-    check(types.count('side') == 2, f"two sides, as configured — got {types}")
-    check(types.count('dessert') == 1, "and the fruit this family always has")
-    check(types[0] in ('entree', 'meal'), f"led by a main, got {types}")
-    kinds = [d.get('side_type') for d in dishes if d['type'] == 'side']
-    check(len(set(kinds)) == 2,
-          f"sides spread across kinds rather than two of the same — got {kinds}")
+
+    def in_cat(name):
+        cid = category_id(name)
+        return [d for d in dishes if cid in (d.get('category_ids') or [])]
+
+    check(len(in_cat('protein')) == 1, f"one protein, got {[d['name'] for d in dishes]}")
+    check(len(in_cat('vegetables')) == 1, "one vegetable")
+    check(len(in_cat('starches/carbs')) == 1, "one starch")
+    check(len(in_cat('something sweet')) == 1, "and the fruit this family always has")
+    check(dishes[0]['type'] == 'meal'
+          or category_id('protein') in (dishes[0].get('category_ids') or []),
+          f"led by the first block the family asked for, got {dishes[0]['name']}")
 
 
 def scenario_the_side_count_is_a_knob_not_a_stored_shape():
@@ -921,10 +932,14 @@ def scenario_the_side_count_is_a_knob_not_a_stored_shape():
     p = _pantry()
     storage.set_cached_schedule({"events": [], "assignments": {},
                                  "matched_rules": {}, "scheduled_errands": []})
+    veg = next(c for c in storage.get_dish_categories() if c['name'] == 'vegetables')
     for n in (0, 1, 3):
-        s = _settings(sides_per_meal=n, include_dessert=False)
-        got = [d for d in meals.compose_plate(DAY, settings=s) if d['type'] == 'side']
-        check(len(got) == n, f"asked for {n} sides, got {len(got)}")
+        veg['min_per_plate'], veg['max_per_plate'] = n, max(n, 1)
+        storage.save_dish_category(veg)
+        cid = veg['id']
+        got = [d for d in meals.compose_plate(DAY)
+               if cid in (d.get('category_ids') or [])]
+        check(len(got) == n, f"asked for {n} vegetables, got {len(got)}")
 
 
 def scenario_a_meal_dish_stands_alone():
@@ -949,11 +964,15 @@ def scenario_dessert_is_a_family_setting():
     p = _pantry()
     storage.set_cached_schedule({"events": [], "assignments": {},
                                  "matched_rules": {}, "scheduled_errands": []})
-    on = _settings(sides_per_meal=1, include_dessert=True)
-    off = _settings(sides_per_meal=1, include_dessert=False)
-    check(any(d['type'] == 'dessert' for d in meals.compose_plate(DAY, settings=on)),
+    sweet = next(c for c in storage.get_dish_categories() if c['name'] == 'something sweet')
+    cid = sweet['id']
+    sweet['min_per_plate'] = 1
+    storage.save_dish_category(sweet)
+    check(any(cid in (d.get('category_ids') or []) for d in meals.compose_plate(DAY)),
           "families who always have fruit get it")
-    check(not any(d['type'] == 'dessert' for d in meals.compose_plate(DAY, settings=off)),
+    sweet['min_per_plate'] = 0
+    storage.save_dish_category(sweet)
+    check(not any(cid in (d.get('category_ids') or []) for d in meals.compose_plate(DAY)),
           "families who have nothing after dinner are not offered any")
 
 
@@ -1026,13 +1045,13 @@ def scenario_migration_types_m4_dishes_and_retires_slot_meals():
     meal, d = _plate_meal()            # an M4 slot-meal with role-tagged dishes
     res = meals.migrate_slot_meals()
     check(res['retired_meals'] == 1, "the stored combination is retired")
-    check(storage.get_dish(d['chicken']['id'])['type'] == 'entree',
-          "role=protein became type=entree")
+    check(storage.get_dish(d['chicken']['id'])['category_ids'] == [category_id('protein')],
+          "role=protein lands in the family's protein category")
     veg = storage.get_dish(d['veg'][0]['id'])
-    check(veg['type'] == 'side' and veg['side_type'] == 'vegetable',
-          f"role=vegetable became a vegetable side, got {veg.get('side_type')}")
-    check(storage.get_dish(d['rice']['id'])['side_type'] == 'starch',
-          "and role=starch became a starch side")
+    check(veg['type'] == 'dish' and veg['category_ids'] == [category_id('vegetables')],
+          f"role=vegetable became a vegetable, got {veg.get('category_ids')}")
+    check(storage.get_dish(d['rice']['id'])['category_ids'] == [category_id('starches/carbs')],
+          "and role=starch became a starch")
     check(all(dd['id'] for dd in storage.get_dishes()),
           "no dish the family entered is lost — only the grouping goes")
 
@@ -1043,14 +1062,21 @@ def scenario_extraction_emits_one_dish_per_alternative():
                                     "home_location": HOME}
     payload = {"dishes": [
         {"name": "roasted chicken thighs", "short_name": "chicken",
-         "type": "entree", "finish_mins": 10, "portability": "utensils_ok"},
-        {"name": "black beans", "short_name": "beans", "type": "side",
-         "side_type": "starch", "finish_mins": 5, "portability": "utensils_ok"},
-        {"name": "pinto beans", "short_name": "beans", "type": "side",
-         "side_type": "starch", "finish_mins": 5, "portability": "utensils_ok"},
-        {"name": "steamed carrots", "short_name": "carrots", "type": "side",
-         "side_type": "vegetable", "finish_mins": 8, "portability": "utensils_ok"},
-        {"name": "fresh fruit", "short_name": "fruit", "type": "dessert",
+         "type": "dish", "categories": ["protein"],
+         "finish_mins": 10, "portability": "utensils_ok"},
+        # The classifier answers in the FAMILY'S words. Beans as both protein
+        # and starch is the case the fixed taxonomy could not express at all.
+        {"name": "black beans", "short_name": "beans", "type": "dish",
+         "categories": ["protein", "starches/carbs"],
+         "finish_mins": 5, "portability": "utensils_ok"},
+        {"name": "pinto beans", "short_name": "beans", "type": "dish",
+         "categories": ["starches/carbs"],
+         "finish_mins": 5, "portability": "utensils_ok"},
+        {"name": "steamed carrots", "short_name": "carrots", "type": "dish",
+         "categories": ["vegetable"],   # singular: a plural must still match
+         "finish_mins": 8, "portability": "utensils_ok"},
+        {"name": "fresh fruit", "short_name": "fruit", "type": "dish",
+         "categories": ["something sweet"],
          "finish_mins": 5, "portability": "utensils_ok"},
     ]}
     with mock.patch('services.model_pools.call_pool_json', return_value=payload):
@@ -1059,8 +1085,16 @@ def scenario_extraction_emits_one_dish_per_alternative():
     check(len(res['added']) == 5,
           f"every alternative is its own dish — got {len(res['added'])}")
     check(not storage.get_meals(), "and nothing stores a combination any more")
-    by_type = {d['type'] for d in storage.get_dishes()}
-    check(by_type == {'entree', 'side', 'dessert'}, f"typed on the way in, got {by_type}")
+    by_name = {d['name']: d for d in storage.get_dishes()}
+    check({d['type'] for d in storage.get_dishes()} == {'dish'},
+          "nothing here is a whole meal on its own")
+    check(by_name['black beans']['category_ids']
+          == [category_id('protein'), category_id('starches/carbs')],
+          "a dish can serve as either, which the old side_type could not say")
+    check(by_name['steamed carrots']['category_ids'] == [category_id('vegetables')],
+          "a singular answer still matches the family's plural category")
+    check(by_name['fresh fruit']['category_ids'] == [category_id('something sweet')],
+          "and their own words for pudding are honoured")
 
     # Re-entering the same text reuses rather than duplicating.
     with mock.patch('services.model_pools.call_pool_json', return_value=payload):
@@ -1237,8 +1271,64 @@ def scenario_m5_tools_in_both_stacks():
 
 # --- M4: dishes are the unit of work ----------------------------------------
 
+# The category set these tests compose against. Named and ranged to mirror the
+# old fixed taxonomy exactly — one main plus two sides — so every pre-v2.108
+# scenario keeps asserting the same behaviour through the new model instead of
+# being rewritten around it.
+_TEST_CATEGORIES = [
+    ('protein', 1, 1, False),
+    ('vegetables', 1, 1, False),
+    ('starches/carbs', 1, 1, False),
+    ('salad', 0, 1, False),
+    ('other', 0, 1, False),
+    ('something sweet', 0, 1, True),
+]
+_LEGACY_TO_CATEGORY = {
+    ('entree', None): 'protein',
+    ('side', 'vegetable'): 'vegetables',
+    ('side', 'starch'): 'starches/carbs',
+    ('side', 'salad'): 'salad',
+    # The old prompt's own rule was "beans served as a starch", and the legacy
+    # 'other' bucket is mostly beans in these scenarios — so it maps to the
+    # starch block rather than to a category no plate asks for.
+    ('side', 'other'): 'starches/carbs',
+    ('side', None): 'starches/carbs',
+    ('dessert', None): 'something sweet',
+}
+
+
+def seed_categories():
+    """Recreate the family vocabulary after a reset_db truncate."""
+    import time as _t
+    for i, (name, lo, hi, with_meal) in enumerate(_TEST_CATEGORIES):
+        storage.save_dish_category({
+            'id': 'cat-' + name.split('/')[0].replace(' ', '-'),
+            'name': name, 'description': '', 'min_per_plate': lo,
+            'max_per_plate': hi, 'with_complete_meal': with_meal,
+            'order': i, 'created_at': _t.time()})
+    storage.set_app_state('dish_categories_seeded', True)
+
+
+def category_id(name):
+    return next(c['id'] for c in storage.get_dish_categories() if c['name'] == name)
+
+
 def _dish(name, **kw):
+    """Legacy `type=`/`side_type=` kwargs are translated to the family's
+    categories, so the existing scenarios exercise the new composer."""
     from models.schemas import Dish
+    if not storage.get_dish_categories():
+        seed_categories()
+    legacy_type = kw.pop('type', None)
+    legacy_side = kw.pop('side_type', None)
+    if legacy_type == 'meal':
+        kw['type'] = 'meal'
+    elif legacy_type is not None or legacy_side is not None:
+        kw['type'] = 'dish'
+        cat = (_LEGACY_TO_CATEGORY.get((legacy_type, legacy_side))
+               or _LEGACY_TO_CATEGORY.get((legacy_type, None)))
+        if cat and not kw.get('category_ids'):
+            kw['category_ids'] = [category_id(cat)]
     d = Dish(name=name, **kw).model_dump()
     storage.add_dish(d)
     return d
@@ -1829,15 +1919,17 @@ def scenario_a_week_does_not_repeat_the_same_dinner():
 
     week = meals.compose_week('2026-08-08', 7)
     check(len(week) == 7, f"seven nights, got {len(week)}")
-    entrees = [next(x['name'] for x in d['dishes'] if x['type'] == 'entree')
+    prot = category_id('protein')
+    entrees = [next(x['name'] for x in d['dishes']
+                    if prot in (x.get('category_ids') or []))
                for d in week]
     check(len(set(entrees)) == 7,
-          f"seven DIFFERENT entrees across the week, got {entrees}")
+          f"seven DIFFERENT proteins across the week, got {entrees}")
 
     # And prove the old behaviour really was the failure: composing each day
     # independently (no forward simulation) collapses to one dinner.
     solo = [next(x['name'] for x in meals.compose_plate(d['date'])
-                 if x['type'] == 'entree') for d in week]
+                 if prot in (x.get('category_ids') or [])) for d in week]
     check(len(set(solo)) == 1,
           f"without the overlay every night is the same — got {set(solo)}")
 
@@ -2417,8 +2509,13 @@ def _repropose_bed(entrees=('tacos', 'brisket', 'chicken', 'pasta', 'chili')):
 
 
 def _entrees_of(week):
+    """What leads each night — the first block the family asks a plate to have,
+    which is the protein here (a whole-meal dish leads on its own)."""
+    prot = category_id('protein')
     return {d['date']: next((x['name'] for x in d['dishes']
-                             if x.get('type') == 'entree'), None) for d in week}
+                             if x.get('type') == 'meal'
+                             or prot in (x.get('category_ids') or [])), None)
+            for d in week}
 
 
 def scenario_repropose_moves_a_week_nobody_has_touched():
@@ -2676,11 +2773,16 @@ def scenario_a_pairing_cycle_terminates():
           f"mutual pairing does not loop, got {[len(d['dishes']) for d in week]}")
 
 
-def scenario_paired_sides_fill_the_slots_they_occupy():
+def scenario_paired_sides_fill_the_blocks_they_occupy():
+    """A pairing counts AGAINST the block it belongs to rather than piling on
+    top of it — brisket bringing beans and fries fills the starch block, so no
+    third starch is proposed. It does NOT excuse the other blocks: the family
+    asked for a vegetable and beans are not one. That is the gain over the old
+    flat side count, where two sides of anything satisfied the plate and the
+    vegetable a family said they wanted quietly never arrived."""
     reset_db(); _seed_people()
-    _settings(sides_per_meal=2, include_dessert=False)
     brisket = _dish('brisket', type='entree')
-    beans = _dish('beans', type='side', side_type='other')
+    beans = _dish('beans', type='side', side_type='other')     # -> starch
     fries = _dish('fries', type='side', side_type='starch')
     for n, st in (('broccoli', 'vegetable'), ('rice', 'starch')):
         _dish(n, type='side', side_type=st)
@@ -2688,10 +2790,15 @@ def scenario_paired_sides_fill_the_slots_they_occupy():
 
     day = next(d for d in meals.compose_week('2026-09-10', 6)
                if any(x['name'] == 'brisket' for x in d['dishes']))
-    sides = [x for x in day['dishes'] if x['type'] == 'side']
-    check(len(sides) == 2, f"two sides asked for, two delivered — the pairing "
-                           f"fills them rather than adding a third, got "
-                           f"{[s['name'] for s in sides]}")
+    names = [x['name'] for x in day['dishes']]
+    starch = category_id('starches/carbs')
+    starches = sorted(x['name'] for x in day['dishes']
+                      if starch in (x.get('category_ids') or []))
+    check(starches == ['beans', 'fries'],
+          f"the pairing fills the starch block, no third starch, got {starches}")
+    check('rice' not in names, f"rice is not piled on top, got {names}")
+    check('broccoli' in names,
+          f"and the vegetable the family asked for still arrives, got {names}")
 
 
 def scenario_pairing_tools_in_both_stacks():
@@ -3600,6 +3707,147 @@ def scenario_dish_scope_is_sayable_in_both_stacks():
     agent_tools_v2.set_dish_scope('turkey', occasion_only=False)
     check(storage.find_dish_by_name('roast turkey')['scope'] == 'everyday',
           "and it comes back the same way")
+
+
+def scenario_a_dish_fills_at_most_one_slot():
+    """The rule that keeps multi-category dishes from making a family do
+    arithmetic. Black beans are the protein next to rice and the starch next to
+    a steak — which the old fixed side_type could not say at all — but they can
+    never satisfy both blocks at once."""
+    reset_db(); _seed_people()
+    beans = _dish('black beans', category_ids=[category_id('protein'),
+                                               category_id('starches/carbs')])
+    _dish('broccoli', type='side', side_type='vegetable')
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    dishes = meals.compose_plate(DAY)
+    check([d['name'] for d in dishes].count('black beans') == 1,
+          f"beans appear once, not once per category, got {[d['name'] for d in dishes]}")
+    # With nothing else able to be a starch, the starch block simply goes
+    # unfilled — minimums bend rather than duplicating a dish.
+    starches = [d for d in dishes
+                if category_id('starches/carbs') in (d.get('category_ids') or [])]
+    check(len(starches) <= 1, f"no double-counting, got {starches}")
+
+    # Give it a dedicated starch and beans free up to be the protein.
+    _dish('rice', type='side', side_type='starch')
+    names = [d['name'] for d in meals.compose_plate(DAY)]
+    check('black beans' in names and 'rice' in names,
+          f"beans answer the protein, rice the starch, got {names}")
+
+
+def scenario_a_whole_meal_satisfies_the_composition():
+    """Marking spaghetti a meal is one word and means "nothing beside it" —
+    the alternative was tagging it protein+starch and deleting the vegetables
+    off every spaghetti night forever."""
+    reset_db(); _seed_people()
+    _dish('spaghetti & meat sauce', type='meal')
+    _dish('broccoli', type='side', side_type='vegetable')
+    _dish('rice', type='side', side_type='starch')
+    fruit = _dish('fresh fruit', category_ids=[category_id('something sweet')])
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+
+    sweet = next(c for c in storage.get_dish_categories() if c['name'] == 'something sweet')
+    sweet['min_per_plate'] = 1        # ...but something sweet opted in
+    storage.save_dish_category(sweet)
+    names = [d['name'] for d in meals.compose_plate(DAY)]
+    check('spaghetti & meat sauce' in names, "the meal leads")
+    check('broccoli' not in names and 'rice' not in names,
+          f"and nothing is served beside it, got {names}")
+    check(fruit['name'] in names,
+          f"except the block that opted in with with_complete_meal, got {names}")
+
+
+def scenario_categories_are_seeded_from_what_the_family_already_has():
+    """Nobody re-enters 25 dishes. The old taxonomy migrates into the family's
+    own list, which they then rename and re-range."""
+    reset_db()
+    with storage.db_lock:
+        storage.dish_categories_table.truncate()
+        storage.app_state_table.truncate()
+    # A genuine pre-v2.108 repertoire: the old vocabulary, no categories.
+    for name, t, st in (('roast chicken', 'entree', None),
+                        ('broccoli', 'side', 'vegetable'),
+                        ('tacos', 'meal', None),
+                        ('fresh fruit', 'dessert', None)):
+        storage.add_dish({'id': name.replace(' ', '-'), 'name': name,
+                          'type': t, 'side_type': st, 'category_ids': [],
+                          'is_active': True})
+
+    storage.ensure_dish_categories()
+    names = [c['name'] for c in storage.get_dish_categories()]
+    check('protein' in names and 'vegetables' in names and 'something sweet' in names,
+          f"categories seeded from the repertoire, got {names}")
+    check('salad' not in names, f"and none nobody owns a dish for, got {names}")
+    by_name = {d['name']: d for d in storage.get_dishes()}
+    check(by_name['roast chicken']['category_ids'] == [category_id('protein')],
+          "the entree became a protein")
+    check(by_name['tacos']['type'] == 'meal', "a whole meal stays a whole meal")
+    check(by_name['broccoli']['type'] == 'dish', "and everything else is just a dish")
+
+    # One-shot: a family that deletes a category must not find it resurrected.
+    storage.delete_dish_category(category_id('vegetables'))
+    storage.ensure_dish_categories()
+    check('vegetables' not in [c['name'] for c in storage.get_dish_categories()],
+          "seeding never runs twice")
+
+
+def scenario_setting_what_a_dish_is_by_hand_and_by_voice():
+    """Every one of these existed in the model and on no screen — the only way
+    to fix a misfiled dish was to ask the agent and hope it re-extracted
+    differently. Both stacks, because the chat widget uses the other one."""
+    reset_db()
+    beans = _dish('black beans', type='side', side_type='starch')
+    from services import agent_tools, agent_tools_v2
+    check('set_dish_categories' in {t['name'] for t in agent_tools_v2.get_available_tools()},
+          "v2 offers the tool")
+    check('set_dish_categories' in agent_tools.TOOL_SCHEMAS
+          and 'set_dish_categories' in agent_tools.TOOL_HANDLERS, "and so does v1")
+
+    res = agent_tools.execute_tool('set_dish_categories',
+                                   {'dish_name': 'black beans',
+                                    'categories': 'protein, starches/carbs'})
+    got = storage.get_dish(beans['id'])
+    check(got['category_ids'] == [category_id('protein'), category_id('starches/carbs')],
+          f"the v1 bridge writes through, got {res}")
+
+    agent_tools_v2.set_dish_categories('black beans', whole_meal=True, serves=8)
+    got = storage.get_dish(beans['id'])
+    check(got['type'] == 'meal' and got['serves'] == 8,
+          f"whole-meal and serves are settable too, got {got['type']}/{got['serves']}")
+
+    # A category nobody created is reported, never invented.
+    bad = agent_tools_v2.set_dish_categories('black beans', categories='amuse-bouche')
+    check(bad['status'] == 'error' and 'protein' in bad['message'],
+          f"unknown category names the ones they do have, got {bad}")
+    check(len(storage.get_dish_categories()) == len(_TEST_CATEGORIES),
+          "and nothing was created behind their back")
+
+
+def scenario_a_renamed_category_propagates_nowhere():
+    reset_db()
+    veg = next(c for c in storage.get_dish_categories() if c['name'] == 'vegetables')
+    d = _dish('broccoli', type='side', side_type='vegetable')
+    veg['name'] = 'greens'
+    storage.save_dish_category(veg)
+    check(storage.get_dish(d['id'])['category_ids'] == [veg['id']],
+          "the dish still points at the same category — ids are stable")
+    check(any(c['name'] == 'greens' for c in storage.get_dish_categories()),
+          "and the family's word for it is what shows")
+
+
+def scenario_the_classifier_is_given_the_familys_words():
+    reset_db()
+    block = meals.category_prompt_block()
+    check('protein' in block and 'starches/carbs' in block,
+          f"their categories are in the prompt, got {block!r}")
+    check('entree' not in block, "and ours are not")
+    check(meals.resolve_category_names(['Protein', 'vegetable']) ==
+          [category_id('protein'), category_id('vegetables')],
+          "case and a stray plural still resolve")
+    check(meals.resolve_category_names(['appetiser']) == [],
+          "a category they never created is discarded, not invented")
 
 
 def scenario_nights_stay_on_the_record():

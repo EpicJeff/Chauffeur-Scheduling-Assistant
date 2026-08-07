@@ -509,8 +509,6 @@ class Settings(BaseModel):
     # How a plate is built when nobody has said otherwise (meals arc M5).
     # A knob, not a rule: tonight's plate is editable, so this is only the
     # starting proposal.
-    sides_per_meal: int = 2
-    include_dessert: bool = True
     # The provisioning cycle (meals arc M6). Families do not plan "the next 7
     # days" — they plan up to the next grocery run, a day or two before it, and
     # buy for that span. Both of those are what the week plan is anchored to,
@@ -885,6 +883,43 @@ class MealIngredient(BaseModel):
     role: Optional[str] = None
     optional: bool = False             # the salad nobody minds skipping
 
+class DishCategory(BaseModel):
+    """The family's OWN vocabulary for what goes on a plate, and how much.
+
+    M5 shipped a fixed taxonomy — meal/entree/side plus vegetable/starch/salad/
+    other — which is restaurant vocabulary imposed on a household. "Entree" is a
+    word families do not use; "protein" is, for the ones who think
+    nutritionally, and "a meat, a bread and a potato" is for the ones who don't.
+    Worse, the fixed list actively lied: the extractor was told beans are a
+    starch, so a family whose protein comes from beans had no protein on any
+    plate the app composed. `MealComponent.role` had already reached this
+    conclusion once — "deliberately NOT a controlled vocabulary... that road
+    ends at a meal-builder" — before M5 built one anyway.
+
+    A category IS its own composition rule, which is why this is one model and
+    not two: "protein" and "one protein per plate" are the same sentence in
+    every household that says it. `id` is stable and `name` is editable, so
+    renaming "dessert" to "something sweet" propagates nowhere.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str                            # "protein", "starches/carbs"
+    # One line, fed to the classifier — this is how the family teaches the
+    # model their vocabulary instead of inheriting ours.
+    description: str = ""
+    # What a plate wants. The composer fills to `min_per_plate`; `max_per_plate`
+    # is the ceiling that leftovers, pairings and the family's own hand may
+    # reach but nothing may exceed.
+    min_per_plate: int = 0
+    max_per_plate: int = 1
+    # A dish marked `type='meal'` is the whole plate and satisfies every
+    # category on its own. Something sweet is the exception a family actually
+    # wants — spaghetti night still ends with fruit — so the block says so
+    # rather than the code hardcoding "dessert is special".
+    with_complete_meal: bool = False
+    order: int = 0
+    created_at: float = 0.0
+
+
 class Dish(BaseModel):
     # Meals & provisioning arc M4. THE DISH IS THE UNIT OF WORK — roasted
     # potatoes and mashed potatoes are different jobs with different times and
@@ -909,12 +944,24 @@ class Dish(BaseModel):
     # eat combinations of maybe 25 dishes, so storing the combinations was
     # both lossy (the count froze at whatever was typed) and misleading (one
     # "meal" standing for a dozen dinners).
-    #   meal    — complete on its own (tacos, spaghetti and meatballs)
-    #   entree  — the main; needs sides
-    #   side    — see `side_type`
-    #   dessert — optional on any plate (fresh fruit here, a cookie elsewhere)
-    type: str = 'side'
-    side_type: Optional[str] = None    # vegetable | starch | salad | other
+    #   meal — complete on its own (tacos, spaghetti and meatballs). Satisfies
+    #          the whole composition; nothing is added beside it except the
+    #          categories that opted in with `with_complete_meal`.
+    #   dish — fills ONE slot on a plate, chosen from `category_ids`.
+    #
+    # Kept as a flag rather than dissolved into categories because the
+    # alternative makes the family do arithmetic: if spaghetti & meat sauce were
+    # tagged protein+starch against a plate wanting 2-3 vegetables, every
+    # spaghetti night would arrive with vegetables to delete. "It's a meal" is
+    # one word and it is what people actually say.
+    type: str = 'dish'                 # meal | dish
+    # The family's own categories (DishCategory ids). MULTIPLE categories mean
+    # "can serve as any of these", NOT "counts as all of these at once" — a
+    # dish fills at most one slot per plate. That is what lets black beans be
+    # the protein next to rice and the starch next to a steak, which is exactly
+    # what the old fixed `side_type` could not say.
+    category_ids: List[str] = Field(default_factory=list)
+    side_type: Optional[str] = None    # legacy (pre-v2.108) — migrated to categories
     role: Optional[str] = None         # legacy free-text label (pre-M5)
 
     # Kiosk board (arc K1). An image is NOT decoration here: a child who

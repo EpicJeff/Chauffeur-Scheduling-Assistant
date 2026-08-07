@@ -1818,6 +1818,53 @@ def set_dish_scope(dish_name: str, occasion_only: bool = True,
             "message": f"Got it — {nm} is back in the everyday rotation."}
 
 
+def set_dish_categories(dish_name: str, categories: str = "",
+                        whole_meal: bool = None, serves: int = None,
+                        acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "black beans are a protein, not just a starch", "spaghetti and
+    meat sauce is a whole meal", "the chili serves eight".
+
+    The correction path for what a dish IS. Categories are the FAMILY'S own,
+    so an unknown one is reported rather than invented — the agent must not
+    quietly create vocabulary nobody chose.
+    """
+    from services import storage, meals as _meals
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error",
+                "message": f"I don't have a dish called '{dish_name}'."}
+    nm = dish.get('short_name') or dish['name']
+    patch, said = {}, []
+    wanted = [c.strip() for c in (categories or '').split(',') if c.strip()]
+    if wanted:
+        ids = _meals.resolve_category_names(wanted)
+        if not ids:
+            known = ', '.join(c['name'] for c in storage.get_dish_categories())
+            return {"status": "error",
+                    "message": f"I don't have a category called "
+                               f"'{wanted[0]}'. You have: {known or 'none yet'}."}
+        patch['category_ids'] = ids
+        names = [c['name'] for c in storage.get_dish_categories() if c['id'] in ids]
+        said.append("counts as " + " or ".join(names))
+    if whole_meal is not None:
+        patch['type'] = 'meal' if whole_meal else 'dish'
+        said.append("a whole dinner on its own" if whole_meal
+                    else "one part of a plate")
+    if serves is not None:
+        try:
+            patch['serves'] = max(1, min(50, int(serves)))
+            said.append(f"serves {patch['serves']}")
+        except (TypeError, ValueError):
+            pass
+    if not patch:
+        return {"status": "error",
+                "message": "Tell me what to change — the categories, whether "
+                           "it's a whole meal, or how many it serves."}
+    storage.update_dish(dish['id'], patch)
+    return {"status": "success",
+            "message": f"Got it — {nm} " + ", ".join(said) + "."}
+
+
 def unpair_dishes(dish_name: str, partner_name: str = "",
                   acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "brisket doesn't always come with fries anymore"."""
@@ -2696,6 +2743,20 @@ def get_available_tools() -> List[Dict]:
                 "properties": {
                     "dish_name": {"type": "string", "description": "Which dish, e.g. turkey."},
                     "occasion_only": {"type": "boolean", "description": "true for holiday/party only (the default), false to return it to everyday."}
+                },
+                "required": ["dish_name"]
+            }
+        },
+        {
+            "name": "set_dish_categories",
+            "description": "Corrects what a dish IS on the plate, using the family's own categories: black beans are a protein not just a starch, spaghetti and meat sauce is a whole meal on its own, the chili serves eight. A dish may belong to several categories - it then fills whichever one the plate still needs, never two at once. Use this instead of re-adding the dish when the classification came out wrong.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish, e.g. black beans."},
+                    "categories": {"type": "string", "description": "Comma-separated category names, in the family's own words, e.g. 'protein, starches/carbs'."},
+                    "whole_meal": {"type": "boolean", "description": "true if it is a whole dinner on its own and nothing is served beside it."},
+                    "serves": {"type": "integer", "description": "How many people it feeds."}
                 },
                 "required": ["dish_name"]
             }

@@ -5285,15 +5285,14 @@ class PlateEdit(BaseModel):
 
 @app.get("/api/meals/plate")
 def tonights_plate(date: Optional[str] = None):
-    """Tonight's dinner: an entree plus sides (or a one-dish meal), with a
-    dessert if the family keeps them — proposed by rule, then editable."""
+    """Tonight's dinner: a whole-meal dish, or one composed to the family's own
+    plate shape — proposed by rule, then editable."""
     import datetime as _dt
     from services import meals as _meals
     date_str = date or _dt.date.today().isoformat()
     plan = _meals.eating_plan(date_str, 'dinner')
     plate = _meals.get_or_compose_plate(date_str, plan)
     totals = _meals.plate_totals(plate['dishes'], date_str)
-    sides_n, dessert = _meals.plate_settings()
     return {'date': date_str, 'edited': plate['edited'],
             'dishes': _meals.with_chip_labels(plate['dishes']),
             'prep_ahead_mins': totals.get('prep_ahead_mins'),
@@ -5304,7 +5303,6 @@ def tonights_plate(date: Optional[str] = None):
             'cooks': totals.get('cooks'),
             'needs_ahead': totals.get('needs_ahead'),
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
-            'sides_per_meal': sides_n, 'include_dessert': dessert,
             'cook_window_mins': plan.get('cook_window_mins'),
             'split': plan.get('split'), 'packed_count': plan.get('packed_count'),
             'nobody_can_eat': plan.get('nobody_can_eat'),
@@ -5352,7 +5350,6 @@ def meal_week(start: Optional[str] = None, days: Optional[int] = None):
     start_str = start or win['start']
     n = int(days) if days else win['days']
     return {'window': win, 'start': start_str, 'days': n,
-            'sides_per_meal': _meals.plate_settings()[0],
             'week': _meals.compose_week(start_str, n)}
 
 class WalmartMap(BaseModel):
@@ -5654,7 +5651,78 @@ def meal_week_repropose(start: Optional[str] = None, days: Optional[int] = None)
     week = _meals.repropose_week(start_str, n)
     _touch_stream()
     return {'window': win, 'start': start_str, 'days': n,
-            'sides_per_meal': _meals.plate_settings()[0], 'week': week}
+            'week': week}
+
+class DishCategoryReq(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: str = ""
+    min_per_plate: int = 0
+    max_per_plate: int = 1
+    with_complete_meal: bool = False
+    order: int = 0
+
+@app.get("/api/meals/categories")
+def list_dish_categories():
+    """The family's own plate vocabulary, and how much of each a plate wants."""
+    cats = storage.get_dish_categories()
+    dishes = storage.get_dishes()
+    for c in cats:
+        c['dish_count'] = len([d for d in dishes
+                               if c['id'] in (d.get('category_ids') or [])])
+    return {'categories': cats}
+
+@app.post("/api/meals/categories")
+def save_dish_category(req: DishCategoryReq):
+    import time as _t, uuid as _uuid
+    name = (req.name or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="A category needs a name")
+    prior = storage.get_dish_category(req.id) if req.id else None
+    lo = max(0, min(6, int(req.min_per_plate)))
+    hi = max(lo, min(6, int(req.max_per_plate)))
+    rec = {'id': (prior or {}).get('id') or req.id or _uuid.uuid4().hex,
+           'name': name, 'description': (req.description or '').strip(),
+           'min_per_plate': lo, 'max_per_plate': hi,
+           'with_complete_meal': bool(req.with_complete_meal),
+           'order': int(req.order),
+           'created_at': (prior or {}).get('created_at') or _t.time()}
+    storage.save_dish_category(rec)
+    _touch_stream()
+    return rec
+
+@app.delete("/api/meals/categories/{cat_id}")
+def delete_dish_category(cat_id: str):
+    touched = storage.delete_dish_category(cat_id)
+    _touch_stream()
+    return {'status': 'success', 'dishes_unassigned': touched}
+
+class DishFieldsReq(BaseModel):
+    """The corrections that used to need the agent: what a dish IS, and how
+    many it feeds. Every one of these existed in the model and on no screen."""
+    category_ids: Optional[List[str]] = None
+    type: Optional[str] = None            # meal | dish
+    serves: Optional[int] = None
+    tags: Optional[List[str]] = None
+
+@app.patch("/api/meals/dishes/{dish_id}/fields")
+def set_dish_fields(dish_id: str, req: DishFieldsReq):
+    if not storage.get_dish(dish_id):
+        raise HTTPException(status_code=404, detail="No such dish")
+    patch = {}
+    if req.category_ids is not None:
+        known = {c['id'] for c in storage.get_dish_categories()}
+        patch['category_ids'] = [c for c in req.category_ids if c in known]
+    if req.type is not None:
+        patch['type'] = 'meal' if req.type == 'meal' else 'dish'
+    if req.serves is not None:
+        patch['serves'] = max(1, min(50, int(req.serves)))
+    if req.tags is not None:
+        patch['tags'] = [str(t).strip().lower()[:24] for t in req.tags[:6] if str(t).strip()]
+    if patch:
+        storage.update_dish(dish_id, patch)
+    _touch_stream()
+    return {'status': 'success', 'dish': storage.get_dish(dish_id)}
 
 @app.get("/api/meals/history")
 def meal_history(days: int = 21):

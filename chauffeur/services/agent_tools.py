@@ -635,6 +635,15 @@ class SetDishScopeTool(BaseModel):
     dish_name: str = Field(..., description="Which dish, e.g. turkey.")
     occasion_only: Optional[bool] = Field(True, description="true for holiday/party only, false to return it to everyday.")
 
+class SetDishCategoriesTool(BaseModel):
+    """
+    Corrects what a dish IS on the plate, using the family's own categories ("black beans are a protein, not just a starch", "spaghetti and meat sauce is a whole meal", "the chili serves eight"). A dish may belong to several categories and then fills whichever one the plate still needs, never two at once.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. black beans.")
+    categories: Optional[str] = Field("", description="Comma-separated category names in the family's own words, e.g. 'protein, starches/carbs'.")
+    whole_meal: Optional[bool] = Field(None, description="true if it is a whole dinner on its own.")
+    serves: Optional[int] = Field(None, description="How many people it feeds.")
+
 class UnpairDishesTool(BaseModel):
     """
     Removes a pairing between dishes.
@@ -827,6 +836,7 @@ TOOL_SCHEMAS = {
     "pair_dishes": PairDishesTool.model_json_schema(),
     "unpair_dishes": UnpairDishesTool.model_json_schema(),
     "set_dish_scope": SetDishScopeTool.model_json_schema(),
+    "set_dish_categories": SetDishCategoriesTool.model_json_schema(),
     "set_hosting": SetHostingTool.model_json_schema(),
     "get_run_sheet": GetRunSheetTool.model_json_schema(),
     "add_occasion": AddOccasionTool.model_json_schema(),
@@ -2062,6 +2072,13 @@ def handle_set_hosting(args: dict) -> dict:
                        int(args.get("serving_for") or 0),
                        int(args.get("cooks") or 0))
 
+def handle_set_dish_categories(args: dict) -> dict:
+    from services.agent_tools_v2 import set_dish_categories
+    return set_dish_categories(args.get("dish_name") or "",
+                               args.get("categories") or "",
+                               args.get("whole_meal"),
+                               args.get("serves"))
+
 def handle_set_dish_scope(args: dict) -> dict:
     from services.agent_tools_v2 import set_dish_scope
     occ = args.get("occasion_only")
@@ -2228,6 +2245,7 @@ TOOL_HANDLERS = {
     "pair_dishes": handle_pair_dishes,
     "unpair_dishes": handle_unpair_dishes,
     "set_dish_scope": handle_set_dish_scope,
+    "set_dish_categories": handle_set_dish_categories,
     "set_hosting": handle_set_hosting,
     "get_run_sheet": handle_get_run_sheet,
     "add_occasion": handle_add_occasion,

@@ -25,6 +25,7 @@ def reset_db():
             if name.endswith("_table"):
                 val.truncate()
     storage._distance_mem_cache = None
+    _seed_categories()
     maps.get_travel_time_minutes = lambda a, b, *args, **kw: (
         0 if (a or "").lower() == (b or "").lower() else 15)
 
@@ -67,8 +68,44 @@ def _member_id(name):
     return next(m['id'] for m in storage.get_all_members() if m['name'] == name)
 
 
+# The family vocabulary these scenarios compose against, mirroring the old
+# fixed taxonomy one-for-one so occasion behaviour is unchanged by v2.108.
+_OCCASION_CATEGORIES = [('protein', 1, 1, False), ('vegetables', 1, 1, False),
+                        ('starches/carbs', 1, 1, False),
+                        ('something sweet', 0, 1, True)]
+_LEGACY_TO_CATEGORY = {'entree': 'protein', 'vegetable': 'vegetables',
+                       'starch': 'starches/carbs', 'salad': 'vegetables',
+                       'other': 'starches/carbs', 'dessert': 'something sweet'}
+
+
+def _seed_categories():
+    import time as _t
+    for i, (name, lo, hi, with_meal) in enumerate(_OCCASION_CATEGORIES):
+        storage.save_dish_category({
+            'id': 'cat-' + name.split('/')[0].replace(' ', '-'), 'name': name,
+            'description': '', 'min_per_plate': lo, 'max_per_plate': hi,
+            'with_complete_meal': with_meal, 'order': i, 'created_at': _t.time()})
+    storage.set_app_state('dish_categories_seeded', True)
+
+
+def _category_id(name):
+    return next(c['id'] for c in storage.get_dish_categories() if c['name'] == name)
+
+
 def _dish(name, **kw):
+    """Legacy `type=`/`side_type=` are translated to the family's categories."""
     from models.schemas import Dish
+    if not storage.get_dish_categories():
+        _seed_categories()
+    legacy_type = kw.pop('type', None)
+    legacy_side = kw.pop('side_type', None)
+    if legacy_type == 'meal':
+        kw['type'] = 'meal'
+    elif legacy_type is not None or legacy_side is not None:
+        kw['type'] = 'dish'
+        cat = _LEGACY_TO_CATEGORY.get(legacy_side or legacy_type or '')
+        if cat and not kw.get('category_ids'):
+            kw['category_ids'] = [_category_id(cat)]
     d = Dish(name=name, **kw).model_dump()
     storage.add_dish(d)
     return d

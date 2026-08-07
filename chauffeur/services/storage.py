@@ -403,6 +403,7 @@ with db_lock:
     meals_table = db.table('meals')
     leftovers_table = db.table('leftovers')
     dishes_table = db.table('dishes')
+    dish_categories_table = db.table('dish_categories')
     plates_table = db.table('plates')
     walmart_items_table = db.table('walmart_items')
     meal_rules_table = db.table('meal_rules')
@@ -1903,6 +1904,159 @@ def mark_meal_served(meal_id: str, when: float = None) -> Optional[dict]:
 # --- Dishes (meals arc M4) ---
 # The unit of WORK. Reused across meals, so they are stored once and
 # referenced by MealSlot.dish_ids. See models.schemas.Dish.
+
+# --- Dish categories (v2.108: the family's own plate vocabulary) ---
+
+# The fixed taxonomy this replaces, and what each old value becomes. Seeding
+# from the repertoire rather than handing the family a blank slate is the whole
+# difference between "one-time setup" and "re-enter your 25 dishes".
+_LEGACY_CATEGORY_SEED = [
+    # (key, name, description, from-type, from-side_type)
+    ('protein', 'protein',
+     'the main source of protein — meat, fish, beans, eggs, tofu, a protein pasta',
+     'entree', None),
+    ('vegetable', 'vegetables', 'vegetables, cooked or raw', 'side', 'vegetable'),
+    ('starch', 'starches/carbs',
+     'rice, potatoes, pasta, bread and other carbohydrates', 'side', 'starch'),
+    ('salad', 'salad', 'a green or cold salad', 'side', 'salad'),
+    ('other', 'other', 'anything else that goes alongside', 'side', 'other'),
+    ('sweet', 'something sweet',
+     'fruit, a cookie, ice cream — whatever ends a meal', 'dessert', None),
+]
+
+
+def ensure_dish_categories():
+    """Seed the family's categories from the repertoire they already have.
+
+    ONE-SHOT, stamped in app_state: a family that deletes "salad" must not find
+    it resurrected on the next boot. Only categories that actually describe a
+    dish they own are created, so nobody inherits an empty "other".
+
+    The seeded ranges reproduce the old behavior as closely as a richer model
+    can: one protein, `sides_per_meal` worth of sides distributed vegetables
+    first, and something sweet iff `include_dessert` was on. All of it is then
+    editable, which is the point.
+    """
+    import uuid as _uuid
+    import time
+    with db_lock:
+        if get_app_state('dish_categories_seeded'):
+            return
+        dishes = [dict(d) for d in dishes_table.all()]
+        if not dishes and not dish_categories_table.all():
+            # Fresh install: seed the common shape so day one is not a blank
+            # slate either, but leave it entirely editable.
+            wanted = ['protein', 'vegetable', 'starch', 'sweet']
+        else:
+            wanted = []
+            for key, _n, _d, from_type, from_side in _LEGACY_CATEGORY_SEED:
+                for d in dishes:
+                    if (d.get('type') or 'side') != from_type:
+                        continue
+                    if from_side and (d.get('side_type') or 'other') != from_side:
+                        continue
+                    wanted.append(key)
+                    break
+        if not wanted:
+            set_app_state('dish_categories_seeded', True)
+            return
+
+        settings = get_settings() or {}
+        try:
+            sides_n = max(0, min(6, int(settings.get('sides_per_meal', 2))))
+        except (TypeError, ValueError):
+            sides_n = 2
+        dessert_on = settings.get('include_dessert')
+        dessert_on = True if dessert_on is None else bool(dessert_on)
+
+        # Idempotent by NAME as well as by stamp. The stamp alone was enough
+        # only while nothing ever cleared it; a second run then created a
+        # duplicate "protein" rather than doing nothing, and two categories of
+        # the same name are indistinguishable to everyone except the composer.
+        existing = {str(c.get('name') or '').strip().lower(): dict(c)
+                    for c in dish_categories_table.all()}
+        by_key, order = {}, len(existing)
+        remaining_sides = sides_n
+        for key, name, desc, _ft, _fs in _LEGACY_CATEGORY_SEED:
+            if key not in wanted:
+                continue
+            prior = existing.get(name.strip().lower())
+            if prior:
+                by_key[key] = prior['id']
+                continue
+            if key == 'protein':
+                lo, hi, with_meal = 1, 1, False
+            elif key == 'sweet':
+                lo, hi, with_meal = (1 if dessert_on else 0), 1, True
+            else:
+                lo = 1 if remaining_sides > 0 else 0
+                remaining_sides -= lo
+                hi = lo + 1
+                with_meal = False
+            rec = {'id': _uuid.uuid4().hex, 'name': name, 'description': desc,
+                   'min_per_plate': lo, 'max_per_plate': hi,
+                   'with_complete_meal': with_meal, 'order': order,
+                   'created_at': time.time()}
+            dish_categories_table.insert(rec)
+            by_key[key] = rec['id']
+            order += 1
+
+        # Assign every existing dish, and collapse the old type vocabulary:
+        # everything that is not a whole meal is simply a dish now.
+        for d in dishes:
+            old_type = d.get('type') or 'side'
+            patch = {}
+            if old_type == 'meal':
+                patch['type'] = 'meal'
+            else:
+                patch['type'] = 'dish'
+            if not (d.get('category_ids') or []):
+                cid = None
+                if old_type == 'entree':
+                    cid = by_key.get('protein')
+                elif old_type == 'dessert':
+                    cid = by_key.get('sweet')
+                elif old_type == 'side':
+                    cid = by_key.get(d.get('side_type') or 'other') or by_key.get('other')
+                if cid:
+                    patch['category_ids'] = [cid]
+            if d.get('id'):
+                dishes_table.update(patch, Query().id == d['id'])
+        set_app_state('dish_categories_seeded', True)
+
+
+def get_dish_categories() -> List[dict]:
+    with db_lock:
+        rows = [dict(c) for c in dish_categories_table.all()]
+    return sorted(rows, key=lambda c: (c.get('order') or 0,
+                                       (c.get('name') or '').lower()))
+
+def get_dish_category(cat_id: str) -> Optional[dict]:
+    with db_lock:
+        res = dish_categories_table.search(Query().id == cat_id)
+        return dict(res[0]) if res else None
+
+def save_dish_category(data: dict) -> dict:
+    with db_lock:
+        dish_categories_table.upsert(data, Query().id == data['id'])
+        mark_all_daily_schedules_dirty()
+    return data
+
+def delete_dish_category(cat_id: str) -> int:
+    """Removing a category unassigns it from every dish. A dish left with no
+    category is not deleted — it simply fills no slot until somebody says what
+    it is, which is visible in the editor rather than silent."""
+    touched = 0
+    with db_lock:
+        dish_categories_table.remove(Query().id == cat_id)
+        for d in dishes_table.all():
+            ids = d.get('category_ids') or []
+            if cat_id in ids:
+                dishes_table.update({'category_ids': [i for i in ids if i != cat_id]},
+                                    doc_ids=[d.doc_id])
+                touched += 1
+    return touched
+
 
 def get_dishes(include_inactive: bool = False) -> List[dict]:
     with db_lock:
@@ -4016,3 +4170,8 @@ def delete_status_day(day_id: str) -> Optional[dict]:
 def status_auto_dismissed(date: str, protocol_id: str) -> bool:
     tombs = get_app_state('status_auto_dismissed') or {}
     return f"{date}:{protocol_id}" in tombs
+
+
+# Runs last: the seed reads settings and dishes, both defined above. One-shot
+# and stamped, so a family's edits to their own vocabulary are never undone.
+ensure_dish_categories()

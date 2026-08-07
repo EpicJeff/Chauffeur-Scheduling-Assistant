@@ -584,23 +584,57 @@
                                 <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                                     🍲 What a plate looks like
                                 </div>
-                                <div class="flex flex-wrap items-center gap-4">
-                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
-                                        Sides
-                                        <input type="number" min="0" max="4"
-                                            x-model.number="mealCfg.sides_per_meal" @change="saveMealCfg()"
-                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
-                                    </label>
-                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                                        <input type="checkbox" x-model="mealCfg.include_dessert"
-                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
-                                        Something sweet after
-                                    </label>
-                                </div>
-                                <p class="text-[11px] text-gray-500 mt-2">
-                                    How many sides a proposed dinner is built with. A plate is composed by
-                                    rule and then edited freely, so this is the starting shape, never a limit.
+                                <p class="text-[11px] text-gray-500 mb-3">
+                                    Your words, not ours. Say what goes on a plate and how much of
+                                    it — "1 protein, 2-3 vegetables, 1-2 starches, and something
+                                    sweet sometimes". Argyle files new dishes into these, and the
+                                    description is how it learns what you mean by each one.
+                                    A plate is composed to the minimums and then edited freely.
                                 </p>
+                                <div class="space-y-2">
+                                    <template x-for="c in categories" :key="'cat-' + c.id">
+                                        <div class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <input type="text" x-model="c.name" @change="saveCategory(c)"
+                                                    placeholder="protein"
+                                                    class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-sm font-bold text-white w-40 focus:outline-none focus:border-pink-400/60">
+                                                <span class="text-[11px] text-gray-500">per plate</span>
+                                                <input type="number" min="0" max="6" x-model.number="c.min_per_plate"
+                                                    @change="saveCategory(c)" title="Fewest a plate should have"
+                                                    class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 w-14 text-sm text-white">
+                                                <span class="text-[11px] text-gray-600">to</span>
+                                                <input type="number" min="0" max="6" x-model.number="c.max_per_plate"
+                                                    @change="saveCategory(c)" title="Most a plate may have"
+                                                    class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 w-14 text-sm text-white">
+                                                <span class="text-[11px] text-gray-600"
+                                                    x-text="(c.dish_count || 0) + ' dish' + ((c.dish_count || 0) === 1 ? '' : 'es')"></span>
+                                                <button @click="deleteCategory(c)"
+                                                    class="ml-auto text-gray-600 hover:text-red-400 text-sm">✕</button>
+                                            </div>
+                                            <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                                                <input type="text" x-model="c.description" @change="saveCategory(c)"
+                                                    placeholder="what counts as this — meat, fish, beans, eggs…"
+                                                    class="flex-1 min-w-[200px] bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-[11px] text-gray-300 focus:outline-none focus:border-pink-400/60">
+                                                <label class="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer shrink-0"
+                                                    title="A dish marked as a whole meal satisfies everything else. Tick this to still offer it alongside one.">
+                                                    <input type="checkbox" x-model="c.with_complete_meal"
+                                                        @change="saveCategory(c)" class="accent-pink-500 w-3.5 h-3.5">
+                                                    even with a whole meal
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div x-show="!categories.length" class="text-xs text-gray-500">
+                                        No categories yet — add the first one below.
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 mt-3">
+                                    <input type="text" x-model="newCategoryName"
+                                        @keydown.enter="addCategory()" placeholder="add a category — protein, bread…"
+                                        class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-pink-400/60">
+                                    <button @click="addCategory()" :disabled="!newCategoryName.trim()"
+                                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40">Add</button>
+                                </div>
                             </div>
 
                             <!-- Provisioning. Families plan up to the next
@@ -972,6 +1006,36 @@
                                             class="text-[10px] font-bold text-gray-600 hover:text-emerald-300">
                                             + comes with
                                         </button>
+                                        <!-- What the dish IS, and how far it goes.
+                                             Both were in the model from the start
+                                             and on no screen: the only way to fix
+                                             a misfiled dish was to ask the agent
+                                             and hope it re-extracted differently. -->
+                                        <template x-for="c in categories" :key="'dc-' + m.id + c.id">
+                                            <button @click="toggleDishCategory(m, c)"
+                                                x-show="m.type !== 'meal'"
+                                                class="text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-colors"
+                                                :class="(m.category_ids || []).includes(c.id)
+                                                    ? 'bg-pink-500/15 border-pink-400/50 text-pink-200'
+                                                    : 'border-gray-700 text-gray-600 hover:text-pink-300'"
+                                                x-text="c.name"></button>
+                                        </template>
+                                        <button @click="toggleWholeMeal(m)"
+                                            class="text-[10px] font-bold"
+                                            :class="m.type === 'meal'
+                                                ? 'px-2 py-0.5 rounded-lg bg-violet-500/15 border border-violet-400/50 text-violet-200'
+                                                : 'text-gray-600 hover:text-violet-300'"
+                                            :title="m.type === 'meal'
+                                                ? 'A whole dinner on its own — nothing is served beside it. Tap to make it fill one slot instead.'
+                                                : 'Mark as a whole dinner on its own'"
+                                            x-text="m.type === 'meal' ? 'whole meal' : '+ whole meal'"></button>
+                                        <label class="text-[10px] font-bold text-gray-600 flex items-center gap-1"
+                                            title="How many it feeds. More than the household means a second night of it.">
+                                            serves
+                                            <input type="number" min="1" max="50" :value="m.serves || 4"
+                                                @change="setDishServes(m, $event.target.value)"
+                                                class="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 w-12 text-[10px] text-gray-300">
+                                        </label>
                                         <button @click="openPairingPicker(m, 'only_with')"
                                             class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
                                             + only with
@@ -1468,6 +1532,7 @@
                 // {kind:'rule',field} | {kind:'pairing',dishId,mode}.
                 // "Again" (repeat a past dinner) and drag-to-reorder both end
                 // as one arrangement write — see arrange_week.
+                categories: [], newCategoryName: '',
                 againOpen: false, againDay: null, againMode: 'push',
                 history: [], historyLoaded: false,
                 dragDate: null, dragOverDate: null,
@@ -1490,7 +1555,6 @@
                 // Settings model exactly so a failed load changes nothing.
                 mealCfg: {
                     car_dining: 'full', venue_dining: 'full',
-                    sides_per_meal: 2, include_dessert: false,
                     grocery_weekday: '', grocery_plan_lead_days: 2,
                     meal_week_enabled: true, propose_shopping_errands: true,
                     prep_reminders_enabled: true, prep_reminder_time: '20:30',
@@ -1522,6 +1586,7 @@
                     this.loadTrip();
                     this.loadWalmart();
                     this.loadKitchen();
+                    this.loadCategories();
                     this.openFromHash();
                     // Open the dish list where there is room for it. Collapsing
                     // it was only ever about the shopping list being pushed off
@@ -2001,6 +2066,72 @@
                     }
                 },
 
+                // --- The family's plate vocabulary ---
+                async loadCategories() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/categories');
+                        this.categories = r.ok ? (await r.json()).categories || [] : [];
+                    } catch (e) { this.categories = []; }
+                },
+                async saveCategory(c) {
+                    if (!(c.name || '').trim()) return;
+                    if (Number(c.max_per_plate) < Number(c.min_per_plate)) {
+                        c.max_per_plate = c.min_per_plate;
+                    }
+                    await fetch(this.apiBase + 'api/meals/categories', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(c)
+                    });
+                    await this.loadCategories();
+                    await this.refreshMeals();
+                },
+                async addCategory() {
+                    const name = (this.newCategoryName || '').trim();
+                    if (!name) return;
+                    this.newCategoryName = '';
+                    await this.saveCategory({ name: name, description: '',
+                        min_per_plate: 1, max_per_plate: 1,
+                        with_complete_meal: false, order: this.categories.length });
+                },
+                async deleteCategory(c) {
+                    if (!await promptConfirm('Remove category',
+                        `Remove "${c.name}"? ${c.dish_count || 0} dish(es) will no longer be `
+                        + 'filed under it, and plates will stop asking for one.', 'Remove')) return;
+                    await fetch(this.apiBase + 'api/meals/categories/' + c.id, { method: 'DELETE' });
+                    await this.loadCategories();
+                    await this.loadRepertoire();
+                    await this.refreshMeals();
+                },
+                // --- What a dish is, by hand ---
+                async patchDish(dish, patch) {
+                    const r = await fetch(this.apiBase + 'api/meals/dishes/' + dish.id + '/fields', {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(patch)
+                    });
+                    if (!r.ok) { showGlobalAlert('Could not save that.'); return; }
+                    await this.loadRepertoire();
+                    await this.loadCategories();
+                    await this.refreshMeals();
+                },
+                toggleDishCategory(dish, cat) {
+                    const ids = [...(dish.category_ids || [])];
+                    const at = ids.indexOf(cat.id);
+                    if (at >= 0) ids.splice(at, 1); else ids.push(cat.id);
+                    return this.patchDish(dish, { category_ids: ids });
+                },
+                toggleWholeMeal(dish) {
+                    return this.patchDish(dish, { type: dish.type === 'meal' ? 'dish' : 'meal' });
+                },
+                setDishServes(dish, value) {
+                    const n = parseInt(value);
+                    if (!n || n < 1) return;
+                    return this.patchDish(dish, { serves: n });
+                },
+                async refreshMeals() {
+                    await this.loadWeek();
+                    this.loadPlate();
+                },
+
                 // --- The record, and the two gestures that write it back ---
                 async loadHistory() {
                     try {
@@ -2064,21 +2195,36 @@
                     this.againOpen = false;
                     await this.arrangeWeek(days);
                 },
-                // Drop swaps the two nights. Swap rather than insert-and-shift:
-                // dragging Thursday onto Tuesday is a statement about those two
-                // nights, and quietly moving the five in between is not what
-                // anyone meant by it.
+                // Drop SHIFTS: the dragged night lands on the target and
+                // everything between closes up behind it. Shifting can express a
+                // swap (drag twice); swapping cannot express an insertion, which
+                // is the move people actually make when a night is in the wrong
+                // place. Locked nights are anchors — they keep their date and
+                // are not part of the sequence that slides.
                 async dropOnDay(day) {
                     const from = this.dragDate;
                     this.dragOverDate = null;
                     this.dragDate = null;
-                    if (!from || from === day.date) return;
-                    const src = this.week.find(d => d.date === from);
-                    if (!src || day.locked || src.locked) return;
-                    await this.arrangeWeek([
-                        { date: day.date, dish_ids: (src.dishes || []).map(d => d.id) },
-                        { date: from, dish_ids: (day.dishes || []).map(d => d.id) }
-                    ]);
+                    if (!from || from === day.date || day.locked) return;
+                    const movable = (this.week || []).filter(d => !d.locked);
+                    const fromIdx = movable.findIndex(d => d.date === from);
+                    const toIdx = movable.findIndex(d => d.date === day.date);
+                    if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+
+                    const before = movable.map(d => (d.dishes || []).map(x => x.id));
+                    const after = before.slice();
+                    after.splice(toIdx, 0, after.splice(fromIdx, 1)[0]);
+                    // Only the nights that actually moved get written. Every
+                    // arranged night is PINNED, and pinning one that didn't
+                    // change would quietly stop it recomposing as the week's
+                    // schedule shifts under it — the fluidity is deliberate.
+                    const days = movable
+                        .map((d, i) => ({ date: d.date, dish_ids: after[i], _same:
+                            before[i].length === after[i].length
+                            && before[i].every((id, j) => id === after[i][j]) }))
+                        .filter(d => !d._same)
+                        .map(d => ({ date: d.date, dish_ids: d.dish_ids }));
+                    if (days.length) await this.arrangeWeek(days);
                 },
 
                 async loadStaples() {
@@ -2558,8 +2704,6 @@
                         const c = this.mealCfg;
                         c.car_dining = d.car_dining || 'full';
                         c.venue_dining = d.venue_dining || 'full';
-                        c.sides_per_meal = d.sides_per_meal != null ? d.sides_per_meal : 2;
-                        c.include_dessert = d.include_dessert === true;
                         c.grocery_weekday = d.grocery_weekday != null ? String(d.grocery_weekday) : '';
                         c.grocery_plan_lead_days = d.grocery_plan_lead_days != null ? d.grocery_plan_lead_days : 2;
                         c.meal_week_enabled = d.meal_week_enabled !== false;
@@ -2595,8 +2739,6 @@
                         body: JSON.stringify({
                             car_dining: c.car_dining || 'full',
                             venue_dining: c.venue_dining || 'full',
-                            sides_per_meal: Math.max(0, parseInt(c.sides_per_meal, 10) || 0),
-                            include_dessert: !!c.include_dessert,
                             // '' means "work it out from our schedule" and must
                             // travel as null, not as 0 (which is Monday).
                             grocery_weekday: c.grocery_weekday === ''

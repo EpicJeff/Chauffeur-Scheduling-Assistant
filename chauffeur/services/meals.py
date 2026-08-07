@@ -561,14 +561,12 @@ SIDE_TYPES = ('vegetable', 'starch', 'salad', 'other')
 DISH_TYPES = ('meal', 'entree', 'side', 'dessert')
 
 
-def plate_settings(settings: dict = None) -> tuple:
-    settings = settings if settings is not None else (storage.get_settings() or {})
-    try:
-        sides = max(0, min(6, int(settings.get('sides_per_meal', 2))))
-    except (TypeError, ValueError):
-        sides = 2
-    dessert = settings.get('include_dessert')
-    return sides, (True if dessert is None else bool(dessert))
+def plate_shape() -> list:
+    """What a plate is, in the family's own words — the categories and the
+    range of each. Replaced `plate_settings`, which returned a side COUNT and a
+    dessert flag and could not express "1 protein, 2-3 vegetables, 1-2
+    starches" at all."""
+    return storage.get_dish_categories()
 
 
 def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set,
@@ -888,7 +886,6 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     that cannot see which pool actually ran out.
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
-    sides_n, want_dessert = plate_settings(settings)
     plan = plan or eating_plan(date_str, 'dinner')
     avoid, dislike = _eater_diet(plan)
     leftovers = storage.get_leftovers(date_str)
@@ -934,20 +931,27 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                    + _rank(d, leftover_ids, affinity, dislike, as_of, served))
 
     chosen = []
-    # A `meal` dish is the whole plate. It only wins outright when it is
-    # already made; otherwise it competes with the entree on rank so the
-    # family's one-pot meals stay in rotation without dominating it.
-    meals_pool = storage.get_dishes_by_type('meal')
-    entrees = storage.get_dishes_by_type('entree')
-    best_meal = pick(meals_pool)
-    best_entree = pick(entrees)
-    # Strictly greater, not >=: on a tie the entree path wins. Everything ties
-    # while nothing has been served yet, and a >= here let one-dish meals take
-    # every plate on a fresh repertoire.
+    cats = storage.get_dish_categories()
+
+    def pool_for(cid):
+        return [d for d in storage.get_dishes()
+                if (d.get('type') or 'dish') != 'meal'
+                and cid in (d.get('category_ids') or [])]
+
+    # A `meal` dish is the whole plate. It competes on rank against the LEAD
+    # block — the first category the family said a plate must have, which is
+    # the protein in every household that has told us about one. That keeps
+    # one-pot meals in rotation without letting them take every night.
+    lead = next((c for c in cats if int(c.get('min_per_plate') or 0) > 0), None)
+    best_meal = pick(storage.get_dishes_by_type('meal'))
+    best_lead = pick(pool_for(lead['id'])) if lead else None
+    # Strictly greater, not >=: on a tie the composed path wins. Everything
+    # ties while nothing has been served yet, and a >= here let one-dish meals
+    # take every plate on a fresh repertoire.
     use_meal = best_meal and (
-        not best_entree
+        not best_lead
         or _rank(best_meal, leftover_ids, frozenset(), dislike, as_of, served)
-        > _rank(best_entree, leftover_ids, frozenset(), dislike, as_of, served))
+        > _rank(best_lead, leftover_ids, frozenset(), dislike, as_of, served))
 
     def attach(seed, acc):
         """Pull in whatever this dish ALWAYS brings.
@@ -975,50 +979,93 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                 queue.append(mate)
         return acc
 
+    # dish id -> the ONE category slot it is filling tonight.
+    assigned = {}
+
+    def fill_categories(blocks, affinity=frozenset()):
+        """Fill each block to its minimum, in the family's own order.
+
+        A dish fills AT MOST ONE slot per plate — it is in `chosen` after the
+        first, so a dish tagged protein AND starch answers whichever slot is
+        still open tonight without ever counting twice. That one rule is what
+        keeps multi-category dishes from making the family do arithmetic.
+
+        Order matters and is the family's: with protein first, beans answer the
+        protein slot and rice takes the starch. Within a block, a dish that
+        belongs to FEWER categories wins ties, which keeps the versatile ones
+        available for the slots still to be filled.
+        """
+        def claim_existing():
+            """Assign whatever is already on the plate — the lead dish, a
+            pairing, a leftover — to ONE block each.
+
+            Counting a dish against every category it lists was the bug this
+            replaces: black beans (protein AND starch) filled the protein slot
+            and silently satisfied the starch block too, so rice never arrived.
+            Assignment walks the family's order and takes the first block with
+            room, which is also why they put protein first.
+            """
+            for d in chosen:
+                if d['id'] in assigned:
+                    continue
+                for b in blocks:
+                    bid = b['id']
+                    if bid not in (d.get('category_ids') or []):
+                        continue
+                    cap = max(0, int(b.get('max_per_plate') or 0))
+                    if len([1 for v in assigned.values() if v == bid]) < cap:
+                        assigned[d['id']] = bid
+                        break
+
+        for block in blocks:
+            cid = block['id']
+            lo = max(0, int(block.get('min_per_plate') or 0))
+            hi = max(lo, int(block.get('max_per_plate') or 0))
+            claim_existing()
+            # Whatever arrived already counts against the ONE block it was
+            # assigned to. A plate wanting two starches that turns up with
+            # beans and fries is FULL; a plate that got beans as its protein
+            # still wants a starch.
+            have = len([1 for v in assigned.values() if v == cid])
+            for _ in range(max(0, min(lo, hi) - have)):
+                taken_ids = {d['id'] for d in chosen}
+                cands = [d for d in pool_for(cid)
+                         if d['id'] not in taken_ids
+                         and _dish_ok(d, avoid, binding, leftover_ids, open_tags)
+                         and _pairing_ok(d, chosen)
+                         and _rules_ok(d, ctx)]
+                if not cands:
+                    break                 # minimums bend; the plate says so
+                got = max(cands, key=lambda d: (
+                    refusal(d)
+                    + _rank(d, leftover_ids, affinity, dislike, as_of, served)
+                    # Specialists first, so the dish that can only be a
+                    # vegetable is not spent on the starch slot.
+                    + (1.0 if len(d.get('category_ids') or []) <= 1 else 0.0)
+                    # The open pot outranks variety: a batch cycle is the family
+                    # saying they WILL be eating this for a few days.
+                    + (50.0 if d['id'] in ctx.get('forced', ()) else 0.0)))
+                chosen.append(got)
+                assigned[got['id']] = cid     # this is the slot it just filled
+                attach(got, chosen)
+
     if use_meal:
         chosen.append(best_meal)
         attach(best_meal, chosen)
+        # A whole meal satisfies the composition. Only the blocks that opted in
+        # still apply — spaghetti night still ends with something sweet, and
+        # the family says which block that is rather than the code assuming
+        # "dessert" is a word they use.
+        fill_categories([c for c in cats if c.get('with_complete_meal')],
+                        affinity={str(t).strip().lower()
+                                  for t in (best_meal.get('tags') or [])})
     else:
-        if best_entree:
-            chosen.append(best_entree)
-            attach(best_entree, chosen)
+        if best_lead:
+            chosen.append(best_lead)
+            attach(best_lead, chosen)
         affinity = {str(t).strip().lower()
-                    for t in ((best_entree or {}).get('tags') or [])}
-        # Spread the sides across kinds — a starch and a vegetable is the usual
-        # shape — but as a PREFERENCE, not a filter. Filtering by side_type
-        # first meant an already-made dish of the "wrong" kind never entered
-        # the running, so leftover potatoes lost to a fresh vegetable. Using up
-        # what exists is the stronger signal; variety is a tiebreak.
-        sides_pool = storage.get_dishes_by_type('side')
-        used_types = {d.get('side_type') or 'other' for d in chosen
-                      if d.get('type') == 'side'}
-        # Sides that came along with the entree already fill their slots — a
-        # plate set to two sides that arrives with beans and fries is FULL.
-        free_slots = sides_n - len([d for d in chosen if d.get('type') == 'side'])
-        for _ in range(max(0, free_slots)):
-            taken_ids = {d['id'] for d in chosen}
-            cands = [d for d in sides_pool
-                     if d['id'] not in taken_ids
-                     and _dish_ok(d, avoid, binding, leftover_ids, open_tags)
-                     and _pairing_ok(d, chosen)
-                     and _rules_ok(d, ctx)]
-            if not cands:
-                break
-            got = max(cands, key=lambda d: (
-                refusal(d)
-                + _rank(d, leftover_ids, affinity, dislike, as_of, served)
-                + (1.0 if (d.get('side_type') or 'other') not in used_types else 0.0)
-                # The open pot outranks variety: a batch cycle is the family
-                # saying they WILL be eating this for a few days.
-                + (50.0 if d['id'] in ctx.get('forced', ()) else 0.0)))
-            used_types.add(got.get('side_type') or 'other')
-            chosen.append(got)
-
-    if want_dessert:
-        sweet = pick(storage.get_dishes_by_type('dessert'),
-                     exclude={d['id'] for d in chosen})
-        if sweet:
-            chosen.append(sweet)
+                    for t in ((best_lead or {}).get('tags') or [])}
+        fill_categories(cats, affinity)
     return chosen
 
 
@@ -2184,6 +2231,47 @@ def _now_ts() -> float:
     return _t.time()
 
 
+def category_prompt_block() -> str:
+    """The family's vocabulary, handed to the classifier.
+
+    This is the whole inversion: the model is told THEIR words instead of
+    teaching them ours. The old prompt asserted that beans are a starch, which
+    meant a household whose protein comes from beans got plates with no protein
+    on them and no way to say otherwise.
+    """
+    cats = storage.get_dish_categories()
+    if not cats:
+        return ""
+    lines = ["\nTHIS FAMILY'S CATEGORIES — use exactly these names:"]
+    for c in cats:
+        desc = (c.get('description') or '').strip()
+        lines.append(f"  - {c['name']}" + (f": {desc}" if desc else ""))
+    return "\n".join(lines) + "\n"
+
+
+def resolve_category_names(names) -> list:
+    """Model answers -> the family's category ids. Matching is loose on case
+    and whitespace and tolerant of a plural, because the classifier writing
+    "vegetable" for a category called "vegetables" is not a disagreement worth
+    dropping the answer over. Unknown names are discarded rather than invented:
+    a category the family did not create is not one the composer can fill."""
+    if not names:
+        return []
+    cats = storage.get_dish_categories()
+    by_key = {}
+    for c in cats:
+        key = str(c.get('name') or '').strip().lower()
+        by_key[key] = c['id']
+        by_key[key.rstrip('s')] = c['id']
+    out = []
+    for n in names[:6]:
+        key = str(n or '').strip().lower()
+        cid = by_key.get(key) or by_key.get(key.rstrip('s'))
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
 def _today_iso() -> str:
     return datetime.date.today().isoformat()
 
@@ -2349,8 +2437,7 @@ _DISH_SYSTEM_V5 = (
     "DISHES. Reply with STRICT JSON only, no prose, no code fences. You are "
     "NOT writing recipes — never return steps, instructions or quantities.\n\n"
     "Schema: {\"dishes\": [{\"name\": str, \"short_name\": str, "
-    "\"type\": \"meal|entree|side|dessert\", "
-    "\"side_type\": \"vegetable|starch|salad|other|null\", "
+    "\"type\": \"meal|dish\", \"categories\": [str], "
     "\"prep_ahead_mins\": int, \"finish_mins\": int, \"unattended_mins\": int, "
     "\"needs_ahead\": \"none|thaw|marinate|slow_cooker\", \"holds_well\": bool, "
     "\"portability\": \"none|handheld|utensils_ok\", "
@@ -2365,12 +2452,15 @@ _DISH_SYSTEM_V5 = (
     "each already specific ('roasted russet potatoes').\n"
     "- IGNORE quantities like 'veggies x 2' — that is how many sides they "
     "want on a plate, not a property of any dish. Just emit the vegetables.\n"
-    "- type: 'meal' only when the dish is a whole dinner by itself (tacos, "
-    "spaghetti and meatballs, chili). 'entree' for a main that needs sides "
-    "(roast chicken, baked salmon). 'side' for everything alongside. "
-    "'dessert' for something sweet after.\n"
-    "- side_type: 'vegetable', 'starch' (rice, potatoes, pasta, bread, "
-    "beans served as a starch), 'salad', or 'other'. Null for non-sides.\n"
+    "- type: 'meal' ONLY when the dish is a whole dinner by itself (tacos, "
+    "spaghetti and meatballs, chili) — it satisfies the whole plate and "
+    "nothing is served beside it. 'dish' for everything else.\n"
+    "- categories: choose from THIS FAMILY'S list, given below, and use "
+    "THEIR words, not yours. Give EVERY category a dish can serve as: black "
+    "beans may be both the protein and the starch, and picking both is what "
+    "lets it answer whichever the plate still needs. A dish fills only ONE "
+    "slot per meal, so listing several is never double-counting. Use [] "
+    "only when none of their categories fit.\n"
     "- tags: short lowercase words that say what a dish goes WITH as much as "
     "what it is ('mexican', 'chicken', 'asian', 'comfort'). These are used to "
     "keep a proposed plate coherent.\n\n"
@@ -2552,16 +2642,21 @@ def split_into_dishes(description: str) -> dict:
             'slots': slots}
 
 
-_ROLE_TO_TYPE = {
-    'protein': ('entree', None),
-    'main': ('entree', None),
-    'entree': ('entree', None),
-    'starch': ('side', 'starch'),
-    'vegetable': ('side', 'vegetable'),
-    'veg': ('side', 'vegetable'),
-    'salad': ('side', 'salad'),
-    'side': ('side', 'other'),
-    'dessert': ('dessert', None),
+# M4's free-text `role` -> the category NAME a family is most likely to have
+# for it. Resolved against their own list at migration time, so a household
+# that calls it "carbs" gets carbs and one that deleted "salad" gets nothing
+# rather than a category resurrected behind their back.
+_ROLE_TO_CATEGORY = {
+    'protein': 'protein',
+    'main': 'protein',
+    'entree': 'protein',
+    'starch': 'starches/carbs',
+    'carb': 'starches/carbs',
+    'vegetable': 'vegetables',
+    'veg': 'vegetables',
+    'salad': 'salad',
+    'dessert': 'something sweet',
+    'sweet': 'something sweet',
 }
 
 
@@ -2575,13 +2670,14 @@ def migrate_slot_meals() -> dict:
     """
     typed, retired = 0, 0
     for d in storage.get_dishes(include_inactive=True):
-        if d.get('type') and d.get('type') != 'side':
-            continue
-        if d.get('side_type'):
+        # A whole-meal dish is already right; anything else with a category is
+        # already migrated. The old guard tested for `type != 'side'`, which
+        # after v2.108 excluded every dish (the default is now 'dish').
+        if d.get('type') == 'meal' or d.get('category_ids'):
             continue
         role = str(d.get('role') or '').strip().lower()
-        dish_type, side_type = _ROLE_TO_TYPE.get(role, ('side', 'other'))
-        storage.update_dish(d['id'], {'type': dish_type, 'side_type': side_type})
+        cats = resolve_category_names([_ROLE_TO_CATEGORY.get(role, role)])
+        storage.update_dish(d['id'], {'type': 'dish', 'category_ids': cats})
         typed += 1
     for meal in storage.get_meals(include_inactive=True):
         if not (meal.get('slots') or []):
@@ -2607,7 +2703,7 @@ def add_dishes_from_text(description: str) -> dict:
                 if not api_key else 'nothing to add'}
     try:
         res = model_pools.call_pool_json(
-            'interactive', api_key, _DISH_SYSTEM_V5,
+            'interactive', api_key, _DISH_SYSTEM_V5 + category_prompt_block(),
             f"The family describes what they eat as: {raw}",
             temperature=0.2, timeout_s=45, settings=settings)
         if not isinstance(res, dict) or res.get('error'):
@@ -2621,11 +2717,8 @@ def add_dishes_from_text(description: str) -> dict:
         d = _clean_dish(raw_dish)
         if not d:
             continue
-        d['type'] = (str(raw_dish.get('type') or '').strip().lower()
-                     if str(raw_dish.get('type') or '').strip().lower() in DISH_TYPES
-                     else 'side')
-        st = str(raw_dish.get('side_type') or '').strip().lower()
-        d['side_type'] = st if st in SIDE_TYPES else ('other' if d['type'] == 'side' else None)
+        d['type'] = 'meal' if str(raw_dish.get('type') or '').strip().lower() == 'meal' else 'dish'
+        d['category_ids'] = resolve_category_names(raw_dish.get('categories'))
         prior = storage.find_dish_for_reuse(d['name'])
         if prior:
             existing.append(prior)
