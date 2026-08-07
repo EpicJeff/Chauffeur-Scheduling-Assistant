@@ -47,7 +47,10 @@
     {% include 'nav.html' %}
 
     <div class="flex-1 overflow-y-auto bg-gray-900/50" x-data="shoppingPage()" x-init="init()" x-cloak>
-        <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-3xl'">
+        <!-- 3xl (768px) was right for a single column and wastes half a wide
+                 screen once Our meals and Shopping sit side by side. Kiosk stays
+                 unbounded; phones are unaffected either way. -->
+            <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-6xl'">
 
             <header class="mb-8" x-show="!hideTitle">
                 <h2 class="text-3xl font-bold text-white">Shopping &amp; Meals</h2>
@@ -110,17 +113,14 @@
             <section class="mb-10" x-show="!isKiosk">
                 <div class="flex items-baseline justify-between mb-3 gap-3">
                     <h3 class="text-lg font-bold text-white">Meals</h3>
-                    <!-- Two toggles, not four. Everything that configures or
-                         maintains the meals machinery — the rules, the kitchen,
-                         where we eat, the shape of a plate, provisioning, prep
-                         and the cart, plus fetching dish pictures — is one
-                         drawer. Three sibling text buttons competing at the same
-                         weight made the reader choose between things that were
-                         never alternatives. -->
+                    <!-- One drawer for everything that configures or maintains
+                         the meals machinery: the rules, the kitchen, where we
+                         eat, the shape of a plate, provisioning, prep, the cart
+                         and dish pictures. Four sibling text buttons up here
+                         made the reader choose between things that were never
+                         alternatives; Our meals now has its own column heading
+                         and this is the only control left. -->
                     <div class="flex items-baseline gap-3 shrink-0">
-                        <button @click="showRepertoire = !showRepertoire"
-                            class="text-xs font-bold text-gray-500 hover:text-white"
-                            x-text="showRepertoire ? 'Hide our meals' : 'Our meals'"></button>
                         <button @click="openMealSettings()"
                             class="text-xs font-bold text-gray-500 hover:text-white"
                             x-text="showMealSettings ? 'Hide how this works' : 'How this works'"></button>
@@ -340,153 +340,6 @@
                 </div>
 
 
-                <!-- Our meals: corrections and additions, a sibling of Tonight
-                     rather than nested inside it — Tonight answers "what now",
-                     this is the standing list behind it. Adding costs ONE
-                     sentence (the model fills the rest), because nobody fills in
-                     twelve fields and a repertoire that never reaches ~15 entries
-                     has nothing to filter. -->
-                <div x-show="showRepertoire"
-                    class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
-                    <div class="flex gap-2 mb-3">
-                        <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
-                            placeholder="what you cook — one thing or a whole list"
-                            class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
-                        <button @click="addMeal()" :disabled="!mealDraft.trim() || mealBusy"
-                            class="px-4 py-2.5 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
-                            x-text="mealBusy ? 'Adding…' : 'Add'"></button>
-                    </div>
-                    <p class="text-xs text-gray-500 mb-3">
-                        Write it however you say it — "chicken, rice, beans (black, red,
-                        or pinto), broccoli, salad, fresh fruit" becomes one dish per
-                        thing you'd actually cook — every alternative its own — each
-                        typed as a whole meal, a main, a side or a dessert. Plates get
-                        built from these; how many sides is a setting, not a rule.
-                    </p>
-                    <!-- Every meals setting lives HERE, not on the config page:
-                         they are facts about how this household eats, and they
-                         belong beside the plates and lists they govern
-                         (2026-08-07). The whole panel saves only ITS OWN keys —
-                         /api/settings has always merged rather than replaced, so
-                         a feature-owned surface needs no new endpoint, only the
-                         discipline of sending what it owns. -->
-
-                    <!-- Holiday and party food does not belong in the Tuesday
-                         list. It is HIDDEN, not gone: the toggle says how many
-                         are behind it, because a filter that silently swallows
-                         rows is how a family concludes the app lost their
-                         turkey. -->
-                    <div class="flex items-center justify-between mb-3"
-                        x-show="occasionDishCount()">
-                        <span class="text-[11px] text-gray-500"
-                            x-text="occasionDishCount() + ' occasion dish'
-                                + (occasionDishCount() === 1 ? '' : 'es')
-                                + ' — holiday and party food, never proposed on an ordinary night'"></span>
-                        <button @click="showOccasionDishes = !showOccasionDishes"
-                            class="text-[11px] font-bold shrink-0 ml-3"
-                            :class="showOccasionDishes ? 'text-amber-300' : 'text-gray-600 hover:text-amber-300'"
-                            x-text="showOccasionDishes ? 'Hide' : 'Show'"></button>
-                    </div>
-                    <!-- Corrections are the point of this editor, so the parts the
-                         model guessed have to be visible and the name editable. -->
-                    <div class="space-y-2">
-                        <template x-for="m in shownDishes()" :key="'rp-' + m.id">
-                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
-                                <div class="min-w-0 flex-1">
-                                    <button @click="renameDish(m)"
-                                        class="text-sm font-semibold text-gray-200 hover:text-white text-left"
-                                        title="Rename">
-                                        <span x-text="m.name"></span>
-                                    </button>
-                                    <div class="text-[11px] text-gray-600 truncate"
-                                        x-text="dishBlurb(m)"></div>
-                                    <!-- Prep that happens OUTSIDE the cook
-                                         window (M8). Opt-in per dish, because
-                                         whether rice gets soaked is a fact
-                                         about this household, not about rice. -->
-                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                        <template x-for="(p, pi) in (m.prep_steps || [])"
-                                            :key="'pp-' + m.id + pi">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-amber-500/15 border border-amber-500/40 text-amber-300
-                                                         flex items-center gap-1.5">
-                                                <span x-text="prepLabel(p)"></span>
-                                                <button @click="dropPrep(m, p)"
-                                                    class="text-amber-500/70 hover:text-red-400"
-                                                    title="Stop reminding">✕</button>
-                                            </span>
-                                        </template>
-                                        <button @click="addPrep(m)"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300">
-                                            + prep ahead
-                                        </button>
-                                    </div>
-                                    <!-- Dishes that come as a set (M9). This
-                                         shipped with an API and agent tools and
-                                         no way to say it by hand — the same gap
-                                         the rules engine had. It lives HERE
-                                         because a pairing is a property of a
-                                         dish, not a rule; the label carries the
-                                         direction, because "with" and "only
-                                         with" are opposite claims. -->
-                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                        <template x-for="p in partnerDishes(m, 'always_with')"
-                                            :key="'aw-' + m.id + '-' + p.id">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-emerald-500/15 border border-emerald-500/40 text-emerald-300
-                                                         flex items-center gap-1.5">
-                                                <span class="opacity-60">with</span>
-                                                <span x-text="p.short_name || p.name"></span>
-                                                <button @click="dropPairing(m, p, 'always_with')"
-                                                    class="text-emerald-500/70 hover:text-red-400"
-                                                    title="They don't always come together">✕</button>
-                                            </span>
-                                        </template>
-                                        <template x-for="p in partnerDishes(m, 'only_with')"
-                                            :key="'ow-' + m.id + '-' + p.id">
-                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
-                                                         bg-sky-500/15 border border-sky-500/40 text-sky-300
-                                                         flex items-center gap-1.5">
-                                                <span class="opacity-60">only with</span>
-                                                <span x-text="p.short_name || p.name"></span>
-                                                <button @click="dropPairing(m, p, 'only_with')"
-                                                    class="text-sky-500/70 hover:text-red-400"
-                                                    title="Drop this restriction">✕</button>
-                                            </span>
-                                        </template>
-                                        <button @click="openPairingPicker(m, 'always_with')"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-emerald-300">
-                                            + comes with
-                                        </button>
-                                        <button @click="openPairingPicker(m, 'only_with')"
-                                            class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
-                                            + only with
-                                        </button>
-                                        <!-- The model guesses this from the name;
-                                             the family corrects it here. One tap,
-                                             because it is a label, not a form. -->
-                                        <button @click="toggleDishScope(m)"
-                                            class="text-[10px] font-bold"
-                                            :class="(m.scope || 'everyday') === 'occasion'
-                                                ? 'px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300'
-                                                : 'text-gray-600 hover:text-amber-300'"
-                                            :title="(m.scope || 'everyday') === 'occasion'
-                                                ? 'Holiday and party food — never proposed on an ordinary night. Tap to make it everyday.'
-                                                : 'Move this out of the everyday pool'"
-                                            x-text="(m.scope || 'everyday') === 'occasion'
-                                                ? 'occasion only' : '+ occasion only'"></button>
-                                    </div>
-                                </div>
-                                <button @click="deleteDish(m)"
-                                    class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
-                            </div>
-                        </template>
-                        <span x-show="!shownDishes().length" class="text-xs text-gray-500"
-                            x-text="repertoire.length
-                                ? 'Every dish here is occasion-only — Show them above.'
-                                : 'Nothing yet — describe what you cook and I\'ll sort it out.'"></span>
-                    </div>
-                </div>
                 <!-- ===== HOW THIS WORKS =====
                      One drawer for the machinery behind the meals: the rules,
                      the kitchen, how this family eats, the shape of a plate,
@@ -909,6 +762,181 @@
                     </div>
             </section>
 
+            <!-- ===== OUR MEALS  |  SHOPPING =====
+                 Two vertical lists that are read together: what we cook, and
+                 what has to be bought. Stacked, the dish list pushed the
+                 shopping list off the bottom of a page named after both — which
+                 was the only real reason the dish list was collapsed by
+                 default. Side by side that reason disappears, so on a wide
+                 screen the dish list opens itself (see `init`).
+
+                 `items-start` so the two columns size independently: a 25-dish
+                 repertoire beside a 4-item list must not stretch the short one
+                 into dead space. Below `lg` this is a single column and the
+                 order is unchanged, which is the whole mobile strategy — the
+                 dish list stays collapsed there because the vertical budget
+                 that made it a problem is exactly what a phone has least of. -->
+            <div class="grid gap-6 items-start mb-10"
+                :class="isKiosk ? '' : 'lg:grid-cols-2'">
+                <div class="min-w-0" x-show="!isKiosk">
+                    <div class="flex items-baseline justify-between mb-3 gap-3">
+                        <h3 class="text-lg font-bold text-white">Our meals</h3>
+                        <button @click="showRepertoire = !showRepertoire"
+                            class="text-xs font-bold text-gray-500 hover:text-white shrink-0"
+                            x-text="showRepertoire ? 'Hide' : 'Show'"></button>
+                    </div>
+
+                <!-- Our meals: corrections and additions, a sibling of Tonight
+                     rather than nested inside it — Tonight answers "what now",
+                     this is the standing list behind it. Adding costs ONE
+                     sentence (the model fills the rest), because nobody fills in
+                     twelve fields and a repertoire that never reaches ~15 entries
+                     has nothing to filter. -->
+                <div x-show="showRepertoire"
+                    class="bg-gray-800 rounded-2xl border border-gray-700 p-5">
+                    <div class="flex gap-2 mb-3">
+                        <input x-model="mealDraft" @keydown.enter="addMeal()" type="text"
+                            placeholder="what you cook — one thing or a whole list"
+                            class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+                        <button @click="addMeal()" :disabled="!mealDraft.trim() || mealBusy"
+                            class="px-4 py-2.5 rounded-xl font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                            x-text="mealBusy ? 'Adding…' : 'Add'"></button>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        Write it however you say it — "chicken, rice, beans (black, red,
+                        or pinto), broccoli, salad, fresh fruit" becomes one dish per
+                        thing you'd actually cook — every alternative its own — each
+                        typed as a whole meal, a main, a side or a dessert. Plates get
+                        built from these; how many sides is a setting, not a rule.
+                    </p>
+                    <!-- Every meals setting lives HERE, not on the config page:
+                         they are facts about how this household eats, and they
+                         belong beside the plates and lists they govern
+                         (2026-08-07). The whole panel saves only ITS OWN keys —
+                         /api/settings has always merged rather than replaced, so
+                         a feature-owned surface needs no new endpoint, only the
+                         discipline of sending what it owns. -->
+
+                    <!-- Holiday and party food does not belong in the Tuesday
+                         list. It is HIDDEN, not gone: the toggle says how many
+                         are behind it, because a filter that silently swallows
+                         rows is how a family concludes the app lost their
+                         turkey. -->
+                    <div class="flex items-center justify-between mb-3"
+                        x-show="occasionDishCount()">
+                        <span class="text-[11px] text-gray-500"
+                            x-text="occasionDishCount() + ' occasion dish'
+                                + (occasionDishCount() === 1 ? '' : 'es')
+                                + ' — holiday and party food, never proposed on an ordinary night'"></span>
+                        <button @click="showOccasionDishes = !showOccasionDishes"
+                            class="text-[11px] font-bold shrink-0 ml-3"
+                            :class="showOccasionDishes ? 'text-amber-300' : 'text-gray-600 hover:text-amber-300'"
+                            x-text="showOccasionDishes ? 'Hide' : 'Show'"></button>
+                    </div>
+                    <!-- Corrections are the point of this editor, so the parts the
+                         model guessed have to be visible and the name editable. -->
+                    <div class="space-y-2">
+                        <template x-for="m in shownDishes()" :key="'rp-' + m.id">
+                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <button @click="renameDish(m)"
+                                        class="text-sm font-semibold text-gray-200 hover:text-white text-left"
+                                        title="Rename">
+                                        <span x-text="m.name"></span>
+                                    </button>
+                                    <div class="text-[11px] text-gray-600 truncate"
+                                        x-text="dishBlurb(m)"></div>
+                                    <!-- Prep that happens OUTSIDE the cook
+                                         window (M8). Opt-in per dish, because
+                                         whether rice gets soaked is a fact
+                                         about this household, not about rice. -->
+                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                        <template x-for="(p, pi) in (m.prep_steps || [])"
+                                            :key="'pp-' + m.id + pi">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-amber-500/15 border border-amber-500/40 text-amber-300
+                                                         flex items-center gap-1.5">
+                                                <span x-text="prepLabel(p)"></span>
+                                                <button @click="dropPrep(m, p)"
+                                                    class="text-amber-500/70 hover:text-red-400"
+                                                    title="Stop reminding">✕</button>
+                                            </span>
+                                        </template>
+                                        <button @click="addPrep(m)"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-amber-300">
+                                            + prep ahead
+                                        </button>
+                                    </div>
+                                    <!-- Dishes that come as a set (M9). This
+                                         shipped with an API and agent tools and
+                                         no way to say it by hand — the same gap
+                                         the rules engine had. It lives HERE
+                                         because a pairing is a property of a
+                                         dish, not a rule; the label carries the
+                                         direction, because "with" and "only
+                                         with" are opposite claims. -->
+                                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                        <template x-for="p in partnerDishes(m, 'always_with')"
+                                            :key="'aw-' + m.id + '-' + p.id">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-emerald-500/15 border border-emerald-500/40 text-emerald-300
+                                                         flex items-center gap-1.5">
+                                                <span class="opacity-60">with</span>
+                                                <span x-text="p.short_name || p.name"></span>
+                                                <button @click="dropPairing(m, p, 'always_with')"
+                                                    class="text-emerald-500/70 hover:text-red-400"
+                                                    title="They don't always come together">✕</button>
+                                            </span>
+                                        </template>
+                                        <template x-for="p in partnerDishes(m, 'only_with')"
+                                            :key="'ow-' + m.id + '-' + p.id">
+                                            <span class="px-2 py-0.5 rounded-lg text-[10px] font-semibold
+                                                         bg-sky-500/15 border border-sky-500/40 text-sky-300
+                                                         flex items-center gap-1.5">
+                                                <span class="opacity-60">only with</span>
+                                                <span x-text="p.short_name || p.name"></span>
+                                                <button @click="dropPairing(m, p, 'only_with')"
+                                                    class="text-sky-500/70 hover:text-red-400"
+                                                    title="Drop this restriction">✕</button>
+                                            </span>
+                                        </template>
+                                        <button @click="openPairingPicker(m, 'always_with')"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-emerald-300">
+                                            + comes with
+                                        </button>
+                                        <button @click="openPairingPicker(m, 'only_with')"
+                                            class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
+                                            + only with
+                                        </button>
+                                        <!-- The model guesses this from the name;
+                                             the family corrects it here. One tap,
+                                             because it is a label, not a form. -->
+                                        <button @click="toggleDishScope(m)"
+                                            class="text-[10px] font-bold"
+                                            :class="(m.scope || 'everyday') === 'occasion'
+                                                ? 'px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                                                : 'text-gray-600 hover:text-amber-300'"
+                                            :title="(m.scope || 'everyday') === 'occasion'
+                                                ? 'Holiday and party food — never proposed on an ordinary night. Tap to make it everyday.'
+                                                : 'Move this out of the everyday pool'"
+                                            x-text="(m.scope || 'everyday') === 'occasion'
+                                                ? 'occasion only' : '+ occasion only'"></button>
+                                    </div>
+                                </div>
+                                <button @click="deleteDish(m)"
+                                    class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
+                            </div>
+                        </template>
+                        <span x-show="!shownDishes().length" class="text-xs text-gray-500"
+                            x-text="repertoire.length
+                                ? 'Every dish here is occasion-only — Show them above.'
+                                : 'Nothing yet — describe what you cook and I\'ll sort it out.'"></span>
+                    </div>
+                </div>
+                </div>
+
+                <div class="min-w-0">
+
             <!-- ===== SHOPPING LISTS ===== -->
             <section x-show="!isKiosk" class="mb-2">
                 <h3 class="text-lg font-bold text-white mb-1">Shopping Lists</h3>
@@ -1119,6 +1147,10 @@
                     </template>
                 </div>
             </div>
+                </div>
+            </div>
+
+
         </div>
 
         <!-- "+ List" result. A skip nobody can see reads as a bug — which is
@@ -1350,6 +1382,14 @@
                     this.loadWalmart();
                     this.loadKitchen();
                     this.openFromHash();
+                    // Open the dish list where there is room for it. Collapsing
+                    // it was only ever about the shopping list being pushed off
+                    // the bottom; in two columns nothing is pushed anywhere. A
+                    // phone has the least vertical room of anything, so below
+                    // the breakpoint it stays shut.
+                    if (window.matchMedia('(min-width: 1024px)').matches) {
+                        this.showRepertoire = true;
+                    }
                     if (this.isKiosk) this.loadStaples();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
