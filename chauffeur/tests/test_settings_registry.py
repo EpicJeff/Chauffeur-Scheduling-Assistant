@@ -39,6 +39,26 @@ def scenario_every_setting_is_listed_and_nothing_is_stale():
           f"registry entries with no matching setting: {a['stale']}")
 
 
+def scenario_no_setting_is_unreachable():
+    """The "none get lost" guarantee, mechanically enforced.
+
+    The registry says where each setting lives; this checks the claim against
+    the template. A registry entry pointing at a page that does not carry the
+    control is the silent failure the index would otherwise hide — and it
+    would be worse than the old 5,631-line config page, where at least
+    everything really was on it.
+
+    Run at the start of the migration this found TEN settings with no hand
+    path anywhere (days-to-solve, sides, dessert, the three prep-reminder
+    keys, and the four Walmart keys). None were introduced by the move; they
+    had simply never had one.
+    """
+    u = reg.audit_ui()['unreachable']
+    check(not u,
+          "settings with no way to change them by hand: "
+          + ', '.join(f"{e['key']} ({e['why']})" for e in u))
+
+
 def scenario_every_entry_carries_an_owner_and_words_to_search_on():
     for e in reg.ENTRIES:
         check(e['page'] and e['anchor'],

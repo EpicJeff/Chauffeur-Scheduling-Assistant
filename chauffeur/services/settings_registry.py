@@ -51,9 +51,14 @@ GROUPS = [
 _CONFIG = 'config'
 
 
-def _e(key, group, label, help_text, page=_CONFIG, anchor='general'):
+def _e(key, group, label, help_text, page=_CONFIG, anchor='general', ui_marker=None):
+    # `ui_marker` is for the honest exception: a control that does not name its
+    # setting anywhere. The status-tier editor is one component shared by Chores
+    # and Routines, keyed by `kind` and saving through /api/status-tiers, so the
+    # words `chore_status_tiers` appear nowhere on screen. Declaring the marker
+    # keeps the coverage audit truthful without weakening it into a guess.
     return {'key': key, 'group': group, 'label': label, 'help': help_text,
-            'page': page, 'anchor': anchor}
+            'page': page, 'anchor': anchor, 'ui_marker': ui_marker}
 
 
 # The declarations. Grouped by what a person is trying to DO, not by which
@@ -78,34 +83,49 @@ ENTRIES: List[dict] = [
 
     # --- meals & shopping
     _e('car_dining', 'meals', 'Eating in the car',
-       'Whether this family eats full meals, handheld food, snacks or nothing in the car.'),
+       'Whether this family eats full meals, handheld food, snacks or nothing in the car.',
+       page='shopping', anchor='dining'),
     _e('venue_dining', 'meals', 'Eating at a venue',
-       'The same question for sitting at a practice or a game.'),
+       'The same question for sitting at a practice or a game.',
+       page='shopping', anchor='dining'),
     _e('sides_per_meal', 'meals', 'Sides on a plate',
-       'How many sides a proposed dinner is built with.'),
+       'How many sides a proposed dinner is built with.',
+       page='shopping', anchor='plate'),
     _e('include_dessert', 'meals', 'Dessert on a plate',
-       'Whether a composed plate includes something sweet.'),
+       'Whether a composed plate includes something sweet.',
+       page='shopping', anchor='plate'),
     _e('grocery_weekday', 'meals', 'Shop day',
-       'The day the big grocery run happens. Unset means work it out from the schedule.'),
+       'The day the big grocery run happens. Unset means work it out from the schedule.',
+       page='shopping', anchor='planning'),
     _e('grocery_plan_lead_days', 'meals', 'Plan ahead by',
-       'How many days before the shop to ask "how does this look?".'),
+       'How many days before the shop to ask "how does this look?".',
+       page='shopping', anchor='planning'),
     _e('meal_week_enabled', 'meals', 'Plan the week',
-       'Propose the whole span the next grocery run has to buy for.'),
+       'Propose the whole span the next grocery run has to buy for.',
+       page='shopping', anchor='planning'),
     _e('propose_shopping_errands', 'meals', 'Offer a shopping trip',
-       'Suggest an errand for a list that has no trip attached.'),
+       'Suggest an errand for a list that has no trip attached.',
+       page='shopping', anchor='planning'),
     _e('prep_reminders_enabled', 'meals', 'Prep reminders',
-       'Remind about soaking, thawing and marinating that happens outside the cook window.'),
+       'Remind about soaking, thawing and marinating that happens outside the cook window.',
+       page='shopping', anchor='prep'),
     _e('prep_reminder_time', 'meals', 'Night-before reminder',
-       'When the evening prep nudge goes out.'),
-    _e('prep_morning_time', 'meals', 'Morning reminder', 'When the morning-of prep nudge goes out.'),
+       'When the evening prep nudge goes out.',
+       page='shopping', anchor='prep'),
+    _e('prep_morning_time', 'meals', 'Morning reminder', 'When the morning-of prep nudge goes out.',
+       page='shopping', anchor='prep'),
     _e('walmart_store_id', 'meals', 'Walmart store',
-       'Localises cart links and prices to your store.'),
+       'Localises cart links and prices to your store.',
+       page='shopping', anchor='walmart'),
     _e('walmart_impact_publisher_id', 'meals', 'Walmart affiliate publisher',
-       'Only needed if the household has onboarded as an affiliate. The plain cart link needs none of it.'),
+       'Only needed if the household has onboarded as an affiliate. The plain cart link needs none of it.',
+       page='shopping', anchor='walmart'),
     _e('walmart_impact_ad_id', 'meals', 'Walmart affiliate ad id',
-       'Part of the same affiliate trio; leave blank unless you have onboarded.'),
+       'Part of the same affiliate trio; leave blank unless you have onboarded.',
+       page='shopping', anchor='walmart'),
     _e('walmart_impact_campaign_id', 'meals', 'Walmart affiliate campaign',
-       'Part of the same affiliate trio; leave blank unless you have onboarded.'),
+       'Part of the same affiliate trio; leave blank unless you have onboarded.',
+       page='shopping', anchor='walmart'),
 
     # --- the kitchen (owned by the meals surface, not the config page)
     _e('kitchen_ovens', 'kitchen', 'Ovens',
@@ -219,9 +239,11 @@ ENTRIES: List[dict] = [
     _e('load_balancing_metric', 'solver', 'Balance by',
        'Whether fairness is measured in trips or in minutes.'),
     _e('chore_status_tiers', 'solver', 'Chore status tiers',
-       'The thresholds behind the chore status colours.', page='chores', anchor='tiers'),
+       'The point thresholds behind the chore status colours.',
+       page='chores', anchor='tiers', ui_marker='statusTiersEditor'),
     _e('routine_status_tiers', 'solver', 'Routine status tiers',
-       'The thresholds behind the routine status colours.', page='routines', anchor='tiers'),
+       'The streak thresholds behind the routine status colours.',
+       page='routines', anchor='tiers', ui_marker='statusTiersEditor'),
 ]
 
 BY_KEY: Dict[str, dict] = {e['key']: e for e in ENTRIES}
@@ -239,6 +261,78 @@ def audit() -> dict:
     model = set(Settings.model_fields)
     listed = set(BY_KEY)
     return {'missing': sorted(model - listed), 'stale': sorted(listed - model)}
+
+
+def _camel(key: str) -> str:
+    head, *rest = key.split('_')
+    return head + ''.join(w[:1].upper() + w[1:] for w in rest)
+
+
+def audit_ui(templates_dir: str = None) -> dict:
+    """Which registered settings have no way to change them by hand.
+
+    This is the guarantee that nothing gets LOST while settings migrate off
+    the config page. The registry says where each setting lives; this checks
+    the claim by looking for the key — or its camelCase Alpine binding — in
+    that page's template. A registry entry pointing at a page that does not
+    actually carry the control is exactly the silent failure the index would
+    otherwise hide, and it is worse than the old 5,631-line page: there, at
+    least, everything really was on it.
+
+    Ran once at the start of the migration and found SIX settings with no UI
+    anywhere at all (sides per plate, dessert, the three prep-reminder keys,
+    and the Walmart store id) — none of which the move introduced. They had
+    simply never had a hand path.
+    """
+    import os
+    import re
+    base = templates_dir or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+    cache = {}
+
+    def _read(rel, seen):
+        """A template PLUS everything it includes.
+
+        Following `{% include %}` is not optional: shared editors are how this
+        app surfaces several settings (the status-tier editor is one component
+        included by both Chores and Routines), and an audit that stopped at the
+        page file reported those as unreachable when they are on screen. A
+        false alarm here trains people to ignore the audit, which costs more
+        than the audit is worth.
+        """
+        if rel in seen:
+            return ''
+        seen.add(rel)
+        try:
+            with open(os.path.join(base, rel), encoding='utf-8') as fh:
+                body = fh.read()
+        except OSError:
+            return ''
+        for inc in re.findall(r"{%\s*include\s+'([^']+)'", body):
+            body += _read(inc, seen)
+        return body
+
+    def _text(page):
+        if page not in cache:
+            cache[page] = _read(f'{page}.html', set())
+        return cache[page]
+
+    missing = []
+    for e in ENTRIES:
+        body = _text(e['page'])
+        if not body:
+            missing.append({**e, 'why': f"no template for page '{e['page']}'"})
+            continue
+        # Word-boundary match so `kitchen_ovens` is not satisfied by a comment
+        # mentioning `kitchen_ovens_limit`, and the camelCase form catches the
+        # Alpine bindings the config page is written in.
+        needles = [e['key'], _camel(e['key'])]
+        if e.get('ui_marker'):
+            needles = [e['ui_marker']]
+        pat = re.compile(r'\b(%s)\b' % '|'.join(re.escape(n) for n in needles))
+        if not pat.search(body):
+            missing.append({**e, 'why': f"not found on '{e['page']}'"})
+    return {'unreachable': missing}
 
 
 def index(values: dict = None) -> List[dict]:

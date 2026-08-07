@@ -160,6 +160,21 @@
                                 Mode Dashboard (1-14)</span>
                         </div>
                     </div>
+                    <!-- Days to solve. Had NO hand path at all until 2026-08-07 —
+                         it could only be changed through the API, which the
+                         settings-coverage audit is there to stop happening again.
+                         Distinct from "days to display": showing more than is
+                         solved just shows unassigned days. -->
+                    <div class="mb-6">
+                        <label class="block text-gray-400 font-bold mb-2 text-sm uppercase tracking-wider">Days to
+                            Solve</label>
+                        <div class="flex items-center space-x-4">
+                            <input type="number" min="1" max="30" x-model="daysToBuild" @change="saveSettings()"
+                                class="bg-gray-800 border border-gray-600 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500 font-mono w-24">
+                            <span class="text-gray-400 text-sm">How far ahead the solver actually assigns drivers.
+                                Displaying more days than this shows them unassigned.</span>
+                        </div>
+                    </div>
 
                     <!-- Route Cache Duration -->
                     <div class="mb-6">
@@ -696,51 +711,24 @@
                                 that day.
                             </p>
                         </div>
-                        <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🍽️ Where this family eats</span>
-                            <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
-                                <div class="flex items-center gap-2 shrink-0">
-                                    <label class="text-sm text-gray-400 font-semibold">In the car</label>
-                                    <select x-model="carDining" @change="saveSettings()"
-                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                                        <option value="full">Full meals, utensils fine</option>
-                                        <option value="handheld">Handheld only</option>
-                                        <option value="snack">Snacks only</option>
-                                        <option value="none">Never</option>
-                                    </select>
-                                </div>
-                                <div class="flex items-center gap-2 shrink-0">
-                                    <label class="text-sm text-gray-400 font-semibold">At a venue</label>
-                                    <select x-model="venueDining" @change="saveSettings()"
-                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500">
-                                        <option value="full">Full meals, utensils fine</option>
-                                        <option value="handheld">Handheld only</option>
-                                        <option value="snack">Snacks only</option>
-                                        <option value="none">Never</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <p class="text-sm text-gray-500">
-                                How a family eats is a house rule, not a fact about cars — some families
-                                eat full meals with forks between activities, others never eat in the car
-                                at all. This decides which gaps in the day count as chances to eat.
-                                "Never" removes them entirely. Left permissive on purpose: a suggestion
-                                you don't want takes a second to ignore, while a hidden one never explains
-                                itself.
-                            </p>
-                        </div>
-                        <!-- The kitchen moved to Shopping & Meals (2026-08-07),
-                             the first deliberate step of decentralising settings
-                             onto the surface that owns them. A pointer stays
+                        <!-- Where this family eats moved to Shopping & Meals
+                             (2026-08-07) along with every other meals setting —
+                             it decides which gaps count as chances to eat, which
+                             is a fact about how they eat, not about the app. -->
+                        <!-- Settings live on the surface that owns them
+                             (2026-08-07). A pointer stays where they used to be,
                              because a setting that silently vanishes from where
                              somebody last saw it is worse than one in the wrong
-                             place. Find-a-setting indexes all of them. -->
+                             place. -->
                         <div class="flex flex-col gap-2 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
-                            <span class="font-bold text-gray-300">🍳 The kitchen</span>
+                            <span class="font-bold text-gray-300">🍽️ Meals, shopping and the kitchen</span>
                             <p class="text-sm text-gray-500">
-                                Ovens, burners and how many of you usually cook now live on
-                                <a href="shopping#kitchen" class="text-blue-400 hover:text-blue-300 font-semibold">Shopping &amp; Meals</a>,
-                                next to the plates they govern. Everything else is on
+                                Where this family eats, the shape of a plate, the shop day and how
+                                early to ask, prep reminders, the Walmart cart and the kitchen's
+                                ovens and burners now live on
+                                <a href="shopping#how" class="text-blue-400 hover:text-blue-300 font-semibold">Shopping &amp; Meals</a>,
+                                beside the plates and lists they govern. Everything in the app is
+                                findable from
                                 <a href="settings" class="text-blue-400 hover:text-blue-300 font-semibold">Find a setting</a>.
                             </p>
                         </div>
@@ -1630,76 +1618,10 @@
                             family map once a location tracker is set.</p>
                     </div>
 
-                    <!-- Meal planning (M6). Families plan up to the next grocery
-                         run, a day or two before it, and buy for that span — so
-                         these two knobs are what the whole week plan is anchored
-                         to, not a generic "7 days from now". -->
-                    <div class="mt-6 pt-4 border-t border-gray-700">
-                        <h3 class="text-sm font-bold text-gray-300 mb-2">Meal planning</h3>
-                        <div class="flex flex-wrap items-end gap-4">
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-xs">🛒 We shop on</label>
-                                <select x-model="groceryWeekday"
-                                    class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
-                                    <option value="">Work it out from our schedule</option>
-                                    <template x-for="(d, di) in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']"
-                                        :key="'gw-' + di">
-                                        <option :value="String(di)" x-text="d"></option>
-                                    </template>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-gray-400 mb-1 text-xs">Ask "how does this look?" this early</label>
-                                <select x-model.number="groceryPlanLeadDays"
-                                    class="bg-gray-900 border border-gray-600 rounded p-2.5 text-white">
-                                    <option :value="0">Same day</option>
-                                    <option :value="1">1 day before</option>
-                                    <option :value="2">2 days before</option>
-                                    <option :value="3">3 days before</option>
-                                </select>
-                            </div>
-                            <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
-                                <input type="checkbox" x-model="mealWeekEnabled" class="accent-teal-500 w-4 h-4">
-                                Propose the week
-                            </label>
-                            <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer pb-2.5">
-                                <input type="checkbox" x-model="proposeShoppingErrands" class="accent-teal-500 w-4 h-4">
-                                Offer a trip for a list with no errand
-                            </label>
-                            <button @click="saveSettings()"
-                                class="bg-teal-700 hover:bg-teal-600 text-white font-bold px-4 py-2.5 rounded text-sm transition-colors">Save
-                                Planning</button>
-                        </div>
-                        <!-- The choice has to be arguable, not asserted. These are
-                             real free blocks from the schedule, ranked by the WORST
-                             week — a standing shop day has to work most weeks. -->
-                        <div x-show="groceryDays.length" x-cloak class="mt-3">
-                            <p class="text-xs text-gray-400 mb-1.5">
-                                Room for a <span x-text="groceryTripMins"></span>-minute trip,
-                                worst week in the next three:
-                            </p>
-                            <div class="flex flex-wrap gap-1.5">
-                                <template x-for="(c, ci) in groceryDays" :key="'gd-' + ci">
-                                    <button @click="groceryWeekday = String(c.weekday); saveSettings()"
-                                        class="text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors text-left"
-                                        :class="c.fits ? 'bg-gray-900 text-teal-300 border-gray-700 hover:border-teal-500'
-                                                       : 'bg-gray-900 text-gray-500 border-gray-700 hover:border-gray-500'">
-                                        <span x-text="c.weekday_name"></span>
-                                        <span class="font-normal"
-                                            x-text="' · ' + (c.worst_mins >= 60
-                                                ? (Math.round(c.worst_mins / 6) / 10) + 'h'
-                                                : c.worst_mins + ' min')"></span>
-                                        <span x-show="!c.fits" class="font-normal text-amber-500"> · tight</span>
-                                    </button>
-                                </template>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-1.5" x-text="groceryReason"></p>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-2">Argyle posts the nights that shop has to cover to the
-                            family channel and the approvals banner. Approve and the whole span's fresh ingredients
-                            go on the list; change any night on the Meals page first. Approved nights are pinned —
-                            once you've bought for a dinner it stops re-proposing itself.</p>
-                    </div>
+                    <!-- Meal planning moved to Shopping & Meals (2026-08-07):
+                         shop day, how early to ask, propose-the-week and the
+                         offer-a-trip toggle all live at shopping#planning now. -->
+
                 </div>
 
                 <!-- Status Days (People tab sub-panel, Presence & Status arc P1) -->
@@ -3459,6 +3381,7 @@
                 debugLogs: [],
                 showDebugLogs: false,
                 daysToShow: 7,
+                daysToBuild: 7,
                 routeCacheDurationMins: 1440,
                 timeFormat24h: false,
                 disableMapbox: false,
@@ -3515,9 +3438,6 @@
                 carFuelWarnPct: 25,
                 carAutoErrand: false,
                 carFuelStation: '',
-                groceryWeekday: '', groceryPlanLeadDays: 2, mealWeekEnabled: true,
-                groceryDays: [], groceryReason: '', groceryTripMins: 90,
-                proposeShoppingErrands: true,
                 nearbyStations: [],
                 stationSearchBusy: false,
                 stationSearchError: '',
@@ -3545,8 +3465,6 @@
                 schoolStatus: null,
                 kidQuietStart: '20:30',
                 kidQuietEnd: '07:00',
-                carDining: 'full',
-                venueDining: 'full',
                 llmTestResult: null,
                 llmTestSuccess: null,
                 aiRulesGenerating: false,
@@ -3880,6 +3798,7 @@
                     const res = await fetch(`${this.apiBase}api/settings`);
                     const data = await res.json();
                     this.daysToShow = data.days_to_show || 7;
+                    this.daysToBuild = data.days_to_build || 7;
                     this.routeCacheDurationMins = data.route_cache_duration_mins || 1440;
                     this.timeFormat24h = data.time_format_24h || false;
                     this.disableMapbox = data.disable_mapbox || false;
@@ -3924,13 +3843,6 @@
                     this.carFuelStation = data.car_fuel_station || '';
                     // '' means "work it out from our schedule" — deliberately not
                     // a hardcoded weekday.
-                    this.groceryWeekday = data.grocery_weekday != null
-                        ? String(data.grocery_weekday) : '';
-                    this.groceryPlanLeadDays = data.grocery_plan_lead_days != null
-                        ? data.grocery_plan_lead_days : 2;
-                    this.mealWeekEnabled = data.meal_week_enabled !== false;
-                    this.proposeShoppingErrands = data.propose_shopping_errands !== false;
-                    this.loadGroceryDays();
                     this.suggestedRoutesEnabled = data.suggested_routes_enabled !== false;
                     this.chatSuggestionsEnabled = data.chat_suggestions_enabled === true;
                     this.tomorrowDigestEnabled = data.tomorrow_digest_enabled !== false;
@@ -3950,8 +3862,6 @@
                     this.loadSchoolStatus();  // non-blocking; may take a moment (gcal fetch)
                     this.kidQuietStart = data.kid_quiet_start || '20:30';
                     this.kidQuietEnd = data.kid_quiet_end || '07:00';
-                    this.carDining = data.car_dining || 'full';
-                    this.venueDining = data.venue_dining || 'full';
                     this.loadWeatherEntities();   // non-blocking; empty when HA is absent
 
                     await this.fetchCalendarMetadata(this.calendarIds);
@@ -4027,6 +3937,7 @@
                             calendar_ids: this.calendarIds,
                             default_calendar_id: this.defaultCalendarId || '',
                             days_to_show: parseInt(this.daysToShow) || 7,
+                            days_to_build: parseInt(this.daysToBuild) || 7,
                             route_cache_duration_mins: parseInt(this.routeCacheDurationMins) || 1440,
                             time_format_24h: this.timeFormat24h,
                             disable_mapbox: this.disableMapbox,
@@ -4063,11 +3974,6 @@
                             car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
                             car_auto_errand: this.carAutoErrand,
                             car_fuel_station: (this.carFuelStation || '').trim(),
-                            grocery_weekday: this.groceryWeekday === ''
-                                ? null : parseInt(this.groceryWeekday, 10),
-                            grocery_plan_lead_days: parseInt(this.groceryPlanLeadDays, 10),
-                            meal_week_enabled: this.mealWeekEnabled,
-                            propose_shopping_errands: this.proposeShoppingErrands,
                             suggested_routes_enabled: this.suggestedRoutesEnabled,
                             chat_suggestions_enabled: this.chatSuggestionsEnabled,
                             tomorrow_digest_enabled: this.tomorrowDigestEnabled,
@@ -4085,9 +3991,7 @@
                             school_year_end: this.schoolYearEnd || '',
                             school_closed_keywords: this.schoolClosedKeywords || '',
                             kid_quiet_start: this.kidQuietStart || '20:30',
-                            kid_quiet_end: this.kidQuietEnd || '07:00',
-                            car_dining: this.carDining || 'full',
-                            venue_dining: this.venueDining || 'full'
+                            kid_quiet_end: this.kidQuietEnd || '07:00'
                         };
 
                         await fetch(`${this.apiBase}api/settings`, {
@@ -4631,16 +4535,6 @@
                 },
 
                 // --- Car alerts: home gas-station picker (map-first) ---
-                async loadGroceryDays() {
-                    try {
-                        const r = await fetch(`${this.apiBase}api/meals/grocery-day`);
-                        if (!r.ok) return;
-                        const d = await r.json();
-                        this.groceryDays = (d.suggestion || {}).candidates || [];
-                        this.groceryReason = (d.suggestion || {}).reason || '';
-                        this.groceryTripMins = d.trip_mins || 90;
-                    } catch (e) { /* advisory only — the dropdown still works */ }
-                },
 
                 async findNearbyStations() {
                     this.stationSearchBusy = true;

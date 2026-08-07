@@ -504,14 +504,227 @@
                         typed as a whole meal, a main, a side or a dessert. Plates get
                         built from these; how many sides is a setting, not a rule.
                     </p>
-                    <!-- The kitchen lives HERE, not on the config page: it is a
-                         fact about how this household cooks, and it belongs next
-                         to the plates it governs. First deliberate step of
-                         moving settings onto the surface that owns them
-                         (2026-08-07) — it saves only its own three keys, since
-                         /api/settings has always merged rather than replaced. -->
-                    <div id="kitchen" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-4">
-                        <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                    <!-- Every meals setting lives HERE, not on the config page:
+                         they are facts about how this household eats, and they
+                         belong beside the plates and lists they govern
+                         (2026-08-07). The whole panel saves only ITS OWN keys —
+                         /api/settings has always merged rather than replaced, so
+                         a feature-owned surface needs no new endpoint, only the
+                         discipline of sending what it owns. -->
+                    <div id="how" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-4">
+                        <button @click="showMealSettings = !showMealSettings"
+                            class="w-full flex items-center justify-between text-left">
+                            <span class="text-xs font-black uppercase tracking-widest text-pink-200">
+                                ⚙️ How this works
+                            </span>
+                            <span class="text-[11px] font-bold text-gray-500"
+                                x-text="showMealSettings ? 'Hide' : 'Show'"></span>
+                        </button>
+                        <div x-show="showMealSettings" x-cloak class="mt-4 space-y-5">
+
+                            <!-- Where this family eats. A house rule, not a fact
+                                 about cars: it decides which gaps in the day
+                                 count as chances to eat at all. -->
+                            <div id="dining">
+                                <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                                    🍽️ Where this family eats
+                                </div>
+                                <div class="flex flex-wrap gap-4">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        In the car
+                                        <select x-model="mealCfg.car_dining" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-pink-400/60">
+                                            <option value="full">Full meals, utensils fine</option>
+                                            <option value="handheld">Handheld only</option>
+                                            <option value="snack">Snacks only</option>
+                                            <option value="none">Never</option>
+                                        </select>
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        At a venue
+                                        <select x-model="mealCfg.venue_dining" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-pink-400/60">
+                                            <option value="full">Full meals, utensils fine</option>
+                                            <option value="handheld">Handheld only</option>
+                                            <option value="snack">Snacks only</option>
+                                            <option value="none">Never</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                    Some families eat full meals with forks between activities and others
+                                    never eat in the car at all. "Never" removes those gaps entirely.
+                                    Left permissive on purpose — a suggestion you don't want takes a
+                                    second to ignore, while a hidden one never explains itself.
+                                </p>
+                            </div>
+
+                            <!-- The shape of a plate. Had no hand path at all
+                                 until now: composed dinners were built from
+                                 numbers only the API could change. -->
+                            <div id="plate">
+                                <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                                    🍲 What a plate looks like
+                                </div>
+                                <div class="flex flex-wrap items-center gap-4">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        Sides
+                                        <input type="number" min="0" max="4"
+                                            x-model.number="mealCfg.sides_per_meal" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                        <input type="checkbox" x-model="mealCfg.include_dessert"
+                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
+                                        Something sweet after
+                                    </label>
+                                </div>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                    How many sides a proposed dinner is built with. A plate is composed by
+                                    rule and then edited freely, so this is the starting shape, never a limit.
+                                </p>
+                            </div>
+
+                            <!-- Provisioning. Families plan up to the next
+                                 grocery run, a day or two before it, and buy for
+                                 that span — these are what the week plan is
+                                 anchored to, not a generic seven days. -->
+                            <div id="planning">
+                                <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                                    🛒 Planning and shopping
+                                </div>
+                                <div class="flex flex-wrap items-center gap-4">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        We shop on
+                                        <select x-model="mealCfg.grocery_weekday" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-pink-400/60">
+                                            <option value="">Work it out from our schedule</option>
+                                            <template x-for="(d, di) in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']"
+                                                :key="'gw-' + di">
+                                                <option :value="String(di)" x-text="d"></option>
+                                            </template>
+                                        </select>
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        Ask this early
+                                        <select x-model.number="mealCfg.grocery_plan_lead_days" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-pink-400/60">
+                                            <option :value="0">Same day</option>
+                                            <option :value="1">1 day before</option>
+                                            <option :value="2">2 days before</option>
+                                            <option :value="3">3 days before</option>
+                                        </select>
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                        <input type="checkbox" x-model="mealCfg.meal_week_enabled"
+                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
+                                        Propose the week
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                        <input type="checkbox" x-model="mealCfg.propose_shopping_errands"
+                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
+                                        Offer a trip for a list with no errand
+                                    </label>
+                                </div>
+                                <!-- The choice has to be arguable, not asserted:
+                                     real free blocks from the schedule, ranked by
+                                     the WORST week, because a standing shop day
+                                     has to work most weeks. -->
+                                <div x-show="groceryDays.length" x-cloak class="mt-3">
+                                    <p class="text-[11px] text-gray-500 mb-1.5">
+                                        Room for a <span x-text="groceryTripMins"></span>-minute trip,
+                                        worst week in the next three:
+                                    </p>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <template x-for="(c, ci) in groceryDays" :key="'gd-' + ci">
+                                            <button @click="mealCfg.grocery_weekday = String(c.weekday); saveMealCfg()"
+                                                class="text-[11px] font-bold px-3 py-1.5 rounded-lg border text-left"
+                                                :class="c.fits ? 'bg-gray-800 text-teal-300 border-gray-700 hover:border-teal-500'
+                                                               : 'bg-gray-800 text-gray-500 border-gray-700 hover:border-gray-500'">
+                                                <span x-text="c.weekday_name"></span>
+                                                <span class="font-normal"
+                                                    x-text="' · ' + (c.worst_mins >= 60
+                                                        ? (Math.round(c.worst_mins / 6) / 10) + 'h'
+                                                        : c.worst_mins + ' min')"></span>
+                                                <span x-show="!c.fits" class="font-normal text-amber-500"> · tight</span>
+                                            </button>
+                                        </template>
+                                    </div>
+                                    <p class="text-[11px] text-gray-500 mt-1.5" x-text="groceryReason"></p>
+                                </div>
+                            </div>
+
+                            <!-- Prep that happens outside the cook window, and
+                                 the reminder that is the whole point of it. -->
+                            <div id="prep">
+                                <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                                    ⏰ Prep reminders
+                                </div>
+                                <div class="flex flex-wrap items-center gap-4">
+                                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                        <input type="checkbox" x-model="mealCfg.prep_reminders_enabled"
+                                            @change="saveMealCfg()" class="accent-pink-500 w-4 h-4">
+                                        Remind us
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        Night before
+                                        <input type="time" x-model="mealCfg.prep_reminder_time" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:border-pink-400/60">
+                                    </label>
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        Morning of
+                                        <input type="time" x-model="mealCfg.prep_morning_time" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:border-pink-400/60">
+                                    </label>
+                                </div>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                    Soaking, thawing and marinating happen on a different day from cooking,
+                                    and forgetting one silently invalidates tomorrow's plan. "The night
+                                    before" is a human moment rather than an offset, which is why it is a
+                                    clock time and not a number of hours.
+                                </p>
+                            </div>
+
+                            <!-- The cart. Lives here because the list it builds
+                                 from is on this page. -->
+                            <div id="walmart">
+                                <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                                    🛍️ Walmart cart
+                                </div>
+                                <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                    Store id
+                                    <input type="text" x-model="mealCfg.walmart_store_id" @change="saveMealCfg()"
+                                        placeholder="e.g. 3520"
+                                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-32 text-white placeholder-gray-600 focus:outline-none focus:border-pink-400/60">
+                                </label>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                    Localises cart links and prices to your store. Everything the cart does
+                                    works without it — this only makes it yours.
+                                </p>
+                                <details class="mt-3">
+                                    <summary class="text-[11px] font-bold text-gray-600 hover:text-gray-400 cursor-pointer">
+                                        Affiliate credentials
+                                    </summary>
+                                    <p class="text-[11px] text-gray-500 mt-2 mb-2">
+                                        Only for a household that has actually onboarded with Impact
+                                        Radius. The plain cart link needs none of it — leave all three blank.
+                                    </p>
+                                    <div class="flex flex-wrap gap-2">
+                                        <input type="text" x-model="mealCfg.walmart_impact_publisher_id"
+                                            @change="saveMealCfg()" placeholder="publisher id"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-pink-400/60">
+                                        <input type="text" x-model="mealCfg.walmart_impact_ad_id"
+                                            @change="saveMealCfg()" placeholder="ad id"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-pink-400/60">
+                                        <input type="text" x-model="mealCfg.walmart_impact_campaign_id"
+                                            @change="saveMealCfg()" placeholder="campaign id"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-pink-400/60">
+                                    </div>
+                                </details>
+                            </div>
+
+                            <div id="kitchen">
+                        <div class="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
                             🍳 The kitchen
                         </div>
                         <div class="flex flex-wrap items-center gap-4">
@@ -541,6 +754,8 @@
                             to matter when you cook for a crowd: two dishes wanting the same oven
                             at different temperatures cannot share it however much room is left.
                         </p>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Holiday and party food does not belong in the Tuesday
@@ -1071,6 +1286,20 @@
                 showOccasionDishes: false,
                 runSheet: null, runSheetBusy: false,
                 kitchen: { ovens: 1, burners: 4, cooks: 1 },
+                showMealSettings: false,
+                groceryDays: [], groceryReason: '', groceryTripMins: 90,
+                // Every meals setting, owned by this page. Defaults mirror the
+                // Settings model exactly so a failed load changes nothing.
+                mealCfg: {
+                    car_dining: 'full', venue_dining: 'full',
+                    sides_per_meal: 2, include_dessert: false,
+                    grocery_weekday: '', grocery_plan_lead_days: 2,
+                    meal_week_enabled: true, propose_shopping_errands: true,
+                    prep_reminders_enabled: true, prep_reminder_time: '20:30',
+                    prep_morning_time: '08:00', walmart_store_id: '',
+                    walmart_impact_publisher_id: '', walmart_impact_ad_id: '',
+                    walmart_impact_campaign_id: ''
+                },
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
@@ -1904,7 +2133,71 @@
                             burners: d.kitchen_burners != null ? d.kitchen_burners : 4,
                             cooks: d.kitchen_cooks != null ? d.kitchen_cooks : 1
                         };
+                        // Read each key explicitly rather than spreading the
+                        // response: this page owns THESE settings, and hoovering
+                        // up the rest is how a surface starts writing back keys
+                        // it knows nothing about.
+                        const c = this.mealCfg;
+                        c.car_dining = d.car_dining || 'full';
+                        c.venue_dining = d.venue_dining || 'full';
+                        c.sides_per_meal = d.sides_per_meal != null ? d.sides_per_meal : 2;
+                        c.include_dessert = d.include_dessert === true;
+                        c.grocery_weekday = d.grocery_weekday != null ? String(d.grocery_weekday) : '';
+                        c.grocery_plan_lead_days = d.grocery_plan_lead_days != null ? d.grocery_plan_lead_days : 2;
+                        c.meal_week_enabled = d.meal_week_enabled !== false;
+                        c.propose_shopping_errands = d.propose_shopping_errands !== false;
+                        c.prep_reminders_enabled = d.prep_reminders_enabled !== false;
+                        c.prep_reminder_time = d.prep_reminder_time || '20:30';
+                        c.prep_morning_time = d.prep_morning_time || '08:00';
+                        c.walmart_store_id = d.walmart_store_id || '';
+                        c.walmart_impact_publisher_id = d.walmart_impact_publisher_id || '';
+                        c.walmart_impact_ad_id = d.walmart_impact_ad_id || '';
+                        c.walmart_impact_campaign_id = d.walmart_impact_campaign_id || '';
                     } catch (e) { /* defaults are the old behaviour exactly */ }
+                    this.loadGroceryDays();
+                },
+
+                async loadGroceryDays() {
+                    // The shop-day suggestion has to be arguable rather than
+                    // asserted, so the candidates travel with the setting.
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/grocery-day');
+                        if (!r.ok) return;
+                        const d = await r.json();
+                        this.groceryDays = (d.suggestion || {}).candidates || [];
+                        this.groceryReason = (d.suggestion || {}).reason || '';
+                        this.groceryTripMins = d.trip_mins || 90;
+                    } catch (e) { /* the chips are a bonus, never a blocker */ }
+                },
+
+                async saveMealCfg() {
+                    const c = this.mealCfg;
+                    await fetch(this.apiBase + 'api/settings', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            car_dining: c.car_dining || 'full',
+                            venue_dining: c.venue_dining || 'full',
+                            sides_per_meal: Math.max(0, parseInt(c.sides_per_meal, 10) || 0),
+                            include_dessert: !!c.include_dessert,
+                            // '' means "work it out from our schedule" and must
+                            // travel as null, not as 0 (which is Monday).
+                            grocery_weekday: c.grocery_weekday === ''
+                                ? null : parseInt(c.grocery_weekday, 10),
+                            grocery_plan_lead_days: parseInt(c.grocery_plan_lead_days, 10) || 0,
+                            meal_week_enabled: !!c.meal_week_enabled,
+                            propose_shopping_errands: !!c.propose_shopping_errands,
+                            prep_reminders_enabled: !!c.prep_reminders_enabled,
+                            prep_reminder_time: c.prep_reminder_time || '20:30',
+                            prep_morning_time: c.prep_morning_time || '08:00',
+                            walmart_store_id: (c.walmart_store_id || '').trim(),
+                            walmart_impact_publisher_id: (c.walmart_impact_publisher_id || '').trim(),
+                            walmart_impact_ad_id: (c.walmart_impact_ad_id || '').trim(),
+                            walmart_impact_campaign_id: (c.walmart_impact_campaign_id || '').trim()
+                        })
+                    });
+                    await this.loadPlate();
+                    await this.loadWeek();
+                    this.loadGroceryDays();
                 },
 
                 // Sends THREE keys, not eighty-three. /api/settings has always

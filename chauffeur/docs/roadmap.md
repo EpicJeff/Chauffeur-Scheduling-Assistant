@@ -351,22 +351,27 @@ looking, and every one works. config.html is the residue.
   This is the thing decentralisation otherwise destroys: somewhere to look when
   you half-remember a setting but not which page owns it. Secrets show as
   set/not-set and never as values.
-- **The kitchen moved to Shopping & Meals** as the pattern proof, saving only
-  its own three keys — `/api/settings` has always merged with `exclude_unset`,
-  so a feature-owned surface needs no new endpoint, only the discipline of
-  sending what it owns. config.html keeps a pointer, because a setting that
-  silently vanishes from where somebody last saw it is worse than one in the
-  wrong place.
+- **`audit_ui()` — the nothing-gets-lost guarantee**, enforced by a test. It
+  checks every registry claim against the owning template (following
+  `{% include %}`). It found **ten settings with no hand path at all**, none of
+  them caused by the migration: days-to-solve, sides-per-plate, dessert, the
+  three prep-reminder keys and the four Walmart keys. All ten have one now.
+- **The whole meals group moved to Shopping & Meals** (v2.98.0) under
+  "⚙️ How this works" — dining, plate shape, planning, prep reminders, Walmart,
+  kitchen. It POSTs only its own keys: `/api/settings` has always merged with
+  `exclude_unset`, so a feature-owned surface needs no new endpoint, only the
+  discipline of sending what it owns. config.html keeps pointers, because a
+  setting that silently vanishes from where somebody last saw it is worse than
+  one in the wrong place. config.html: 5,631 → 5,501 lines.
 
 **What remains — move a group at a time, registry entry first:**
-- Kids & school → the member card / kid surfaces (quiet hours, digest times,
-  school year and calendar).
-- Meals & shopping → the rest of the meals block onto Shopping & Meals.
-- Cars → the car entity pages. Intake creds → `/intake` (already its own page).
-- Digests → wherever the digest is configured; Maps/quotas and AI keys are the
-  natural residue and can legitimately stay on config as "plumbing".
-- Then config.html becomes plumbing + a link to the index, and the 5,600 lines
-  come down with it.
+- Kids & school (9) → the member card / kid surfaces.
+- Cars (4) → the car entity pages.
+- Digests (7) → wherever a digest is configured.
+- Daily/household/integrations/AI/maps are the natural residue and can
+  legitimately stay on config as plumbing — the index makes them findable
+  regardless. Intake (5) already lives on `/intake`; solver tiers (2) already
+  live on Chores and Routines.
 
 Rule going forward: **a new setting is registered in the registry and placed on
 its feature's surface, never appended to config.html.**
