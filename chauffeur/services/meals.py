@@ -612,12 +612,24 @@ def eaters_on(date_str: str, settings: dict = None, sched: dict = None) -> int:
 def leftover_nights(dish: dict, headcount: int) -> int:
     """How many EXTRA nights this dish makes, beyond the one it is cooked for.
 
-    A pot is made whole or not at all — `kitchen.scale_factor` never scales
-    below 1.0, because nobody peels three-quarters of a potato — so a dish that
-    serves eight in a house of four feeds tonight and one more night. That is
-    the fact the family already knew and the app did not: chili on Sunday is
-    also Monday, and proposing it twice is using it up rather than repeating
-    themselves.
+    FLOOR, never ceiling: a night only counts when there is enough left to feed
+    EVERYONE again. Nine people eating a dish that serves six means making
+    double and having three portions spare, and three portions is not dinner —
+    proposing it again on the strength of that would mean cooking more of it,
+    leaving a little spare again, forever. That forever-cycle is the reason
+    this is not "is there anything left".
+
+    Equivalent to the long way round — make whole batches, subtract what was
+    eaten, and see how many further full sittings remain:
+
+        floor((ceil(head / serves) * serves - head) / head)
+
+    ...which reduces to the expression below in every case (tested exhaustively
+    in `scenario_a_little_bit_left_over_is_not_another_night`).
+
+    `serves` is a SCALING input and nothing else. It says how much to make and
+    therefore what is left over; it must never make a dish more or less likely
+    to be proposed in its own right.
     """
     try:
         serves = int(dish.get('serves') or 0)

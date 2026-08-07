@@ -3863,6 +3863,53 @@ def scenario_serves_decides_whether_there_is_a_second_night():
     check(meals.leftover_nights({'serves': 0}, 4) == 0, "an unknown size forecasts nothing")
 
 
+def scenario_a_little_bit_left_over_is_not_another_night():
+    """The rule that stops the forever-cycle.
+
+    Leftovers count for PROPOSAL only when there is enough to feed everyone
+    again — a floor, never a ceiling. Nine people eating a dish that serves six
+    means making double and having three portions spare, and three portions is
+    not dinner: proposing it again on the strength of that would mean cooking
+    more of it, which leaves a little spare again, forever.
+
+    `serves` is a SCALING input. It says how much to make and therefore what is
+    left; it must never make a dish more or less likely to be proposed in its
+    own right.
+    """
+    import math
+    reset_db()
+
+    def enough_to_feed_everyone_again(serves, head):
+        """The rule stated the long way round, from what is actually made."""
+        batches = math.ceil(head / serves)      # you make whole batches
+        left = batches * serves - head
+        return left // head                     # floor: it has to feed them ALL
+
+    for serves in range(1, 25):
+        for head in range(1, 15):
+            check(meals.leftover_nights({'serves': serves}, head)
+                  == enough_to_feed_everyone_again(serves, head),
+                  f"serves={serves} head={head}: "
+                  f"{meals.leftover_nights({'serves': serves}, head)} != "
+                  f"{enough_to_feed_everyone_again(serves, head)}")
+
+    check(meals.leftover_nights({'serves': 6}, 9) == 0,
+          "double the carrots for nine leaves a little, which is not a night")
+    check(meals.leftover_nights({'serves': 6}, 6) == 0,
+          "a household-sized dish is exactly one dinner")
+    check(meals.leftover_nights({'serves': 12}, 6) == 1,
+          "twice the household is one more night")
+
+    # And the consequence: a dish that only ever leaves a little is never
+    # proposed again on leftover grounds, however often it is made.
+    _settings(household_headcount=9)
+    carrots = _dish('roast carrots', type='side', side_type='vegetable', serves=6)
+    cov = meals._leftover_coverage(meals._now_ts(),
+                                   {carrots['id']: meals._now_ts() - 86400}, 9, {})
+    check(carrots['id'] not in cov,
+          "a little spare never becomes a reason to serve it again")
+
+
 def scenario_a_big_pot_comes_back_the_next_night():
     """The point of the whole feature: the family already eats Sunday's chili
     on Monday, and the app should not need telling."""
