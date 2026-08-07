@@ -234,6 +234,146 @@ def scenario_the_tools_are_in_both_stacks_and_speak_plainly():
     check('the Wilsons' in read['message'], f"the read-back is plain, got {read}")
 
 
+def scenario_the_interview_generates_rather_than_records():
+    """The difference between planning help and a form. Answering headcount
+    does not store a number - it scales every plate inside the window."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    iv = occasions.interview(o['id'])
+    check([q['key'] for q in iv['questions']][:2] == ['headcount', 'cooking_hands'],
+          f"it asks the things that cascade first, got {iv['questions']}")
+
+    res = occasions.answer(o['id'], 'headcount', 16)
+    check(res['generated'], f"answering generates work, got {res}")
+    plate = storage.get_plate(DAY) or {}
+    check(plate.get('serving_for') == 16,
+          f"the anchor day is cooking for 16, got {plate.get('serving_for')}")
+    edge = storage.get_plate(WIN_END) or {}
+    check(edge.get('serving_for') == 16, "and so is the last day of the window")
+    check(not storage.get_plate('2026-12-05'), "while a day outside it is untouched")
+
+
+def scenario_headcount_never_overwrites_a_specific_statement():
+    """A general answer must not stamp over what somebody said about one night."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    meals.set_plate_hosting(DAY, serving_for=6, cooks=1)
+    occasions.answer(o['id'], 'headcount', 16)
+    check((storage.get_plate(DAY) or {}).get('serving_for') == 6,
+          "the night the family set by hand keeps its own number")
+    check((storage.get_plate(WIN_END) or {}).get('serving_for') == 16,
+          "and the rest of the window still takes the answer")
+
+
+def scenario_the_report_is_a_diff_not_an_inventory():
+    """A list of what exists cannot answer "have I forgotten anything" - the
+    gap is invisible by construction."""
+    reset_db(); _members(); _settings()
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    occasions.answer(o['id'], 'cake', True)
+    keys = {g['key'] for g in occasions.gap_report(o['id'])['gaps']}
+    check('cake' in keys and 'party_supplies' in keys,
+          f"it names what is missing, got {keys}")
+
+    occasions.apply_template(o['id'])
+    after = {g['key'] for g in occasions.gap_report(o['id'])['gaps']}
+    check('cake' not in after,
+          f"and stops naming it once the errand exists, got {after}")
+    errs = [e for e in storage.get_all_errands() if e.get('occasion_key') == 'cake']
+    check(len(errs) == 1 and errs[0]['window_days'] >= 1,
+          f"the errand carries a real deadline, got {errs}")
+
+
+def scenario_unanswered_is_not_no():
+    """A family that has not been asked about a cake must not be told they are
+    missing one. That is how a report becomes noise instead of a signal."""
+    reset_db(); _members(); _settings()
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    keys = {g['key'] for g in occasions.gap_report(o['id'])['gaps']}
+    check('cake' not in keys, f"silence is not a yes, got {keys}")
+    occasions.answer(o['id'], 'cake', False)
+    keys = {g['key'] for g in occasions.gap_report(o['id'])['gaps']}
+    check('cake' not in keys, "and an explicit no keeps it out too")
+
+
+def scenario_a_settled_decision_stops_coming_back():
+    reset_db(); _members(); _settings()
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    check('party_supplies' in {g['key'] for g in occasions.gap_report(o['id'])['gaps']},
+          "it starts on the list")
+    occasions.dismiss(o['id'], 'party_supplies')
+    check('party_supplies' not in {g['key'] for g in occasions.gap_report(o['id'])['gaps']},
+          "and a waved-off line never comes back")
+
+
+def scenario_last_year_surfaces_what_the_template_never_knew():
+    """The rented tables nobody thought to model. Only the prior instance can
+    show that kind of absence."""
+    reset_db(); _members(); _settings()
+    from models.schemas import Errand
+    last = occasions.create('Thanksgiving 2025', '2025-11-27', 'thanksgiving')
+    storage.add_errand(Errand(title='Collect the rented tables - Thanksgiving 2025',
+                              duration_mins=30, location='Rentals',
+                              occasion_id=last['id']).model_dump())
+    this = occasions.create('Thanksgiving 2026', DAY, 'thanksgiving')
+    check(this['prior_occasion_id'] == last['id'], "linked to last year")
+
+    rep = occasions.gap_report(this['id'])
+    prior_gaps = [g for g in rep['gaps'] if g['source'] == 'prior']
+    check(any('rented tables' in g['label'] for g in prior_gaps),
+          f"last year's line shows as missing, got {prior_gaps}")
+    check(all('had this' in (g.get('note') or '') for g in prior_gaps),
+          "and says where it came from")
+    check(rep['has_prior'], "the report knows it had something to compare with")
+
+
+def scenario_gaps_are_ordered_by_slack_and_carry_no_percentage():
+    reset_db(); _members(); _settings()
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    occasions.answer(o['id'], 'cake', True)
+    occasions.answer(o['id'], 'gifts', True)
+    rep = occasions.gap_report(o['id'])
+    slacks = [g['slack_days'] for g in rep['gaps']]
+    check(slacks == sorted(slacks), f"tightest first, got {slacks}")
+    check('percent' not in str(rep) and 'pct' not in str(rep),
+          "and nothing anywhere is a percentage")
+
+
+def scenario_the_watcher_anticipates_but_does_not_nag():
+    """Anticipation is the half of the load a page cannot carry - but only
+    inside a lead window, and never about a settled decision."""
+    import datetime as _dt
+    reset_db(); _members(); _settings()
+    from services import watchers
+    soon = (_dt.date.today() + _dt.timedelta(days=2)).isoformat()
+    o = occasions.create('Ellie birthday', soon, 'birthday')
+    occasions.answer(o['id'], 'cake', True)
+    keys = [k for k, _ in watchers._occasion_findings(_dt.datetime.now())]
+    check(any(k.startswith('occasion_gap:') for k in keys),
+          f"a party in two days with an unbought cake gets a nudge, got {keys}")
+
+    far = (_dt.date.today() + _dt.timedelta(days=200)).isoformat()
+    o2 = occasions.create('Christmas', far, 'christmas')
+    occasions.answer(o2['id'], 'gifts', True)
+    keys2 = [k for k, _ in watchers._occasion_findings(_dt.datetime.now())]
+    check(not any(o2['id'] in k for k in keys2),
+          "but something 200 days out is not a heads-up, it is nagging")
+
+
+def scenario_the_gap_report_is_sayable():
+    reset_db(); _members(); _settings()
+    from services import agent_tools, agent_tools_v2
+    check('get_occasion_gaps' in {t['name'] for t in agent_tools_v2.get_available_tools()}
+          and 'get_occasion_gaps' in agent_tools.TOOL_HANDLERS,
+          "the tool is in both stacks")
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    occasions.answer(o['id'], 'cake', True)
+    res = agent_tools.execute_tool('get_occasion_gaps', {'occasion_name': 'Ellie'})
+    check('cake' in res['message'].lower(),
+          f"it names what is missing, got {res['message']}")
+    check('%' not in res['message'], "and quotes no percentage")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

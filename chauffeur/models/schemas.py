@@ -694,6 +694,10 @@ class Errand(BaseModel):
     group_id: Optional[str] = None
     valid_days_of_week: List[int] = Field(default_factory=list)
     occasion_id: Optional[str] = None   # "pick up the cake" belongs to the party
+    # WHICH line of the template this satisfies. The gap report can only show
+    # an absence by matching against something, and an exact key beats keyword
+    # guessing at the one job where a false match is worse than no report.
+    occasion_key: Optional[str] = None
 
 class ErrandRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -730,6 +734,7 @@ class ShoppingList(BaseModel):
     store: Optional[str] = None        # display name; matches Errand.location
     errand_tag: Optional[str] = None   # binds to whichever errand carries it
     is_default: bool = False
+    occasion_key: Optional[str] = None  # which template line this satisfies
     # Membership attaches to the coarsest entity the occasion WHOLLY owns
     # (design principle 3). A list made for the shark party is the party's, so
     # an item added to it belongs to the party regardless of which page the
@@ -1143,6 +1148,14 @@ class Occasion(BaseModel):
     # which is the only thing that can surface an absence.
     prior_occasion_id: Optional[str] = None
     status: str = 'planning'                # planning | done
+    # What the interview has been TOLD. The occasion's own data, not a copy of
+    # anything else — every answer is a fact nobody else stores, and each one
+    # generates work that then lives in its normal home.
+    answers: Dict[str, Any] = Field(default_factory=dict)
+    # Checklist keys the family has explicitly waved off ("no cake this year").
+    # Without this the gap report nags forever about a deliberate decision,
+    # which is how a report stops being read.
+    dismissed: List[str] = Field(default_factory=list)
     created_at: float = Field(default_factory=time.time)
 
 

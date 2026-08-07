@@ -635,6 +635,9 @@ sending or claiming, and never pass from_member/member_name for them.
                     elif func_name == "get_occasion":
                         res = _atv2.get_occasion(args.get("occasion_name", "") or "",
                                                  acting_member=actor)
+                    elif func_name == "get_occasion_gaps":
+                        res = _atv2.get_occasion_gaps(
+                            args.get("occasion_name", "") or "", acting_member=actor)
                     elif func_name == "add_occasion_guests":
                         res = _atv2.add_occasion_guests(
                             args.get("occasion_name", "") or "",

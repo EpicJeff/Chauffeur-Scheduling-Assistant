@@ -1593,6 +1593,46 @@ def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[st
     return {"status": "success", "message": ' '.join(bits)}
 
 
+def get_occasion_gaps(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "what still needs doing for Thanksgiving?", "am I forgetting
+    anything for the party?"
+
+    A DIFF, not an inventory. Listing what exists cannot answer "have I
+    forgotten anything" — the gap is invisible by construction — so this
+    compares against the usual shape of this kind of occasion and against last
+    year's. Ordered by slack, and it never quotes a percentage: six of
+    fourteen presents unbought is fine in October and an emergency on the 23rd.
+    """
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "success",
+                "message": "I don't have any occasions on the books yet."}
+    rep = _occ.gap_report(o['id'])
+    gaps, qs = rep.get('gaps') or [], rep.get('questions') or []
+    away = rep.get('days_away')
+    head = f"{o['title']}" + (f", {away} days away" if isinstance(away, int) and away >= 0
+                              else "") + "."
+    if not gaps:
+        tail = (" Nothing outstanding against the usual list"
+                + (" or last year's." if rep.get('has_prior')
+                   else " — there's no previous one to compare with yet."))
+        if qs:
+            tail += f" I still don't know: {qs[0]['ask']}"
+        return {"status": "success", "message": head + tail}
+    lines = []
+    for g in gaps[:6]:
+        when = ("overdue" if g['slack_days'] < 0
+                else "today" if g['slack_days'] == 0
+                else f"{g['slack_days']} days")
+        note = f" ({g['note']})" if g.get('note') else ""
+        lines.append(f"{g['label']} — {when}{note}")
+    msg = head + " Still to sort: " + "; ".join(lines) + "."
+    if qs:
+        msg += f" And I still don't know: {qs[0]['ask']}"
+    return {"status": "success", "message": msg}
+
+
 def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
                         cannot_eat: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "the Wilsons are coming, there are four of them", "Grandma's
@@ -2498,6 +2538,17 @@ def get_available_tools() -> List[Dict]:
         {
             "name": "get_occasion",
             "description": "Reads the state of a holiday or party: what's the state of Thanksgiving, who is coming to the party, what still needs doing for Ellie's birthday. Reports guests, headcount, lists and outstanding errands.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which one; omit for the next one coming up."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_occasion_gaps",
+            "description": "Says what is still MISSING for a holiday or party - what still needs doing for Thanksgiving, am I forgetting anything for the party. This is a diff against the usual shape of that kind of occasion and against last year's, ordered by how little time is left. Use it whenever someone asks whether they have forgotten something.",
             "parameters": {
                 "type": "object",
                 "properties": {

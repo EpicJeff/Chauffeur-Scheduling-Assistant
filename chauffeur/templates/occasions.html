@@ -116,6 +116,84 @@
                 </div>
 
                 <div x-show="detail[o.id]" x-cloak class="mt-4 border-t border-gray-700 pt-4">
+
+                    <!-- The interview. Each answer GENERATES logistics rather
+                         than recording them, which is the whole difference
+                         between planning help and a form. -->
+                    <div x-show="((gaps[o.id] || {}).questions || []).length" class="mb-4">
+                        <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                            💬 A couple of things
+                        </div>
+                        <template x-for="q in ((gaps[o.id] || {}).questions || []).slice(0, 1)"
+                            :key="'q-' + o.id + q.key">
+                            <div class="bg-gray-900 rounded-xl border border-gray-700 p-4">
+                                <div class="text-sm text-gray-200 font-semibold" x-text="q.ask"></div>
+                                <div class="text-[11px] text-gray-500 mt-0.5" x-show="q.hint" x-text="q.hint"></div>
+                                <div class="flex gap-2 mt-3">
+                                    <template x-if="q.kind === 'yesno'">
+                                        <div class="flex gap-2">
+                                            <button @click="answer(o, q.key, true)"
+                                                class="px-4 py-1.5 rounded-lg text-xs font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200">Yes</button>
+                                            <button @click="answer(o, q.key, false)"
+                                                class="px-4 py-1.5 rounded-lg text-xs font-bold bg-gray-800 border border-gray-700 text-gray-300">No</button>
+                                        </div>
+                                    </template>
+                                    <template x-if="q.kind !== 'yesno'">
+                                        <div class="flex gap-2 w-full">
+                                            <input x-model="answerDraft[o.id + q.key]"
+                                                :type="q.kind === 'number' ? 'number' : 'text'"
+                                                @keydown.enter="answer(o, q.key, answerDraft[o.id + q.key])"
+                                                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-pink-400/60">
+                                            <button @click="answer(o, q.key, answerDraft[o.id + q.key])"
+                                                class="px-4 py-1.5 rounded-lg text-xs font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200">Save</button>
+                                        </div>
+                                    </template>
+                                    <button @click="answer(o, q.key, null)"
+                                        class="text-[11px] text-gray-600 hover:text-gray-400 ml-auto self-center">skip</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- The gap report: what is MISSING. A list of what exists
+                         cannot answer "have I forgotten anything" — the gap is
+                         invisible by construction, and nine tidy green rows
+                         manufacture confidence about the exact worry. Sorted by
+                         slack, never a percentage. -->
+                    <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                        🔍 Not sorted yet
+                    </div>
+                    <div class="space-y-1.5 mb-4">
+                        <template x-for="g in ((gaps[o.id] || {}).gaps || [])" :key="'g-' + g.key">
+                            <div class="bg-gray-900 rounded-xl border px-4 py-2 flex items-baseline gap-3"
+                                :class="g.slack_days < 0 ? 'border-red-500/50'
+                                    : g.slack_days <= 2 ? 'border-amber-500/50' : 'border-gray-700'">
+                                <span class="text-sm text-gray-200 flex-1 min-w-0">
+                                    <span x-text="g.label"></span>
+                                    <span class="text-[11px] text-gray-600 ml-1.5"
+                                        x-show="g.note" x-text="'· ' + g.note"></span>
+                                </span>
+                                <span class="text-[11px] font-bold shrink-0"
+                                    :class="g.slack_days < 0 ? 'text-red-400'
+                                        : g.slack_days <= 2 ? 'text-amber-300' : 'text-gray-500'"
+                                    x-text="slackLabel(g)"></span>
+                                <button @click="dismissGap(o, g)"
+                                    class="text-gray-600 hover:text-gray-400 text-[11px] shrink-0"
+                                    title="Not doing this one">✕</button>
+                            </div>
+                        </template>
+                        <div x-show="!((gaps[o.id] || {}).gaps || []).length"
+                            class="text-[11px] text-gray-500"
+                            x-text="(gaps[o.id] || {}).has_prior
+                                ? 'Nothing outstanding against the usual list or last time.'
+                                : 'Nothing outstanding against the usual list — there is no previous one to compare with yet.'"></div>
+                        <button @click="applyTemplate(o)"
+                            x-show="((gaps[o.id] || {}).gaps || []).some(g => g.source === 'template' && g.type === 'errand')"
+                            class="text-[11px] font-bold text-gray-600 hover:text-pink-300 mt-1">
+                            + put the errands on the schedule
+                        </button>
+                    </div>
+
                     <!-- Guests. The list earns its place by feeding headcount and
                          allergies into the meal plan; there is deliberately no
                          invitation sending. -->
@@ -198,6 +276,7 @@
         return {
             apiBase: window.location.pathname.endsWith('/') ? '../' : '',
             occasions: [], detail: {}, sourceDraft: {},
+            gaps: {}, answerDraft: {},
             loading: true, busy: false, sourcing: false, showNew: false,
             kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering'],
             draft: { title: '', kind: 'gathering', anchor_date: '', tags: '',
@@ -226,8 +305,47 @@
 
             async open(o) {
                 if (this.detail[o.id]) { delete this.detail[o.id]; return; }
-                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
-                if (r.ok) this.detail[o.id] = await r.json();
+                await this.refresh(o);
+            },
+
+            async refresh(o) {
+                const [d, g] = await Promise.all([
+                    fetch(this.apiBase + 'api/occasions/' + o.id),
+                    fetch(this.apiBase + 'api/occasions/' + o.id + '/gaps')
+                ]);
+                if (d.ok) this.detail[o.id] = await d.json();
+                if (g.ok) this.gaps[o.id] = await g.json();
+            },
+
+            slackLabel(g) {
+                const d = g.slack_days;
+                if (d < 0) return Math.abs(d) + 'd late';
+                if (d === 0) return 'today';
+                if (d === 1) return 'tomorrow';
+                return d + 'd';
+            },
+
+            async answer(o, key, value) {
+                await fetch(this.apiBase + 'api/occasions/' + o.id + '/answer', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key, value })
+                });
+                this.answerDraft[o.id + key] = '';
+                await this.refresh(o);
+            },
+
+            async applyTemplate(o) {
+                await fetch(this.apiBase + 'api/occasions/' + o.id + '/apply-template',
+                    { method: 'POST' });
+                await this.refresh(o);
+                showGlobalAlert('On the schedule — each one has a deadline counted '
+                    + 'back from the day itself, so the solver can place them.');
+            },
+
+            async dismissGap(o, g) {
+                await fetch(this.apiBase + 'api/occasions/' + o.id
+                    + '/dismiss/' + encodeURIComponent(g.key), { method: 'POST' });
+                await this.refresh(o);
             },
 
             async createOccasion() {
@@ -289,14 +407,12 @@
                             .map(s => s.trim().toLowerCase()).filter(Boolean)
                     })
                 });
-                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
-                if (r.ok) this.detail[o.id] = await r.json();
+                await this.refresh(o);
             },
 
             async removeGuest(o, g) {
                 await fetch(this.apiBase + 'api/occasions/guests/' + g.id, { method: 'DELETE' });
-                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
-                if (r.ok) this.detail[o.id] = await r.json();
+                await this.refresh(o);
             },
 
             async sourceIt(o) {
@@ -311,8 +427,7 @@
                     const res = r.ok ? await r.json() : {};
                     if (!r.ok) throw new Error(res.detail || 'failed');
                     this.sourceDraft[o.id] = '';
-                    const d = await fetch(this.apiBase + 'api/occasions/' + o.id);
-                    if (d.ok) this.detail[o.id] = await d.json();
+                    await this.refresh(o);
                     showGlobalAlert((res.items || []).length + ' things on a new list — '
                         + 'open it to check it over and send it to a cart.');
                 } catch (e) {

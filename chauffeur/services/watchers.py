@@ -148,6 +148,41 @@ def _prep_kit_findings(now_ts: float):
              f"tap ✨ Suggest on the Routines page to review & save")]
 
 
+def _occasion_findings(now: datetime.datetime):
+    """ANTICIPATION, which is the half of the mental load a page cannot carry.
+
+    A surface you have to remember to open is one you do not open, so the gap
+    report has to come to the parent — but only once it can say something
+    useful, and only about the things that are actually running out of room.
+    Two guards keep this from becoming noise: nothing fires outside a lead
+    window, and a settled decision (`dismissed`) never resurfaces.
+    """
+    from services import occasions as _occ
+    today = now.date()
+    out = []
+    for o in storage.get_occasions():
+        try:
+            anchor = datetime.date.fromisoformat(o['anchor_date'])
+        except (TypeError, ValueError, KeyError):
+            continue
+        away = (anchor - today).days
+        # Three weeks is where anticipation is still useful and not yet nagging.
+        if away < 0 or away > 21:
+            continue
+        rep = _occ.gap_report(o['id'])
+        urgent = [g for g in rep.get('gaps') or [] if g['slack_days'] <= 3]
+        if not urgent:
+            continue
+        # The dedup key carries the DAY, so one nudge a day at most while the
+        # gap stands, rather than one forever or one per sweep.
+        key = f"occasion_gap:{o['id']}:{today.isoformat()}"
+        names = ', '.join(g['label'] for g in urgent[:3])
+        more = f" (+{len(urgent) - 3} more)" if len(urgent) > 3 else ""
+        when = "today" if away == 0 else f"in {away} day{'s' if away != 1 else ''}"
+        out.append((key, f"🎉 {o['title']} is {when} — still to sort: {names}{more}"))
+    return out
+
+
 def collect_findings(now: datetime.datetime = None):
     """All watcher findings as (dedup_key, line) pairs — unfiltered."""
     now = now or datetime.datetime.now()
@@ -159,6 +194,7 @@ def collect_findings(now: datetime.datetime = None):
     findings += chore
     findings += _redemption_findings(now_ts)
     findings += _errand_findings()
+    findings += _occasion_findings(now)
     return findings, unclaimed
 
 

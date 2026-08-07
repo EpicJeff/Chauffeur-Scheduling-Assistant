@@ -5794,6 +5794,55 @@ def remove_occasion_guest(guest_id: str):
     storage.delete_occasion_guest(guest_id)
     return {"status": "ok"}
 
+class AnswerRequest(BaseModel):
+    key: str
+    value: Any = None
+
+@app.get("/api/occasions/{occasion_id}/interview")
+def occasion_interview(occasion_id: str):
+    from services import occasions as _occ
+    res = _occ.interview(occasion_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return res
+
+@app.post("/api/occasions/{occasion_id}/answer")
+def occasion_answer(occasion_id: str, req: AnswerRequest):
+    """One answer, and whatever it cascades into. Headcount does not store a
+    number — it scales every plate in the window."""
+    from services import occasions as _occ
+    res = _occ.answer(occasion_id, req.key, req.value)
+    if res.get('error'):
+        raise HTTPException(status_code=404, detail=res['error'])
+    _touch_stream()
+    return res
+
+@app.post("/api/occasions/{occasion_id}/apply-template")
+def occasion_apply_template(occasion_id: str, keys: Optional[List[str]] = None):
+    from services import occasions as _occ
+    res = _occ.apply_template(occasion_id, keys)
+    if res.get('error'):
+        raise HTTPException(status_code=404, detail=res['error'])
+    _touch_stream()
+    return res
+
+@app.get("/api/occasions/{occasion_id}/gaps")
+def occasion_gaps(occasion_id: str):
+    """What is MISSING — a diff against the template and last year, never a
+    list of what is already there."""
+    from services import occasions as _occ
+    res = _occ.gap_report(occasion_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return res
+
+@app.post("/api/occasions/{occasion_id}/dismiss/{key}")
+def occasion_dismiss(occasion_id: str, key: str):
+    from services import occasions as _occ
+    if not _occ.dismiss(occasion_id, key):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return {"status": "ok"}
+
 @app.post("/api/occasions/{occasion_id}/source")
 def source_for_occasion(occasion_id: str, req: SourcingRequest):
     """"Party favours for a shark party" → a list the occasion owns, ready for

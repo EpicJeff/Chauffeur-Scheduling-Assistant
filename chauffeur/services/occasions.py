@@ -217,6 +217,317 @@ def contents(occasion_id: str) -> dict:
     }
 
 
+# --- Templates: an INTERVIEW, not a checklist (O2) ---------------------------
+#
+# This is the difference between planning help and a form. Each answer
+# GENERATES logistics rather than recording them — "how many are coming?"
+# cascades into scaling, shopping and oven capacity; "anyone staying over?"
+# produces beds, towels and an errand.
+#
+# Work is stamped at OFFSETS from the anchor, because `Errand` already
+# expresses a deadline as `starts_on` + `window_days`, so this is arithmetic
+# against shipped primitives rather than new solver work.
+#
+# Deliberately static data, never an LLM call: a family answering the same
+# question twice must get the same cascade, and a template that drifts is one
+# nobody can trust as a diff baseline.
+
+_ASK = {
+    'headcount': ("How many are you feeding?",
+                  "Everybody, your own family included."),
+    'staying_over': ("Is anyone staying the night?", None),
+    'cooking_hands': ("How many of you will be cooking?", None),
+    'travelling': ("Are you travelling for it, or are they coming to you?", None),
+    'cake': ("Is there a cake?", None),
+    'gifts': ("Are there presents to buy?", None),
+    'theme': ("Does it have a theme?", "Sharks, dinosaurs, whatever it is."),
+}
+
+_COMMON = [
+    {'key': 'headcount', 'ask': 'headcount', 'kind': 'number'},
+    {'key': 'cooking_hands', 'ask': 'cooking_hands', 'kind': 'number'},
+]
+
+TEMPLATES = {
+    'thanksgiving': {
+        'dish_tags': ['thanksgiving'],
+        'questions': _COMMON + [
+            {'key': 'staying_over', 'ask': 'staying_over', 'kind': 'yesno'},
+        ],
+        'checklist': [
+            {'key': 'food_shop', 'label': 'Shop for the meal', 'type': 'errand',
+             'offset_days': -4, 'location': 'Grocery', 'duration_mins': 90},
+            {'key': 'turkey_thaw', 'label': 'Turkey out to thaw',
+             'type': 'note', 'offset_days': -4},
+            {'key': 'house', 'label': 'Tidy the house', 'type': 'errand',
+             'offset_days': -1, 'location': 'Home', 'duration_mins': 60},
+            {'key': 'beds', 'label': 'Beds and towels for guests', 'type': 'note',
+             'offset_days': -1, 'needs': 'staying_over'},
+        ],
+    },
+    'christmas': {
+        'dish_tags': ['christmas'],
+        'questions': _COMMON + [
+            {'key': 'gifts', 'ask': 'gifts', 'kind': 'yesno'},
+            {'key': 'travelling', 'ask': 'travelling', 'kind': 'yesno'},
+            {'key': 'staying_over', 'ask': 'staying_over', 'kind': 'yesno'},
+        ],
+        'checklist': [
+            {'key': 'food_shop', 'label': 'Shop for the meal', 'type': 'errand',
+             'offset_days': -3, 'location': 'Grocery', 'duration_mins': 90},
+            {'key': 'gifts', 'label': 'Presents', 'type': 'note',
+             'offset_days': -14, 'needs': 'gifts'},
+            {'key': 'beds', 'label': 'Beds and towels for guests', 'type': 'note',
+             'offset_days': -1, 'needs': 'staying_over'},
+        ],
+    },
+    'birthday': {
+        'dish_tags': ['birthday'],
+        'questions': _COMMON + [
+            {'key': 'cake', 'ask': 'cake', 'kind': 'yesno'},
+            {'key': 'theme', 'ask': 'theme', 'kind': 'text'},
+            {'key': 'gifts', 'ask': 'gifts', 'kind': 'yesno'},
+        ],
+        'checklist': [
+            {'key': 'cake', 'label': 'Order and collect the cake', 'type': 'errand',
+             'offset_days': -1, 'location': 'Bakery', 'duration_mins': 20,
+             'needs': 'cake'},
+            {'key': 'party_supplies', 'label': 'Party supplies', 'type': 'list',
+             'offset_days': -5, 'sourcing': 'party supplies and decorations'},
+            {'key': 'gifts', 'label': 'Presents', 'type': 'note',
+             'offset_days': -7, 'needs': 'gifts'},
+        ],
+    },
+    'party': {
+        'dish_tags': [],
+        'questions': _COMMON + [
+            {'key': 'theme', 'ask': 'theme', 'kind': 'text'},
+        ],
+        'checklist': [
+            {'key': 'party_supplies', 'label': 'Party supplies', 'type': 'list',
+             'offset_days': -4, 'sourcing': 'party supplies and decorations'},
+            {'key': 'food_shop', 'label': 'Shop for the food', 'type': 'errand',
+             'offset_days': -2, 'location': 'Grocery', 'duration_mins': 60},
+            {'key': 'house', 'label': 'Tidy the house', 'type': 'errand',
+             'offset_days': -1, 'location': 'Home', 'duration_mins': 45},
+        ],
+    },
+    'gathering': {
+        'dish_tags': [],
+        'questions': _COMMON,
+        'checklist': [
+            {'key': 'food_shop', 'label': 'Shop for the food', 'type': 'errand',
+             'offset_days': -2, 'location': 'Grocery', 'duration_mins': 60},
+        ],
+    },
+}
+TEMPLATES['easter'] = TEMPLATES['gathering']
+
+
+def template_for(occasion: dict) -> dict:
+    return TEMPLATES.get(occasion.get('kind') or 'gathering', TEMPLATES['gathering'])
+
+
+def _needed(line: dict, answers: dict) -> bool:
+    """A checklist line gated on an answer only counts once that answer is YES.
+
+    Unanswered is NOT no: a family that has not been asked about a cake yet
+    should not be told they are missing one — that is how a gap report becomes
+    noise instead of a signal.
+    """
+    need = line.get('needs')
+    if not need:
+        return True
+    return bool(answers.get(need))
+
+
+def interview(occasion_id: str) -> dict:
+    """The questions still unanswered, in order, with what each one unlocks."""
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {}
+    answers = o.get('answers') or {}
+    tpl = template_for(o)
+    out = []
+    for q in tpl['questions']:
+        if q['key'] in answers:
+            continue
+        ask, hint = _ASK.get(q.get('ask') or q['key'], (q['key'], None))
+        out.append({'key': q['key'], 'kind': q['kind'], 'ask': ask, 'hint': hint})
+    return {'occasion_id': occasion_id, 'questions': out,
+            'answered': answers, 'done': not out}
+
+
+def answer(occasion_id: str, key: str, value) -> dict:
+    """Record one answer and let it cascade.
+
+    Headcount is the clearest case: answering it does not store a number, it
+    scales every plate in the window, which is the difference between an
+    interview and a form.
+    """
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    answers = dict(o.get('answers') or {})
+    answers[key] = value
+    patch = {'answers': answers}
+    if key == 'cooking_hands':
+        try:
+            patch['cooks'] = max(1, int(value))
+        except (TypeError, ValueError):
+            pass
+    storage.update_occasion(occasion_id, patch)
+
+    generated = []
+    if key == 'headcount':
+        generated += _apply_headcount(occasion_id, value)
+    return {'occasion_id': occasion_id, 'answers': answers,
+            'generated': generated, 'next': interview(occasion_id)}
+
+
+def _apply_headcount(occasion_id: str, value) -> List[str]:
+    """Headcount reaches the kitchen, which is the whole point of asking.
+
+    Only days inside the window, and only days the family has not already
+    marked themselves — an answer to a general question must not overwrite a
+    specific statement somebody made about one night.
+    """
+    from services import meals
+    o = storage.get_occasion(occasion_id)
+    try:
+        n = max(1, int(value))
+    except (TypeError, ValueError):
+        return []
+    lo, hi = window(o)
+    out, day = [], lo
+    while day <= hi:
+        saved = storage.get_plate(day.isoformat()) or {}
+        if not saved.get('serving_for'):
+            meals.set_plate_hosting(day.isoformat(), n, o.get('cooks') or 0)
+            out.append(f"cooking for {n} on {day.isoformat()}")
+        day += datetime.timedelta(days=1)
+    return out
+
+
+def apply_template(occasion_id: str, keys: List[str] = None) -> dict:
+    """Stamp the template's work at its offsets from the anchor.
+
+    Errands land as real errands with a real deadline: `starts_on` at the
+    offset and `window_days` carrying it to the anchor, which is exactly how
+    the intake arc already expresses "due by". Nothing new in the solver.
+    """
+    from models.schemas import Errand
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    anchor = _d(o['anchor_date']) or _today()
+    answers = o.get('answers') or {}
+    have = {e.get('occasion_key') for e in storage.get_all_errands()
+            if e.get('occasion_id') == occasion_id}
+    have |= {l.get('occasion_key') for l in storage.get_shopping_lists()
+             if l.get('occasion_id') == occasion_id}
+    made = []
+    for line in template_for(o)['checklist']:
+        if keys and line['key'] not in keys:
+            continue
+        if line['key'] in have or line['key'] in (o.get('dismissed') or []):
+            continue
+        if not _needed(line, answers):
+            continue
+        if line['type'] != 'errand':
+            continue           # notes are report lines; lists come from sourcing
+        due = anchor + datetime.timedelta(days=int(line.get('offset_days') or 0))
+        start = min(due, _today())
+        rec = Errand(title=f"{line['label']} — {o['title']}",
+                     duration_mins=int(line.get('duration_mins') or 30),
+                     location=line.get('location') or 'Home',
+                     starts_on=time.mktime(start.timetuple()),
+                     window_days=max(1, (due - start).days + 1),
+                     occasion_id=occasion_id,
+                     occasion_key=line['key']).model_dump()
+        storage.add_errand(rec)
+        made.append(rec)
+    return {'created': made}
+
+
+def gap_report(occasion_id: str) -> dict:
+    """What is missing, not what is there.
+
+    A list of what exists cannot answer "have I forgotten anything" — it shows
+    what somebody remembered to add, and the gap is invisible by construction.
+    Nine tidy green rows manufacture confidence about the exact thing being
+    worried about. So this is a DIFF: against the template, and against last
+    year's instance.
+
+    Sorted by SLACK against the anchor and carrying no percentage. Six of
+    fourteen presents unbought is fine in October and an emergency on the 23rd;
+    one number cannot say both.
+    """
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {}
+    anchor = _d(o['anchor_date']) or _today()
+    answers = o.get('answers') or {}
+    dismissed = set(o.get('dismissed') or [])
+    c = contents(occasion_id)
+    covered = {e.get('occasion_key') for e in c['errands'] if e.get('occasion_key')}
+    covered |= {l.get('occasion_key') for l in c['lists'] if l.get('occasion_key')}
+
+    gaps = []
+    for line in template_for(o)['checklist']:
+        if line['key'] in covered or line['key'] in dismissed:
+            continue
+        if not _needed(line, answers):
+            continue
+        due = anchor + datetime.timedelta(days=int(line.get('offset_days') or 0))
+        gaps.append({'key': line['key'], 'label': line['label'],
+                     'type': line['type'], 'due': due.isoformat(),
+                     'slack_days': (due - _today()).days,
+                     'source': 'template',
+                     'sourcing': line.get('sourcing')})
+
+    # Last year is the only thing that can surface an absence the template
+    # never knew about — the rented tables nobody thought to model.
+    prior_id = o.get('prior_occasion_id')
+    if prior_id:
+        prior = contents(prior_id) or {}
+        mine = {(e.get('title') or '').lower() for e in c['errands']}
+        mine |= {(l.get('name') or '').lower() for l in c['lists']}
+        prior_title = (prior.get('occasion') or {}).get('title') or 'last time'
+        for e in (prior.get('errands') or []):
+            stem = (e.get('title') or '').split('—')[0].strip().lower()
+            if stem and not any(stem in m for m in mine):
+                gaps.append({'key': 'prior:' + e['id'], 'label': stem,
+                             'type': 'errand', 'due': anchor.isoformat(),
+                             'slack_days': (anchor - _today()).days,
+                             'source': 'prior', 'note': f"{prior_title} had this"})
+        for l in (prior.get('lists') or []):
+            nm = (l.get('name') or '').strip().lower()
+            if nm and not any(nm in m for m in mine):
+                gaps.append({'key': 'prior:' + l['id'], 'label': nm,
+                             'type': 'list', 'due': anchor.isoformat(),
+                             'slack_days': (anchor - _today()).days,
+                             'source': 'prior', 'note': f"{prior_title} had this"})
+
+    gaps.sort(key=lambda g: g['slack_days'])
+    unanswered = interview(occasion_id).get('questions') or []
+    return {'occasion': o, 'gaps': gaps, 'questions': unanswered,
+            'days_away': (anchor - _today()).days,
+            'has_prior': bool(prior_id)}
+
+
+def dismiss(occasion_id: str, key: str) -> bool:
+    """"No cake this year." A gap report that keeps raising a settled decision
+    stops being read, which costs more than the line was ever worth."""
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return False
+    keys = list(o.get('dismissed') or [])
+    if key not in keys:
+        keys.append(key)
+    return storage.update_occasion(occasion_id, {'dismissed': keys})
+
+
 _SOURCING_SYSTEM = (
     "You turn a family's description of something they need to buy for an "
     "occasion into a flat SHOPPING LIST. Reply with STRICT JSON only, no "
