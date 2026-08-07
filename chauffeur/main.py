@@ -5280,6 +5280,7 @@ def tonights_plate(date: Optional[str] = None):
             'prep_ahead_mins': totals.get('prep_ahead_mins'),
             'finish_mins': totals.get('finish_mins'),
             'unattended_mins': totals.get('unattended_mins'),
+            'oven_conflicts': totals.get('oven_conflicts'),
             'needs_ahead': totals.get('needs_ahead'),
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
             'sides_per_meal': sides_n, 'include_dessert': dessert,

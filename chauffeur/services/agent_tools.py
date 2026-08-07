@@ -560,6 +560,13 @@ class PairDishesTool(BaseModel):
     partner_names: str = Field(..., description="Comma separated dishes that come with it.")
     exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
 
+class SetDishScopeTool(BaseModel):
+    """
+    Marks a dish as holiday and party food rather than everyday food, so it stops being suggested on ordinary nights ("turkey is only for holidays", "we only make deviled eggs for parties"). The dish stays pickable by hand and its leftovers still count.
+    """
+    dish_name: str = Field(..., description="Which dish, e.g. turkey.")
+    occasion_only: Optional[bool] = Field(True, description="true for holiday/party only, false to return it to everyday.")
+
 class UnpairDishesTool(BaseModel):
     """
     Removes a pairing between dishes.
@@ -751,6 +758,7 @@ TOOL_SCHEMAS = {
     "unlock_dinner": UnlockDinnerTool.model_json_schema(),
     "pair_dishes": PairDishesTool.model_json_schema(),
     "unpair_dishes": UnpairDishesTool.model_json_schema(),
+    "set_dish_scope": SetDishScopeTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -1929,6 +1937,12 @@ def handle_unpair_dishes(args: dict) -> dict:
     from services.agent_tools_v2 import unpair_dishes
     return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
 
+def handle_set_dish_scope(args: dict) -> dict:
+    from services.agent_tools_v2 import set_dish_scope
+    occ = args.get("occasion_only")
+    return set_dish_scope(args.get("dish_name") or "",
+                          True if occ is None else bool(occ))
+
 def handle_set_dish_prep(args: dict) -> dict:
     from services.agent_tools_v2 import set_dish_prep
     return set_dish_prep(args.get("dish_name") or "", args.get("action") or "",
@@ -2088,6 +2102,7 @@ TOOL_HANDLERS = {
     "unlock_dinner": handle_unlock_dinner,
     "pair_dishes": handle_pair_dishes,
     "unpair_dishes": handle_unpair_dishes,
+    "set_dish_scope": handle_set_dish_scope,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

@@ -624,6 +624,12 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.unpair_dishes(args.get("dish_name", "") or "",
                                                   args.get("partner_name", "") or "",
                                                   acting_member=actor)
+                    elif func_name == "set_dish_scope":
+                        occ = args.get("occasion_only")
+                        res = _atv2.set_dish_scope(
+                            args.get("dish_name", "") or "",
+                            True if occ is None else bool(occ),
+                            acting_member=actor)
                     elif func_name == "set_dish_prep":
                         res = _atv2.set_dish_prep(
                             args.get("dish_name", "") or "",

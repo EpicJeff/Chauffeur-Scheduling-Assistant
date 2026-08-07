@@ -1527,6 +1527,32 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
+def set_dish_scope(dish_name: str, occasion_only: bool = True,
+                   acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "turkey is only for holidays", "we eat deviled eggs at parties,
+    not on a Tuesday" — and the reverse, "the ham is fine any time".
+
+    Says PROPOSAL, not availability, in the reply on purpose: the family must
+    not come away thinking the dish is gone. It still shows in every picker,
+    and leftovers of it still land on ordinary plates.
+    """
+    from services import storage
+    dish = storage.find_dish_by_name(dish_name)
+    if not dish:
+        return {"status": "error",
+                "message": f"I don't have a dish called '{dish_name}'."}
+    scope = 'occasion' if occasion_only else 'everyday'
+    storage.update_dish(dish['id'], {'scope': scope})
+    nm = dish.get('short_name') or dish['name']
+    if occasion_only:
+        return {"status": "success",
+                "message": f"Got it — {nm} is holiday and party food now. I "
+                           "won't suggest it on an ordinary night, but it's "
+                           "still there to pick, and leftovers of it still count."}
+    return {"status": "success",
+            "message": f"Got it — {nm} is back in the everyday rotation."}
+
+
 def unpair_dishes(dish_name: str, partner_name: str = "",
                   acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "brisket doesn't always come with fries anymore"."""
@@ -2282,6 +2308,18 @@ def get_available_tools() -> List[Dict]:
                     "exclusive": {"type": "boolean", "description": "true for 'X is only ever served with Y'."}
                 },
                 "required": ["dish_name", "partner_names"]
+            }
+        },
+        {
+            "name": "set_dish_scope",
+            "description": "Marks a dish as holiday and party food rather than everyday food, so it stops being suggested on ordinary nights: turkey is only for holidays, we only make deviled eggs for parties, the trifle is a Christmas thing. Set occasion_only=false to put it back in the everyday rotation. This changes what gets SUGGESTED - the dish stays pickable by hand and its leftovers still count.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dish_name": {"type": "string", "description": "Which dish, e.g. turkey."},
+                    "occasion_only": {"type": "boolean", "description": "true for holiday/party only (the default), false to return it to everyday."}
+                },
+                "required": ["dish_name"]
             }
         },
         {

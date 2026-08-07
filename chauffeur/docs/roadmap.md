@@ -383,6 +383,43 @@ App Store is the destination.**
   (replacing web push for the wrapper) — its own task, second-biggest
   value item after lock-screen audio.
 
+## Config is past its limit (raised 2026-08-07, do this before the next arc)
+
+Measured when the O0 kitchen block went in: **`templates/config.html` is 5,631
+lines and `Settings` carries 83 fields**, all saved through one `saveSettings`
+that PUTs the entire object. Every arc has added to it and none has ever taken
+anything out. The family's words: it either needs a massive reorganization or
+a new paradigm, and something needs to happen soon or it becomes a nightmare
+to use.
+
+The observation that should shape the fix: **the app has already been
+decentralizing settings for a year without calling it that.** ICS feeds live
+on the driver/passenger form. Pairings live on the dish row. Meal rules live
+in the "How we eat" panel. Bus fields live on the member card. Every one of
+those was put where the family is already looking, and every one of them
+works. What is left in config.html is the residue — the things that never got
+a feature surface, plus everything nobody found a home for.
+
+So the paradigm shift is half-finished, not unstarted. Proposed shape (not
+yet decided):
+
+- **Settings move to the surface that owns the feature** — kitchen capacities
+  onto Shopping & Meals beside the plate they govern, quiet hours onto the kid
+  surfaces, and so on. This is the established pattern, not a new one.
+- **Config becomes a generated INDEX, not a form.** A settings registry (key,
+  label, help text, group, owning page) rendered as one searchable list that
+  deep-links to the surface where each setting actually lives. That keeps the
+  one thing decentralization otherwise destroys: a place to look when you do
+  not know which page owns the thing you half-remember.
+- **`Settings` stops being one 83-field model** saved as a whole. Per-group
+  PATCH, the way `ShoppingItem` already refuses a whole-list PUT.
+- Alternative if that is too much at once: a pure reorganization of
+  config.html into the same groups first, which buys maybe a year and is
+  strictly less work — but it is the option that gets re-litigated later.
+
+Do not fold this into an arc as a side quest; it is its own piece of work and
+it touches every page that has ever added a setting.
+
 ## Nice-to-haves / polish
 
 - Chore fairness nudges via the solver (rotation suggestions for chronically

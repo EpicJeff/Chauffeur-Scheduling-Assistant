@@ -30,6 +30,7 @@ import datetime
 from typing import Optional
 
 from services import storage
+from services import kitchen
 
 # Daily-life meal windows. Deliberately module constants for v1 — see the
 # open question in docs/meal_design.md about whether a family needs to move
@@ -1294,7 +1295,7 @@ def compose_week(start_date: str = None, days: int = 7,
         for d in dishes:
             served[d['id']] = stamp
             runs[d['id']] = runs.get(d['id'], 0) + 1
-        totals = plate_totals(dishes, date_str)
+        totals = plate_totals(dishes, date_str, settings)
         out.append({
             'date': date_str,
             'weekday': datetime.date.fromisoformat(date_str).strftime('%a'),
@@ -1314,6 +1315,7 @@ def compose_week(start_date: str = None, days: int = 7,
             'prep_ahead_mins': totals.get('prep_ahead_mins'),
             'finish_mins': totals.get('finish_mins'),
             'unattended_mins': totals.get('unattended_mins'),
+            'oven_conflicts': totals.get('oven_conflicts'),
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
         })
     return out
@@ -1590,11 +1592,13 @@ def toggle_leftover_dish(date_str: str, dish_id: str, label: str = None) -> bool
     return True
 
 
-def plate_totals(dishes: list, date_str: str = None) -> dict:
-    """The aggregate timing for a plate, same rules as the slot version:
-    hands-on sums, the oven overlaps, weakest link wins."""
+def plate_totals(dishes: list, date_str: str = None, settings: dict = None,
+                 cooks: int = None) -> dict:
+    """The aggregate timing for a plate, same rules as the slot version: the
+    dishes are scheduled against the declared kitchen, and the weakest link
+    wins on portability."""
     leftovers = storage.get_leftovers(date_str or _today_iso())
-    return compose({'name': 'plate'}, dishes, leftovers)
+    return compose({'name': 'plate'}, dishes, leftovers, settings, cooks)
 
 
 def slot_detail_is_moot(pool: list) -> bool:
@@ -1713,30 +1717,37 @@ def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> li
     return chosen
 
 
-def compose(meal: dict, dishes: list, leftovers: list = None) -> dict:
+def compose(meal: dict, dishes: list, leftovers: list = None,
+            settings: dict = None, cooks: int = None) -> dict:
     """Roll a set of dishes up into the timing shape the fit filter reads.
 
-    Hands-on time SUMS (one cook, one pair of hands) while unattended time
-    takes the MAX (the oven runs while the rice sits). Portability and
-    holds_well take the weakest link — a plate travels only as well as its
-    worst dish. Anything already made contributes nothing at all, which is
-    the exactness M3's proportional guess could not reach.
+    The three timing numbers come from `services/kitchen.py`, which schedules
+    the dishes against a declared kitchen (ovens and their temperatures,
+    burners, hands) rather than the two constants this function used to carry:
+    hands-on SUMS because there is one cook, unattended takes the MAX because
+    the oven is infinite. **With one cook, one oven and no temperature clash
+    those are exactly what kitchen.totals returns** — and where they differ
+    (two dishes wanting the oven at different temperatures) the old arithmetic
+    was wrong, quietly, in the optimistic direction.
+
+    Portability and holds_well take the weakest link — a plate travels only as
+    well as its worst dish. Anything already made contributes nothing at all,
+    which is the exactness M3's proportional guess could not reach.
     """
+    settings = settings if settings is not None else (storage.get_settings() or {})
     done = set()
     for l in leftovers or []:
         done.update(l.get('dish_ids') or [])
 
-    prep = finish = 0
-    unattended = 0
     holds, port_rank = True, 9
     ahead = 'none'
     ahead_rank = {'none': 0, 'thaw': 1, 'marinate': 2, 'slow_cooker': 3}
-    for d in dishes:
-        if d['id'] in done:
-            continue                      # already made: costs nothing
-        prep += int(d.get('prep_ahead_mins') or 0)
-        finish += int(d.get('finish_mins') or 0)
-        unattended = max(unattended, int(d.get('unattended_mins') or 0))
+    # An already-made dish is not cooked, so it occupies no oven, no burner and
+    # nobody's hands — it must leave the kitchen model entirely, not merely
+    # contribute zero to a sum.
+    to_cook = [d for d in dishes if d['id'] not in done]
+    kt = kitchen.totals(to_cook, settings, cooks)
+    for d in to_cook:
         holds = holds and bool(d.get('holds_well'))
         port_rank = min(port_rank, _PORTABILITY_RANK.get(
             str(d.get('portability') or 'none').lower(), 0))
@@ -1749,12 +1760,17 @@ def compose(meal: dict, dishes: list, leftovers: list = None) -> dict:
             port = k
     return {
         **meal,
-        'prep_ahead_mins': prep, 'finish_mins': finish,
-        'unattended_mins': unattended, 'needs_ahead': ahead,
+        'prep_ahead_mins': kt['prep_ahead_mins'], 'finish_mins': kt['finish_mins'],
+        'unattended_mins': kt['unattended_mins'], 'needs_ahead': ahead,
         'holds_well': holds if dishes else bool(meal.get('holds_well')),
         'portability': port if dishes else str(meal.get('portability') or 'none'),
         'dishes': dishes,
         'leftover_dish_ids': sorted(done & {d['id'] for d in dishes}),
+        # Reported, never merely priced into the number above: "these two want
+        # the oven at different temperatures" is the most useful sentence this
+        # model can say, and a total that quietly grew says none of it.
+        'oven_conflicts': kt['oven_conflicts'],
+        'cooks': kt['cooks'],
     }
 
 
@@ -1834,14 +1850,21 @@ def ensure_slot_ids(meal: dict) -> dict:
     return {**meal, 'slots': patched}
 
 
-def compose_meal(meal: dict, prefer: dict = None, leftovers: list = None) -> dict:
+def compose_meal(meal: dict, prefer: dict = None, leftovers: list = None,
+                 settings: dict = None, cooks: int = None) -> dict:
     """`choose_dishes` + `compose`. Legacy meals with no slots pass through on
-    their own stored numbers, so nothing breaks mid-migration."""
+    their own stored numbers, so nothing breaks mid-migration.
+
+    `settings` is threaded rather than re-read because the fit filter calls
+    this once per repertoire entry per day — a whole-repertoire fortnight is
+    several hundred calls, and the kitchen capacities are the same for all of
+    them.
+    """
     if not (meal.get('slots') or []):
         return {**meal, 'dishes': []}
     meal = ensure_slot_ids(meal)
     dishes = choose_dishes(meal, prefer, leftovers)
-    return compose(meal, dishes, leftovers)
+    return compose(meal, dishes, leftovers, settings, cooks)
 
 
 def leftover_for(meal: dict, leftovers: list) -> Optional[dict]:
@@ -1893,7 +1916,7 @@ def apply_leftovers(meal: dict, leftover: dict) -> dict:
     return out
 
 
-def meals_that_fit(plan: dict, limit: int = 5) -> dict:
+def meals_that_fit(plan: dict, limit: int = 5, settings: dict = None) -> dict:
     """Repertoire entries that actually work for this plan, ranked.
 
     Hard filters: the household's tightest slot (a meal everyone can eat has
@@ -1902,6 +1925,7 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
     effort. Returns {'fits': [...], 'blocked': [...]} — blocked entries carry
     their reason so nothing vanishes without explanation.
     """
+    settings = settings if settings is not None else (storage.get_settings() or {})
     repertoire = storage.get_meals()
     leftovers = storage.get_leftovers(plan.get('date'))
     # "We just have leftovers tonight" with no repertoire entry attached is a
@@ -1942,7 +1966,7 @@ def meals_that_fit(plan: dict, limit: int = 5) -> dict:
             meal = compose_meal(meal,
                                 prefer=get_choices(plan.get('date') or _today_iso(),
                                                    meal.get('id')),
-                                leftovers=leftovers)
+                                leftovers=leftovers, settings=settings)
             if meal.get('leftover_dish_ids'):
                 meal['leftover'] = True
                 meal['leftover_exact'] = True

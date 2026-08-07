@@ -182,6 +182,17 @@
 
                         <div class="text-[11px] text-gray-500 mt-2" x-text="plateBlurb()"></div>
 
+                        <!-- The oven, said out loud. The old model reported the
+                             longest single dish and stopped, so two things
+                             wanting different temperatures looked free. Naming
+                             which dishes collide is the whole value — a total
+                             that quietly grew explains nothing. -->
+                        <div x-show="(plate.oven_conflicts || []).length"
+                            class="mt-2 text-[11px] text-amber-300/90 flex items-start gap-1.5">
+                            <span class="shrink-0">🔥</span>
+                            <span x-text="ovenClashLine(plate)"></span>
+                        </div>
+
                         <!-- Add anything from the repertoire that isn't on already. -->
                         <div class="flex items-center gap-2 mt-3">
                             <button @click="openDishPicker(plate.date)"
@@ -1958,6 +1969,18 @@
                         bits.push(d.needs_ahead.replace('_', ' '));
                     if (d.needs_detail) bits.push('needs detail');
                     return bits.join(' · ');
+                },
+
+                ovenClashLine(day) {
+                    const cs = (day && day.oven_conflicts) || [];
+                    if (!cs.length) return '';
+                    // Name the DISHES, not the temperatures alone: "350° and
+                    // 425°" is a fact, "the roast and the pie" is the problem.
+                    const parts = cs.map(c => (c.dishes || []).join(' + ')
+                        + ' at ' + c.temp_f + '°');
+                    return 'One oven, ' + cs.length + ' temperatures — '
+                        + parts.join(', ') + '. They have to take turns, which is '
+                        + 'already in the time above.';
                 },
 
                 // The standing pool is what gets PROPOSED, so it is what the

@@ -3288,6 +3288,142 @@ def scenario_the_model_fills_the_kitchen_metadata_it_can_guess():
           f"and the defaults are the everyday ones, got {plain.get('scope')}")
 
 
+# --- O0: the kitchen as a resource model -------------------------------------
+
+def scenario_the_kitchen_reduces_to_the_old_arithmetic():
+    """THE contract. One cook, one oven, no temperature clash — every number
+    must be byte-identical to the sum/max this app shipped with, or the
+    replacement is a behaviour change wearing a refactor's clothes."""
+    from services import kitchen
+    plate = [
+        {'prep_ahead_mins': 5, 'finish_mins': 5, 'unattended_mins': 40,
+         'equipment': 'oven', 'oven_temp_f': 400},
+        {'prep_ahead_mins': 2, 'finish_mins': 0, 'unattended_mins': 20,
+         'equipment': 'burner'},
+        {'prep_ahead_mins': 0, 'finish_mins': 8, 'unattended_mins': 0,
+         'equipment': 'none'},
+    ]
+    got = kitchen.totals(plate, {})
+    want_prep = sum(d['prep_ahead_mins'] for d in plate)
+    want_finish = sum(d['finish_mins'] for d in plate)
+    want_unatt = max(d['unattended_mins'] for d in plate)
+    check(got['prep_ahead_mins'] == want_prep,
+          f"prep still sums for one cook, got {got['prep_ahead_mins']}")
+    check(got['finish_mins'] == want_finish,
+          f"and so does the finish, got {got['finish_mins']}")
+    check(got['unattended_mins'] == want_unatt,
+          f"the oven still overlaps the rice, got {got['unattended_mins']}")
+    check(not got['oven_conflicts'], "and nothing is reported as colliding")
+
+
+def scenario_dishes_with_no_kitchen_metadata_behave_exactly_as_before():
+    """Every dish saved before this shipped has no equipment and no
+    temperature. They must not start colliding retroactively."""
+    from services import kitchen
+    legacy = [{'prep_ahead_mins': 10, 'finish_mins': 15, 'unattended_mins': 45},
+              {'prep_ahead_mins': 5, 'finish_mins': 10, 'unattended_mins': 30}]
+    got = kitchen.totals(legacy, {})
+    check(got['prep_ahead_mins'] == 15 and got['finish_mins'] == 25,
+          f"hands-on sums, got {got['prep_ahead_mins']}/{got['finish_mins']}")
+    check(got['unattended_mins'] == 45,
+          f"and unattended takes the max, got {got['unattended_mins']}")
+
+
+def scenario_two_temperatures_cannot_share_one_oven():
+    """The error that hid on weeknights. Space is the constraint people
+    picture; temperature is the one that actually blocks."""
+    from services import kitchen
+    clash = [{'unattended_mins': 40, 'equipment': 'oven', 'oven_temp_f': 350},
+             {'unattended_mins': 20, 'equipment': 'oven', 'oven_temp_f': 425}]
+    got = kitchen.totals(clash, {})
+    check(got['unattended_mins'] == 60,
+          f"they queue rather than overlapping, got {got['unattended_mins']}")
+    check([c['temp_f'] for c in got['oven_conflicts']] == [350, 425],
+          f"and the collision is NAMED, longest first, got {got['oven_conflicts']}")
+
+    same = [{'unattended_mins': 40, 'equipment': 'oven', 'oven_temp_f': 350},
+            {'unattended_mins': 20, 'equipment': 'oven', 'oven_temp_f': 350}]
+    check(kitchen.totals(same, {})['unattended_mins'] == 40,
+          "while one temperature shares the oven freely")
+    check(kitchen.totals(clash, {'kitchen_ovens': 2})['unattended_mins'] == 40,
+          "and a second oven dissolves the clash entirely")
+
+
+def scenario_a_second_pair_of_hands_shortens_the_evening():
+    """`hands_on = sum` assumed one cook, which is the assumption that breaks
+    the moment anybody offers to help."""
+    from services import kitchen
+    plate = [{'finish_mins': 20}, {'finish_mins': 20}, {'finish_mins': 10}]
+    solo = kitchen.totals(plate, {'kitchen_cooks': 1})['finish_mins']
+    pair = kitchen.totals(plate, {'kitchen_cooks': 2})['finish_mins']
+    check(solo == 50, f"one cook works through them in turn, got {solo}")
+    check(pair == 25, f"two share the load, got {pair}")
+    check(kitchen.totals([{'finish_mins': 40}], {'kitchen_cooks': 3})['finish_mins'] == 40,
+          "but three cooks cannot make one dish cook faster")
+    check(kitchen.totals(plate, {'kitchen_cooks': 1}, cooks=2)['finish_mins'] == 25,
+          "and a hosting plate can raise the count without touching the setting")
+
+
+def scenario_a_burner_dish_holds_its_ring_while_someone_stands_there():
+    """A stir-fry is 25 minutes of hands-on AND 25 minutes of occupied burner.
+    Counting only the unattended part means burners are never contended for
+    exactly the dishes that contend for them."""
+    from services import kitchen
+    stove = [{'finish_mins': 25, 'unattended_mins': 0, 'equipment': 'burner'},
+             {'finish_mins': 20, 'unattended_mins': 0, 'equipment': 'burner'}]
+    one = kitchen.totals(stove, {'kitchen_burners': 1})
+    check(one['unattended_mins'] == 45,
+          f"one ring means they queue, got {one['unattended_mins']}")
+    check(kitchen.totals(stove, {'kitchen_burners': 4})['unattended_mins'] == 25,
+          "four rings and they run side by side")
+
+
+def scenario_an_already_made_dish_occupies_no_oven_at_all():
+    """Leftovers leave the kitchen model entirely rather than contributing a
+    zero — otherwise a reheated casserole still books the oven it does not
+    need."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    roast = _dish('roast beef', type='entree', prep_ahead_mins=10, finish_mins=10,
+                  unattended_mins=90, equipment='oven', oven_temp_f=325)
+    pie = _dish('apple pie', type='dessert', finish_mins=5,
+                unattended_mins=45, equipment='oven', oven_temp_f=425)
+    both = meals.plate_totals([roast, pie], DAY)
+    check(both['unattended_mins'] == 135,
+          f"fresh, the two temperatures queue, got {both['unattended_mins']}")
+
+    _leftover(date=DAY, label='beef', dish_ids=[roast['id']])
+    left = meals.plate_totals([roast, pie], DAY)
+    check(left['unattended_mins'] == 45,
+          f"with the beef already made only the pie books the oven, got {left}")
+    check(left['prep_ahead_mins'] == 0 and left['finish_mins'] == 5,
+          "and it costs none of the hands either")
+
+
+def scenario_dish_scope_is_sayable_in_both_stacks():
+    """Anything the family can tap they must be able to say, and the reply has
+    to promise PROPOSAL rather than availability — "I've removed the turkey"
+    is not what happened and not what anybody wants to hear."""
+    reset_db(); _seed_people()
+    _settings()
+    _dish('roast turkey', type='entree')
+    from services import agent_tools, agent_tools_v2
+    check('set_dish_scope' in {t['name'] for t in agent_tools_v2.get_available_tools()},
+          "v2 offers the tool")
+    check('set_dish_scope' in agent_tools.TOOL_SCHEMAS
+          and 'set_dish_scope' in agent_tools.TOOL_HANDLERS, "and so does v1")
+
+    res = agent_tools.execute_tool('set_dish_scope', {'dish_name': 'turkey'})
+    check(storage.find_dish_by_name('roast turkey')['scope'] == 'occasion',
+          f"the v1 bridge writes through, got {res}")
+    check('pick' in res['message'] and 'leftover' in res['message'],
+          f"and says it is still pickable, got {res['message']}")
+
+    agent_tools_v2.set_dish_scope('turkey', occasion_only=False)
+    check(storage.find_dish_by_name('roast turkey')['scope'] == 'everyday',
+          "and it comes back the same way")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
