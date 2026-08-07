@@ -552,7 +552,16 @@ class Settings(BaseModel):
     school_year_start: str = ""       # YYYY-MM-DD, update once a year
     school_year_end: str = ""         # YYYY-MM-DD
     school_closed_keywords: str = ""  # comma list; empty = built-in default
-    calendar_ids: List[str]
+    # Defaulted, and it MATTERS: POST /api/settings merges with
+    # `exclude_unset=True` precisely so a client can send only the fields it
+    # manages — but a required field makes every partial body a 422 before the
+    # merge is ever reached. That silently broke the write half of settings
+    # decentralisation: the meals page's "how we eat" panel, the kitchen
+    # panel and the wall-panel setup all POST only their own keys and all got
+    # "calendar_ids: Field required". The default cannot clobber a stored list
+    # — unset fields are excluded from the merge, so absence still means
+    # "leave it alone" — it only stops validation rejecting the request.
+    calendar_ids: List[str] = Field(default_factory=list)
     # One of calendar_ids, starred in Config → General. The family's shared
     # calendar: intake proposals with no clear owner (and whole-family /
     # multi-member events) default here.
