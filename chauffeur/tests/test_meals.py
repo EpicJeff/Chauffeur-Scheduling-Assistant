@@ -3602,6 +3602,77 @@ def scenario_dish_scope_is_sayable_in_both_stacks():
           "and it comes back the same way")
 
 
+def scenario_nights_stay_on_the_record():
+    """Plates used to be pruned to TODAY on every write, so the family's own
+    history was destroyed daily. It is the only copy that will ever exist."""
+    import datetime as _dt
+    from models.schemas import Plate, PlateItem
+    reset_db()
+    today = _dt.date.today()
+    iso = lambda n: (today + _dt.timedelta(days=n)).isoformat()
+
+    chili = _dish('chili', type='meal')
+    tacos = _dish('tacos', type='meal')
+    storage.save_plate(Plate(date=iso(-3), edited=True,
+                             items=[PlateItem(dish_id=chili['id'])]).model_dump())
+    storage.save_plate(Plate(date=iso(-1), edited=True,
+                             items=[PlateItem(dish_id=tacos['id'])]).model_dump())
+    # Any write triggers the prune; the past must survive it.
+    meals._persist_plate(iso(0), [chili])
+    check(storage.get_plate(iso(-3)), "a night from three days ago still exists")
+    check(storage.get_plate(iso(-1)), "and so does last night")
+
+    hist = meals.served_history(21)
+    check([h['date'] for h in hist] == [iso(-1), iso(-3)],
+          f"history is newest-first and excludes today, got {[h['date'] for h in hist]}")
+    check(hist[0]['headline'] == 'tacos', "headline names the dish")
+
+    # A refusal record carries no items and is not a dinner.
+    storage.save_plate(Plate(date=iso(-2), edited=False,
+                             rejected=[chili['id']], items=[]).model_dump())
+    check(len(meals.served_history(21)) == 2, "a refusal record is not history")
+
+    # Beyond the retention window it does go.
+    storage.save_plate(Plate(date=iso(-(meals.PLATE_RETENTION_DAYS + 5)), edited=True,
+                             items=[PlateItem(dish_id=chili['id'])]).model_dump())
+    meals._persist_plate(iso(0), [chili])
+    check(not storage.get_plate(iso(-(meals.PLATE_RETENTION_DAYS + 5))),
+          "past the retention window a night is pruned")
+
+
+def scenario_arrange_week_is_one_write_for_both_gestures():
+    import datetime as _dt
+    from models.schemas import Plate, PlateItem
+    reset_db()
+    today = _dt.date.today()
+    iso = lambda n: (today + _dt.timedelta(days=n)).isoformat()
+    chili = _dish('chili', type='meal')
+    tacos = _dish('tacos', type='meal')
+
+    # A swap (the drag) — both nights written in one call.
+    res = meals.arrange_week([{'date': iso(1), 'dish_ids': [tacos['id']]},
+                              {'date': iso(2), 'dish_ids': [chili['id']]}])
+    check(res['written'] == [iso(1), iso(2)], f"both nights written, got {res}")
+    check([i['dish_id'] for i in storage.get_plate(iso(1))['items']] == [tacos['id']],
+          "the dishes moved to the new date")
+    check(storage.get_plate(iso(1))['edited'],
+          "an arranged night is pinned — the family stated an intent about it")
+
+    # A locked night refuses, by name, rather than moving quietly.
+    storage.save_plate(Plate(date=iso(3), edited=True, locked=True,
+                             items=[PlateItem(dish_id=tacos['id'])]).model_dump())
+    res = meals.arrange_week([{'date': iso(3), 'dish_ids': [chili['id']]}])
+    check(res['written'] == [] and res['refused'] == [{'date': iso(3), 'reason': 'locked'}],
+          f"locked night refused by name, got {res}")
+    check([i['dish_id'] for i in storage.get_plate(iso(3))['items']] == [tacos['id']],
+          "and it is genuinely untouched")
+
+    # The record of what was eaten is not editable by a drag.
+    res = meals.arrange_week([{'date': iso(-1), 'dish_ids': [chili['id']]}])
+    check(res['refused'] == [{'date': iso(-1), 'reason': 'past'}],
+          f"a past night is refused, got {res}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

@@ -276,9 +276,24 @@
 
                     <div class="space-y-2">
                         <template x-for="day in week" :key="'wd-' + day.date">
-                            <div class="bg-gray-900 rounded-xl border px-3 py-2.5"
-                                :class="day.pinned ? 'border-pink-400/40' : 'border-gray-700'">
+                            <!-- Dragging reorders the NIGHTS, not the plan: the
+                                 dishes move to the new date and the date stays
+                                 put, because Thursday is Thursday. A locked
+                                 night refuses to move rather than moving
+                                 quietly — see arrange_week. -->
+                            <div class="bg-gray-900 rounded-xl border px-3 py-2.5 transition-colors"
+                                :class="[day.pinned ? 'border-pink-400/40' : 'border-gray-700',
+                                         dragOverDate === day.date ? 'ring-2 ring-pink-400/60' : '',
+                                         dragDate === day.date ? 'opacity-40' : '']"
+                                :draggable="!day.locked"
+                                @dragstart="dragDate = day.date"
+                                @dragend="dragDate = null; dragOverDate = null"
+                                @dragover.prevent="dragOverDate = day.date"
+                                @dragleave="if (dragOverDate === day.date) dragOverDate = null"
+                                @drop.prevent="dropOnDay(day)">
                                 <div class="flex items-baseline gap-2 mb-1.5">
+                                    <span x-show="!day.locked" class="text-gray-700 cursor-grab shrink-0 text-xs"
+                                        title="Drag to move this dinner to another night">⠿</span>
                                     <span class="text-xs font-bold text-gray-300 w-10 shrink-0"
                                         x-text="day.weekday"></span>
                                     <span class="text-[11px] text-gray-500 flex-1 truncate"
@@ -293,6 +308,13 @@
                                         x-text="day.locked ? '🔒' : '🔓'"></button>
                                     <span x-show="day.pinned && !day.locked" title="Edited — held still"
                                         class="text-[11px] text-pink-300 shrink-0">📌</span>
+                                    <!-- "We had lots of this — let's have it
+                                         again." The night it repeats FROM is
+                                         usually not last night, so this opens
+                                         the record rather than assuming. -->
+                                    <button @click="openAgain(day)" x-show="!day.locked"
+                                        class="text-[11px] text-gray-600 hover:text-pink-300 shrink-0"
+                                        title="Have a previous dinner again on this night">Again</button>
                                     <button x-show="day.pinned" @click="resetDay(day)"
                                         class="text-[11px] text-gray-600 hover:text-white shrink-0">Reset</button>
                                 </div>
@@ -1260,6 +1282,63 @@
              typeable, because scanning a 40-dish list for the one you want is
              the work this was supposed to remove.
              MUST stay inside the x-data root above (see the "+ List" dialog). -->
+        <!-- "Have it again". The night to repeat is often two or three back —
+             a pot of chili is not a one-night event — so this lists what was
+             actually eaten rather than assuming last night. MUST stay inside
+             the x-data root above. -->
+        <div x-show="againOpen" x-cloak
+            class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
+            @click.self="againOpen = false" @keydown.escape.window="againOpen = false">
+            <div class="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full p-5">
+                <h3 class="text-sm font-bold text-white mb-1"
+                    x-text="'Have a dinner again on ' + (againDay ? againDay.weekday : '')"></h3>
+                <p class="text-[11px] text-gray-500 mb-3">
+                    What you ate recently. Picking one puts it on that night —
+                    push moves everything after it back a day, replace just takes the night.
+                </p>
+                <div class="flex items-center gap-2 mb-3">
+                    <button @click="againMode = 'push'"
+                        class="text-[11px] font-bold px-2.5 py-1 rounded-lg border"
+                        :class="againMode === 'push' ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                                     : 'border-gray-700 text-gray-500 hover:text-white'">
+                        Push the rest back
+                    </button>
+                    <button @click="againMode = 'replace'"
+                        class="text-[11px] font-bold px-2.5 py-1 rounded-lg border"
+                        :class="againMode === 'replace' ? 'bg-pink-500/20 border-pink-400/60 text-pink-200'
+                                                        : 'border-gray-700 text-gray-500 hover:text-white'">
+                        Replace that night
+                    </button>
+                </div>
+                <div class="max-h-[50vh] overflow-y-auto space-y-1.5">
+                    <template x-for="h in history" :key="'hh-' + h.date">
+                        <button @click="repeatMeal(h)"
+                            class="w-full text-left bg-gray-900 border border-gray-700 hover:border-pink-400/60
+                                   rounded-xl px-3 py-2 flex items-center gap-3">
+                            <img x-show="h.dishes[0] && h.dishes[0].image_url"
+                                :src="h.dishes[0] && h.dishes[0].image_url" alt=""
+                                class="w-9 h-11 rounded-lg object-cover border border-gray-700 shrink-0">
+                            <div class="min-w-0">
+                                <div class="text-[11px] text-gray-500"
+                                    x-text="h.weekday + ' · ' + h.date"></div>
+                                <div class="text-sm font-semibold text-gray-200 truncate"
+                                    x-text="h.dishes.map(d => d.short_name || d.name).join(' · ')"></div>
+                            </div>
+                        </button>
+                    </template>
+                    <div x-show="!history.length && historyLoaded" class="text-xs text-gray-500">
+                        Nothing on the record yet. Nights land here once they've been
+                        approved or edited and the day has passed.
+                    </div>
+                    <div x-show="!historyLoaded" class="text-xs text-gray-600">Looking…</div>
+                </div>
+                <div class="flex justify-end mt-4">
+                    <button @click="againOpen = false"
+                        class="text-xs font-bold text-gray-400 hover:text-white px-3 py-1.5">Close</button>
+                </div>
+            </div>
+        </div>
+
         <div x-show="pickerOpen" x-cloak
             class="fixed inset-0 z-[70] bg-black/60 flex items-start justify-center p-4 pt-16"
             @click.self="closePicker()" @keydown.escape.window="closePicker()">
@@ -1387,6 +1466,11 @@
                 // What the picker is currently answering FOR. One object
                 // rather than a nullable per caller: {kind:'night',date} |
                 // {kind:'rule',field} | {kind:'pairing',dishId,mode}.
+                // "Again" (repeat a past dinner) and drag-to-reorder both end
+                // as one arrangement write — see arrange_week.
+                againOpen: false, againDay: null, againMode: 'push',
+                history: [], historyLoaded: false,
+                dragDate: null, dragOverDate: null,
                 pickerOpen: false, pickerFor: null,
                 pickerSelected: [], pickerBusy: false,
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
@@ -1915,6 +1999,86 @@
                     } finally {
                         this.dishPicBusy = null;
                     }
+                },
+
+                // --- The record, and the two gestures that write it back ---
+                async loadHistory() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/history?days=21');
+                        this.history = r.ok ? (await r.json()).history || [] : [];
+                    } catch (e) { this.history = []; }
+                    this.historyLoaded = true;
+                },
+                openAgain(day) {
+                    this.againDay = day;
+                    this.againOpen = true;
+                    this.historyLoaded = false;
+                    this.loadHistory();
+                },
+                // One write for the whole week: a half-applied order would show
+                // the family a plan that never existed.
+                async arrangeWeek(days) {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/week/arrange', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ days: days })
+                        });
+                        if (!r.ok) { showGlobalAlert('Could not rearrange the week.'); return null; }
+                        const res = await r.json();
+                        const locked = (res.refused || []).filter(x => x.reason === 'locked');
+                        if (locked.length) {
+                            showGlobalAlert('Left ' + locked.length + ' locked night'
+                                + (locked.length === 1 ? '' : 's') + ' where they were.');
+                        }
+                        await this.loadWeek();
+                        this.loadPlate();
+                        return res;
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                        return null;
+                    }
+                },
+                async repeatMeal(entry) {
+                    const target = this.againDay && this.againDay.date;
+                    if (!target) return;
+                    const ids = entry.dishes.map(d => d.id);
+                    let days;
+                    if (this.againMode === 'replace') {
+                        days = [{ date: target, dish_ids: ids }];
+                    } else {
+                        // Push: the repeated dinner takes the night, and every
+                        // night from there shuffles one day later. The last
+                        // night of the window falls off the end — it was the
+                        // furthest-out proposal and is the cheapest to lose.
+                        const from = this.week.findIndex(d => d.date === target);
+                        if (from < 0) return;
+                        days = [{ date: target, dish_ids: ids }];
+                        for (let i = from; i < this.week.length - 1; i++) {
+                            days.push({
+                                date: this.week[i + 1].date,
+                                dish_ids: (this.week[i].dishes || []).map(d => d.id)
+                            });
+                        }
+                    }
+                    this.againOpen = false;
+                    await this.arrangeWeek(days);
+                },
+                // Drop swaps the two nights. Swap rather than insert-and-shift:
+                // dragging Thursday onto Tuesday is a statement about those two
+                // nights, and quietly moving the five in between is not what
+                // anyone meant by it.
+                async dropOnDay(day) {
+                    const from = this.dragDate;
+                    this.dragOverDate = null;
+                    this.dragDate = null;
+                    if (!from || from === day.date) return;
+                    const src = this.week.find(d => d.date === from);
+                    if (!src || day.locked || src.locked) return;
+                    await this.arrangeWeek([
+                        { date: day.date, dish_ids: (src.dishes || []).map(d => d.id) },
+                        { date: from, dish_ids: (day.dishes || []).map(d => d.id) }
+                    ]);
                 },
 
                 async loadStaples() {

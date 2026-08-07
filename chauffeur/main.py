@@ -5656,6 +5656,30 @@ def meal_week_repropose(start: Optional[str] = None, days: Optional[int] = None)
     return {'window': win, 'start': start_str, 'days': n,
             'sides_per_meal': _meals.plate_settings()[0], 'week': week}
 
+@app.get("/api/meals/history")
+def meal_history(days: int = 21):
+    """The nights already eaten. Plates are the record — see served_history."""
+    from services import meals as _meals
+    return {'history': _meals.served_history(max(1, min(120, int(days))))}
+
+class WeekArrangeDay(BaseModel):
+    date: str
+    dish_ids: List[str] = []
+
+class WeekArrangeReq(BaseModel):
+    days: List[WeekArrangeDay] = []
+
+@app.post("/api/meals/week/arrange")
+def meal_week_arrange(req: WeekArrangeReq):
+    """Write a whole arrangement of nights at once — the one primitive under
+    both dragging a night to a new day and having last night's dinner again
+    with everything else pushed back. Locked and past nights are refused,
+    by name, rather than silently skipped."""
+    from services import meals as _meals
+    res = _meals.arrange_week([d.model_dump() for d in req.days])
+    _touch_stream()
+    return res
+
 @app.post("/api/meals/plate/pin")
 def plate_pin(req: PlateEdit):
     """Freeze one day as proposed, without shopping for it yet."""

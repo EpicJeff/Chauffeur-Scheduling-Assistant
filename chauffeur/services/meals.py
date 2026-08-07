@@ -1046,7 +1046,7 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
     # saved date was harmless while only tonight existed; with a week of plans
     # in the table, pinning Thursday would have deleted Monday through
     # Wednesday on the way past.
-    storage.prune_plates(_today_iso())
+    storage.prune_plates(_history_cutoff())
     # Carry the lock and its note forward. This rebuilds the record from
     # scratch, so without this an ordinary edit — or the week approval, which
     # re-persists every night — would silently unlock Mom's birthday and drop
@@ -1082,7 +1082,7 @@ def set_plate_lock(date_str: str, locked: bool = True, note: str = None,
         by_id = {d['id']: d for d in storage.get_dishes_by_ids(dish_ids)}
         cur = [by_id[i] for i in dish_ids if i in by_id]
     prior = storage.get_plate(date_str) or {}
-    storage.prune_plates(_today_iso())
+    storage.prune_plates(_history_cutoff())
     rec = Plate(date=date_str, edited=True, locked=bool(locked),
                 note=(note if note is not None else prior.get('note')) or None,
                 rejected=list(prior.get('rejected') or []),
@@ -1107,7 +1107,7 @@ def set_plate_hosting(date_str: str, serving_for: int = None,
     """
     from models.schemas import Plate, PlateItem
     prior = storage.get_plate(date_str) or {}
-    storage.prune_plates(_today_iso())
+    storage.prune_plates(_history_cutoff())
 
     def _n(given, existing):
         if given is None:
@@ -1437,11 +1437,83 @@ def repropose_week(start_date: str = None, days: int = 7) -> list:
     not being proposed at all, so there is nothing to refuse.
     """
     week = compose_week(start_date, days)
-    storage.prune_plates(_today_iso())
+    storage.prune_plates(_history_cutoff())
     for day in week:
         if not day.get('locked'):
             _refuse(day['date'], [d['id'] for d in day['dishes']])
     return compose_week(start_date, days)
+
+
+def served_history(days: int = 21, before: str = None) -> list:
+    """The nights already eaten, newest first.
+
+    Plates ARE the record — there is no second table, because a second source
+    of truth for "what was on Tuesday" is how the two disagree. A night appears
+    here once it has been pinned, which the week approval does for every night
+    it covers, so the ordinary flow fills this in on its own. A night nobody
+    ever touched or approved leaves no trace, and that is honest: the app does
+    not know what was actually eaten, only what was agreed.
+    """
+    end = before or _today_iso()
+    start = (datetime.date.fromisoformat(end)
+             - datetime.timedelta(days=max(1, days))).isoformat()
+    out = []
+    for p in storage.get_plates_between(start, end):
+        if (p.get('date') or '') >= end:
+            continue                      # today is not yet history
+        ids = [i['dish_id'] for i in (p.get('items') or [])]
+        if not ids:
+            continue                      # a refusal record, not a dinner
+        by_id = {d['id']: d for d in storage.get_dishes_by_ids(ids)}
+        dishes = [by_id[i] for i in ids if i in by_id]
+        if not dishes:
+            continue
+        out.append({
+            'date': p['date'],
+            'weekday': datetime.date.fromisoformat(p['date']).strftime('%a'),
+            'dishes': [{'id': d['id'], 'name': d['name'],
+                        'short_name': d.get('short_name'),
+                        'image_url': d.get('image_url')} for d in dishes],
+            'headline': (dishes[0].get('short_name') or dishes[0]['name']),
+            'note': p.get('note'),
+        })
+    out.reverse()
+    return out
+
+
+def arrange_week(days: list) -> dict:
+    """Write a whole arrangement of nights at once.
+
+    One primitive under two gestures, because they are the same operation: a
+    drag that swaps Tuesday and Thursday, and "we have this again tomorrow,
+    push the rest back", both end as "these dates now hold these dishes".
+    Doing it in one write also means the week never renders a half-applied
+    order.
+
+    A LOCKED night is refused rather than silently skipped: it is somebody's
+    birthday dinner, and a reorder that quietly moved it — or quietly didn't —
+    is worse than being told. Past dates are refused for the same reason; the
+    record of what was eaten is not editable by a drag.
+    """
+    today = _today_iso()
+    written, refused = [], []
+    for day in days or []:
+        date_str = (day or {}).get('date')
+        if not date_str:
+            continue
+        if date_str < today:
+            refused.append({'date': date_str, 'reason': 'past'})
+            continue
+        prior = storage.get_plate(date_str) or {}
+        if prior.get('locked'):
+            refused.append({'date': date_str, 'reason': 'locked'})
+            continue
+        ids = [i for i in (day.get('dish_ids') or []) if i]
+        dishes = storage.get_dishes_by_ids(ids)
+        by_id = {d['id']: d for d in dishes}
+        _persist_plate(date_str, [by_id[i] for i in ids if i in by_id])
+        written.append(date_str)
+    return {'status': 'success', 'written': written, 'refused': refused}
 
 
 def _refuse(date_str: str, dish_ids: list) -> dict:
@@ -2114,6 +2186,23 @@ def _now_ts() -> float:
 
 def _today_iso() -> str:
     return datetime.date.today().isoformat()
+
+
+# How long a night stays on the record. Plates used to be pruned to TODAY on
+# every write, which meant the family's own history was destroyed daily: what
+# they ate last night was gone the moment anything touched tonight, and the
+# only trace left was one `last_served_at` per dish — a single timestamp that
+# cannot answer "what did we have on Tuesday", "what do we cook most", or the
+# frequency caps' own documented gap ("a cap of twice a week cannot see a third
+# helping from last Tuesday"). A plate row is a date and a handful of dish ids;
+# a year of them is nothing, and it is the only copy of this that will ever
+# exist. Kept for two years, then pruned.
+PLATE_RETENTION_DAYS = 730
+
+
+def _history_cutoff() -> str:
+    return (datetime.date.today()
+            - datetime.timedelta(days=PLATE_RETENTION_DAYS)).isoformat()
 
 
 # --- population: the human supplies the NAME, the model supplies the rest ----
