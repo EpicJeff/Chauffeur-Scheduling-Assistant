@@ -110,15 +110,16 @@ def scenario_the_hero_is_the_next_drive_that_has_not_happened():
         storage.get_completed_drives = lambda: []
         storage.get_in_progress_drives = lambda: []
 
-        runs = home_board.todays_runs()
+        runs = home_board.todays_runs(now=_at(12))
         check([r['id'] for r in runs] == ['morning', 'evening'], "runs sort by time")
 
         hero = home_board._hero(_at(12), runs)
         check(hero['next']['id'] == 'evening', "midday: the evening drive is next")
-        check(hero['remaining'] == 2, "nothing is done, so both remain")
+        check(hero['remaining'] == 1,
+              "the morning drive is behind us even though nobody marked it done")
 
         # Property 3, the part a blank hero gets wrong: after everything, say so.
-        hero = home_board._hero(_at(22), runs)
+        hero = home_board._hero(_at(22), home_board.todays_runs(now=_at(22)))
         check(hero['next'] is None and hero['all_done'],
               "after the last drive the hero says everyone is home")
     finally:
@@ -141,9 +142,47 @@ def scenario_a_drive_under_way_outranks_a_later_one():
         storage.get_completed_drives = lambda: []
         storage.get_in_progress_drives = lambda: ['init_now']
 
-        hero = home_board._hero(_at(16, 40), home_board.todays_runs())
+        hero = home_board._hero(_at(16, 40), home_board.todays_runs(now=_at(16, 40)))
         check(hero['next']['id'] == 'now', "the in-progress drive is the hero")
         check(hero['next']['live'], "and it is marked live")
+
+        # A live drive is never "over", however far past its end time it runs.
+        late = home_board.todays_runs(now=_at(23))
+        check(not next(r for r in late if r['id'] == 'now')['over'],
+              "a drive still under way at 11pm is not behind us")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
+
+
+def scenario_the_hero_and_the_drives_tile_cannot_contradict_each_other():
+    """The bug a photograph of the real panel caught: "Everyone's home 🏠 /
+    Nothing left to drive today" printed directly above a tile headed "the
+    rest of the day" listing a 5:00 PM drive, at 6:34 PM.
+
+    The hero treated a drive as behind us once its end time passed; the tile
+    only believed the manual completed flag, and nobody marks drives complete.
+    Two definitions of "done" on one screen. `over` is now computed once, in
+    todays_runs, and both consumers read it."""
+    orig_s, orig_d, orig_c, orig_p = (storage.get_cached_schedule, storage.get_all_drivers,
+                                      storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        storage.get_cached_schedule = lambda: _sched(
+            ({'id': 'past', 'title': 'Academy - Dribble and Swish',
+              'start': _at(17).isoformat(), 'end': _at(18).isoformat()}, 'drv1'))
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo', 'color_code': '#f00'}]
+        storage.get_completed_drives = lambda: []      # nobody ever taps this
+        storage.get_in_progress_drives = lambda: []
+
+        evening = _at(18, 34)
+        runs = home_board.todays_runs(now=evening)
+        hero = home_board._hero(evening, runs)
+        tile = home_board._tile_drives(evening, runs=runs)
+
+        check(hero['all_done'], "the hero says the driving is done")
+        check(tile is None,
+              "so the drives tile must be gone, not listing the 5pm drive as "
+              "'the rest of the day'")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
@@ -267,6 +306,16 @@ def scenario_the_board_is_cached_so_a_second_panel_costs_nothing():
     finally:
         storage.get_cached_schedule = orig
         _clear_cache()
+
+
+def scenario_every_page_in_the_nav_can_be_a_tile():
+    """The panel is the whole app on a wall, so every destination on the shelf
+    has to have a glance on the board — otherwise the board quietly says some
+    parts of Chauffeur are less real than others. `home` is the board itself
+    and `schedule` is the drives tile under its nav slug."""
+    covered = set(home_board.WIDGET_KEYS) | {'home', 'schedule'}
+    missing = [s for s in home_board.NAV_SLUGS if s not in covered]
+    check(not missing, f"nav pages with no home-board tile: {missing}")
 
 
 def scenario_the_catalog_offers_only_things_that_exist():

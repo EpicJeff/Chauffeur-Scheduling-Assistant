@@ -74,6 +74,11 @@
     html[data-panel] {
         font-size: 19px;
         -webkit-tap-highlight-color: transparent;
+        /* ONE number for how much bottom edge the shelf owns. Everything that
+           has to clear the shelf derives from it, so the page padding and the
+           Argyle bar cannot drift apart from each other or from the shelf
+           itself (which pins its own min-height to the same variable). */
+        --panel-shelf-h: 4.75rem;
     }
 
     html[data-panel] body {
@@ -82,7 +87,16 @@
         -webkit-user-select: none;
         user-select: none;
         /* Room for the shelf, which is fixed over the bottom of the page. */
-        padding-bottom: 5.5rem;
+        padding-bottom: calc(var(--panel-shelf-h) + 0.75rem);
+    }
+
+    /* The Argyle bar is `fixed bottom-6` at z-80 and the shelf is at z-70, so
+       on a panel it landed ON the shelf and swallowed two buttons whole. Lift
+       it clear rather than hide it: asking Argyle a question from the kitchen
+       is one of the better reasons to have a panel on the wall at all. An
+       individual display that genuinely wants none of it still has ?chat=none. */
+    html[data-panel] #chat-overlay-container {
+        bottom: calc(var(--panel-shelf-h) + 1rem);
     }
 
     /* Typing still has to work — the no-select rule is about stray long

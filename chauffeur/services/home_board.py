@@ -55,6 +55,17 @@ WIDGETS = [
      'blurb': "A forecast chip per day. Needs a Home Assistant weather entity."},
     {'key': 'moments', 'icon': '📸', 'label': 'Latest moments',
      'blurb': "Recent photos from the family's events."},
+    {'key': 'calendar', 'icon': '📅', 'label': "What's coming",
+     'blurb': "The next few days on the family calendar, drives or not."},
+    {'key': 'errands', 'icon': '📋', 'label': 'Errands waiting',
+     'blurb': "What still needs doing, past-due first."},
+    {'key': 'trips', 'icon': '🧭', 'label': 'Next trip',
+     'blurb': "The next trip and how long until it starts."},
+    {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is',
+     'blurb': "Who is home, out, or driving. Needs Home Assistant."},
+    {'key': 'intake', 'icon': '📬', 'label': 'Waiting to approve',
+     'blurb': "How many intake proposals need a parent. A COUNT only — the "
+              "mail itself stays off shared screens."},
 ]
 WIDGET_KEYS = [w['key'] for w in WIDGETS]
 
@@ -99,6 +110,16 @@ def _clock(dt: datetime.datetime) -> str:
     return dt.strftime('%I:%M %p').lstrip('0')
 
 
+def day_word(d: datetime.date, today: datetime.date) -> str:
+    """'Today' / 'Tomorrow' / 'Wed'. Same convention as family_digest's
+    day_label, shortened — a tile has room for three letters, not a date."""
+    if d == today:
+        return 'Today'
+    if d == today + datetime.timedelta(days=1):
+        return 'Tomorrow'
+    return d.strftime('%a')
+
+
 def _driver_index() -> dict:
     """driver_id -> {name, color, avatar, image}. Built once per board rather
     than looked up per drive: family_digest._driver_name scans every driver on
@@ -119,11 +140,22 @@ def _driver_index() -> dict:
     return idx
 
 
-def todays_runs(target: datetime.date = None, sched: dict = None) -> List[dict]:
+def todays_runs(target: datetime.date = None, sched: dict = None,
+                now: datetime.datetime = None) -> List[dict]:
     """Every assigned drive and scheduled errand on one day, sorted by time,
-    each tagged done / now / next-up. Shared by the hero and the drives tile
-    so the wall can never contradict itself about what is happening."""
-    target = target or datetime.date.today()
+    each tagged done / live / **over**.
+
+    `over` is the one that matters, and it is computed HERE rather than by each
+    consumer, because the hero and the drives tile both need it and the wall
+    must not contradict itself. A drive is behind us if somebody marked it
+    complete OR its end time has simply passed — and nobody marks drives
+    complete. Reading only the manual flag put "Nothing left to drive today"
+    directly above a tile headed "the rest of the day" listing a 5pm drive at
+    6:34pm, which is the exact failure this shared builder existed to prevent.
+    A drive under way is never over, whatever the clock says.
+    """
+    now = now or datetime.datetime.now()
+    target = target or now.date()
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
     events = {e.get('id'): e for e in (sched.get('events') or [])}
     drivers = _driver_index()
@@ -145,14 +177,18 @@ def todays_runs(target: datetime.date = None, sched: dict = None) -> List[dict]:
         if not ev or not start or start.date() != target:
             continue
         d = drivers.get(d_id) or {'name': 'Driver', 'color': '#3b82f6'}
+        end = _parse(ev.get('end')) or start
+        live = ev_id in live_events
+        done = ev_id in done_events
         runs.append({
             'id': ev_id, 'kind': 'event', 'title': ev.get('title') or 'Event',
             'location': ev.get('location') or None,
             'start': start.isoformat(), 'at': _clock(start),
-            'end': (_parse(ev.get('end')) or start).isoformat(),
+            'end': end.isoformat(),
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
-            'done': ev_id in done_events, 'live': ev_id in live_events,
+            'done': done, 'live': live,
+            'over': bool(not live and (done or end < now)),
         })
 
     for er in (sched.get('scheduled_errands') or []):
@@ -161,15 +197,16 @@ def todays_runs(target: datetime.date = None, sched: dict = None) -> List[dict]:
         if not d_id or not start or start.date() != target:
             continue
         d = drivers.get(d_id) or {'name': 'Driver', 'color': '#3b82f6'}
+        end = _parse(er.get('end_time')) or start
         runs.append({
             'id': er.get('id') or er.get('title'), 'kind': 'errand',
             'title': er.get('title') or 'Errand',
             'location': er.get('location') or None,
             'start': start.isoformat(), 'at': _clock(start),
-            'end': (_parse(er.get('end_time')) or start).isoformat(),
+            'end': end.isoformat(),
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
-            'done': False, 'live': False,
+            'done': False, 'live': False, 'over': bool(end < now),
         })
 
     runs.sort(key=lambda r: r['start'])
@@ -187,10 +224,9 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
     a timetable, and negative values mean it should already be underway, which
     is exactly when somebody walking past needs to see it.
     """
-    upcoming = [r for r in runs if not r['done']]
+    upcoming = [r for r in runs if not r['over']]
     live = next((r for r in upcoming if r['live']), None)
-    nxt = live or next(
-        (r for r in upcoming if _parse(r['end']) and _parse(r['end']) >= now), None)
+    nxt = live or (upcoming[0] if upcoming else None)
 
     hero = {'next': None, 'remaining': len(upcoming), 'later': [], 'all_done': False}
     if nxt:
@@ -209,7 +245,11 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
 # Each returns the tile's payload, or None when it has nothing to say.
 
 def _tile_drives(now, runs, **_):
-    rest = [r for r in runs if not r['done']]
+    # `over`, not `done` — the heading says "the rest of the day", so a drive
+    # whose end time has passed does not belong here whether or not anybody
+    # remembered to tap it complete. Reading `done` here while the hero read
+    # the clock is what let the wall contradict itself.
+    rest = [r for r in runs if not r['over']]
     if not rest:
         return None
     by_driver = {}
@@ -384,10 +424,142 @@ def _tile_moments(now, **_):
         return None
 
 
+def _tile_calendar(now, **_):
+    """What is coming that is not a drive. The drives tile answers "who is
+    taking whom"; this answers "what is this family doing", which on most days
+    is a different list — a dentist appointment nobody drives to still belongs
+    on the wall."""
+    try:
+        sched = storage.get_cached_schedule() or {}
+        horizon = now.date() + datetime.timedelta(days=3)
+        rows = []
+        for ev in (sched.get('events') or []):
+            start = _parse(ev.get('start'))
+            if not start or not (now <= start) or start.date() > horizon:
+                continue
+            rows.append({'day': day_word(start.date(), now.date()),
+                         'at': '' if ev.get('all_day') else _clock(start),
+                         'title': ev.get('title') or 'Event',
+                         'start': start.isoformat()})
+        if not rows:
+            return None
+        rows.sort(key=lambda r: r['start'])
+        return {'events': rows[:6]}
+    except Exception as e:
+        print(f"[home_board] calendar failed: {e}")
+        return None
+
+
+def _tile_errands(now, **_):
+    try:
+        rows = []
+        for er in storage.get_all_errands() or []:
+            if er.get('is_completed') or er.get('status') == 'completed':
+                continue
+            rows.append({'title': er.get('title') or 'Errand',
+                         'location': er.get('location') or None,
+                         'past_due': er.get('status') == 'past_due',
+                         'priority': er.get('priority') or 2})
+        if not rows:
+            return None
+        # Past-due first, then by priority: a wall panel shows the thing that
+        # has already slipped before the thing that has not.
+        rows.sort(key=lambda r: (not r['past_due'], r['priority']))
+        return {'errands': rows[:5], 'total': len(rows)}
+    except Exception as e:
+        print(f"[home_board] errands failed: {e}")
+        return None
+
+
+def _tile_trips(now, **_):
+    """The next trip, counted down in days. Drafts are excluded — a trip
+    nobody has committed to is not news."""
+    try:
+        rows = []
+        for t in storage.get_all_trip_metadata() or []:
+            if t.get('is_draft'):
+                continue
+            ts = t.get('mock_start_date')
+            start = None
+            if ts:
+                try:
+                    start = datetime.datetime.fromtimestamp(float(ts)).date()
+                except (TypeError, ValueError, OSError):
+                    start = None
+            if not start or start < now.date():
+                continue
+            rows.append({'title': t.get('title') or 'Trip',
+                         'location': t.get('location') or None,
+                         'date': start.isoformat(),
+                         'days': (start - now.date()).days})
+        if not rows:
+            return None
+        rows.sort(key=lambda r: r['days'])
+        return {'trips': rows[:2]}
+    except Exception as e:
+        print(f"[home_board] trips failed: {e}")
+        return None
+
+
+def _tile_map(now, runs=None, **_):
+    """Who is home, out, or driving right now. Needs Home Assistant for the
+    zone; the driving half comes from in-progress legs and works without it,
+    which is why a member with no person entity still appears when they are
+    behind the wheel."""
+    try:
+        from services import ha_api
+        driving = {r['driver_id']: r['title'] for r in (runs or []) if r.get('live')}
+        rows = []
+        for m in storage.get_all_members():
+            if m.get('role') == 'helper' or m.get('system'):
+                continue
+            state = None
+            ent = m.get('ha_person_entity')
+            if ent:
+                try:
+                    s = ha_api.get_state(ent)
+                    state = (s or {}).get('state')
+                except Exception:
+                    state = None
+            leg = driving.get(m.get('driver_id'))
+            if not state and not leg:
+                continue
+            rows.append({'name': m.get('name'), 'color_code': m.get('color_code'),
+                         'avatar': m.get('avatar'), 'image': m.get('image'),
+                         'state': state, 'driving': leg})
+        if not rows:
+            return None
+        # Anyone out ranks anyone home: "everybody is home" is the boring case.
+        rows.sort(key=lambda r: (not r['driving'], (r['state'] or '') == 'home',
+                                 r['name'] or ''))
+        return {'people': rows[:6]}
+    except Exception as e:
+        print(f"[home_board] map failed: {e}")
+        return None
+
+
+def _tile_intake(now, **_):
+    """A COUNT and nothing else. Intake is mail approvals and IMAP settings —
+    an admin surface the kiosk rule keeps off shared screens — but "three
+    things are waiting for a parent" is not confidential, and it is the only
+    part of intake anybody needs from across a kitchen. The proposals
+    themselves stay on /intake."""
+    try:
+        # 'proposed' is the waiting-for-a-parent status — NOT 'pending', which
+        # matches nothing and would have made this tile permanently silent.
+        waiting = storage.get_proposals('proposed') or []
+        return {'pending': len(waiting)} if waiting else None
+    except Exception as e:
+        print(f"[home_board] intake failed: {e}")
+        return None
+
+
 _BUILDERS: dict = {
     'drives': _tile_drives, 'kids': _tile_kids, 'meals': _tile_meals,
     'shopping': _tile_shopping, 'chores': _tile_chores, 'routines': _tile_routines,
     'occasions': _tile_occasions, 'weather': _tile_weather, 'moments': _tile_moments,
+    'calendar': _tile_calendar, 'errands': _tile_errands, 'trips': _tile_trips,
+    'map': _tile_map, 'intake': _tile_intake,
 }
 
 
@@ -495,7 +667,9 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         return _CACHE['data']
 
     from services import family_digest
-    runs = todays_runs(now.date())
+    # `now` threaded through, not left to default: the hero, the tiles and the
+    # `over` flag must all be reasoning about the same instant.
+    runs = todays_runs(now.date(), now=now)
 
     tiles = []
     for key in keys:

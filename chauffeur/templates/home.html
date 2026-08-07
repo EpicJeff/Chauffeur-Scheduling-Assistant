@@ -258,6 +258,82 @@
                             </template>
                         </div>
                     </template>
+
+                    <!-- what's coming -->
+                    <template x-if="t.key === 'calendar'">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.events" :key="i">
+                                <div class="flex gap-2 text-base text-gray-300">
+                                    <span class="text-xs font-bold uppercase text-gray-500 w-16 shrink-0 pt-1"
+                                        x-text="e.day"></span>
+                                    <span class="tabular-nums font-semibold text-gray-400 shrink-0"
+                                        x-text="e.at"></span>
+                                    <span class="truncate" x-text="e.title"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- errands waiting -->
+                    <template x-if="t.key === 'errands'">
+                        <div class="space-y-1.5">
+                            <template x-for="(e, i) in t.data.errands" :key="i">
+                                <div class="flex items-baseline gap-2">
+                                    <span class="shrink-0" :class="e.past_due ? 'text-amber-400' : 'text-gray-600'"
+                                        x-text="e.past_due ? '!' : '•'"></span>
+                                    <span class="text-base truncate"
+                                        :class="e.past_due ? 'text-amber-200' : 'text-gray-300'"
+                                        x-text="e.title"></span>
+                                </div>
+                            </template>
+                            <div class="text-xs text-gray-600 pt-1" x-show="t.data.total > t.data.errands.length"
+                                x-text="'and ' + (t.data.total - t.data.errands.length) + ' more'"></div>
+                        </div>
+                    </template>
+
+                    <!-- next trip -->
+                    <template x-if="t.key === 'trips'">
+                        <div class="space-y-2">
+                            <template x-for="(tr, i) in t.data.trips" :key="i">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="min-w-0">
+                                        <span class="text-base text-gray-200 truncate" x-text="tr.title"></span>
+                                        <span class="block text-xs text-gray-500 truncate" x-show="tr.location"
+                                            x-text="tr.location"></span>
+                                    </span>
+                                    <span class="text-sm font-bold shrink-0"
+                                        :class="tr.days <= 7 ? 'text-sky-300' : 'text-gray-500'"
+                                        x-text="tr.days === 0 ? 'today' : (tr.days === 1 ? 'tomorrow' : tr.days + ' days')"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- where everyone is -->
+                    <template x-if="t.key === 'map'">
+                        <div class="space-y-1.5">
+                            <template x-for="(p, i) in t.data.people" :key="i">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base truncate"
+                                        :style="'color:' + (p.color_code || '#d1d5db')" x-text="p.name"></span>
+                                    <span class="text-sm shrink-0 truncate max-w-[55%]"
+                                        :class="p.driving ? 'text-emerald-300' : 'text-gray-400'"
+                                        x-text="p.driving ? ('🚗 ' + p.driving) : p.state"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- waiting to approve -->
+                    <template x-if="t.key === 'intake'">
+                        <div class="flex items-baseline gap-3">
+                            <span class="text-4xl font-black tabular-nums text-indigo-300"
+                                x-text="t.data.pending"></span>
+                            <span class="text-base text-gray-400"
+                                x-text="t.data.pending === 1 ? 'thing waiting for a parent'
+                                        : 'things waiting for a parent'"></span>
+                        </div>
+                    </template>
                 </div>
             </template>
         </div>
