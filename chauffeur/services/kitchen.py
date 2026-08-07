@@ -208,6 +208,203 @@ def oven_conflicts(dishes: List[dict], ovens: int) -> List[dict]:
     return out
 
 
+def _phases(dish: dict) -> tuple:
+    """(prep, unattended, finish) in the order they actually happen.
+
+    Prep, then the cooking the dish does on its own, then the work near
+    serving. A roast is five minutes of seasoning, forty in the oven, five to
+    rest and carve — and that order is what makes a run sheet a sequence
+    rather than a pile of durations.
+    """
+    return (max(0, int(dish.get('prep_ahead_mins') or 0)),
+            max(0, int(dish.get('unattended_mins') or 0)),
+            max(0, int(dish.get('finish_mins') or 0)))
+
+
+def _sequential_sheet(plate: List[dict], n_cooks: int) -> Optional[dict]:
+    """The fallback when the solver is unavailable or gives up.
+
+    One dish after another, which is pessimistic but never WRONG — it is the
+    schedule a single cook working through the list would actually follow. A
+    run sheet that fails open with a safe answer beats one that vanishes on
+    the day somebody needed it.
+    """
+    t, steps = 0, []
+    for d in plate:
+        p, u, f = _phases(d)
+        steps.append({'dish': d, 'prep_at': t, 'cook_at': t + p,
+                      'finish_at': t + p + u})
+        t += p + u + f
+    return {'span_mins': t, 'steps': steps, 'exact': False}
+
+
+def _solve_sheet(plate: List[dict], ovens: int, burners: int,
+                 n_cooks: int) -> Optional[dict]:
+    """Place every dish so that the LATEST possible start still serves on time.
+
+    "When do I have to start?" is the question a run sheet exists to answer,
+    so the objective maximises the first task's start rather than minimising a
+    makespan — same schedule, but the number that falls out is the one worth
+    reading.
+
+    This is where CP-SAT belongs, and `totals()` is where it does not: this
+    runs on demand for one plate, while totals runs once per composed day.
+    """
+    try:
+        from ortools.sat.python import cp_model
+    except ImportError:                       # pragma: no cover
+        return None
+
+    horizon = sum(sum(_phases(d)) for d in plate) or 1
+    m = cp_model.CpModel()
+    cook_ivs, burner_ivs, oven_rows = [], [], []
+    starts, out = [], []
+
+    for idx, d in enumerate(plate):
+        p, u, f = _phases(d)
+        s_prep = m.NewIntVar(0, horizon, f'p{idx}')
+        s_cook = m.NewIntVar(0, horizon, f'c{idx}')
+        s_fin = m.NewIntVar(0, horizon, f'f{idx}')
+        # The chain. Equality is not required between phases — a dish may wait
+        # for a free burner, and pretending otherwise would make the sheet lie.
+        m.Add(s_prep + p <= s_cook)
+        m.Add(s_cook + u <= s_fin)
+        m.Add(s_fin + f <= horizon)
+        starts.append(s_prep if p else (s_cook if u else s_fin))
+
+        if p:
+            cook_ivs.append(m.NewIntervalVar(s_prep, p, m.NewIntVar(0, horizon, ''), ''))
+        if f:
+            cook_ivs.append(m.NewIntervalVar(s_fin, f, m.NewIntVar(0, horizon, ''), ''))
+
+        equip = str(d.get('equipment') or 'none')
+        if equip == 'burner' and (u or f):
+            # The ring is held from the moment it goes on until the cook walks
+            # away — through the hands-on finish, not merely the simmer.
+            end = m.NewIntVar(0, horizon, '')
+            m.Add(end == s_fin + f)
+            burner_ivs.append(m.NewIntervalVar(s_cook, u + f, end, ''))
+        elif equip == 'oven' and u:
+            oven_rows.append((idx, d.get('oven_temp_f'), s_cook, u))
+        out.append({'dish': d, 'p': p, 'u': u, 'f': f,
+                    's_prep': s_prep, 's_cook': s_cook, 's_fin': s_fin})
+
+    if cook_ivs:
+        m.AddCumulative(cook_ivs, [1] * len(cook_ivs), n_cooks)
+    if burner_ivs:
+        m.AddCumulative(burner_ivs, [1] * len(burner_ivs), burners)
+
+    # Ovens: one temperature shares freely, two temperatures cannot share at
+    # all. Rack space stays unmodelled, so the only exclusion is thermal.
+    if oven_rows:
+        assign = {}
+        for idx, _t, _s, _u in oven_rows:
+            lits = [m.NewBoolVar(f'o{idx}_{o}') for o in range(ovens)]
+            m.AddExactlyOne(lits)
+            assign[idx] = lits
+        for a in range(len(oven_rows)):
+            for b in range(a + 1, len(oven_rows)):
+                i, ti, si, ui = oven_rows[a]
+                j, tj, sj, uj = oven_rows[b]
+                # An unknown temperature never shares: not knowing is not
+                # evidence of a match.
+                if ti is not None and tj is not None and int(ti) == int(tj):
+                    continue
+                for o in range(ovens):
+                    first = m.NewBoolVar('')
+                    both = [assign[i][o], assign[j][o]]
+                    m.Add(si + ui <= sj).OnlyEnforceIf(both + [first])
+                    m.Add(sj + uj <= si).OnlyEnforceIf(both + [first.Not()])
+
+    begin = m.NewIntVar(0, horizon, 'begin')
+    if starts:
+        m.AddMinEquality(begin, starts)
+    # Two terms, and the second one is not decoration. Maximising the first
+    # start alone says nothing about where the REST of the work lands, so the
+    # first solve cheerfully finished the gravy five hours before dinner —
+    # technically before serving, and completely useless. Pushing every task
+    # as late as its resources allow is what a cook actually does, and it puts
+    # the finishing work against the serve time where it belongs. `begin`
+    # still dominates: its weight exceeds anything the tail can sum to.
+    tail = sum(r['s_fin'] for r in out)
+    m.Maximize(begin * (len(out) * horizon + 1) + tail)
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 3.0
+    solver.parameters.num_search_workers = 4
+    if solver.Solve(m) not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None
+    first = solver.Value(begin)
+    return {'span_mins': horizon - first, 'exact': True,
+            'steps': [{'dish': r['dish'],
+                       'prep_at': solver.Value(r['s_prep']) - first,
+                       'cook_at': solver.Value(r['s_cook']) - first,
+                       'finish_at': solver.Value(r['s_fin']) - first}
+                      for r in out]}
+
+
+def run_sheet(dishes: List[dict], serve_at: str = '18:00', settings: dict = None,
+              cooks: int = None, serving_for: int = None) -> dict:
+    """Clock times for a plate: when each dish starts, and when to begin.
+
+    **Shown, never pushed.** The meals arc's taskmaster rule governs this
+    absolutely — emitting "start the rice at 3:40, pack two at 4:50" every
+    evening is a stream of orders, and the promise is removing load rather
+    than issuing it. This is also why the design brief's plan to emit these as
+    `PrepStep`s was dropped: `PrepStep` models work OUTSIDE the cook window,
+    per dish, opt-in, and it fires reminders. A run sheet is inside the window,
+    dated, computed, and asked for. Wrong entity, and the reminders would be
+    exactly the nagging the arc promised not to become.
+    """
+    ovens, burners, n_cooks = capacities(settings, cooks)
+    plate = [scaled(d, serving_for) for d in dishes
+             if any(_phases(scaled(d, serving_for)))]
+    if not plate:
+        return {'serve_at': serve_at, 'start_at': serve_at, 'steps': [],
+                'span_mins': 0, 'exact': True, 'cooks': n_cooks}
+
+    sol = _solve_sheet(plate, ovens, burners, n_cooks) \
+        or _sequential_sheet(plate, n_cooks)
+
+    try:
+        hh, mm = [int(x) for x in str(serve_at).split(':')[:2]]
+    except (TypeError, ValueError):
+        hh, mm = 18, 0
+    serve_mins = hh * 60 + mm
+    span = int(sol['span_mins'])
+
+    def clock(offset_from_start: int) -> str:
+        t = (serve_mins - span + offset_from_start) % (24 * 60)
+        return f"{t // 60:02d}:{t % 60:02d}"
+
+    lines = []
+    for st in sol['steps']:
+        d = st['dish']
+        nm = d.get('short_name') or d.get('name') or 'dish'
+        p, u, f = _phases(d)
+        equip = str(d.get('equipment') or 'none')
+        if p:
+            lines.append({'at': clock(st['prep_at']), 'mins': p, 'kind': 'prep',
+                          'dish': nm, 'text': f"{nm} — {p} min prep"})
+        if u:
+            where = 'in the oven'
+            if equip == 'oven' and d.get('oven_temp_f'):
+                where = f"in the oven at {int(d['oven_temp_f'])}°"
+            elif equip == 'burner':
+                where = 'on the stove'
+            elif equip == 'none':
+                where = 'going'
+            lines.append({'at': clock(st['cook_at']), 'mins': u, 'kind': 'cook',
+                          'dish': nm, 'text': f"{nm} {where} — {u} min"})
+        if f:
+            lines.append({'at': clock(st['finish_at']), 'mins': f, 'kind': 'finish',
+                          'dish': nm, 'text': f"{nm} — {f} min to finish"})
+    lines.sort(key=lambda r: r['at'])
+    return {'serve_at': serve_at, 'start_at': clock(0), 'steps': lines,
+            'span_mins': span, 'exact': bool(sol.get('exact')),
+            'cooks': n_cooks, 'serving_for': serving_for or None}
+
+
 def totals(dishes: List[dict], settings: dict = None, cooks: int = None,
            serving_for: int = None) -> dict:
     """The three numbers every meals surface reads, computed against a real

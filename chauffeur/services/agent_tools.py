@@ -560,6 +560,13 @@ class PairDishesTool(BaseModel):
     partner_names: str = Field(..., description="Comma separated dishes that come with it.")
     exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
 
+class GetRunSheetTool(BaseModel):
+    """
+    Works out when to start cooking and what goes on when, counting back from when the family eats ("when do I need to start on Thursday?", "what time does the turkey go in?"). Accounts for one oven at two temperatures and for how many people are cooking.
+    """
+    target_date: Optional[str] = Field("today", description="The night, e.g. today, Saturday, 2026-11-26.")
+    serve_at: Optional[str] = Field("", description="Optional HH:MM to eat at; omit to use the family's own sitting.")
+
 class SetHostingTool(BaseModel):
     """
     Records how many people are eating on a night and how many are cooking ("we are having twelve people on Saturday", "four of us are cooking Thursday"). Headcount multiplies hands-on work; cooks divide it. serving_for=0 clears it back to an ordinary night.
@@ -768,6 +775,7 @@ TOOL_SCHEMAS = {
     "unpair_dishes": UnpairDishesTool.model_json_schema(),
     "set_dish_scope": SetDishScopeTool.model_json_schema(),
     "set_hosting": SetHostingTool.model_json_schema(),
+    "get_run_sheet": GetRunSheetTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -1946,6 +1954,11 @@ def handle_unpair_dishes(args: dict) -> dict:
     from services.agent_tools_v2 import unpair_dishes
     return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
 
+def handle_get_run_sheet(args: dict) -> dict:
+    from services.agent_tools_v2 import get_run_sheet
+    return get_run_sheet(args.get("target_date") or "today",
+                         args.get("serve_at") or "")
+
 def handle_set_hosting(args: dict) -> dict:
     from services.agent_tools_v2 import set_hosting
     return set_hosting(args.get("target_date") or "",
@@ -2119,6 +2132,7 @@ TOOL_HANDLERS = {
     "unpair_dishes": handle_unpair_dishes,
     "set_dish_scope": handle_set_dish_scope,
     "set_hosting": handle_set_hosting,
+    "get_run_sheet": handle_get_run_sheet,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

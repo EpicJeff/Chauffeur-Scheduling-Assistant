@@ -211,11 +211,47 @@
                                     ? '👥 ' + plate.serving_for + ((plate.cooks || 1) > 1
                                         ? ' · ' + plate.cooks + ' cooking' : '')
                                     : '👥 Cooking for…'"></button>
+                            <!-- Asked for, never pushed: the taskmaster rule
+                                 means a run sheet is something you open, not a
+                                 stream of orders arriving all afternoon. -->
+                            <button @click="toggleRunSheet()"
+                                x-show="(plate.dishes || []).length"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg border"
+                                :class="runSheet
+                                    ? 'bg-sky-500/15 border-sky-500/40 text-sky-300'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'"
+                                x-text="runSheetBusy ? '…' : '🕐 When do I start?'"></button>
                             <button @click="plateToList()"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white ml-auto">
                                 + List
                             </button>
                         </div>
+
+                        <div x-show="runSheet" x-cloak class="mt-3 bg-gray-900 rounded-xl border border-gray-700 p-4">
+                            <div class="text-xs font-black uppercase tracking-widest text-sky-200 mb-1"
+                                x-text="runSheet
+                                    ? 'Start at ' + runSheet.start_at + ' to eat at ' + runSheet.serve_at
+                                    : ''"></div>
+                            <!-- Say when the schedule is the safe fallback rather
+                                 than the real one. A sheet that silently degrades
+                                 is worse than one that admits it. -->
+                            <div x-show="runSheet && !runSheet.exact"
+                                class="text-[11px] text-gray-500 mb-2">
+                                Worked out one dish at a time — the exact schedule
+                                wasn't available, so this is the safe version.
+                            </div>
+                            <div class="space-y-1 mt-2">
+                                <template x-for="(s, i) in ((runSheet && runSheet.steps) || [])"
+                                    :key="'rs-' + i">
+                                    <div class="flex items-baseline gap-3 text-sm">
+                                        <span class="font-mono font-bold text-sky-300 shrink-0"
+                                            x-text="s.at"></span>
+                                        <span class="text-gray-300" x-text="s.text"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
 
@@ -994,6 +1030,7 @@
                              dwell_days: 3 },
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 showOccasionDishes: false,
+                runSheet: null, runSheetBusy: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
@@ -1814,6 +1851,20 @@
                     }
                     if (p.edited) bits.push('yours');
                     return bits.join(' · ');
+                },
+
+                async toggleRunSheet() {
+                    if (this.runSheet) { this.runSheet = null; return; }
+                    this.runSheetBusy = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/plate/runsheet?date='
+                            + encodeURIComponent((this.plate || {}).date || ''));
+                        this.runSheet = r.ok ? await r.json() : null;
+                        if (!this.runSheet) showGlobalAlert('Could not work that out just now.');
+                    } catch (e) {
+                        showGlobalAlert('Could not work that out just now.');
+                    }
+                    this.runSheetBusy = false;
                 },
 
                 async setHosting() {

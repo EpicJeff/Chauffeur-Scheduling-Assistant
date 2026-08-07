@@ -1122,6 +1122,35 @@ def set_plate_hosting(date_str: str, serving_for: int = None,
             'oven_conflicts': totals.get('oven_conflicts')}
 
 
+def plate_run_sheet(date_str: str = None, serve_at: str = None,
+                    settings: dict = None) -> dict:
+    """Clock times for a night's cooking, working back from when people eat.
+
+    The serve time is the household's own dinner sitting when one can be
+    derived from the solved day — the whole reason this app can do a run sheet
+    at all is that it already knows when this family gets to sit down. Falls
+    back to the start of the dinner window, never to a guess.
+    """
+    day = date_str or _today_iso()
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    saved = storage.get_plate(day) or {}
+    dishes = get_or_compose_plate(day)['dishes']
+    if not serve_at:
+        plan = eating_plan(day, 'dinner', settings=settings)
+        # The EARLIEST sitting, not the latest: on a split evening the food has
+        # to be ready when the first person eats, and cooking to the last one
+        # is how the kids in the car get nothing.
+        firsts = sorted(p['first']['start'] for p in (plan.get('people') or [])
+                        if p.get('first') and p['first'].get('start'))
+        serve_at = (firsts[0][11:16] if firsts
+                    else MEAL_WINDOWS['dinner'][0].strftime('%H:%M'))
+    sheet = kitchen.run_sheet(dishes, serve_at, settings,
+                              saved.get('cooks'), saved.get('serving_for'))
+    sheet['date'] = day
+    sheet['dish_count'] = len(dishes)
+    return sheet
+
+
 def grocery_settings(settings: dict = None) -> tuple:
     """The shop day and how early to ask. An UNSET shop day is derived from the
     family's actual free time rather than guessed — the first cut hardcoded

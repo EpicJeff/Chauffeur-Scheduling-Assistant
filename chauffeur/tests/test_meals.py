@@ -3400,6 +3400,86 @@ def scenario_an_already_made_dish_occupies_no_oven_at_all():
           "and it costs none of the hands either")
 
 
+def _thanksgiving():
+    return [
+        {'name': 'roast turkey', 'short_name': 'turkey', 'prep_ahead_mins': 20,
+         'finish_mins': 20, 'unattended_mins': 240, 'equipment': 'oven',
+         'oven_temp_f': 325, 'serves': 12},
+        {'name': 'roasted potatoes', 'short_name': 'potatoes', 'prep_ahead_mins': 20,
+         'finish_mins': 5, 'unattended_mins': 45, 'equipment': 'oven',
+         'oven_temp_f': 425, 'serves': 4},
+        {'name': 'gravy', 'short_name': 'gravy', 'prep_ahead_mins': 0,
+         'finish_mins': 15, 'unattended_mins': 0, 'equipment': 'burner', 'serves': 12},
+    ]
+
+
+def scenario_the_run_sheet_counts_back_from_when_people_eat():
+    from services import kitchen
+    r = kitchen.run_sheet(_thanksgiving(), '16:00',
+                          {'kitchen_ovens': 1, 'kitchen_burners': 4}, cooks=2)
+    check(r['exact'], "the solver answered")
+    check(r['start_at'] == '11:00' or r['span_mins'] >= 300,
+          f"and starting time reflects a four-hour bird, got {r['start_at']}")
+    at = {s['dish'] + ':' + s['kind']: s['at'] for s in r['steps']}
+    mins = {k: int(v[:2]) * 60 + int(v[3:]) for k, v in at.items()}
+    check(at['turkey:cook'] < at['potatoes:cook'],
+          f"the oven runs the long dish first, got {at}")
+    # 325 then 425 in ONE oven. The oven frees when the bird comes OUT — which
+    # is `cook + unattended`, not when carving finishes: the whole point of the
+    # move is that the turkey rests on the counter while the potatoes go in.
+    check(mins['potatoes:cook'] >= mins['turkey:cook'] + 240,
+          f"the second temperature waits for the oven, got {at}")
+    check(mins['turkey:finish'] >= mins['turkey:cook'] + 240,
+          f"and nothing is carved before it is cooked, got {at}")
+
+
+def scenario_finishing_work_lands_against_the_serve_time():
+    """The first cut maximised only the earliest start, which cheerfully
+    finished the gravy five hours before dinner — technically before serving
+    and completely useless."""
+    from services import kitchen
+    r = kitchen.run_sheet(_thanksgiving(), '16:00',
+                          {'kitchen_ovens': 1, 'kitchen_burners': 4}, cooks=2)
+    gravy = next(s for s in r['steps'] if s['dish'] == 'gravy')
+    check(gravy['at'] >= '15:00',
+          f"the gravy is made near the meal, not at dawn, got {gravy['at']}")
+
+
+def scenario_the_run_sheet_falls_back_rather_than_vanishing():
+    """A sheet that fails open with a safe, pessimistic answer beats one that
+    disappears on the day somebody needed it."""
+    from services import kitchen
+    seq = kitchen._sequential_sheet(_thanksgiving(), 1)
+    check(seq['span_mins'] == 365 and not seq['exact'],
+          f"one dish after another, and it says so, got {seq['span_mins']}")
+
+
+def scenario_the_run_sheet_is_pull_not_push_in_both_stacks():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _dish('roast beef', type='entree', prep_ahead_mins=15, finish_mins=15,
+          unattended_mins=90, equipment='oven', oven_temp_f=325)
+    _dish('green salad', type='side', side_type='salad', finish_mins=10)
+    from services import agent_tools, agent_tools_v2
+    check('get_run_sheet' in {t['name'] for t in agent_tools_v2.get_available_tools()},
+          "v2 offers it")
+    check('get_run_sheet' in agent_tools.TOOL_SCHEMAS
+          and 'get_run_sheet' in agent_tools.TOOL_HANDLERS, "and so does v1")
+    res = agent_tools.execute_tool('get_run_sheet',
+                                   {'target_date': DAY, 'serve_at': '18:00'})
+    check('Start at' in res['message'] and '18:00' in res['message'],
+          f"and it answers with clock times, got {res['message'][:120]}")
+
+
+def scenario_an_empty_night_says_so_instead_of_inventing_a_schedule():
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    from services import agent_tools_v2
+    res = agent_tools_v2.get_run_sheet(DAY)
+    check('nothing to cook' in res['message'],
+          f"an empty plate is a plain answer, got {res['message']}")
+
+
 def scenario_scaling_multiplies_the_hands_not_the_oven():
     """Four times the potatoes is four times the peeling and NOT four times
     the roasting. A tray that genuinely needs longer is a bigger thing, which

@@ -5693,6 +5693,13 @@ def plate_hosting(req: PlateHosting):
     _touch_stream()
     return res
 
+@app.get("/api/meals/plate/runsheet")
+def plate_runsheet(date: Optional[str] = None, serve: Optional[str] = None):
+    """When to start, and what goes on when. Asked for, never pushed."""
+    import datetime as _dt
+    from services import meals as _meals
+    return _meals.plate_run_sheet(date or _dt.date.today().isoformat(), serve)
+
 @app.post("/api/meals/migrate-dishes")
 def migrate_dishes():
     """One-shot: type M4's dishes and retire the slot-meals they belonged to."""

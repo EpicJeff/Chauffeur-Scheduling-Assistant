@@ -1527,6 +1527,30 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
+def get_run_sheet(target_date: str = "today", serve_at: str = "",
+                  acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "when do I need to start cooking on Thursday?", "what time does
+    the turkey go in?"
+
+    Pull, never push. This is the taskmaster line the meals arc drew: a run
+    sheet is something somebody asks for, and the moment it starts arriving on
+    its own it is a stream of orders.
+    """
+    from services import meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    sheet = meals.plate_run_sheet(day.isoformat(), (serve_at or '').strip() or None)
+    if not sheet.get('steps'):
+        return {"status": "success",
+                "message": "There's nothing to cook on that night yet — pick "
+                           "some dishes and I'll work out the timings."}
+    head = (f"Start at {sheet['start_at']} to eat at {sheet['serve_at']}"
+            + (f", {sheet['cooks']} of you cooking" if (sheet.get('cooks') or 1) > 1 else "")
+            + ".")
+    lines = [f"{s['at']} — {s['text']}" for s in sheet['steps']]
+    return {"status": "success", "message": head + "\n" + "\n".join(lines),
+            "start_at": sheet['start_at'], "serve_at": sheet['serve_at']}
+
+
 def set_hosting(target_date: str, serving_for: int = 0, cooks: int = 0,
                 acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "we're having twelve people on Saturday", "four of us are cooking
@@ -2341,6 +2365,18 @@ def get_available_tools() -> List[Dict]:
                     "exclusive": {"type": "boolean", "description": "true for 'X is only ever served with Y'."}
                 },
                 "required": ["dish_name", "partner_names"]
+            }
+        },
+        {
+            "name": "get_run_sheet",
+            "description": "Works out when to start cooking and what goes on when, counting back from when the family eats: when do I need to start on Thursday, what time does the turkey go in, how early do I have to be up for this. Accounts for one oven at two temperatures and for how many people are cooking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "The night, e.g. today, Saturday, 2026-11-26."},
+                    "serve_at": {"type": "string", "description": "Optional HH:MM to eat at; omit to use the family's own sitting."}
+                },
+                "required": []
             }
         },
         {
