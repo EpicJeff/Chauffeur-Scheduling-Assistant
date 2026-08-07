@@ -670,7 +670,8 @@ sending or claiming, and never pass from_member/member_name for them.
                             args.get("dish_name", "") or "",
                             args.get("categories", "") or "",
                             args.get("whole_meal"),
-                            args.get("serves"), acting_member=actor)
+                            args.get("serves"),
+                            args.get("whole_units"), acting_member=actor)
                     elif func_name == "set_dish_scope":
                         occ = args.get("occasion_only")
                         res = _atv2.set_dish_scope(

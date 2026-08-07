@@ -713,3 +713,10 @@ Everything before this is nouns, and every noun is a logistics noun. This is wha
 - Shopping needed no change: a dish on two nights already buys once (the cross-day consolidation), so a repeat night costs nothing extra at the shop.
 - Surfaces: **Cooking for N** beside the plate blocks, a `+2 nights` badge next to `serves` on every dish row, the existing per-night hosting override, and `household_headcount` in the settings registry.
 - Tests: the roster fallback and the configured number, hosting overriding and clearing back to the household, the arithmetic at several household sizes, a big pot returning the very next night and then stopping, and nothing repeating when nothing is left over.
+
+## A tray is a tray (v2.109.2)
+
+- **The gap**: `kitchen.scale_factor` is continuous, which is right for most food — cooking nine portions of carrots really is 1.5 pans and 1.5 times the peeling — and wrong for anything made in indivisible units. You cannot bake half a lasagna, so a family of nine eating from a tray that serves six needs TWO trays: twice the ingredients, twice the hands-on, and a real surplus rather than a rounding error. Both the timing and the shopping under-counted.
+- **`Dish.whole_units`** (default false, because most food divides) rounds the factor up to the next whole unit. Never below one, for the same reason as before: scaling down is the one direction that is pure fiction.
+- **It cannot change the leftover forecast, and that is pinned by a test.** Rounding up adds strictly less than one unit of surplus, and a unit smaller than the household is by definition not another dinner — so the floor rule absorbs it. Verified across every combination up to 24 servings and 14 eaters, which is worth having in writing before somebody "fixes" the forecast to account for it.
+- Hand paths, both of them: a **by the tray** toggle on the dish row, and `whole_units` on `set_dish_categories` in both agent stacks ("the lasagna is made by the tray"). The extractor is asked for it too, told plainly that most food is not — a tray, a casserole, a cake, a sheet pan, a loaf; and when in doubt, false.

@@ -1052,6 +1052,18 @@
                                                 @change="setDishServes(m, $event.target.value)"
                                                 class="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 w-12 text-[10px] text-gray-300">
                                         </label>
+                                        <!-- A tray is a tray: feeding more people
+                                             means making another whole one, not
+                                             one-and-a-half of one. -->
+                                        <button @click="toggleWholeUnits(m)"
+                                            class="text-[10px] font-bold"
+                                            :class="m.whole_units
+                                                ? 'px-2 py-0.5 rounded-lg bg-sky-500/15 border border-sky-400/50 text-sky-200'
+                                                : 'text-gray-600 hover:text-sky-300'"
+                                            :title="m.whole_units
+                                                ? 'Made in whole units — feeding more means another whole one. Tap if you can just make more or less of it.'
+                                                : 'Made in whole units? A tray, a cake, a sheet pan.'"
+                                            x-text="m.whole_units ? 'by the tray' : '+ by the tray'"></button>
                                         <!-- The consequence of that number, said
                                              where the number is typed. -->
                                         <span x-show="leftoverNights(m)"
@@ -2155,6 +2167,9 @@
                     const serves = parseInt(dish.serves) || 0;
                     if (!head || !serves) return 0;
                     return Math.max(0, Math.floor(serves / head) - 1);
+                },
+                toggleWholeUnits(dish) {
+                    return this.patchDish(dish, { whole_units: !dish.whole_units });
                 },
                 setDishServes(dish, value) {
                     const n = parseInt(value);

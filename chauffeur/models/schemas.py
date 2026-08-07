@@ -1000,6 +1000,13 @@ class Dish(BaseModel):
     # temperature is the one that actually blocks.
     oven_temp_f: Optional[int] = None
     serves: int = 4                    # what the stored times/ingredients assume
+    # Made in WHOLE UNITS: a tray of lasagna, a cake, a sheet pan, a pot pie.
+    # Scaling is continuous by default because most food is — cooking nine
+    # portions of carrots really is 1.5 pans and 1.5 times the peeling — but a
+    # tray is a tray. You cannot bake half of one, so feeding nine from a tray
+    # that serves six means TWO trays: twice the ingredients, twice the work,
+    # and a genuine surplus rather than a rounding error.
+    whole_units: bool = False
 
     # Holiday and party food is not Tuesday food. Keeping turkey in the
     # standing pool just so it exists twice a year pollutes every picker for

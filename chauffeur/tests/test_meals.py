@@ -3910,6 +3910,60 @@ def scenario_a_little_bit_left_over_is_not_another_night():
           "a little spare never becomes a reason to serve it again")
 
 
+def scenario_a_tray_is_a_tray():
+    """Most food divides and some does not. Cooking nine portions of carrots
+    really is 1.5 pans and 1.5 times the peeling; you cannot bake half a
+    lasagna, so nine people means TWO trays — twice the ingredients and twice
+    the work, not 1.5 times either."""
+    from services import kitchen
+    reset_db()
+    carrots = {'serves': 6}
+    tray = {'serves': 6, 'whole_units': True}
+
+    check(kitchen.scale_factor(carrots, 9) == 1.5,
+          "divisible food scales continuously")
+    check(kitchen.scale_factor(tray, 9) == 2.0,
+          f"a tray rounds up to the next whole one, got {kitchen.scale_factor(tray, 9)}")
+    check(kitchen.scale_factor(tray, 6) == 1.0, "exactly one tray for exactly six")
+    check(kitchen.scale_factor(tray, 7) == 2.0, "one over is still another tray")
+    check(kitchen.scale_factor(tray, 4) == 1.0,
+          "and you never make less than one — scaling down is fiction either way")
+    check(kitchen.scale_factor(tray, None) == 1.0, "no headcount, no scaling")
+
+    # The work and the shopping follow the factor.
+    big = kitchen.scaled({'serves': 6, 'whole_units': True, 'finish_mins': 20,
+                          'ingredients': [{'name': 'pasta', 'kind': 'fresh'}]}, 9)
+    check(big['finish_mins'] == 40, f"twice the hands-on, got {big['finish_mins']}")
+
+
+def scenario_whole_units_never_changes_the_leftover_forecast():
+    """Worth pinning: rounding UP to whole trays cannot manufacture a spare
+    night, because the floor rule already demands enough to feed everyone.
+    A ceiling can only ever add less than one unit of surplus, and a unit that
+    is smaller than the household is by definition not another dinner."""
+    reset_db()
+    for serves in range(1, 25):
+        for head in range(1, 15):
+            plain = meals.leftover_nights({'serves': serves}, head)
+            whole = meals.leftover_nights({'serves': serves, 'whole_units': True}, head)
+            check(plain == whole,
+                  f"serves={serves} head={head}: {plain} != {whole}")
+
+
+def scenario_by_the_tray_is_settable_by_hand_and_by_voice():
+    reset_db()
+    lasagna = _dish('lasagna', type='entree', serves=6)
+    from services import agent_tools, agent_tools_v2
+    agent_tools.execute_tool('set_dish_categories',
+                             {'dish_name': 'lasagna', 'whole_units': True})
+    check(storage.get_dish(lasagna['id'])['whole_units'] is True,
+          "the v1 bridge writes it through")
+    res = agent_tools_v2.set_dish_categories('lasagna', whole_units=False)
+    check(storage.get_dish(lasagna['id'])['whole_units'] is False
+          and 'more or less' in res['message'],
+          f"and v2 says what it did, got {res}")
+
+
 def scenario_a_big_pot_comes_back_the_next_night():
     """The point of the whole feature: the family already eats Sunday's chili
     on Monday, and the app should not need telling."""

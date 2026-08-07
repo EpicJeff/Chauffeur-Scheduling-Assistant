@@ -5042,6 +5042,7 @@ class MealPatch(BaseModel):
     fulfillment: Optional[str] = None
     effort: Optional[str] = None
     serves: Optional[int] = None
+    whole_units: Optional[bool] = None
     tags: Optional[List[str]] = None
     ingredients: Optional[List[Dict[str, Any]]] = None
     notes: Optional[str] = None
@@ -5717,6 +5718,8 @@ def set_dish_fields(dish_id: str, req: DishFieldsReq):
         patch['type'] = 'meal' if req.type == 'meal' else 'dish'
     if req.serves is not None:
         patch['serves'] = max(1, min(50, int(req.serves)))
+    if req.whole_units is not None:
+        patch['whole_units'] = bool(req.whole_units)
     if req.tags is not None:
         patch['tags'] = [str(t).strip().lower()[:24] for t in req.tags[:6] if str(t).strip()]
     if patch:

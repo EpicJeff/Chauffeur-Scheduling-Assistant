@@ -643,6 +643,7 @@ class SetDishCategoriesTool(BaseModel):
     categories: Optional[str] = Field("", description="Comma-separated category names in the family's own words, e.g. 'protein, starches/carbs'.")
     whole_meal: Optional[bool] = Field(None, description="true if it is a whole dinner on its own.")
     serves: Optional[int] = Field(None, description="How many people it feeds.")
+    whole_units: Optional[bool] = Field(None, description="true if made in indivisible whole units (a tray, a cake, a sheet pan).")
 
 class UnpairDishesTool(BaseModel):
     """
@@ -2077,7 +2078,8 @@ def handle_set_dish_categories(args: dict) -> dict:
     return set_dish_categories(args.get("dish_name") or "",
                                args.get("categories") or "",
                                args.get("whole_meal"),
-                               args.get("serves"))
+                               args.get("serves"),
+                               args.get("whole_units"))
 
 def handle_set_dish_scope(args: dict) -> dict:
     from services.agent_tools_v2 import set_dish_scope

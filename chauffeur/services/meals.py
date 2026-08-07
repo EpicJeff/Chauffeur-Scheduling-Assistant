@@ -2575,7 +2575,7 @@ _DISH_SYSTEM_V5 = (
     "\"portability\": \"none|handheld|utensils_ok\", "
     "\"source\": \"prep|ordered\", \"tags\": [str], "
     "\"equipment\": \"none|oven|burner\", \"oven_temp_f\": int|null, "
-    "\"serves\": int, \"scope\": \"everyday|occasion\", "
+    "\"serves\": int, \"whole_units\": bool, \"scope\": \"everyday|occasion\", "
     "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}], "
     "\"needs_detail\": bool, \"detail_question\": str|null}]}\n\n"
     "ONE DISH PER THING THEY WOULD ACTUALLY COOK OR SERVE:\n"
@@ -2606,6 +2606,11 @@ _DISH_SYSTEM_V5 = (
     "(two dishes share an oven only at the SAME temperature); null otherwise.\n"
     "- serves: how many people the times and ingredients above assume. Use 4 "
     "unless the description says otherwise.\n"
+    "- whole_units: TRUE only for food made in indivisible units - a tray of "
+    "lasagna, a casserole, a cake, a sheet pan, a pot pie, a loaf. Feeding more "
+    "people means making ANOTHER whole one. FALSE for anything you can simply "
+    "make more or less of (rice, carrots, chicken thighs, salad), which is most "
+    "food. When in doubt, false.\n"
     "- scope: 'occasion' for food a family eats at holidays and parties rather "
     "than on an ordinary weeknight (turkey, stuffing, cranberry sauce, deviled "
     "eggs, a birthday cake). 'everyday' for everything else, INCLUDING dishes "
@@ -2717,6 +2722,7 @@ def _clean_dish(raw: dict) -> Optional[dict]:
                      if _choice('equipment', ('none', 'oven', 'burner'), 'none') == 'oven'
                      else None),
         serves=_int('serves', 40) or 4,
+        whole_units=bool(raw.get('whole_units')),
         scope=_choice('scope', ('everyday', 'occasion'), 'everyday'),
         ingredients=ings,
         tags=[str(t).strip().lower()[:24] for t in (raw.get('tags') or [])[:6]

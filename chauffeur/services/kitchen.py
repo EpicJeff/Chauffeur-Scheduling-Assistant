@@ -80,6 +80,13 @@ def scale_factor(dish: dict, serving_for: Optional[int]) -> float:
         base = 0
     if base <= 0:
         base = 4
+    # Most food divides: nine portions of carrots is 1.5 pans and 1.5 times the
+    # peeling. A tray does not — you cannot bake half a lasagna — so a dish
+    # made in whole units rounds UP to the next one, which is twice the
+    # ingredients and twice the work, not 1.5 times either.
+    if dish.get('whole_units'):
+        import math
+        return float(max(1, math.ceil(float(serving_for) / float(base))))
     return max(1.0, float(serving_for) / float(base))
 
 

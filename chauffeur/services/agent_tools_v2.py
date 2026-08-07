@@ -1820,6 +1820,7 @@ def set_dish_scope(dish_name: str, occasion_only: bool = True,
 
 def set_dish_categories(dish_name: str, categories: str = "",
                         whole_meal: bool = None, serves: int = None,
+                        whole_units: bool = None,
                         acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "black beans are a protein, not just a starch", "spaghetti and
     meat sauce is a whole meal", "the chili serves eight".
@@ -1856,10 +1857,15 @@ def set_dish_categories(dish_name: str, categories: str = "",
             said.append(f"serves {patch['serves']}")
         except (TypeError, ValueError):
             pass
+    if whole_units is not None:
+        patch['whole_units'] = bool(whole_units)
+        said.append("made by the tray" if whole_units
+                    else "something you can make more or less of")
     if not patch:
         return {"status": "error",
                 "message": "Tell me what to change — the categories, whether "
-                           "it's a whole meal, or how many it serves."}
+                           "it's a whole meal, how many it serves, or whether "
+                           "it's made in whole trays."}
     storage.update_dish(dish['id'], patch)
     return {"status": "success",
             "message": f"Got it — {nm} " + ", ".join(said) + "."}
@@ -2756,7 +2762,8 @@ def get_available_tools() -> List[Dict]:
                     "dish_name": {"type": "string", "description": "Which dish, e.g. black beans."},
                     "categories": {"type": "string", "description": "Comma-separated category names, in the family's own words, e.g. 'protein, starches/carbs'."},
                     "whole_meal": {"type": "boolean", "description": "true if it is a whole dinner on its own and nothing is served beside it."},
-                    "serves": {"type": "integer", "description": "How many people it feeds."}
+                    "serves": {"type": "integer", "description": "How many people it feeds."},
+                    "whole_units": {"type": "boolean", "description": "true if it is made in indivisible whole units - a tray of lasagna, a cake, a sheet pan - so feeding more people means making another whole one."}
                 },
                 "required": ["dish_name"]
             }
