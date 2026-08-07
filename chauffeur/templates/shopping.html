@@ -591,6 +591,22 @@
                                     description is how it learns what you mean by each one.
                                     A plate is composed to the minimums and then edited freely.
                                 </p>
+                                <!-- Who is actually eating. There was no answer to
+                                     this at all: nothing was ever scaled, because
+                                     the headcount was only ever set when hosting. -->
+                                <div class="flex items-center gap-3 mb-3 flex-wrap">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        Cooking for
+                                        <input type="number" min="0" max="30"
+                                            x-model.number="mealCfg.household_headcount" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
+                                        <span class="text-[11px] text-gray-500 font-normal">people</span>
+                                    </label>
+                                    <span class="text-[11px] text-gray-500"
+                                        x-text="mealCfg.household_headcount
+                                            ? 'A dish that serves more than this makes a second night, and gets proposed again to use it up.'
+                                            : 'Unset — guessing from the family list, which counts everyone with a profile. Set it and we stop guessing.'"></span>
+                                </div>
                                 <div class="space-y-2">
                                     <template x-for="c in categories" :key="'cat-' + c.id">
                                         <div class="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5">
@@ -1036,6 +1052,14 @@
                                                 @change="setDishServes(m, $event.target.value)"
                                                 class="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 w-12 text-[10px] text-gray-300">
                                         </label>
+                                        <!-- The consequence of that number, said
+                                             where the number is typed. -->
+                                        <span x-show="leftoverNights(m)"
+                                            class="text-[10px] font-bold px-2 py-0.5 rounded-lg
+                                                   bg-teal-500/15 border border-teal-400/40 text-teal-300"
+                                            title="Big enough to come back — it gets proposed again to use it up"
+                                            x-text="'+' + leftoverNights(m) + ' night'
+                                                + (leftoverNights(m) === 1 ? '' : 's')"></span>
                                         <button @click="openPairingPicker(m, 'only_with')"
                                             class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
                                             + only with
@@ -1554,6 +1578,7 @@
                 // Every meals setting, owned by this page. Defaults mirror the
                 // Settings model exactly so a failed load changes nothing.
                 mealCfg: {
+                    household_headcount: 0,
                     car_dining: 'full', venue_dining: 'full',
                     grocery_weekday: '', grocery_plan_lead_days: 2,
                     meal_week_enabled: true, propose_shopping_errands: true,
@@ -2121,6 +2146,15 @@
                 },
                 toggleWholeMeal(dish) {
                     return this.patchDish(dish, { type: dish.type === 'meal' ? 'dish' : 'meal' });
+                },
+                // Mirrors meals.leftover_nights: a pot is made whole, so a dish
+                // serving more than the household feeds tonight and beyond.
+                leftoverNights(dish) {
+                    const head = this.mealCfg.household_headcount
+                        || (this.members || []).filter(m => m.role !== 'helper').length;
+                    const serves = parseInt(dish.serves) || 0;
+                    if (!head || !serves) return 0;
+                    return Math.max(0, Math.floor(serves / head) - 1);
                 },
                 setDishServes(dish, value) {
                     const n = parseInt(value);
@@ -2702,6 +2736,7 @@
                         // up the rest is how a surface starts writing back keys
                         // it knows nothing about.
                         const c = this.mealCfg;
+                        c.household_headcount = d.household_headcount || 0;
                         c.car_dining = d.car_dining || 'full';
                         c.venue_dining = d.venue_dining || 'full';
                         c.grocery_weekday = d.grocery_weekday != null ? String(d.grocery_weekday) : '';
@@ -2737,6 +2772,7 @@
                     await fetch(this.apiBase + 'api/settings', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                            household_headcount: Math.max(0, parseInt(c.household_headcount, 10) || 0),
                             car_dining: c.car_dining || 'full',
                             venue_dining: c.venue_dining || 'full',
                             // '' means "work it out from our schedule" and must

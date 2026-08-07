@@ -91,6 +91,10 @@ ENTRIES: List[dict] = [
     _e('grocery_weekday', 'meals', 'Shop day',
        'The day the big grocery run happens. Unset means work it out from the schedule.',
        page='shopping', anchor='planning'),
+    _e('household_headcount', 'meals', 'Cooking for',
+       'How many people a normal dinner feeds. Decides how far a dish stretches '
+       'and whether it makes a second night. Override any single night on the plate.',
+       page='shopping', anchor='plate'),
     _e('grocery_plan_lead_days', 'meals', 'Plan ahead by',
        'How many days before the shop to ask "how does this look?".',
        page='shopping', anchor='planning'),

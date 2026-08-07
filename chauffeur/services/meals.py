@@ -561,6 +561,73 @@ SIDE_TYPES = ('vegetable', 'starch', 'salad', 'other')
 DISH_TYPES = ('meal', 'entree', 'side', 'dessert')
 
 
+def household_headcount(settings: dict = None) -> int:
+    """How many people the cooking is for, by default.
+
+    There was no answer to this at all before v2.109. `serving_for` was None
+    unless somebody typed a number on a specific night for hosting, and
+    `kitchen.scale_factor` returns 1.0 for a falsy headcount — so every dish
+    was quietly made at whatever its `serves` said and nothing was ever scaled
+    or forecast. Occasions counted every non-helper member; meals counted
+    nobody.
+
+    A configured number wins, because a household is not the same as a list of
+    profiles: people live elsewhere, a teenager eats at work, a helper is on
+    the driving roster and never at the table. Falling back to the roster is
+    better than falling back to nothing, but it is a guess and the setting is
+    how the family stops us guessing.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        n = int(settings.get('household_headcount') or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        return n
+    roster = [m for m in storage.get_all_members()
+              if not m.get('system') and m.get('role') != 'helper']
+    return max(1, len(roster))
+
+
+def eaters_on(date_str: str, settings: dict = None, sched: dict = None) -> int:
+    """Tonight's headcount: the household default, less anyone away.
+
+    A per-night override (set for hosting) always wins — it is the family
+    stating a fact about that night, not a default to be adjusted.
+    """
+    saved = storage.get_plate(date_str) or {}
+    if saved.get('serving_for'):
+        return int(saved['serving_for'])
+    base = household_headcount(settings)
+    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    away = 0
+    for m in storage.get_all_members():
+        if m.get('system') or m.get('role') == 'helper':
+            continue
+        if away_on_trip(m['id'], date_str, sched):
+            away += 1
+    return max(1, base - away)
+
+
+def leftover_nights(dish: dict, headcount: int) -> int:
+    """How many EXTRA nights this dish makes, beyond the one it is cooked for.
+
+    A pot is made whole or not at all — `kitchen.scale_factor` never scales
+    below 1.0, because nobody peels three-quarters of a potato — so a dish that
+    serves eight in a house of four feeds tonight and one more night. That is
+    the fact the family already knew and the app did not: chili on Sunday is
+    also Monday, and proposing it twice is using it up rather than repeating
+    themselves.
+    """
+    try:
+        serves = int(dish.get('serves') or 0)
+    except (TypeError, ValueError):
+        serves = 0
+    if serves <= 0 or headcount <= 0:
+        return 0
+    return max(0, serves // headcount - 1)
+
+
 def plate_shape() -> list:
     """What a plate is, in the family's own words — the categories and the
     range of each. Replaced `plate_settings`, which returned a side COUNT and a
@@ -759,6 +826,40 @@ def _served_days(dish_ids: set, as_of: float, window_days: int,
     return len(days)
 
 
+def _leftover_coverage(as_of: float, served: dict, headcount: int,
+                       runs: dict = None) -> dict:
+    """dish id -> how strongly tonight is already covered by what was made.
+
+    A dish that serves eight in a house of four covers ONE more night, so it
+    earns the bonus on the night after it was cooked and nothing after that.
+    The bonus decays with the nights already eaten so that a very big pot
+    tapers off rather than owning the week, and it stays well below the +50 an
+    explicit `batch_cycle` rule carries: the family saying "one pot of beans at
+    a time" must outrank us inferring the same thing from a number.
+    """
+    if headcount <= 0:
+        return {}
+    out = {}
+    for d in storage.get_dishes():
+        last = max((served or {}).get(d['id'], 0) or 0,
+                   d.get('last_served_at') or 0)
+        if not last or last >= as_of:
+            continue
+        extra = leftover_nights(d, headcount)
+        if not extra:
+            continue
+        nights = int((as_of - last) // 86400) or 1
+        # The pot EMPTIES. Measuring only "when did we last eat it" made the
+        # gap permanently one day, so a big batch was covered forever and took
+        # every night of the week — the same mistake `batch_cycle` was written
+        # to fix, which is why it counts servings rather than elapsed days.
+        # `runs` is how many nights of this horizon have already eaten from it.
+        eaten = (runs or {}).get(d['id'], 0)
+        if nights <= extra and eaten <= extra:
+            out[d['id']] = 20.0 / nights
+    return out
+
+
 def rule_context(as_of: float, served: dict, settings: dict = None,
                  runs: dict = None) -> dict:
     """Everything the rules decide ONCE per composed day.
@@ -840,7 +941,7 @@ def _pairing_ok(dish: dict, chosen: list) -> bool:
 
 
 def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
-          as_of: float = None, served: dict = None) -> float:
+          as_of: float = None, served: dict = None, covered: dict = None) -> float:
     score = 0.0
     if dish['id'] in leftover_ids:
         score += 100.0                        # already made — obviously tonight
@@ -860,6 +961,14 @@ def _rank(dish: dict, leftover_ids: set, affinity: set, dislike: set,
         last = max(last, served.get(dish['id'], 0))
     ref = as_of if as_of is not None else _now_ts()
     score += min(max(ref - last, 0.0) / 86400.0, 21) / 21.0
+    # A pot big enough for a second night SHOULD come back tomorrow: that is
+    # eating what was made, not repeating themselves, and it is exactly what a
+    # family does without being asked. Deliberately smaller than an explicit
+    # batch_cycle (+50) — the family stating "one pot of beans at a time" still
+    # outranks us inferring it from a number — and it decays with the nights
+    # already eaten so a huge pot does not colonise the week.
+    if covered:
+        score += covered.get(dish['id'], 0.0)
     return score
 
 
@@ -887,6 +996,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     plan = plan or eating_plan(date_str, 'dinner')
+    headcount = eaters_on(date_str, settings)
     avoid, dislike = _eater_diet(plan)
     leftovers = storage.get_leftovers(date_str)
     leftover_ids = set()
@@ -928,7 +1038,12 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         if not cands:
             return None
         return max(cands, key=lambda d: refusal(d)
-                   + _rank(d, leftover_ids, affinity, dislike, as_of, served))
+                   + _rank(d, leftover_ids, affinity, dislike, as_of, served, covered))
+
+    # Which dishes tonight is already covered by, because the pot was big
+    # enough. Computed once per day, like the rule context, since the answer is
+    # a property of the night rather than of each candidate.
+    covered = _leftover_coverage(as_of, served, headcount, runs)
 
     chosen = []
     cats = storage.get_dish_categories()
@@ -950,8 +1065,8 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     # take every plate on a fresh repertoire.
     use_meal = best_meal and (
         not best_lead
-        or _rank(best_meal, leftover_ids, frozenset(), dislike, as_of, served)
-        > _rank(best_lead, leftover_ids, frozenset(), dislike, as_of, served))
+        or _rank(best_meal, leftover_ids, frozenset(), dislike, as_of, served, covered)
+        > _rank(best_lead, leftover_ids, frozenset(), dislike, as_of, served, covered))
 
     def attach(seed, acc):
         """Pull in whatever this dish ALWAYS brings.
@@ -1038,7 +1153,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                     break                 # minimums bend; the plate says so
                 got = max(cands, key=lambda d: (
                     refusal(d)
-                    + _rank(d, leftover_ids, affinity, dislike, as_of, served)
+                    + _rank(d, leftover_ids, affinity, dislike, as_of, served, covered)
                     # Specialists first, so the dish that can only be a
                     # vegetable is not spent on the starch slot.
                     + (1.0 if len(d.get('category_ids') or []) <= 1 else 0.0)
@@ -1825,6 +1940,11 @@ def plate_totals(dishes: list, date_str: str = None, settings: dict = None,
         saved = plate if plate is not None else (storage.get_plate(day) or {})
         serving_for = serving_for if serving_for is not None else saved.get('serving_for')
         cooks = cooks if cooks is not None else saved.get('cooks')
+    # No override for the night: cook for the household, less anyone away.
+    # Leaving this None meant every dish was made at its own `serves` and the
+    # scale factor was permanently 1.0.
+    if serving_for is None:
+        serving_for = eaters_on(day, settings)
     return compose({'name': 'plate'}, dishes, leftovers, settings, cooks,
                    serving_for)
 

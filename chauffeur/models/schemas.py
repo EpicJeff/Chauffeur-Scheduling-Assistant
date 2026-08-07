@@ -517,6 +517,11 @@ class Settings(BaseModel):
     # default here was wrong for exactly the family it shipped to (Saturday is
     # when their activities are, so it is the worst day for a 90-min trip).
     grocery_weekday: Optional[int] = None
+    # How many people the cooking is for. 0/unset falls back to counting the
+    # non-helper roster, which is a GUESS: a household is not a list of
+    # profiles (people live elsewhere, a teenager eats at work). Overridable
+    # on any single night via the plate's `serving_for`.
+    household_headcount: int = 0
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none

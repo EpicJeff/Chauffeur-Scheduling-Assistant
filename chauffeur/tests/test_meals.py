@@ -3659,7 +3659,9 @@ def scenario_hosting_reaches_every_surface_that_renders_the_night():
 
     meals.set_plate_hosting(DAY, serving_for=0)
     back = next(d for d in meals.compose_week(DAY, 1))
-    check(not back['serving_for'], "clearing it returns an ordinary night")
+    check(back['serving_for'] == meals.household_headcount(),
+          f"clearing it falls back to the household, not to nobody — "
+          f"got {back.get('serving_for')}")
 
 
 def scenario_hosting_is_sayable_and_answers_with_the_consequence():
@@ -3823,6 +3825,73 @@ def scenario_setting_what_a_dish_is_by_hand_and_by_voice():
           f"unknown category names the ones they do have, got {bad}")
     check(len(storage.get_dish_categories()) == len(_TEST_CATEGORIES),
           "and nothing was created behind their back")
+
+
+def scenario_the_household_headcount_is_configured_not_guessed():
+    """Before v2.109 nothing was ever scaled: `serving_for` was None unless
+    somebody typed a number for a hosting night, and a falsy headcount means a
+    scale factor of exactly 1.0. Meals counted nobody, while occasions counted
+    every non-helper profile."""
+    reset_db(); _seed_people()
+    roster = [m for m in storage.get_all_members()
+              if not m.get('system') and m.get('role') != 'helper']
+    check(meals.household_headcount() == len(roster),
+          "with nothing set it falls back to the roster — a guess, but a number")
+
+    _settings(household_headcount=3)
+    check(meals.household_headcount() == 3, "a configured number wins over the roster")
+    check(meals.eaters_on(DAY) == 3, "and it is what a night cooks for")
+
+    # A single night still overrides everything.
+    meals.set_plate_hosting(DAY, serving_for=12, cooks=2)
+    check(meals.eaters_on(DAY) == 12, "hosting is a fact about that night")
+    meals.set_plate_hosting(DAY, serving_for=0)
+    check(meals.eaters_on(DAY) == 3, "and clearing it returns to the household")
+
+
+def scenario_serves_decides_whether_there_is_a_second_night():
+    reset_db(); _seed_people()
+    _settings(household_headcount=4)
+    small = _dish('salmon fillets', type='entree', serves=4)
+    big = _dish('big pot of chili', type='meal', serves=12)
+    check(meals.leftover_nights(small, 4) == 0,
+          "a dish that serves exactly the household is one dinner")
+    check(meals.leftover_nights(big, 4) == 2,
+          f"twelve servings for four is tonight plus two, got {meals.leftover_nights(big, 4)}")
+    check(meals.leftover_nights(big, 12) == 0,
+          "the same pot at a party is a single night")
+    check(meals.leftover_nights({'serves': 0}, 4) == 0, "an unknown size forecasts nothing")
+
+
+def scenario_a_big_pot_comes_back_the_next_night():
+    """The point of the whole feature: the family already eats Sunday's chili
+    on Monday, and the app should not need telling."""
+    reset_db(); _seed_people()
+    _settings(household_headcount=4)
+    _dish('big pot of chili', type='meal', serves=12)
+    for n in ('tacos', 'pizza night', 'stir fry', 'roast dinner'):
+        _dish(n, type='meal', serves=4)
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+
+    week = meals.compose_week('2026-09-07', 5)
+    nights = [[x['name'] for x in d['dishes']] for d in week]
+    chili = [i for i, names in enumerate(nights) if 'big pot of chili' in names]
+    check(len(chili) >= 2, f"the pot comes back, got {nights}")
+    check(chili[1] - chili[0] == 1,
+          f"on the very next night, not a week later, got {chili}")
+    check(len(chili) <= 3,
+          f"and stops when it runs out rather than owning the week, got {chili}")
+
+    # A pot that only feeds tonight does not repeat.
+    reset_db(); _seed_people()
+    _settings(household_headcount=4)
+    for n in ('tacos', 'pizza night', 'stir fry', 'roast dinner'):
+        _dish(n, type='meal', serves=4)
+    storage.set_cached_schedule({"events": [], "assignments": {},
+                                 "matched_rules": {}, "scheduled_errands": []})
+    lead = [[x['name'] for x in d['dishes']][0] for d in meals.compose_week('2026-09-07', 4)]
+    check(len(set(lead)) == 4, f"nothing repeats when nothing is left over, got {lead}")
 
 
 def scenario_a_renamed_category_propagates_nowhere():
