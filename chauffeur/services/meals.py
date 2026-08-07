@@ -1041,6 +1041,11 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
                 locked=bool(prior.get('locked')),
                 note=prior.get('note'),
                 rejected=list(prior.get('rejected') or []),
+                # Hosting survives an edit for exactly the reason the lock does:
+                # swapping a side on the night twelve people are coming must not
+                # quietly reset it to a family of four.
+                serving_for=prior.get('serving_for'),
+                cooks=prior.get('cooks'),
                 items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
     storage.save_plate(rec)
     return rec
@@ -1066,10 +1071,55 @@ def set_plate_lock(date_str: str, locked: bool = True, note: str = None,
     rec = Plate(date=date_str, edited=True, locked=bool(locked),
                 note=(note if note is not None else prior.get('note')) or None,
                 rejected=list(prior.get('rejected') or []),
+                serving_for=prior.get('serving_for'), cooks=prior.get('cooks'),
                 items=[PlateItem(dish_id=d['id']) for d in cur]).model_dump()
     storage.save_plate(rec)
     return {'status': 'success', 'date': date_str, 'locked': bool(locked),
             'note': rec['note'], 'dishes': cur}
+
+
+def set_plate_hosting(date_str: str, serving_for: int = None,
+                      cooks: int = None) -> dict:
+    """"We're having twelve people on Saturday, and two of us are cooking."
+
+    Deliberately does NOT set `edited`. Saying how many are coming is a fact
+    about the evening, not a decision about what to eat — pinning the night on
+    the strength of it would freeze whatever happened to be proposed at the
+    moment somebody answered the door question, which is the opposite of
+    helpful three weeks out.
+
+    Passing 0 or a blank clears the value back to an ordinary night.
+    """
+    from models.schemas import Plate, PlateItem
+    prior = storage.get_plate(date_str) or {}
+    storage.prune_plates(_today_iso())
+
+    def _n(given, existing):
+        if given is None:
+            return existing
+        try:
+            v = int(given)
+        except (TypeError, ValueError):
+            return existing
+        return v if v > 0 else None
+
+    rec = Plate(date=date_str,
+                edited=bool(prior.get('edited')),
+                locked=bool(prior.get('locked')),
+                note=prior.get('note'),
+                rejected=list(prior.get('rejected') or []),
+                serving_for=_n(serving_for, prior.get('serving_for')),
+                cooks=_n(cooks, prior.get('cooks')),
+                items=[PlateItem(**i) for i in (prior.get('items') or [])]
+                ).model_dump()
+    storage.save_plate(rec)
+    dishes = get_or_compose_plate(date_str)['dishes']
+    totals = plate_totals(dishes, date_str, plate=rec)
+    return {'status': 'success', 'date': date_str,
+            'serving_for': rec['serving_for'], 'cooks': rec['cooks'],
+            'hands_on_mins': totals.get('prep_ahead_mins', 0) + totals.get('finish_mins', 0),
+            'unattended_mins': totals.get('unattended_mins'),
+            'oven_conflicts': totals.get('oven_conflicts')}
 
 
 def grocery_settings(settings: dict = None) -> tuple:
@@ -1295,7 +1345,7 @@ def compose_week(start_date: str = None, days: int = 7,
         for d in dishes:
             served[d['id']] = stamp
             runs[d['id']] = runs.get(d['id'], 0) + 1
-        totals = plate_totals(dishes, date_str, settings)
+        totals = plate_totals(dishes, date_str, settings, plate=saved or {})
         out.append({
             'date': date_str,
             'weekday': datetime.date.fromisoformat(date_str).strftime('%a'),
@@ -1316,6 +1366,8 @@ def compose_week(start_date: str = None, days: int = 7,
             'finish_mins': totals.get('finish_mins'),
             'unattended_mins': totals.get('unattended_mins'),
             'oven_conflicts': totals.get('oven_conflicts'),
+            'serving_for': totals.get('serving_for'),
+            'cooks': totals.get('cooks'),
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
         })
     return out
@@ -1593,12 +1645,25 @@ def toggle_leftover_dish(date_str: str, dish_id: str, label: str = None) -> bool
 
 
 def plate_totals(dishes: list, date_str: str = None, settings: dict = None,
-                 cooks: int = None) -> dict:
+                 cooks: int = None, serving_for: int = None,
+                 plate: dict = None) -> dict:
     """The aggregate timing for a plate, same rules as the slot version: the
     dishes are scheduled against the declared kitchen, and the weakest link
-    wins on portability."""
-    leftovers = storage.get_leftovers(date_str or _today_iso())
-    return compose({'name': 'plate'}, dishes, leftovers, settings, cooks)
+    wins on portability.
+
+    Headcount and hands are read off the STORED plate when the caller does not
+    override them, so a night marked "twelve people, two of us cooking" keeps
+    saying so on every surface that renders it, rather than only on the one
+    where it was typed.
+    """
+    day = date_str or _today_iso()
+    leftovers = storage.get_leftovers(day)
+    if serving_for is None or cooks is None:
+        saved = plate if plate is not None else (storage.get_plate(day) or {})
+        serving_for = serving_for if serving_for is not None else saved.get('serving_for')
+        cooks = cooks if cooks is not None else saved.get('cooks')
+    return compose({'name': 'plate'}, dishes, leftovers, settings, cooks,
+                   serving_for)
 
 
 def slot_detail_is_moot(pool: list) -> bool:
@@ -1718,7 +1783,8 @@ def choose_dishes(meal: dict, prefer: dict = None, leftovers: list = None) -> li
 
 
 def compose(meal: dict, dishes: list, leftovers: list = None,
-            settings: dict = None, cooks: int = None) -> dict:
+            settings: dict = None, cooks: int = None,
+            serving_for: int = None) -> dict:
     """Roll a set of dishes up into the timing shape the fit filter reads.
 
     The three timing numbers come from `services/kitchen.py`, which schedules
@@ -1746,7 +1812,7 @@ def compose(meal: dict, dishes: list, leftovers: list = None,
     # nobody's hands — it must leave the kitchen model entirely, not merely
     # contribute zero to a sum.
     to_cook = [d for d in dishes if d['id'] not in done]
-    kt = kitchen.totals(to_cook, settings, cooks)
+    kt = kitchen.totals(to_cook, settings, cooks, serving_for)
     for d in to_cook:
         holds = holds and bool(d.get('holds_well'))
         port_rank = min(port_rank, _PORTABILITY_RANK.get(
@@ -1762,6 +1828,7 @@ def compose(meal: dict, dishes: list, leftovers: list = None,
         **meal,
         'prep_ahead_mins': kt['prep_ahead_mins'], 'finish_mins': kt['finish_mins'],
         'unattended_mins': kt['unattended_mins'], 'needs_ahead': ahead,
+        'serving_for': kt['serving_for'],
         'holds_well': holds if dishes else bool(meal.get('holds_well')),
         'portability': port if dishes else str(meal.get('portability') or 'none'),
         'dishes': dishes,

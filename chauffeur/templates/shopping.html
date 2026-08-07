@@ -199,6 +199,18 @@
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200">
                                 + Add dishes
                             </button>
+                            <!-- Hosting. Not a lock and not an edit: saying how
+                                 many are coming is a fact about the evening,
+                                 not a decision about what to eat. -->
+                            <button @click="setHosting()"
+                                class="text-xs font-bold px-3 py-1.5 rounded-lg border"
+                                :class="plate.serving_for
+                                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-white'"
+                                x-text="plate.serving_for
+                                    ? '👥 ' + plate.serving_for + ((plate.cooks || 1) > 1
+                                        ? ' · ' + plate.cooks + ' cooking' : '')
+                                    : '👥 Cooking for…'"></button>
                             <button @click="plateToList()"
                                 class="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 hover:text-white ml-auto">
                                 + List
@@ -1793,8 +1805,42 @@
                     if (p.unattended_mins) bits.push(p.unattended_mins + ' min in the oven');
                     if (p.needs_ahead && p.needs_ahead !== 'none')
                         bits.push('needs a ' + p.needs_ahead.replace('_', ' ') + ' head start');
+                    // Hands-on is what explodes when a family hosts, so the
+                    // count doing the dividing belongs beside it — one cook is
+                    // the ordinary case and says nothing.
+                    if (p.serving_for) {
+                        bits.push('for ' + p.serving_for);
+                        if ((p.cooks || 1) > 1) bits.push(p.cooks + ' cooking');
+                    }
                     if (p.edited) bits.push('yours');
                     return bits.join(' · ');
+                },
+
+                async setHosting() {
+                    const p = this.plate || {};
+                    const many = await promptInput('Cooking for how many?',
+                        'The whole headcount for the night, your own family '
+                        + 'included. Blank or 0 goes back to an ordinary evening.',
+                        { type: 'number', value: p.serving_for ? String(p.serving_for) : '' });
+                    if (many === null) return;          // cancelled, not cleared
+                    const n = parseInt(many, 10) || 0;
+                    let hands = null;
+                    if (n > 0) {
+                        hands = await promptInput('How many of you are cooking?',
+                            'Hands-on work divides between them. Leave it as 1 '
+                            + 'if it is just you.',
+                            { type: 'number', value: String(p.cooks || 1) });
+                        if (hands === null) return;
+                    }
+                    await fetch(this.apiBase + 'api/meals/plate/hosting', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            date: p.date, serving_for: n,
+                            cooks: n > 0 ? (parseInt(hands, 10) || 1) : 0
+                        })
+                    });
+                    await this.loadPlate();
+                    await this.loadWeek();
                 },
 
                 async dropFromPlate(d) {

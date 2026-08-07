@@ -1527,6 +1527,39 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
+def set_hosting(target_date: str, serving_for: int = 0, cooks: int = 0,
+                acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "we're having twelve people on Saturday", "four of us are cooking
+    Thursday", "it's just us again on the 20th".
+
+    Answers with the consequence rather than a confirmation. "Saved" is not
+    what anybody wants from this — how long the evening now takes, and whether
+    the oven can actually do it, is the reason they said it out loud.
+    """
+    import datetime as _dt
+    from services import meals
+    day = _parse_fuzzy_date(target_date or 'today')
+    res = meals.set_plate_hosting(day.isoformat(), serving_for, cooks)
+    n, hands = res.get('serving_for'), int(res.get('hands_on_mins') or 0)
+    when = "tonight" if day == _dt.date.today() else day.strftime('%A')
+    if not n:
+        return {"status": "success",
+                "message": f"Back to an ordinary night on {when}."}
+    who = f"{res['cooks']} of you cooking" if (res.get('cooks') or 1) > 1 else "just you cooking"
+    bits = [f"{when}: cooking for {n}, {who}."]
+    if hands:
+        hrs = round(hands / 60.0, 1)
+        bits.append(f"That's about {hands} min hands-on"
+                    + (f" ({hrs}h)" if hands >= 90 else "") + ".")
+    clashes = res.get('oven_conflicts') or []
+    if clashes:
+        temps = ', '.join(f"{c['temp_f']}°" for c in clashes)
+        bits.append(f"Heads up — you've got one oven and {len(clashes)} "
+                    f"temperatures on that plate ({temps}), so they have to "
+                    "take turns.")
+    return {"status": "success", "message": ' '.join(bits)}
+
+
 def set_dish_scope(dish_name: str, occasion_only: bool = True,
                    acting_member: dict = None) -> Dict[str, Any]:
     """WRITE: "turkey is only for holidays", "we eat deviled eggs at parties,
@@ -2308,6 +2341,19 @@ def get_available_tools() -> List[Dict]:
                     "exclusive": {"type": "boolean", "description": "true for 'X is only ever served with Y'."}
                 },
                 "required": ["dish_name", "partner_names"]
+            }
+        },
+        {
+            "name": "set_hosting",
+            "description": "Records how many people are eating on a given night and how many are cooking: we are having twelve people on Saturday, four of us are cooking Thursday, it is just us again on the 20th. Headcount multiplies the hands-on work and cooks divide it, so this is what turns a plate into a realistic evening. Pass serving_for=0 to go back to an ordinary night.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_date": {"type": "string", "description": "The night, e.g. Saturday, tomorrow, or 2026-11-26."},
+                    "serving_for": {"type": "integer", "description": "Whole headcount including the family. 0 clears it."},
+                    "cooks": {"type": "integer", "description": "How many people are cooking. Omit or 0 to leave as is."}
+                },
+                "required": ["target_date", "serving_for"]
             }
         },
         {

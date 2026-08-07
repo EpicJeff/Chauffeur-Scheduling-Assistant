@@ -59,6 +59,54 @@ def capacities(settings: dict = None, cooks: int = None) -> tuple:
             max(1, int(cooks or 0)) if cooks else _n('kitchen_cooks', DEFAULT_COOKS))
 
 
+def scale_factor(dish: dict, serving_for: Optional[int]) -> float:
+    """How many times over this dish has to be made.
+
+    Every dish declares what its stored times assume (`serves`), so the factor
+    is per-dish rather than per-plate — a main that serves four and a salad
+    that serves eight are not stretched by the same amount.
+
+    **Never below 1.0.** Cooking for fewer people than a dish serves does not
+    make it faster: you still boil the pot, still heat the oven, and nobody
+    peels three-quarters of a potato. Scaling down is the one direction that
+    is pure fiction.
+    """
+    if not serving_for:
+        return 1.0
+    base = 0
+    try:
+        base = int(dish.get('serves') or 0)
+    except (TypeError, ValueError):
+        base = 0
+    if base <= 0:
+        base = 4
+    return max(1.0, float(serving_for) / float(base))
+
+
+def scaled(dish: dict, serving_for: Optional[int]) -> dict:
+    """The same dish, made for more people.
+
+    **Hands-on scales; the oven does not.** Four times the potatoes is four
+    times the peeling, but it is not four times the roasting — heat does not
+    work that way, and a tray that needs materially longer is a *bigger thing*
+    rather than more of the same thing. That distinction is the same one M4
+    already drew when it made roasted and mashed potatoes separate dishes: a
+    twenty-pound turkey is its own entry with its own times, not a chicken
+    with a multiplier on it.
+
+    Deliberately NOT modelled: that four trays of potatoes may not fit one
+    oven. Rack space is unmodelled everywhere in this module (see `_oven_span`),
+    and inventing a batch count here would be the one place it was guessed.
+    """
+    f = scale_factor(dish, serving_for)
+    if f <= 1.0:
+        return dish
+    return {**dish,
+            'prep_ahead_mins': int(round(int(dish.get('prep_ahead_mins') or 0) * f)),
+            'finish_mins': int(round(int(dish.get('finish_mins') or 0) * f)),
+            '_scale': round(f, 2)}
+
+
 def _makespan(durations: List[int], machines: int) -> int:
     """Shortest wall-clock for these jobs across this many identical machines.
 
@@ -160,17 +208,30 @@ def oven_conflicts(dishes: List[dict], ovens: int) -> List[dict]:
     return out
 
 
-def totals(dishes: List[dict], settings: dict = None,
-           cooks: int = None) -> dict:
+def totals(dishes: List[dict], settings: dict = None, cooks: int = None,
+           serving_for: int = None) -> dict:
     """The three numbers every meals surface reads, computed against a real
-    kitchen instead of two hardcoded constants."""
+    kitchen instead of two hardcoded constants.
+
+    `serving_for` is the whole headcount for the night, not the extra guests —
+    "we're having twelve people" is what somebody says, and asking them to
+    subtract their own family first is the kind of arithmetic an app should be
+    doing for them.
+    """
     ovens, burners, n_cooks = capacities(settings, cooks)
+    plate = [scaled(d, serving_for) for d in dishes]
     return {
         'prep_ahead_mins': _makespan(
-            [d.get('prep_ahead_mins') for d in dishes], n_cooks),
+            [d.get('prep_ahead_mins') for d in plate], n_cooks),
         'finish_mins': _makespan(
-            [d.get('finish_mins') for d in dishes], n_cooks),
-        'unattended_mins': equipment_span(dishes, ovens, burners),
+            [d.get('finish_mins') for d in plate], n_cooks),
+        'unattended_mins': equipment_span(plate, ovens, burners),
         'cooks': n_cooks,
-        'oven_conflicts': oven_conflicts(dishes, ovens),
+        'serving_for': serving_for or None,
+        # The honest headline for a hosting night: hands-on is what explodes,
+        # and how many people are cooking is what decides whether that is an
+        # afternoon or an ordinary evening.
+        'hands_on_mins': _makespan([d.get('prep_ahead_mins') for d in plate], n_cooks)
+                       + _makespan([d.get('finish_mins') for d in plate], n_cooks),
+        'oven_conflicts': oven_conflicts(plate, ovens),
     }

@@ -560,6 +560,14 @@ class PairDishesTool(BaseModel):
     partner_names: str = Field(..., description="Comma separated dishes that come with it.")
     exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
 
+class SetHostingTool(BaseModel):
+    """
+    Records how many people are eating on a night and how many are cooking ("we are having twelve people on Saturday", "four of us are cooking Thursday"). Headcount multiplies hands-on work; cooks divide it. serving_for=0 clears it back to an ordinary night.
+    """
+    target_date: str = Field(..., description="The night, e.g. Saturday, tomorrow, or 2026-11-26.")
+    serving_for: int = Field(..., description="Whole headcount including the family. 0 clears it.")
+    cooks: Optional[int] = Field(0, description="How many people are cooking. 0 leaves it as is.")
+
 class SetDishScopeTool(BaseModel):
     """
     Marks a dish as holiday and party food rather than everyday food, so it stops being suggested on ordinary nights ("turkey is only for holidays", "we only make deviled eggs for parties"). The dish stays pickable by hand and its leftovers still count.
@@ -759,6 +767,7 @@ TOOL_SCHEMAS = {
     "pair_dishes": PairDishesTool.model_json_schema(),
     "unpair_dishes": UnpairDishesTool.model_json_schema(),
     "set_dish_scope": SetDishScopeTool.model_json_schema(),
+    "set_hosting": SetHostingTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -1937,6 +1946,12 @@ def handle_unpair_dishes(args: dict) -> dict:
     from services.agent_tools_v2 import unpair_dishes
     return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
 
+def handle_set_hosting(args: dict) -> dict:
+    from services.agent_tools_v2 import set_hosting
+    return set_hosting(args.get("target_date") or "",
+                       int(args.get("serving_for") or 0),
+                       int(args.get("cooks") or 0))
+
 def handle_set_dish_scope(args: dict) -> dict:
     from services.agent_tools_v2 import set_dish_scope
     occ = args.get("occasion_only")
@@ -2103,6 +2118,7 @@ TOOL_HANDLERS = {
     "pair_dishes": handle_pair_dishes,
     "unpair_dishes": handle_unpair_dishes,
     "set_dish_scope": handle_set_dish_scope,
+    "set_hosting": handle_set_hosting,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

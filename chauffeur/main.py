@@ -5281,6 +5281,8 @@ def tonights_plate(date: Optional[str] = None):
             'finish_mins': totals.get('finish_mins'),
             'unattended_mins': totals.get('unattended_mins'),
             'oven_conflicts': totals.get('oven_conflicts'),
+            'serving_for': totals.get('serving_for'),
+            'cooks': totals.get('cooks'),
             'needs_ahead': totals.get('needs_ahead'),
             'leftover_dish_ids': totals.get('leftover_dish_ids'),
             'sides_per_meal': sides_n, 'include_dessert': dessert,
@@ -5672,6 +5674,22 @@ def plate_lock(req: PlateLock):
     """Spoken for: a night the composer must never touch."""
     from services import meals as _meals
     res = _meals.set_plate_lock(req.date, req.locked, req.note, req.dish_ids)
+    _touch_stream()
+    return res
+
+class PlateHosting(BaseModel):
+    date: str
+    # None means "leave it alone"; 0 means "back to an ordinary night". Two
+    # different statements, so they cannot share a representation.
+    serving_for: Optional[int] = None
+    cooks: Optional[int] = None
+
+@app.post("/api/meals/plate/hosting")
+def plate_hosting(req: PlateHosting):
+    """"Twelve people on Saturday, two of us cooking." Headcount scales the
+    hands-on work; hands divide it."""
+    from services import meals as _meals
+    res = _meals.set_plate_hosting(req.date, req.serving_for, req.cooks)
     _touch_stream()
     return res
 

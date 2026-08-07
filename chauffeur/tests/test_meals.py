@@ -3400,6 +3400,104 @@ def scenario_an_already_made_dish_occupies_no_oven_at_all():
           "and it costs none of the hands either")
 
 
+def scenario_scaling_multiplies_the_hands_not_the_oven():
+    """Four times the potatoes is four times the peeling and NOT four times
+    the roasting. A tray that genuinely needs longer is a bigger thing, which
+    M4 already settled: that is its own dish, not a multiplier."""
+    from services import kitchen
+    plate = [{'prep_ahead_mins': 20, 'finish_mins': 10, 'unattended_mins': 45,
+              'equipment': 'oven', 'oven_temp_f': 400, 'serves': 4}]
+    base = kitchen.totals(plate, {})
+    big = kitchen.totals(plate, {}, serving_for=16)
+    check(base['prep_ahead_mins'] == 20 and big['prep_ahead_mins'] == 80,
+          f"prep scales with the headcount, got {big['prep_ahead_mins']}")
+    check(big['finish_mins'] == 40, f"and so does the finish, got {big['finish_mins']}")
+    check(big['unattended_mins'] == 45,
+          f"the oven does NOT, got {big['unattended_mins']}")
+    check(kitchen.totals(plate, {}, serving_for=2)['prep_ahead_mins'] == 20,
+          "and cooking for fewer never makes it faster")
+
+
+def scenario_each_dish_scales_from_what_it_serves():
+    """A main that serves four and a salad that serves eight are not stretched
+    by the same amount — which is why `serves` is per dish."""
+    from services import kitchen
+    plate = [{'prep_ahead_mins': 10, 'serves': 4},
+             {'prep_ahead_mins': 10, 'serves': 8}]
+    got = kitchen.totals(plate, {}, serving_for=16)
+    check(got['prep_ahead_mins'] == 60,
+          f"40 for the four-serving dish plus 20 for the eight, got {got['prep_ahead_mins']}")
+
+
+def scenario_hosting_survives_an_edit_and_a_lock():
+    """The same failure the lock had once: `_persist_plate` rebuilds the record
+    from scratch, so swapping a side on the night twelve people are coming
+    must not quietly reset it to a family of four."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _dish('roast beef', type='entree', prep_ahead_mins=20, finish_mins=10)
+    salad = _dish('green salad', type='side', side_type='salad', finish_mins=10)
+
+    meals.set_plate_hosting(DAY, serving_for=12, cooks=2)
+    check(storage.get_plate(DAY)['serving_for'] == 12, "the headcount is recorded")
+    check(not storage.get_plate(DAY)['edited'],
+          "and saying it does NOT pin the night — it is a fact, not a decision")
+
+    meals.add_to_plate(DAY, [salad['id']]) if hasattr(meals, 'add_to_plate') \
+        else meals._persist_plate(DAY, storage.get_dishes_by_ids([salad['id']]))
+    rec = storage.get_plate(DAY)
+    check(rec['serving_for'] == 12 and rec['cooks'] == 2,
+          f"an edit carries it forward, got {rec.get('serving_for')}/{rec.get('cooks')}")
+
+    meals.set_plate_lock(DAY, True, 'Thanksgiving')
+    rec = storage.get_plate(DAY)
+    check(rec['serving_for'] == 12 and rec['cooks'] == 2,
+          f"and so does a lock, got {rec.get('serving_for')}")
+
+
+def scenario_hosting_reaches_every_surface_that_renders_the_night():
+    """Typed on Tonight, true on the week strip: the totals read the stored
+    plate rather than only the argument they were handed."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _dish('roast beef', type='entree', prep_ahead_mins=20, finish_mins=10)
+    _dish('green salad', type='side', side_type='salad', finish_mins=10)
+    meals.set_plate_hosting(DAY, serving_for=12, cooks=1)
+
+    day = next(d for d in meals.compose_week(DAY, 1))
+    check(day['serving_for'] == 12,
+          f"the week strip knows, got {day.get('serving_for')}")
+    hands = (day['prep_ahead_mins'] or 0) + (day['finish_mins'] or 0)
+    check(hands >= 90, f"and reports the real evening, got {hands} min")
+
+    meals.set_plate_hosting(DAY, serving_for=0)
+    back = next(d for d in meals.compose_week(DAY, 1))
+    check(not back['serving_for'], "clearing it returns an ordinary night")
+
+
+def scenario_hosting_is_sayable_and_answers_with_the_consequence():
+    """"Saved" is not what anyone wants back from this — how long the evening
+    now takes is the reason they said it out loud."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _dish('roast beef', type='entree', prep_ahead_mins=20, finish_mins=10,
+          unattended_mins=90, equipment='oven', oven_temp_f=325)
+    _dish('apple pie', type='dessert', finish_mins=10, unattended_mins=45,
+          equipment='oven', oven_temp_f=425)
+    from services import agent_tools, agent_tools_v2
+    check('set_hosting' in {t['name'] for t in agent_tools_v2.get_available_tools()},
+          "v2 offers it")
+    check('set_hosting' in agent_tools.TOOL_SCHEMAS
+          and 'set_hosting' in agent_tools.TOOL_HANDLERS, "and so does v1")
+
+    res = agent_tools.execute_tool('set_hosting',
+                                   {'target_date': DAY, 'serving_for': 12, 'cooks': 2})
+    check(storage.get_plate(DAY)['serving_for'] == 12,
+          f"the v1 bridge writes through, got {res}")
+    check('hands-on' in res['message'], f"and reports the cost, got {res['message']}")
+    check('2 of you cooking' in res['message'], "naming who is doing it")
+
+
 def scenario_dish_scope_is_sayable_in_both_stacks():
     """Anything the family can tap they must be able to say, and the reply has
     to promise PROPOSAL rather than availability — "I've removed the turkey"

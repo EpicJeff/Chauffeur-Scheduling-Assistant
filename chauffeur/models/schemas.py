@@ -996,6 +996,15 @@ class Plate(BaseModel):
     # night nor holds dishes still — and it is pruned with every other plate,
     # so a refusal expires on its own.
     rejected: List[str] = Field(default_factory=list)
+    # Hosting (occasions arc O0). The WHOLE headcount, not the extra guests —
+    # "we're having twelve people" is what somebody says, and making them
+    # subtract their own family first is arithmetic the app should do. Absent =
+    # an ordinary night, and every dish's stored `serves` stands.
+    serving_for: Optional[int] = None
+    # Hands available THIS night. Absent = the household default
+    # (`kitchen_cooks`), because someone offering to help on Saturday is not a
+    # statement about how this family cooks on a Tuesday.
+    cooks: Optional[int] = None
     created_at: float = Field(default_factory=time.time)
 
 class MealSlot(BaseModel):
