@@ -518,6 +518,13 @@ class Settings(BaseModel):
     prep_reminders_enabled: bool = True
     prep_reminder_time: str = "20:30"       # evening nudge for night-before prep
     prep_morning_time: str = "08:00"        # morning-of prep
+    # The kitchen as a resource model (occasions arc O0). These replace the
+    # constants that were hardcoded inside `_totals_from_dishes` — cook=1 and
+    # equipment=infinity — and the defaults reproduce exactly the old
+    # behaviour, which is the reduction property the tests assert.
+    kitchen_ovens: int = 1
+    kitchen_burners: int = 4
+    kitchen_cooks: int = 1                  # everyday default; a plate may raise it
     # Walmart cart (arc W1). The store id localizes the cart; the Impact
     # Radius trio is only used by families who have actually onboarded as
     # affiliates — the plain cart URL needs none of it and is the default.
@@ -899,6 +906,29 @@ class Dish(BaseModel):
 
     holds_well: bool = False
     portability: str = 'none'          # none | handheld | utensils_ok
+
+    # --- Occasions arc O0: the kitchen is a resource, and a dish occupies one.
+    # `_totals_from_dishes` has always been a two-resource model with the
+    # capacities hardcoded (cook=1 -> hands-on SUMS, equipment=infinity ->
+    # unattended takes the MAX). Both constants invert the moment the family
+    # hosts, so the capacities move to settings and the dish declares what it
+    # actually occupies. See docs/occasion_design.md §O0.
+    equipment: str = 'none'            # none | oven | burner
+    # Oven dishes only, and it is the SHARING key: two dishes fit one oven when
+    # their temperatures match. Space is the constraint people think of;
+    # temperature is the one that actually blocks.
+    oven_temp_f: Optional[int] = None
+    serves: int = 4                    # what the stored times/ingredients assume
+
+    # Holiday and party food is not Tuesday food. Keeping turkey in the
+    # standing pool just so it exists twice a year pollutes every picker for
+    # the other fifty weeks — but it is deliberately NOT a MealRule: rules are
+    # rhythms ("meat about once a week"), and "turkey is not a Tuesday food" is
+    # a property of the dish. `tags` still carries WHICH occasion, which is why
+    # these are two fields: mashed potatoes are everyday AND Thanksgiving, and
+    # one field cannot say both. `is_active` stays what it is — retired, not
+    # seasonal.
+    scope: str = 'everyday'            # everyday | occasion
 
     source: str = 'prep'               # prep | ordered (a dish can be bought:
     vendor: Optional[str] = None       # rotisserie chicken alongside a salad

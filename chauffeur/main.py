@@ -5130,6 +5130,10 @@ class DishPatch(BaseModel):
     holds_well: Optional[bool] = None
     portability: Optional[str] = None
     source: Optional[str] = None
+    equipment: Optional[str] = None
+    oven_temp_f: Optional[int] = None
+    serves: Optional[int] = None
+    scope: Optional[str] = None
     ingredients: Optional[List[Dict[str, Any]]] = None
     tags: Optional[List[str]] = None
     needs_detail: Optional[bool] = None
@@ -5147,6 +5151,11 @@ def patch_dish(dish_id: str, req: DishPatch):
     if not storage.get_dish(dish_id):
         raise HTTPException(status_code=404, detail="Dish not found")
     patch = {k: v for k, v in req.model_dump().items() if v is not None}
+    # `None` means "not sent" everywhere in this endpoint, so a temperature can
+    # never be cleared by sending null — moving a dish off the oven has to do
+    # it, or a stale sharing key outlives the oven that justified it.
+    if patch.get('equipment') and patch['equipment'] != 'oven':
+        patch['oven_temp_f'] = None
     if patch:
         storage.update_dish(dish_id, patch)
     return storage.get_dish(dish_id)

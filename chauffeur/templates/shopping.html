@@ -445,10 +445,26 @@
                         typed as a whole meal, a main, a side or a dessert. Plates get
                         built from these; how many sides is a setting, not a rule.
                     </p>
+                    <!-- Holiday and party food does not belong in the Tuesday
+                         list. It is HIDDEN, not gone: the toggle says how many
+                         are behind it, because a filter that silently swallows
+                         rows is how a family concludes the app lost their
+                         turkey. -->
+                    <div class="flex items-center justify-between mb-3"
+                        x-show="occasionDishCount()">
+                        <span class="text-[11px] text-gray-500"
+                            x-text="occasionDishCount() + ' occasion dish'
+                                + (occasionDishCount() === 1 ? '' : 'es')
+                                + ' — holiday and party food, never proposed on an ordinary night'"></span>
+                        <button @click="showOccasionDishes = !showOccasionDishes"
+                            class="text-[11px] font-bold shrink-0 ml-3"
+                            :class="showOccasionDishes ? 'text-amber-300' : 'text-gray-600 hover:text-amber-300'"
+                            x-text="showOccasionDishes ? 'Hide' : 'Show'"></button>
+                    </div>
                     <!-- Corrections are the point of this editor, so the parts the
                          model guessed have to be visible and the name editable. -->
                     <div class="space-y-2">
-                        <template x-for="m in repertoire" :key="'rp-' + m.id">
+                        <template x-for="m in shownDishes()" :key="'rp-' + m.id">
                             <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
                                 <div class="min-w-0 flex-1">
                                     <button @click="renameDish(m)"
@@ -520,15 +536,29 @@
                                             class="text-[10px] font-bold text-gray-600 hover:text-sky-300">
                                             + only with
                                         </button>
+                                        <!-- The model guesses this from the name;
+                                             the family corrects it here. One tap,
+                                             because it is a label, not a form. -->
+                                        <button @click="toggleDishScope(m)"
+                                            class="text-[10px] font-bold"
+                                            :class="(m.scope || 'everyday') === 'occasion'
+                                                ? 'px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                                                : 'text-gray-600 hover:text-amber-300'"
+                                            :title="(m.scope || 'everyday') === 'occasion'
+                                                ? 'Holiday and party food — never proposed on an ordinary night. Tap to make it everyday.'
+                                                : 'Move this out of the everyday pool'"
+                                            x-text="(m.scope || 'everyday') === 'occasion'
+                                                ? 'occasion only' : '+ occasion only'"></button>
                                     </div>
                                 </div>
                                 <button @click="deleteDish(m)"
                                     class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                             </div>
                         </template>
-                        <span x-show="!repertoire.length" class="text-xs text-gray-500">
-                            Nothing yet — describe what you cook and I'll sort it out.
-                        </span>
+                        <span x-show="!shownDishes().length" class="text-xs text-gray-500"
+                            x-text="repertoire.length
+                                ? 'Every dish here is occasion-only — Show them above.'
+                                : 'Nothing yet — describe what you cook and I\'ll sort it out.'"></span>
                     </div>
                 </div>
             </section>
@@ -940,6 +970,7 @@
                              takeout: false, max_servings: 1, window_days: 7,
                              dwell_days: 3 },
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
+                showOccasionDishes: false,
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
@@ -1917,10 +1948,43 @@
                     const bits = [d.side_type || d.type];
                     if (hands) bits.push(hands + ' min hands-on');
                     if (d.unattended_mins) bits.push(d.unattended_mins + ' min oven');
+                    // What it OCCUPIES, which is what makes two dishes collide
+                    // when the kitchen is busy. Temperature is shown because it
+                    // is the sharing key, not decoration.
+                    if (d.equipment === 'oven')
+                        bits.push(d.oven_temp_f ? 'oven ' + d.oven_temp_f + '°' : 'oven');
+                    else if (d.equipment === 'burner') bits.push('burner');
                     if (d.needs_ahead && d.needs_ahead !== 'none')
                         bits.push(d.needs_ahead.replace('_', ' '));
                     if (d.needs_detail) bits.push('needs detail');
                     return bits.join(' · ');
+                },
+
+                // The standing pool is what gets PROPOSED, so it is what the
+                // list shows by default. Occasion dishes are still here, one
+                // tap away — hidden, never gone.
+                shownDishes() {
+                    return (this.repertoire || []).filter(
+                        d => this.showOccasionDishes || (d.scope || 'everyday') !== 'occasion');
+                },
+
+                occasionDishCount() {
+                    return (this.repertoire || [])
+                        .filter(d => (d.scope || 'everyday') === 'occasion').length;
+                },
+
+                async toggleDishScope(d) {
+                    const next = (d.scope || 'everyday') === 'occasion' ? 'everyday' : 'occasion';
+                    d.scope = next;          // optimistic: this is a one-tap label
+                    try {
+                        await fetch(this.apiBase + 'api/meals/dishes/' + d.id, {
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ scope: next })
+                        });
+                    } catch (e) {
+                        d.scope = next === 'occasion' ? 'everyday' : 'occasion';
+                        showGlobalAlert('Could not save that just now.');
+                    }
                 },
 
                 async addMeal() {

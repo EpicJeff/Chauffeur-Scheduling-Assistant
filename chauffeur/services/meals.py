@@ -572,9 +572,20 @@ def plate_settings(settings: dict = None) -> tuple:
 
 def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set) -> bool:
     """Hard filters only. An already-made dish skips the portability check —
-    it exists, and it is going in a container either way."""
+    it exists, and it is going in a container either way.
+
+    The same bypass governs `scope` (occasions arc O0), and it is the trap
+    worth naming: turkey is `scope: occasion`, and the days right after
+    Thanksgiving are PRECISELY when it must land on an ordinary plate. Filter
+    it naively here and the dish is blocked from the days it exists to cover.
+    **Scope gates proposal, never presence** — which is also why hand-picking
+    (the plate picker, `set_plate_lock`) never comes through this function.
+    """
     tags = {str(t).strip().lower() for t in (dish.get('tags') or [])}
     if tags & avoid:
+        return False
+    if dish['id'] not in leftover_ids and str(
+            dish.get('scope') or 'everyday') == 'occasion':
         return False
     if binding_slot and dish['id'] not in leftover_ids:
         ok, _ = meal_fits_slot(dish, binding_slot)
@@ -753,7 +764,15 @@ def rule_context(as_of: float, served: dict, settings: dict = None,
     rules = storage.get_meal_rules()
     if not rules:
         return {'blocked': set(), 'forced': set(), 'rules': []}
-    all_dishes = storage.get_dishes()
+    # Occasion dishes are invisible to ordinary rule ACCOUNTING, not merely
+    # given rules of their own (occasions arc O0). Otherwise the Thanksgiving
+    # turkey — which carries a `meat` tag like any other — burns the week's
+    # "meat about once a week" cap and the family gets a baffling vegetarian
+    # weekend, and a batch_cycle advances on a day that had no beans in it.
+    # Excluding them from the member set does both directions at once: serving
+    # one never counts, and being one never blocks.
+    all_dishes = [d for d in storage.get_dishes()
+                  if str(d.get('scope') or 'everyday') != 'occasion']
     blocked, forced = set(), set()
 
     for rule in rules:
@@ -2112,6 +2131,8 @@ _DISH_SYSTEM_V5 = (
     "\"needs_ahead\": \"none|thaw|marinate|slow_cooker\", \"holds_well\": bool, "
     "\"portability\": \"none|handheld|utensils_ok\", "
     "\"source\": \"prep|ordered\", \"tags\": [str], "
+    "\"equipment\": \"none|oven|burner\", \"oven_temp_f\": int|null, "
+    "\"serves\": int, \"scope\": \"everyday|occasion\", "
     "\"ingredients\": [{\"name\": str, \"kind\": \"staple|fresh\"}], "
     "\"needs_detail\": bool, \"detail_question\": str|null}]}\n\n"
     "ONE DISH PER THING THEY WOULD ACTUALLY COOK OR SERVE:\n"
@@ -2133,6 +2154,17 @@ _DISH_SYSTEM_V5 = (
     "earlier and set aside, finish_mins must happen near eating, "
     "unattended_mins is oven or slow-cooker time needing nobody at the stove. "
     "Rice is a little prep and a lot of unattended; a salad is all finish.\n"
+    "- equipment: what the dish OCCUPIES while it cooks — 'oven' for anything "
+    "baked or roasted, 'burner' for a stovetop pot or pan, 'none' for a salad, "
+    "a slow cooker, or anything served cold. With 'oven', give oven_temp_f "
+    "(two dishes share an oven only at the SAME temperature); null otherwise.\n"
+    "- serves: how many people the times and ingredients above assume. Use 4 "
+    "unless the description says otherwise.\n"
+    "- scope: 'occasion' for food a family eats at holidays and parties rather "
+    "than on an ordinary weeknight (turkey, stuffing, cranberry sauce, deviled "
+    "eggs, a birthday cake). 'everyday' for everything else, INCLUDING dishes "
+    "that show up at both (mashed potatoes, rolls, green beans) — when in "
+    "doubt choose 'everyday'.\n"
     "- name is SPECIFIC enough to time and shop for; short_name is what the "
     "family says ('potatoes').\n"
     "- ingredients: kind='staple' for what a kitchen always has (salt, oil, "
@@ -2231,6 +2263,15 @@ def _clean_dish(raw: dict) -> Optional[dict]:
         holds_well=bool(raw.get('holds_well')),
         portability=_choice('portability', ('none', 'handheld', 'utensils_ok'), 'none'),
         source=_choice('source', ('prep', 'ordered'), 'prep'),
+        equipment=_choice('equipment', ('none', 'oven', 'burner'), 'none'),
+        # Only meaningful on an oven dish, and a model that answers 'burner'
+        # while still volunteering a temperature should not leave a phantom
+        # sharing key behind.
+        oven_temp_f=(_int('oven_temp_f', 600) or None
+                     if _choice('equipment', ('none', 'oven', 'burner'), 'none') == 'oven'
+                     else None),
+        serves=_int('serves', 40) or 4,
+        scope=_choice('scope', ('everyday', 'occasion'), 'everyday'),
         ingredients=ings,
         tags=[str(t).strip().lower()[:24] for t in (raw.get('tags') or [])[:6]
               if str(t).strip()],

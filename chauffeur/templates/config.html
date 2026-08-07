@@ -730,6 +730,38 @@
                             </p>
                         </div>
                         <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
+                            <span class="font-bold text-gray-300">🍳 The kitchen</span>
+                            <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Ovens</label>
+                                    <input type="number" min="1" max="4" x-model.number="kitchenOvens"
+                                        @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 w-20 focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Burners</label>
+                                    <input type="number" min="1" max="12" x-model.number="kitchenBurners"
+                                        @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 w-20 focus:outline-none focus:border-blue-500">
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <label class="text-sm text-gray-400 font-semibold">Usually cooking</label>
+                                    <input type="number" min="1" max="6" x-model.number="kitchenCooks"
+                                        @change="saveSettings()"
+                                        class="bg-gray-700 border border-gray-600 text-gray-200 text-sm rounded-lg px-3 py-1.5 w-20 focus:outline-none focus:border-blue-500">
+                                </div>
+                            </div>
+                            <p class="text-sm text-gray-500">
+                                What the kitchen can actually run at once. A weeknight plate is timed
+                                as one pair of hands working through the dishes in turn, with the oven
+                                running alongside — which is these defaults exactly. They start to
+                                matter when the family cooks for a crowd: two dishes wanting the same
+                                oven at different temperatures cannot share it however much room is
+                                left, and a second pair of hands is the difference between a long
+                                evening and a manageable one.
+                            </p>
+                        </div>
+                        <div class="flex flex-col gap-3 mt-4 p-5 bg-gray-900 rounded-xl border border-gray-700">
                             <span class="font-bold text-gray-300">🏫 School Calendar</span>
                             <div class="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
                                 <div class="flex items-center gap-2 shrink-0">
@@ -3500,6 +3532,7 @@
                 carFuelWarnPct: 25,
                 carAutoErrand: false,
                 carFuelStation: '',
+                kitchenOvens: 1, kitchenBurners: 4, kitchenCooks: 1,
                 groceryWeekday: '', groceryPlanLeadDays: 2, mealWeekEnabled: true,
                 groceryDays: [], groceryReason: '', groceryTripMins: 90,
                 proposeShoppingErrands: true,
@@ -3907,6 +3940,9 @@
                     this.carFuelWarnPct = data.car_fuel_warn_pct != null ? data.car_fuel_warn_pct : 25;
                     this.carAutoErrand = data.car_auto_errand === true;
                     this.carFuelStation = data.car_fuel_station || '';
+                    this.kitchenOvens = data.kitchen_ovens != null ? data.kitchen_ovens : 1;
+                    this.kitchenBurners = data.kitchen_burners != null ? data.kitchen_burners : 4;
+                    this.kitchenCooks = data.kitchen_cooks != null ? data.kitchen_cooks : 1;
                     // '' means "work it out from our schedule" — deliberately not
                     // a hardcoded weekday.
                     this.groceryWeekday = data.grocery_weekday != null
@@ -4048,6 +4084,9 @@
                             car_fuel_warn_pct: parseFloat(this.carFuelWarnPct) || 25,
                             car_auto_errand: this.carAutoErrand,
                             car_fuel_station: (this.carFuelStation || '').trim(),
+                            kitchen_ovens: Math.max(1, parseInt(this.kitchenOvens, 10) || 1),
+                            kitchen_burners: Math.max(1, parseInt(this.kitchenBurners, 10) || 4),
+                            kitchen_cooks: Math.max(1, parseInt(this.kitchenCooks, 10) || 1),
                             grocery_weekday: this.groceryWeekday === ''
                                 ? null : parseInt(this.groceryWeekday, 10),
                             grocery_plan_lead_days: parseInt(this.groceryPlanLeadDays, 10),

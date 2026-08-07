@@ -3189,6 +3189,105 @@ def scenario_m3_tools_in_both_stacks():
           f"and rotation is recorded, got {res}")
 
 
+# --- O0: holiday food is not Tuesday food ------------------------------------
+
+def scenario_occasion_dishes_stay_out_of_the_everyday_pool():
+    """The family's complaint exactly: keeping turkey in the standing pool so
+    it exists twice a year pollutes every proposal for the other fifty weeks."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    _dish('roast turkey', type='entree', scope='occasion')
+    _dish('cornbread stuffing', type='side', side_type='starch', scope='occasion')
+    _dish('tacos', type='entree')
+    _dish('steamed broccoli', type='side', side_type='vegetable')
+
+    week = meals.compose_week('2026-09-07', 14)
+    served = {x['name'] for d in week for x in d['dishes']}
+    check(served, "a fortnight still composes")
+    check('roast turkey' not in served and 'cornbread stuffing' not in served,
+          f"and never proposes occasion food, got {sorted(served)}")
+    check('tacos' in served, "while the everyday pool carries the plan")
+
+
+def scenario_an_occasion_dish_is_still_eaten_as_a_leftover():
+    """THE trap. Scope gates PROPOSAL, never PRESENCE: the days right after
+    Thanksgiving are precisely when the turkey has to land on an ordinary
+    plate, and a naive filter blocks it from the days it exists to cover."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    turkey = _dish('roast turkey', type='entree', scope='occasion',
+                   holds_well=True, portability='utensils_ok')
+    _dish('tacos', type='entree')
+    _dish('steamed broccoli', type='side', side_type='vegetable')
+
+    _leftover(date=DAY, label='turkey', dish_ids=[turkey['id']])
+    names = {d['name'] for d in meals.compose_plate(DAY)}
+    check('roast turkey' in names,
+          f"the bird that already exists gets eaten, got {sorted(names)}")
+
+
+def scenario_a_hand_picked_occasion_dish_is_never_filtered():
+    """Eligibility is not selection. Nothing stops a family from putting the
+    turkey on a night deliberately — the pool filter governs what is OFFERED."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    turkey = _dish('roast turkey', type='entree', scope='occasion')
+    _dish('tacos', type='entree')
+
+    meals.set_plate_lock('2026-11-26', True, 'Thanksgiving', [turkey['id']])
+    day = next(d for d in meals.compose_week('2026-11-26', 1))
+    check([x['name'] for x in day['dishes']] == ['roast turkey'],
+          f"the night the family named keeps its dish, got {day['dishes']}")
+
+
+def scenario_occasion_food_is_invisible_to_ordinary_rule_accounting():
+    """A turkey carries a `meat` tag like anything else. If it counted toward
+    "meat about once a week" the family would get a baffling vegetarian
+    weekend after every holiday — and the cap must not block the bird either."""
+    reset_db(); _seed_people()
+    _settings(sides_per_meal=1, include_dessert=False)
+    turkey = _dish('roast turkey', type='entree', scope='occasion', tags=['meat'])
+    _dish('beef tacos', type='entree', tags=['meat'])
+    _dish('lentil soup', type='entree')
+    _dish('steamed broccoli', type='side', side_type='vegetable')
+    meals.add_meal_rule('meat about once a week', 'frequency_cap',
+                        tags=['meat'], max_servings=1, window_days=7)
+
+    ctx = meals.rule_context(meals._as_of_ts(DAY), {}, storage.get_settings(), {})
+    check(turkey['id'] not in ctx['blocked'],
+          "the cap never blocks a dish it should not be counting")
+
+    # Serving it yesterday must not spend this week's allowance.
+    storage.update_dish(turkey['id'],
+                        {'last_served_at': meals._as_of_ts(DAY) - 86400.0})
+    after = meals.rule_context(meals._as_of_ts(DAY), {}, storage.get_settings(), {})
+    tacos = storage.find_dish_by_name('beef tacos')
+    check(tacos['id'] not in after['blocked'],
+          "and eating it yesterday leaves the ordinary week untouched")
+
+
+def scenario_the_model_fills_the_kitchen_metadata_it_can_guess():
+    """Same bargain as every other dish field: the human supplies a name or the
+    repertoire never reaches fifteen entries."""
+    reset_db()
+    d = meals._clean_dish({
+        'name': 'roasted russet potatoes', 'type': 'side', 'side_type': 'starch',
+        'equipment': 'oven', 'oven_temp_f': 425, 'serves': 6, 'scope': 'everyday',
+    })
+    check(d['equipment'] == 'oven' and d['oven_temp_f'] == 425,
+          f"oven and its sharing key survive, got {d.get('oven_temp_f')}")
+    check(d['serves'] == 6, f"as does the serving count, got {d.get('serves')}")
+
+    stove = meals._clean_dish({'name': 'white rice', 'equipment': 'burner',
+                                  'oven_temp_f': 350})
+    check(stove['oven_temp_f'] is None,
+          "a burner dish carries no phantom oven temperature")
+    plain = meals._clean_dish({'name': 'green salad'})
+    check(plain['equipment'] == 'none' and plain['scope'] == 'everyday'
+          and plain['serves'] == 4,
+          f"and the defaults are the everyday ones, got {plain.get('scope')}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
