@@ -3,7 +3,7 @@
      a comment — Jinja executes tags even inside HTML comments). Each ladder is
      single-metric (points for chores, best streak for routines), edited via
      GET/PUT /api/status-tiers?kind=... -->
-<section class="mb-10" x-data="statusTiersEditor()" x-init="init()" x-cloak>
+<section id="tiers" class="mb-10" x-data="statusTiersEditor()" x-init="init()" x-cloak>
     <h3 class="text-xs font-black uppercase tracking-widest text-gray-500 mb-1"
         x-text="kind === 'routine' ? 'Routine Status Levels' : 'Chore Status Levels'"></h3>
     <p class="text-gray-500 text-sm mb-3" x-show="kind === 'routine'">

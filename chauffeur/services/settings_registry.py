@@ -332,6 +332,16 @@ def audit_ui(templates_dir: str = None) -> dict:
         pat = re.compile(r'\b(%s)\b' % '|'.join(re.escape(n) for n in needles))
         if not pat.search(body):
             missing.append({**e, 'why': f"not found on '{e['page']}'"})
+            continue
+        # The ANCHOR has to exist too, or the deep link drops the reader at the
+        # top of the page to hunt. This is the half the first version missed:
+        # grepping a template proves a control EXISTS, not that anything can
+        # get you to it — and the settings drawer spent a version nested inside
+        # an unrelated panel, so every link landed on a hidden element.
+        if e['anchor'] != 'general' and not re.search(
+                r'id="%s"' % re.escape(e['anchor']), body):
+            missing.append({**e,
+                            'why': f"no #{e['anchor']} target on '{e['page']}'"})
     return {'unreachable': missing}
 
 
