@@ -5840,6 +5840,51 @@ def occasion_gaps(occasion_id: str):
         raise HTTPException(status_code=404, detail="Occasion not found")
     return res
 
+class MenuRequest(BaseModel):
+    dish_ids: List[str] = []
+    date: Optional[str] = None
+
+class OccasionDishRequest(BaseModel):
+    description: str
+
+@app.get("/api/occasions/{occasion_id}/menu")
+def occasion_menu(occasion_id: str, date: Optional[str] = None):
+    """The occasion's menu and what it costs to cook. Stores nothing of its
+    own — the menu IS the locked plate on the meal date."""
+    from services import occasions as _occ
+    res = _occ.menu(occasion_id, date)
+    if not res:
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return res
+
+@app.post("/api/occasions/{occasion_id}/menu")
+def set_occasion_menu(occasion_id: str, req: MenuRequest):
+    from services import occasions as _occ
+    res = _occ.set_menu(occasion_id, req.dish_ids, req.date)
+    if res.get('error'):
+        raise HTTPException(status_code=404, detail=res['error'])
+    _touch_stream()
+    return res
+
+@app.delete("/api/occasions/{occasion_id}/menu")
+def clear_occasion_menu(occasion_id: str, date: Optional[str] = None):
+    from services import occasions as _occ
+    res = _occ.clear_menu(occasion_id, date)
+    if res.get('error'):
+        raise HTTPException(status_code=404, detail=res['error'])
+    _touch_stream()
+    return res
+
+@app.post("/api/occasions/{occasion_id}/dishes")
+def add_occasion_dishes(occasion_id: str, req: OccasionDishRequest):
+    """Dishes born occasion-only, so curating a holiday menu never clutters
+    the list the family looks at on a Tuesday."""
+    from services import occasions as _occ
+    res = _occ.add_dishes(occasion_id, req.description)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    return res
+
 @app.get("/api/occasions/{occasion_id}/insights")
 def occasion_insights(occasion_id: str):
     """What only this app can say: who is carrying it, what is undecided and

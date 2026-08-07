@@ -488,6 +488,144 @@ def scenario_insights_are_sayable():
           f"it says the useful thing, got {res['message']}")
 
 
+# --- The menu: curated ahead, in isolation -----------------------------------
+
+def scenario_the_menu_is_the_locked_plate_and_survives_a_repropose():
+    """It stores nothing of its own. That is what makes the run sheet, the
+    shopping drain and the kitchen totals understand it for free - and a menu
+    chosen three weeks out is exactly what `locked` was invented for."""
+    reset_db(); _members(); _settings(sides_per_meal=1, include_dessert=False)
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   scope='occasion', tags=['thanksgiving'])
+    pie = _dish('pumpkin pie', short_name='pie', type='dessert',
+                scope='occasion', tags=['thanksgiving'])
+
+    m = occasions.set_menu(o['id'], [turkey['id'], pie['id']])
+    check([d['short_name'] for d in m['dishes']] == ['turkey', 'pie'],
+          f"the menu is what was chosen, got {m['dishes']}")
+    check(m['locked'], "and the night is locked, not merely edited")
+    check(storage.get_plate(DAY)['note'] == o['title'],
+          "with the occasion as the reason it is spoken for")
+
+    meals.reset_plate(DAY)          # the BULK path, which must refuse
+    after = occasions.menu(o['id'])
+    check([d['short_name'] for d in after['dishes']] == ['turkey', 'pie'],
+          f"a bulk repropose cannot sweep it away, got {after['dishes']}")
+
+
+def scenario_the_menu_reports_what_it_costs_to_cook():
+    """Choosing a menu and finding out it needs two ovens are the same
+    decision; splitting them across two screens is how a family finds out on
+    the day."""
+    reset_db(); _members(); _settings(sides_per_meal=1, include_dessert=False)
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   scope='occasion', tags=['thanksgiving'], prep_ahead_mins=20,
+                   finish_mins=20, unattended_mins=240, equipment='oven',
+                   oven_temp_f=325, serves=12)
+    pie = _dish('pumpkin pie', short_name='pie', type='dessert', scope='occasion',
+                tags=['thanksgiving'], finish_mins=10, unattended_mins=45,
+                equipment='oven', oven_temp_f=425)
+    m = occasions.set_menu(o['id'], [turkey['id'], pie['id']])
+    check(m['prep_ahead_mins'] + m['finish_mins'] == 50,
+          f"hands-on comes back with it, got {m}")
+    check(m['unattended_mins'] == 285,
+          f"one oven at two temperatures queues, got {m['unattended_mins']}")
+    check([c['temp_f'] for c in m['oven_conflicts']] == [325, 425],
+          f"and the clash is named, got {m['oven_conflicts']}")
+
+
+def scenario_another_occasions_dishes_never_enter_the_picker():
+    """The birthday cake has no business in the Thanksgiving menu."""
+    reset_db(); _members(); _settings()
+    thanks = _occasion()
+    occasions.create("Ellie's 8th", '2026-09-14', 'birthday', dish_tags=['birthday'])
+    _dish('roast turkey', type='entree', scope='occasion', tags=['thanksgiving'])
+    _dish('birthday cake', type='dessert', scope='occasion', tags=['birthday'])
+    _dish('tacos', type='meal')
+
+    pool = {d['name'] for d in occasions.menu(thanks['id'])['pool']}
+    check('roast turkey' in pool, f"its own dishes are offered, got {pool}")
+    check('tacos' in pool, "so is the everyday pool")
+    check('birthday cake' not in pool,
+          f"another occasion's food is not, got {pool}")
+
+
+def scenario_dishes_added_through_an_occasion_are_born_occasion_only():
+    """THE point of curating here: building a Thanksgiving menu must not put
+    turkey and stuffing into the list a family looks at on a Tuesday."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    from models.schemas import Dish
+
+    def fake(desc):
+        made = []
+        for name in [n.strip() for n in desc.split(',') if n.strip()]:
+            d = Dish(name=name, type='side').model_dump()
+            storage.add_dish(d)
+            made.append(d)
+        return {'added': made, 'existing': []}
+
+    real = meals.add_dishes_from_text
+    meals.add_dishes_from_text = fake
+    try:
+        res = occasions.add_dishes(o['id'], 'cornbread stuffing, cranberry sauce')
+    finally:
+        meals.add_dishes_from_text = real
+
+    check(len(res['added']) == 2, f"both dishes saved, got {res}")
+    for d in res['added']:
+        saved = storage.get_dish(d['id'])
+        check(saved['scope'] == 'occasion',
+              f"{saved['name']} is occasion-only, got {saved['scope']}")
+        check('thanksgiving' in saved['tags'],
+              f"and carries the occasion's tag, got {saved['tags']}")
+
+    # And therefore invisible to an ordinary night.
+    _dish('tacos', type='entree')
+    names = {d['name'] for d in meals.compose_plate('2026-12-20')}
+    check('cornbread stuffing' not in names,
+          f"nothing of it reaches a December Tuesday, got {names}")
+
+
+def scenario_an_untagged_occasion_still_gets_its_dishes_marked():
+    """Otherwise they fall straight back into the everyday pool the moment
+    they are saved, which is the failure this whole surface exists to avoid."""
+    reset_db(); _members(); _settings()
+    o = occasions.create('Street party', '2026-07-04', 'party')   # no dish_tags
+    from models.schemas import Dish
+
+    def fake(desc):
+        d = Dish(name=desc.strip(), type='side').model_dump()
+        storage.add_dish(d)
+        return {'added': [d], 'existing': []}
+
+    real = meals.add_dishes_from_text
+    meals.add_dishes_from_text = fake
+    try:
+        res = occasions.add_dishes(o['id'], 'hot dogs')
+    finally:
+        meals.add_dishes_from_text = real
+
+    saved = storage.get_dish(res['added'][0]['id'])
+    check(saved['scope'] == 'occasion', f"still occasion-only, got {saved['scope']}")
+    check(saved['tags'], f"and given a tag to be eligible by, got {saved['tags']}")
+    check(storage.get_occasion(o['id'])['dish_tags'] == saved['tags'],
+          "the occasion adopts the same tag, or it could never open its own food")
+
+
+def scenario_clearing_a_menu_releases_the_night_but_keeps_the_dishes():
+    reset_db(); _members(); _settings(sides_per_meal=1, include_dessert=False)
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   scope='occasion', tags=['thanksgiving'])
+    occasions.set_menu(o['id'], [turkey['id']])
+    occasions.clear_menu(o['id'])
+    check(not storage.get_plate(DAY), "the night is released")
+    check(storage.get_dish(turkey['id']), "and the dish is untouched")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

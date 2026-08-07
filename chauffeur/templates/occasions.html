@@ -212,6 +212,91 @@
                         </div>
                     </div>
 
+                    <!-- The menu. Curated ahead, in isolation from the everyday
+                         list: dishes added here are born occasion-only, so a
+                         Thanksgiving menu never puts turkey in the list the
+                         family looks at on a Tuesday. It stores nothing of its
+                         own — the menu IS the locked plate on the meal date,
+                         which is why the run sheet, the shopping drain and the
+                         kitchen totals already understand it. -->
+                    <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                        🍽️ The menu
+                        <span class="text-gray-500 font-bold normal-case tracking-normal ml-1"
+                            x-text="menuWhen(o)"></span>
+                    </div>
+                    <div class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-4">
+                        <div class="flex flex-wrap gap-1.5 mb-3">
+                            <template x-for="d in ((menus[o.id] || {}).dishes || [])" :key="'md-' + d.id">
+                                <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold
+                                             bg-pink-500/15 border border-pink-400/40 text-pink-200
+                                             flex items-center gap-1.5">
+                                    <span x-text="d.short_name || d.name"></span>
+                                    <button @click="dropFromMenu(o, d)"
+                                        class="text-pink-400/70 hover:text-red-400">✕</button>
+                                </span>
+                            </template>
+                            <span x-show="!((menus[o.id] || {}).dishes || []).length"
+                                class="text-[11px] text-gray-500">
+                                Nothing chosen yet — pick from below, or describe what you'll make.
+                            </span>
+                        </div>
+
+                        <!-- What it costs to cook, beside what it is: choosing a
+                             menu and finding out it needs two ovens are the same
+                             decision, and splitting them across two screens is
+                             how a family finds out on the day. -->
+                        <div class="text-[11px] text-gray-500 mb-3"
+                            x-show="((menus[o.id] || {}).dishes || []).length"
+                            x-text="menuCost(o)"></div>
+                        <div x-show="((menus[o.id] || {}).oven_conflicts || []).length"
+                            class="text-[11px] text-amber-300/90 mb-3 flex items-start gap-1.5">
+                            <span class="shrink-0">🔥</span>
+                            <span x-text="menuClash(o)"></span>
+                        </div>
+
+                        <!-- Add a dish that belongs to THIS occasion only. -->
+                        <div class="flex gap-2 mb-3">
+                            <input x-model="dishDraft[o.id]" @keydown.enter="addOccasionDish(o)"
+                                type="text" placeholder="roast turkey, cornbread stuffing, pumpkin pie"
+                                class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+                            <button @click="addOccasionDish(o)" :disabled="dishBusy"
+                                class="px-3 py-2 rounded-xl text-xs font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                                x-text="dishBusy ? 'Adding…' : 'Add dishes'"></button>
+                        </div>
+                        <p class="text-[11px] text-gray-600 mb-3">
+                            Anything added here is occasion-only — it shows up when this occasion
+                            comes round and stays out of the everyday list the rest of the year.
+                        </p>
+
+                        <!-- The pool: this occasion's own dishes plus the
+                             everyday ones. Another occasion's dishes are left
+                             out — the birthday cake has no business in the
+                             Thanksgiving picker. -->
+                        <button @click="showPool[o.id] = !showPool[o.id]"
+                            class="text-[11px] font-bold text-gray-600 hover:text-pink-300"
+                            x-text="showPool[o.id] ? 'Hide what we could make' : '+ Choose from what we make'"></button>
+                        <div x-show="showPool[o.id]" x-cloak class="flex flex-wrap gap-1.5 mt-2">
+                            <template x-for="d in menuPool(o)" :key="'mp-' + d.id">
+                                <button @click="addToMenu(o, d)"
+                                    class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-800 border border-gray-700 text-gray-300 hover:border-pink-400/60">
+                                    <span x-text="d.short_name || d.name"></span>
+                                    <span class="opacity-50"
+                                        x-show="(d.scope || 'everyday') === 'occasion'">·occasion</span>
+                                </button>
+                            </template>
+                            <span x-show="!menuPool(o).length" class="text-[11px] text-gray-500">
+                                Everything you make is already on the menu.
+                            </span>
+                        </div>
+
+                        <div class="flex justify-end mt-3" x-show="((menus[o.id] || {}).dishes || []).length">
+                            <button @click="clearMenu(o)"
+                                class="text-[11px] font-bold text-gray-600 hover:text-red-400">
+                                Clear the menu
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Guests. The list earns its place by feeding headcount and
                          allergies into the meal plan; there is deliberately no
                          invitation sending. -->
@@ -295,6 +380,7 @@
             apiBase: window.location.pathname.endsWith('/') ? '../' : '',
             occasions: [], detail: {}, sourceDraft: {},
             gaps: {}, insights: {}, answerDraft: {},
+            menus: {}, dishDraft: {}, showPool: {}, dishBusy: false,
             loading: true, busy: false, sourcing: false, showNew: false,
             kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering'],
             draft: { title: '', kind: 'gathering', anchor_date: '', tags: '',
@@ -327,14 +413,112 @@
             },
 
             async refresh(o) {
-                const [d, g, i] = await Promise.all([
+                const [d, g, i, m] = await Promise.all([
                     fetch(this.apiBase + 'api/occasions/' + o.id),
                     fetch(this.apiBase + 'api/occasions/' + o.id + '/gaps'),
-                    fetch(this.apiBase + 'api/occasions/' + o.id + '/insights')
+                    fetch(this.apiBase + 'api/occasions/' + o.id + '/insights'),
+                    fetch(this.apiBase + 'api/occasions/' + o.id + '/menu')
                 ]);
                 if (d.ok) this.detail[o.id] = await d.json();
                 if (g.ok) this.gaps[o.id] = await g.json();
                 if (i.ok) this.insights[o.id] = await i.json();
+                if (m.ok) this.menus[o.id] = await m.json();
+            },
+
+            menuWhen(o) {
+                const m = this.menus[o.id];
+                if (!m) return '';
+                const d = new Date(m.date + 'T12:00:00');
+                return isNaN(d) ? m.date : '· ' + d.toLocaleDateString(undefined,
+                    { weekday: 'long', month: 'short', day: 'numeric' });
+            },
+
+            menuCost(o) {
+                const m = this.menus[o.id] || {};
+                const hands = (m.prep_ahead_mins || 0) + (m.finish_mins || 0);
+                const bits = [];
+                if (hands) bits.push(hands + ' min hands-on');
+                if (m.unattended_mins) bits.push(m.unattended_mins + ' min cooking itself');
+                if (m.serving_for) bits.push('for ' + m.serving_for);
+                if ((m.cooks || 1) > 1) bits.push(m.cooks + ' cooking');
+                return bits.join(' · ');
+            },
+
+            menuClash(o) {
+                const cs = ((this.menus[o.id] || {}).oven_conflicts) || [];
+                if (!cs.length) return '';
+                return 'One oven, ' + cs.length + ' temperatures — '
+                    + cs.map(c => (c.dishes || []).join(' + ') + ' at ' + c.temp_f + '°').join(', ')
+                    + '. They have to take turns.';
+            },
+
+            // Anything already on the menu drops OUT of the picker, the same
+            // rule the dish picker on the meals page follows: what is chosen
+            // and what is left should never be the same visual thing.
+            menuPool(o) {
+                const m = this.menus[o.id] || {};
+                const on = new Set((m.dishes || []).map(d => d.id));
+                return (m.pool || []).filter(d => !on.has(d.id));
+            },
+
+            async saveMenu(o, ids) {
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id + '/menu', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dish_ids: ids })
+                });
+                if (r.ok) this.menus[o.id] = await r.json();
+                else showGlobalAlert('Could not save the menu just now.');
+            },
+
+            addToMenu(o, d) {
+                const ids = ((this.menus[o.id] || {}).dishes || []).map(x => x.id);
+                if (ids.includes(d.id)) return;
+                return this.saveMenu(o, ids.concat([d.id]));
+            },
+
+            dropFromMenu(o, d) {
+                const ids = ((this.menus[o.id] || {}).dishes || [])
+                    .map(x => x.id).filter(id => id !== d.id);
+                return this.saveMenu(o, ids);
+            },
+
+            async clearMenu(o) {
+                const ok = await promptConfirm('Clear this menu?',
+                    'The night goes back to whatever the planner would suggest. '
+                    + 'The dishes themselves stay exactly where they are.');
+                if (!ok) return;
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id + '/menu',
+                    { method: 'DELETE' });
+                if (r.ok) this.menus[o.id] = await r.json();
+            },
+
+            async addOccasionDish(o) {
+                const text = (this.dishDraft[o.id] || '').trim();
+                if (!text) return;
+                this.dishBusy = true;
+                try {
+                    const r = await fetch(this.apiBase + 'api/occasions/' + o.id + '/dishes', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ description: text })
+                    });
+                    const res = r.ok ? await r.json() : {};
+                    if (!r.ok || res.error) {
+                        showGlobalAlert(res.detail || res.error
+                            || 'Could not read that — try naming the dishes plainly.');
+                    } else {
+                        this.dishDraft[o.id] = '';
+                        // Straight onto the menu: somebody typing dishes into an
+                        // occasion is choosing them, not filing them away.
+                        const ids = ((this.menus[o.id] || {}).dishes || []).map(x => x.id);
+                        const fresh = [...(res.added || []), ...(res.existing || [])]
+                            .map(d => d.id).filter(id => !ids.includes(id));
+                        await this.saveMenu(o, ids.concat(fresh));
+                        this.showPool[o.id] = false;
+                    }
+                } catch (e) {
+                    showGlobalAlert('Could not add those just now.');
+                }
+                this.dishBusy = false;
             },
 
             insightIcon(kind) {

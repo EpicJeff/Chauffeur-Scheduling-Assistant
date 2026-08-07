@@ -307,6 +307,14 @@ for the standing grocery list.
   leftovers bypassing the filter), `services/kitchen.py` replacing the
   hardcoded cook=1 / oven=∞ (reduction to the old sum/max is an asserted
   contract), serving scale, and the CP-SAT run sheet.
+- **O1b — the occasion MENU. SHIPPED v2.101.0**, closing a real hole in the
+  brief rather than a deferred nice-to-have. The brief sent menu selection to
+  `set_plate_lock` "one plate at a time", which was right about the mechanism
+  and wrong about the reach: by hand a plate is only editable through the week
+  strip, so a menu three weeks out was voice-only. Now each occasion has a
+  menu that IS the locked plate on its meal date, a picker that excludes other
+  occasions' food, an add-dishes box whose dishes are born occasion-only, and
+  the kitchen cost + oven clashes reported beside the choice.
 - **O1 — the occasion as context. SHIPPED v2.94.0.** `Occasion` +
   `OccasionGuest`, `/occasions`, full REST, four tools in both stacks, themed
   list generation onto the shipped cart rails, guest diets binding like family

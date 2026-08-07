@@ -516,6 +516,131 @@ def gap_report(occasion_id: str) -> dict:
             'has_prior': bool(prior_id)}
 
 
+# --- The menu (O1b, 2026-08-07) ----------------------------------------------
+#
+# The gap this closes, in the family's words: there was nowhere to view an
+# occasion's menu, and no way to curate one ahead of time in isolation from the
+# day-to-day list.
+#
+# The brief deferred menu SELECTION to `set_plate_lock`, "one plate at a time",
+# which was right about the mechanism and wrong about the reach: by hand, a
+# plate is only editable through the week strip, and the week strip covers the
+# next grocery window — a few days. A Thanksgiving menu three weeks out was
+# reachable by voice (`plan_specific_dinner`) and by nothing else, which is the
+# hand-path rule broken in the one place it mattered most.
+#
+# So this is a VIEW and an EDITOR over machinery that already existed. It
+# stores nothing of its own: the menu IS the locked plate on the meal date,
+# which is why it survives a bulk repropose and why the run sheet, the shopping
+# drain and the kitchen totals all already understand it.
+
+
+def meal_date(occasion: dict) -> str:
+    """Which day the menu is for. The anchor is The Meal unless somebody has
+    said otherwise — Thanksgiving week is five days and exactly one of them is
+    the dinner everybody means."""
+    return (occasion.get('anchor_date')
+            or (occasion.get('window_start') or _today().isoformat()))
+
+
+def menu(occasion_id: str, date_str: str = None) -> dict:
+    """The occasion's menu, plus what it costs to cook.
+
+    Returns the kitchen consequences alongside the dishes on purpose: choosing
+    a menu and discovering it needs two ovens are the same decision, and
+    splitting them across two screens is how a family finds out on the day.
+    """
+    from services import meals
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {}
+    day = date_str or meal_date(o)
+    plate = storage.get_plate(day) or {}
+    dishes = storage.get_dishes_by_ids(
+        [i['dish_id'] for i in (plate.get('items') or [])])
+    totals = meals.plate_totals(dishes, day, plate=plate) if dishes else {}
+    tags = {str(t).strip().lower() for t in (o.get('dish_tags') or [])}
+    # What this occasion could draw on: its own dishes plus the everyday pool.
+    # Occasion dishes belonging to a DIFFERENT occasion are left out — the
+    # birthday cake has no business in the Thanksgiving picker.
+    pool = []
+    for d in storage.get_dishes():
+        scope = str(d.get('scope') or 'everyday')
+        if scope != 'occasion':
+            pool.append(d)
+            continue
+        dtags = {str(t).strip().lower() for t in (d.get('tags') or [])}
+        if not tags or (dtags & tags):
+            pool.append(d)
+    return {
+        'occasion_id': occasion_id, 'date': day,
+        'locked': bool(plate.get('locked')), 'note': plate.get('note'),
+        'dishes': dishes, 'pool': pool,
+        'serving_for': plate.get('serving_for'), 'cooks': plate.get('cooks'),
+        'prep_ahead_mins': totals.get('prep_ahead_mins') or 0,
+        'finish_mins': totals.get('finish_mins') or 0,
+        'unattended_mins': totals.get('unattended_mins') or 0,
+        'oven_conflicts': totals.get('oven_conflicts') or [],
+    }
+
+
+def set_menu(occasion_id: str, dish_ids: List[str], date_str: str = None) -> dict:
+    """Pin these dishes to the occasion's meal.
+
+    LOCKED, not merely edited: a menu chosen three weeks out is exactly the
+    case `locked` was invented for — "this is Mom's birthday dinner" — and an
+    ordinary edit would let a bulk repropose sweep it away a week early.
+    """
+    from services import meals
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    day = date_str or meal_date(o)
+    meals.set_plate_lock(day, True, o.get('title'), list(dish_ids or []))
+    return menu(occasion_id, day)
+
+
+def clear_menu(occasion_id: str, date_str: str = None) -> dict:
+    """Release the night entirely, back to whatever the composer would say."""
+    from services import meals
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    day = date_str or meal_date(o)
+    meals.reset_plate(day, force=True)
+    return menu(occasion_id, day)
+
+
+def add_dishes(occasion_id: str, description: str) -> dict:
+    """Add dishes that belong to THIS occasion and nowhere else.
+
+    The whole point: curating a Thanksgiving menu must not put turkey, stuffing
+    and cranberry sauce into the list a family looks at on a Tuesday. Anything
+    added here is born `scope='occasion'` carrying the occasion's tags, so it is
+    eligible inside the window and invisible outside it — the same treatment the
+    per-dish toggle applies, without anybody having to remember to apply it.
+    """
+    from services import meals
+    o = storage.get_occasion(occasion_id)
+    if not o:
+        return {'error': 'no such occasion'}
+    res = meals.add_dishes_from_text(description)
+    if res.get('error'):
+        return res
+    tags = [str(t).strip().lower() for t in (o.get('dish_tags') or [])
+            if str(t).strip()]
+    if not tags:
+        # An occasion with no tags of its own still needs its dishes marked, or
+        # they fall back into the everyday pool the moment they are saved.
+        tags = [(o.get('kind') or 'occasion').lower()]
+        storage.update_occasion(occasion_id, {'dish_tags': tags})
+    for d in (res.get('added') or []):
+        merged = sorted({*(d.get('tags') or []), *tags})
+        storage.update_dish(d['id'], {'scope': 'occasion', 'tags': merged})
+        d['scope'], d['tags'] = 'occasion', merged
+    return res
+
+
 # --- O3: the planning intelligence -------------------------------------------
 #
 # Everything above this line is nouns, and every noun is a logistics noun. What
