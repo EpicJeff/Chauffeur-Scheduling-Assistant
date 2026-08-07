@@ -504,6 +504,45 @@
                         typed as a whole meal, a main, a side or a dessert. Plates get
                         built from these; how many sides is a setting, not a rule.
                     </p>
+                    <!-- The kitchen lives HERE, not on the config page: it is a
+                         fact about how this household cooks, and it belongs next
+                         to the plates it governs. First deliberate step of
+                         moving settings onto the surface that owns them
+                         (2026-08-07) — it saves only its own three keys, since
+                         /api/settings has always merged rather than replaced. -->
+                    <div id="kitchen" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-4">
+                        <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                            🍳 The kitchen
+                        </div>
+                        <div class="flex flex-wrap items-center gap-4">
+                            <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                Ovens
+                                <input type="number" min="1" max="4" x-model.number="kitchen.ovens"
+                                    @change="saveKitchen()"
+                                    class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                Burners
+                                <input type="number" min="1" max="12" x-model.number="kitchen.burners"
+                                    @change="saveKitchen()"
+                                    class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                Usually cooking
+                                <input type="number" min="1" max="6" x-model.number="kitchen.cooks"
+                                    @change="saveKitchen()"
+                                    class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 w-20 text-white focus:outline-none focus:border-pink-400/60">
+                            </label>
+                        </div>
+                        <p class="text-[11px] text-gray-500 mt-2">
+                            What the kitchen can run at once. These defaults are exactly how a
+                            weeknight plate has always been timed — one pair of hands working
+                            through the dishes in turn with the oven going alongside. They start
+                            to matter when you cook for a crowd: two dishes wanting the same oven
+                            at different temperatures cannot share it however much room is left.
+                        </p>
+                    </div>
+
                     <!-- Holiday and party food does not belong in the Tuesday
                          list. It is HIDDEN, not gone: the toggle says how many
                          are behind it, because a filter that silently swallows
@@ -1031,6 +1070,7 @@
                 repertoire: [], showRepertoire: false, mealDraft: '', mealBusy: false,
                 showOccasionDishes: false,
                 runSheet: null, runSheetBusy: false,
+                kitchen: { ovens: 1, burners: 4, cooks: 1 },
                 // trailing-slash URLs need to climb one level (HA ingress)
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
@@ -1046,6 +1086,7 @@
                     this.loadWeek();
                     this.loadTrip();
                     this.loadWalmart();
+                    this.loadKitchen();
                     if (this.isKiosk) this.loadStaples();
                     // Shared mutable document: two people at the store, or one
                     // adding while another shops. The SSE clock is bumped by
@@ -1851,6 +1892,36 @@
                     }
                     if (p.edited) bits.push('yours');
                     return bits.join(' · ');
+                },
+
+                async loadKitchen() {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings');
+                        if (!r.ok) return;
+                        const d = await r.json();
+                        this.kitchen = {
+                            ovens: d.kitchen_ovens != null ? d.kitchen_ovens : 1,
+                            burners: d.kitchen_burners != null ? d.kitchen_burners : 4,
+                            cooks: d.kitchen_cooks != null ? d.kitchen_cooks : 1
+                        };
+                    } catch (e) { /* defaults are the old behaviour exactly */ }
+                },
+
+                // Sends THREE keys, not eighty-three. /api/settings has always
+                // merged with exclude_unset, so a surface owning its own
+                // settings needs no new endpoint - only the discipline of
+                // sending what it owns.
+                async saveKitchen() {
+                    await fetch(this.apiBase + 'api/settings', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            kitchen_ovens: Math.max(1, parseInt(this.kitchen.ovens, 10) || 1),
+                            kitchen_burners: Math.max(1, parseInt(this.kitchen.burners, 10) || 4),
+                            kitchen_cooks: Math.max(1, parseInt(this.kitchen.cooks, 10) || 1)
+                        })
+                    });
+                    await this.loadPlate();
+                    await this.loadWeek();
                 },
 
                 async toggleRunSheet() {

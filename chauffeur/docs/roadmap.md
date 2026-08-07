@@ -3,8 +3,8 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-06 (v2.89.0 — the occasions arc designed;
-meals arc M1–M11 shipped, the old "meals" cut reversed).
+up cold. Last updated: 2026-08-07 (v2.96.0 — the occasions arc SHIPPED O0–O3;
+next up: config is past its limit).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -329,42 +329,47 @@ has no visibility scoping and lists render on kitchen kiosks, so `hidden_from`
 must be designed first, enforced at storage and on every surface, or gifts stay
 out.
 
-## Config is past its limit (raised 2026-08-07, do this before the next arc)
+## Config decentralisation (STARTED 2026-08-07, v2.97.0 — continue this)
 
-Measured when the O0 kitchen block went in: **`templates/config.html` is 5,631
-lines and `Settings` carries 83 fields**, all saved through one `saveSettings`
-that PUTs the entire object. Every arc has added to it and none has ever taken
-anything out. The family's words: it either needs a massive reorganization or
-a new paradigm, and something needs to happen soon or it becomes a nightmare
-to use.
+Measured when the O0 kitchen block went in: **`templates/config.html` was 5,631
+lines and `Settings` carries 83 fields**, all saved through one whole-object
+POST. Every arc added to it and none ever took anything out.
 
-The observation that should shape the fix: **the app has already been
-decentralizing settings for a year without calling it that.** ICS feeds live
-on the driver/passenger form. Pairings live on the dish row. Meal rules live
-in the "How we eat" panel. Bus fields live on the member card. Every one of
-those was put where the family is already looking, and every one of them
-works. What is left in config.html is the residue — the things that never got
-a feature surface, plus everything nobody found a home for.
+The observation that shaped the fix: **the app had been decentralising settings
+for a year without calling it that.** ICS feeds live on the driver form.
+Pairings live on the dish row. Meal rules live in the "How we eat" panel. Bus
+fields live on the member card. Every one went where the family was already
+looking, and every one works. config.html is the residue.
 
-So the paradigm shift is half-finished, not unstarted. Proposed shape (not
-yet decided):
+**Shipped as the foundation (v2.97.0):**
+- `services/settings_registry.py` — all 83 keys declared with label, searchable
+  help, group, and the page + anchor that OWNS each one. `audit()` fails on any
+  drift and a test calls it, because an index that quietly falls behind the
+  model is worse than none: it would claim to be complete while hiding whatever
+  was added last.
+- **`/settings` — "Find a setting"**, a searchable index over the registry.
+  This is the thing decentralisation otherwise destroys: somewhere to look when
+  you half-remember a setting but not which page owns it. Secrets show as
+  set/not-set and never as values.
+- **The kitchen moved to Shopping & Meals** as the pattern proof, saving only
+  its own three keys — `/api/settings` has always merged with `exclude_unset`,
+  so a feature-owned surface needs no new endpoint, only the discipline of
+  sending what it owns. config.html keeps a pointer, because a setting that
+  silently vanishes from where somebody last saw it is worse than one in the
+  wrong place.
 
-- **Settings move to the surface that owns the feature** — kitchen capacities
-  onto Shopping & Meals beside the plate they govern, quiet hours onto the kid
-  surfaces, and so on. This is the established pattern, not a new one.
-- **Config becomes a generated INDEX, not a form.** A settings registry (key,
-  label, help text, group, owning page) rendered as one searchable list that
-  deep-links to the surface where each setting actually lives. That keeps the
-  one thing decentralization otherwise destroys: a place to look when you do
-  not know which page owns the thing you half-remember.
-- **`Settings` stops being one 83-field model** saved as a whole. Per-group
-  PATCH, the way `ShoppingItem` already refuses a whole-list PUT.
-- Alternative if that is too much at once: a pure reorganization of
-  config.html into the same groups first, which buys maybe a year and is
-  strictly less work — but it is the option that gets re-litigated later.
+**What remains — move a group at a time, registry entry first:**
+- Kids & school → the member card / kid surfaces (quiet hours, digest times,
+  school year and calendar).
+- Meals & shopping → the rest of the meals block onto Shopping & Meals.
+- Cars → the car entity pages. Intake creds → `/intake` (already its own page).
+- Digests → wherever the digest is configured; Maps/quotas and AI keys are the
+  natural residue and can legitimately stay on config as "plumbing".
+- Then config.html becomes plumbing + a link to the index, and the 5,600 lines
+  come down with it.
 
-Do not fold this into an arc as a side quest; it is its own piece of work and
-it touches every page that has ever added a setting.
+Rule going forward: **a new setting is registered in the registry and placed on
+its feature's surface, never appended to config.html.**
 
 ## Nice-to-haves / polish
 

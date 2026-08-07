@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Find a setting</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: { sans: ['Inter', 'sans-serif'] },
+                        colors: { gray: { 900: '#111827', 800: '#1F2937', 700: '#374151', 600: '#4B5563' } }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+        <div x-data="settingsIndex()" x-init="load()" class="max-w-4xl mx-auto px-4 py-6">
+
+            <h2 class="text-2xl font-black text-white mb-1">🔎 Find a setting</h2>
+            <p class="text-sm text-gray-500 mb-5">
+                Settings live on the page that owns them — the kitchen with the meals,
+                the mailbox with intake, school hours on the person they belong to.
+                This is the list of all of them and where each one is, so you never
+                have to remember which page you left something on.
+            </p>
+
+            <input x-model="q" @input.debounce.200ms="load()" type="search"
+                placeholder="oven, quiet hours, shop day, api key…"
+                class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60 mb-5">
+
+            <div x-show="!groups.length && !loading" class="text-sm text-gray-500">
+                Nothing matches that. Try a word you'd say out loud — "cake", "bus",
+                "oven", "digest".
+            </div>
+
+            <div class="space-y-5">
+                <template x-for="g in groups" :key="g.group">
+                    <div>
+                        <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                            <span x-text="g.icon"></span> <span x-text="g.title"></span>
+                        </div>
+                        <div class="space-y-1.5">
+                            <template x-for="s in g.settings" :key="s.key">
+                                <a :href="linkFor(s)"
+                                    class="block bg-gray-800 rounded-xl border border-gray-700 px-4 py-2.5 hover:border-pink-400/60">
+                                    <div class="flex items-baseline justify-between gap-3">
+                                        <span class="text-sm font-semibold text-gray-200" x-text="s.label"></span>
+                                        <span class="text-[11px] font-mono shrink-0"
+                                            :class="s.is_secret ? 'text-gray-600' : 'text-sky-300'"
+                                            x-text="shown(s)"></span>
+                                    </div>
+                                    <div class="text-[11px] text-gray-500 mt-0.5" x-text="s.help"></div>
+                                    <div class="text-[10px] text-gray-600 mt-1">
+                                        <span x-text="s.key"></span>
+                                        <span x-text="' · on the ' + pageName(s.page) + ' page'"></span>
+                                    </div>
+                                </a>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>
+        function settingsIndex() {
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                groups: [], q: '', loading: true,
+
+                async load() {
+                    this.loading = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings/index?q='
+                            + encodeURIComponent(this.q));
+                        this.groups = r.ok ? (await r.json()).groups : [];
+                    } catch (e) { this.groups = []; }
+                    this.loading = false;
+                },
+
+                pageName(p) {
+                    return { config: 'settings', shopping: 'Shopping & Meals',
+                             intake: 'Intake', chores: 'Chores',
+                             routines: 'Routines' }[p] || p;
+                },
+
+                // The anchor travels as a hash so the owning page can scroll to
+                // its own block — a link that lands you on the right page but the
+                // wrong end of it has only moved the hunting.
+                linkFor(s) {
+                    return this.apiBase + s.page + '#' + s.anchor;
+                },
+
+                shown(s) {
+                    const v = s.value;
+                    if (v === null || v === undefined || v === '') return '—';
+                    if (Array.isArray(v)) return v.length ? v.length + ' set' : '—';
+                    if (typeof v === 'boolean') return v ? 'on' : 'off';
+                    if (typeof v === 'object') return 'set';
+                    return String(v).length > 28 ? String(v).slice(0, 28) + '…' : String(v);
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>

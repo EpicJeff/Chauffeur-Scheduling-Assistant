@@ -801,6 +801,10 @@ def errands(request: Request):
 def occasions_page(request: Request):
     return templates.TemplateResponse(request=request, name="occasions.html")
 
+@app.get("/settings")
+def settings_page(request: Request):
+    return templates.TemplateResponse(request=request, name="settings.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     response = templates.TemplateResponse(request=request, name="chores.html")
@@ -7883,6 +7887,19 @@ def get_settings():
             
     settings['is_home_assistant'] = os.path.exists('/data/options.json')
     return settings
+
+@app.get("/api/settings/index")
+def settings_index(q: Optional[str] = None):
+    """Every setting, grouped, with where it lives.
+
+    Decentralising settings onto the surfaces that own them destroys exactly
+    one thing a big config page was good at: somewhere to look when you
+    half-remember a setting but not which page owns it. This is that place.
+    """
+    from services import settings_registry as _reg
+    current = storage.get_settings() or {}
+    return {'groups': _reg.search(q, current) if q else _reg.index(current),
+            'query': q or ''}
 
 @app.post("/api/settings")
 def update_settings(settings: Settings, background_tasks: BackgroundTasks):

@@ -125,6 +125,19 @@
 
             <!-- Right aligned elements -->
             <div class="flex items-center gap-2">
+                <!-- Find a setting. Sits BESIDE the config gear rather than
+                     inside it: decentralising settings onto their owning pages
+                     removes the one thing a big config page was good at, and
+                     this is what replaces it. -->
+                <div class="hidden md:flex items-center">
+                    <a href="settings" title="Find a setting"
+                        class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700 transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </a>
+                </div>
                 <!-- Settings Icon (left of the Control Center toggle) -->
                 <div class="hidden md:flex items-center" id="settings-nav-item">
                     <a href="config"
@@ -226,7 +239,7 @@
                         'errands': 'errands', 'shopping': 'shopping', 'chores': 'chores',
                         'routines': 'routines', 'intake': 'intake',
                         'trips': 'trips', 'map': 'map', 'moments': 'moments',
-                        'occasions': 'occasions'
+                        'occasions': 'occasions', 'settings': 'settings'
                     };
                     document.querySelectorAll('nav a[href]').forEach(a => {
                         // hrefs were rewritten above to full paths, which under
@@ -347,6 +360,10 @@
                         d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                 </svg>
                 Settings
+            </a>
+            <a href="settings"
+                class="{% if request.url.path.endswith('/settings') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+                🔎 Find a setting
             </a>
             
             <div class="h-px bg-gray-800 my-2"></div>
