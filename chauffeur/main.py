@@ -752,6 +752,40 @@ def dashboard(request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
+@app.get("/home")
+def home_board_page(request: Request):
+    """The wall-panel home screen: what is happening now, then a grid of
+    glances. Opened with ?panel=true it is the panel's resting state; opened
+    in an ordinary browser it is also where the panel gets configured (the
+    tiles are picked while you look at them)."""
+    response = templates.TemplateResponse(request=request, name="home.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+@app.get("/api/home_board")
+def home_board_api(widgets: Optional[str] = None):
+    """The whole board in ONE payload. Six tiles fetching themselves would be
+    six requests per tick on a display that runs sixteen hours a day; this is
+    one, cached briefly so a second panel costs nothing."""
+    from services import home_board
+    return home_board.build(
+        requested=widgets,
+        kid_digest_fn=lambda: _build_kid_digests(_kid_digest_default_date()))
+
+@app.get("/api/home_board/catalog")
+def home_board_catalog():
+    """The pickable tiles, for the panel setup UI."""
+    from services import home_board
+    return home_board.catalog()
+
+@app.get("/api/panel/profile")
+def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None):
+    """What this panel shows, resolved: URL params, then the stored profile,
+    then the defaults. The shelf calls this so a display pointed at a bare
+    /home?panel=true still comes up configured."""
+    from services import home_board
+    return home_board.profile(tabs=tabs, widgets=widgets)
+
 @app.get("/app")
 def driver_app(request: Request):
     # no-store like the dashboard: iOS caches installed-PWA start pages hard,

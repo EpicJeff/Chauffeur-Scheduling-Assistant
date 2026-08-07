@@ -1,4 +1,28 @@
 <script>
+    // --- Panel mode (?panel=true), resolved BEFORE anything reads the URL.
+    //
+    // A wall panel is a kiosk that you touch. Rather than teach ten pages a
+    // second flag, panel mode WRITES kiosk=true into the address and lets
+    // every existing `?kiosk=true` check light up unchanged — the flag is
+    // already threaded through nav, dashboard, chores, routines, shopping,
+    // moments and calendar, and re-deriving that in each of them would be
+    // seven chances to disagree. This has to happen here because ha_theme is
+    // the first thing in every page's <head>; by DOMContentLoaded the nav and
+    // the Alpine components have already made up their minds.
+    //
+    // The param is then carried across links by nav.html's existing
+    // propagation, so the whole panel stays in panel mode by walking around.
+    (function () {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get('panel') !== 'true') return;
+        document.documentElement.setAttribute('data-panel', '');
+        if (p.get('kiosk') !== 'true') {
+            p.set('kiosk', 'true');
+            history.replaceState(null, '',
+                window.location.pathname + '?' + p.toString() + window.location.hash);
+        }
+    })();
+
     const urlParamsTheme = new URLSearchParams(window.location.search);
     const themeParam = urlParamsTheme.get('theme');
     const isKioskTheme = urlParamsTheme.get('kiosk') === 'true';
@@ -40,6 +64,56 @@
     }
 </script>
 <style>
+    /* --- Panel mode: the whole app, sized for a finger.
+       The lever is the ROOT FONT SIZE, not a pile of per-control overrides.
+       Tailwind's type scale and its padding scale are both in rem, so moving
+       16px to 19px scales every button, every gap and every tap target
+       together, and nothing reflows into a layout it was never tested in.
+       Blanket `min-height: 44px` on every anchor was the alternative and it
+       wrecks inline links on eleven pages. */
+    html[data-panel] {
+        font-size: 19px;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    html[data-panel] body {
+        /* A wall panel has no back button and nowhere to rubber-band to. */
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        /* Room for the shelf, which is fixed over the bottom of the page. */
+        padding-bottom: 5.5rem;
+    }
+
+    /* Typing still has to work — the no-select rule is about stray long
+       presses on labels, not about the errand box. */
+    html[data-panel] input,
+    html[data-panel] textarea,
+    html[data-panel] [contenteditable] {
+        -webkit-user-select: text;
+        user-select: text;
+    }
+
+    /* Controls that are still too small after the scale: a checkbox is 13px
+       at any root size, and checking one off is the main thing a kid does at
+       the panel. */
+    html[data-panel] input[type="checkbox"],
+    html[data-panel] input[type="radio"] {
+        width: 1.5rem;
+        height: 1.5rem;
+    }
+
+    html[data-panel] button,
+    html[data-panel] [role="button"] {
+        min-height: 2.75rem;
+    }
+
+    /* The top bar is gone in panel mode, so headers that stick BELOW it would
+       otherwise float a nav-height gap down from the top. */
+    html[data-panel] .sticky.top-\[4rem\] {
+        top: 0 !important;
+    }
+
     body.ha-theme {
         background-color: var(--ha-bg, #111111) !important;
         color: var(--ha-primary-text, #e1e1e1) !important;

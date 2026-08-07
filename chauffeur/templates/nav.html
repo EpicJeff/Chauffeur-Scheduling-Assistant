@@ -1,4 +1,53 @@
-<nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-[60] w-full">
+{#
+  ONE list of destinations, rendered three ways.
+
+  This file used to carry the same twelve links twice — once as the desktop
+  row, once as the mobile menu — hand-copied, so every new page was two edits
+  and the two lists had already drifted. Adding the wall panel's bottom shelf
+  would have made it three. The items live in `NAV_ITEMS` now and the three
+  renderings are loops over it; a new page is one entry.
+
+  `match` is the substring of the request path that means "you are here". It
+  has to be a substring rather than an exact path because under Home Assistant
+  ingress every URL carries a token prefix (/api/hassio_ingress/TOKEN/chores).
+  `short` is the shelf label — "Shopping & Meals" does not fit under a 32px
+  icon, and the shelf is the surface with the least room and the most need to
+  be readable across a kitchen.
+#}
+{% set NAV_ITEMS = [
+    {'slug': 'home', 'href': 'home', 'label': 'Home', 'short': 'Home', 'match': '/home',
+     'paths': ['M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6']},
+    {'slug': 'schedule', 'href': 'dashboard_v2', 'label': 'Schedule', 'short': 'Drives', 'match': 'dashboard_v2',
+     'paths': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']},
+    {'slug': 'calendar', 'href': 'calendar', 'label': 'Calendar', 'short': 'Calendar', 'match': '/calendar',
+     'paths': ['M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']},
+    {'slug': 'errands', 'href': 'errands', 'label': 'Errands', 'short': 'Errands', 'match': '/errands',
+     'paths': ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4']},
+    {'slug': 'shopping', 'href': 'shopping', 'label': 'Shopping & Meals', 'short': 'Meals', 'match': '/shopping',
+     'paths': ['M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z']},
+    {'slug': 'occasions', 'href': 'occasions', 'label': 'Occasions', 'short': 'Occasions', 'match': '/occasions',
+     'paths': ['M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7']},
+    {'slug': 'chores', 'href': 'chores', 'label': 'Chores', 'short': 'Chores', 'match': '/chores',
+     'paths': ['M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z']},
+    {'slug': 'routines', 'href': 'routines', 'label': 'Routines', 'short': 'Routines', 'match': '/routines',
+     'paths': ['M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15']},
+    {'slug': 'intake', 'href': 'intake', 'label': 'Intake', 'short': 'Intake', 'match': '/intake',
+     'paths': ['M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z']},
+    {'slug': 'trips', 'href': 'trips', 'label': 'Trips', 'short': 'Trips', 'match': '/trip',
+     'paths': ['M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z']},
+    {'slug': 'map', 'href': 'map', 'label': 'Map', 'short': 'Map', 'match': '/map',
+     'paths': ['M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7']},
+    {'slug': 'moments', 'href': 'moments', 'label': 'Moments', 'short': 'Moments', 'match': '/moments',
+     'paths': ['M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z',
+               'M15 13a3 3 0 11-6 0 3 3 0 016 0z']}
+] %}
+{% set _path = request.url.path %}
+
+{# The <nav> element is a bare wrapper so that the top bar and the panel shelf
+   are siblings inside it: `?tabs=none` hides the nav and both go with it, and
+   every existing `nav a[href]` selector keeps working. #}
+<nav>
+<div id="top-nav-bar" class="bg-gray-900 border-b border-gray-800 sticky top-0 z-[60] w-full">
     <div class="px-4 mx-auto sm:px-6 lg:px-8">
         <div class="flex items-center justify-between h-16">
             <div class="flex items-center">
@@ -14,107 +63,17 @@
                 </div>
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-4">
-                        <a href="dashboard_v2"
-                            class="{% if 'dashboard_v2' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
+                        {% for item in NAV_ITEMS %}
+                        <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+                            class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
-                                </path>
+                                {% for d in item.paths %}
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ d }}"></path>
+                                {% endfor %}
                             </svg>
-                            Schedule
+                            {{ item.label }}
                         </a>
-                        <a href="calendar"
-                            class="{% if 'calendar' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
-                                </path>
-                            </svg>
-                            Calendar
-                        </a>
-                        <a href="errands"
-                            class="{% if 'errands' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
-                                </path>
-                            </svg>
-                            Errands
-                        </a>
-                        <a href="shopping"
-                            class="{% if 'shopping' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">
-                                </path>
-                            </svg>
-                            Shopping &amp; Meals
-                        </a>
-                        <a href="occasions"
-                            class="{% if 'occasions' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7">
-                                </path>
-                            </svg>
-                            Occasions
-                        </a>
-                        <a href="chores"
-                            class="{% if request.url.path.endswith('/chores') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z">
-                                </path>
-                            </svg>
-                            Chores
-                        </a>
-                        <a href="routines"
-                            class="{% if request.url.path.endswith('/routines') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-                                </path>
-                            </svg>
-                            Routines
-                        </a>
-                        <a href="intake"
-                            class="{% if request.url.path.endswith('/intake') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
-                                </path>
-                            </svg>
-                            Intake
-                        </a>
-                        <a href="trips"
-                            class="{% if 'trips' in request.url.path or 'trip' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
-                                </path>
-                            </svg>
-                            Trips
-                        </a>
-                        <a href="map"
-                            class="{% if request.url.path.endswith('/map') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7">
-                                </path>
-                            </svg>
-                            Map
-                        </a>
-                        <a href="moments"
-                            class="{% if request.url.path.endswith('/moments') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z">
-                                </path>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                            </svg>
-                            Moments
-                        </a>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
@@ -126,7 +85,7 @@
                      removes the one thing a big config page was good at, and
                      this is what replaces it. -->
                 <div class="hidden md:flex items-center" id="find-setting-nav-item">
-                    <a href="settings" title="Find a setting"
+                    <a href="settings" title="Find a setting" data-slug="settings"
                         class="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -175,192 +134,23 @@
             </div>
         </div>
     </div>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const urlParams = new URLSearchParams(window.location.search);
-            const isKiosk = urlParams.get('kiosk') === 'true';
-
-            // Append ALL query parameters to nav links (e.g., kiosk=true, theme=ha)
-            document.querySelectorAll('a[href]').forEach(link => {
-                if (link.href && !link.href.includes('javascript:') && !link.href.includes('#')) {
-                    const url = new URL(link.href, window.location.origin);
-                    for (const [key, value] of urlParams.entries()) {
-                        url.searchParams.set(key, value);
-                    }
-                    link.href = url.pathname + url.search;
-                }
-            });
-
-            if (isKiosk) {
-                // Kiosk is a display surface: no settings, no control center.
-                const settingsIcon = document.getElementById('settings-nav-item');
-                if (settingsIcon) settingsIcon.style.display = 'none';
-                const mobileSettingsIcon = document.getElementById('mobile-settings-nav-item');
-                if (mobileSettingsIcon) mobileSettingsIcon.style.display = 'none';
-                const findSetting = document.getElementById('find-setting-nav-item');
-                if (findSetting) findSetting.style.display = 'none';
-                const mobileFindSetting = document.getElementById('mobile-find-setting-nav-item');
-                if (mobileFindSetting) mobileFindSetting.style.display = 'none';
-                const ccIcon = document.getElementById('control-center-nav-item');
-                if (ccIcon) ccIcon.style.display = 'none';
-                const mobileCcBtn = document.getElementById('mobile-cc-nav-item');
-                if (mobileCcBtn) mobileCcBtn.style.display = 'none';
-
-                // Intake is an admin surface (mail approvals, IMAP settings) —
-                // hide it on kiosk displays unless a card explicitly opts back
-                // in via ?tabs=...,intake.
-                const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
-                    .split(',').map(s => s.trim());
-                if (!kioskTabs.includes('intake')) {
-                    document.querySelectorAll('nav a[href]').forEach(a => {
-                        const path = (a.getAttribute('href') || '').split('?')[0];
-                        const page = path.split('/').filter(Boolean).pop() || '';
-                        if (page === 'intake') a.style.display = 'none';
-                    });
-                }
-            }
-
-            // Per-embed tab filtering, aimed at HA iframe cards: the URL is
-            // each card's own config channel (params propagate across links).
-            //   ?tabs=none                -> no nav bar at all (pure card)
-            //   ?tabs=schedule,chores     -> only those tabs visible
-            // Slugs: schedule, calendar, errands, shopping, chores, routines,
-            // intake, trips, map, moments. Unknown/empty values are ignored.
-            const tabsParam = urlParams.get('tabs');
-            if (tabsParam !== null) {
-                const navEl = document.querySelector('nav');
-                if (tabsParam.trim() === '' || tabsParam.trim().toLowerCase() === 'none') {
-                    if (navEl) navEl.style.display = 'none';
-                } else {
-                    const allowed = new Set(tabsParam.split(',')
-                        .map(s => s.trim().toLowerCase()).filter(Boolean));
-                    const SLUGS = {
-                        'dashboard_v2': 'schedule', 'calendar': 'calendar',
-                        'errands': 'errands', 'shopping': 'shopping', 'chores': 'chores',
-                        'routines': 'routines', 'intake': 'intake',
-                        'trips': 'trips', 'map': 'map', 'moments': 'moments',
-                        'occasions': 'occasions', 'settings': 'settings'
-                    };
-                    document.querySelectorAll('nav a[href]').forEach(a => {
-                        // hrefs were rewritten above to full paths, which under
-                        // HA ingress carry a token prefix — match the LAST
-                        // path segment, not the whole path.
-                        const path = (a.getAttribute('href') || '').split('?')[0];
-                        const page = path.split('/').filter(Boolean).pop() || '';
-                        const slug = SLUGS[page];
-                        if (slug && !allowed.has(slug)) a.style.display = 'none';
-                    });
-                }
-            }
-        });
-    </script>
 
     <!-- Mobile menu, show/hide based on menu state. -->
     <div class="md:hidden hidden absolute top-16 left-0 w-full bg-gray-900 border-b border-gray-800 shadow-2xl z-[70]" id="mobile-menu">
         <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3 flex flex-col">
-            <a href="dashboard_v2"
-                class="{% if 'dashboard_v2' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+            {% for item in NAV_ITEMS %}
+            <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+                class="{% if item.match in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
-                    </path>
+                    {% for d in item.paths %}
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ d }}"></path>
+                    {% endfor %}
                 </svg>
-                Schedule
+                {{ item.label }}
             </a>
-            <a href="calendar"
-                class="{% if 'calendar' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
-                    </path>
-                </svg>
-                Calendar
-            </a>
-            <a href="errands"
-                class="{% if 'errands' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4">
-                    </path>
-                </svg>
-                Errands
-            </a>
-            <a href="shopping"
-                class="{% if 'shopping' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z">
-                    </path>
-                </svg>
-                Shopping &amp; Meals
-            </a>
-            <a href="occasions"
-                class="{% if 'occasions' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7">
-                    </path>
-                </svg>
-                Occasions
-            </a>
-            <a href="chores"
-                class="{% if request.url.path.endswith('/chores') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z">
-                    </path>
-                </svg>
-                Chores
-            </a>
-            <a href="routines"
-                class="{% if request.url.path.endswith('/routines') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-                    </path>
-                </svg>
-                Routines
-            </a>
-            <a href="intake"
-                class="{% if request.url.path.endswith('/intake') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
-                    </path>
-                </svg>
-                Intake
-            </a>
-            <a href="trips"
-                class="{% if 'trips' in request.url.path or 'trip' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
-                    </path>
-                </svg>
-                Trips
-            </a>
-            <a href="map"
-                class="{% if request.url.path.endswith('/map') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7">
-                    </path>
-                </svg>
-                Map
-            </a>
-            <a href="moments"
-                class="{% if request.url.path.endswith('/moments') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z">
-                    </path>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                </svg>
-                Moments
-            </a>
+            {% endfor %}
             <a href="config" id="mobile-settings-nav-item"
-                class="{% if 'config' in request.url.path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+                class="{% if 'config' in _path %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
@@ -370,13 +160,13 @@
                 </svg>
                 Settings
             </a>
-            <a href="settings" id="mobile-find-setting-nav-item"
-                class="{% if request.url.path.endswith('/settings') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
+            <a href="settings" id="mobile-find-setting-nav-item" data-slug="settings"
+                class="{% if _path.endswith('/settings') %}bg-gray-800 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2">
                 🔎 Find a setting
             </a>
-            
+
             <div class="h-px bg-gray-800 my-2"></div>
-            
+
             <button id="mobile-cc-nav-item"
                 onclick="if(typeof toggleOperationsSidebar === 'function'){ document.getElementById('mobile-menu').classList.add('hidden'); toggleOperationsSidebar(); }"
                 class="text-indigo-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium flex items-center gap-2 text-left w-full">
@@ -388,4 +178,157 @@
             </button>
         </div>
     </div>
+</div>
+
+{#
+  THE SHELF (?panel=true). A wall panel is reached with a hand, not a mouse:
+  the desktop row is twelve 14px links with 16px icons, every one of them well
+  under the 44px a finger needs, and it does not collapse to the hamburger
+  because a 10" tablet in landscape clears the `md:` breakpoint.
+
+  Bottom edge, because that is where a hand already is on a panel mounted at
+  chest height, and because it is the one screen edge no page content fights
+  for. The logo goes with it — a wall panel does not need to be told which app
+  it is running, and Home is a destination rather than a wordmark.
+
+  Hidden until the profile resolves so the family never sees eleven buttons
+  flash down to six.
+#}
+<div id="panel-shelf"
+    class="hidden fixed bottom-0 left-0 right-0 z-[70] bg-gray-900/95 backdrop-blur border-t border-gray-800 px-2 py-1.5">
+    <div class="flex items-stretch gap-1" id="panel-shelf-items">
+        {% for item in NAV_ITEMS %}
+        <a href="{{ item.href }}" data-slug="{{ item.slug }}"
+            class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if item.match in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
+            <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                {% for d in item.paths %}
+                <path stroke-linecap="round" stroke-linejoin="round" d="{{ d }}"></path>
+                {% endfor %}
+            </svg>
+            <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ item.short }}</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
 </nav>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const isKiosk = urlParams.get('kiosk') === 'true';
+        const isPanel = urlParams.get('panel') === 'true';
+        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+
+        // Append ALL query parameters to nav links (e.g., kiosk=true, theme=ha,
+        // panel=true) — this is what keeps a panel in panel mode as somebody
+        // walks around it.
+        document.querySelectorAll('a[href]').forEach(link => {
+            if (link.href && !link.href.includes('javascript:') && !link.href.includes('#')) {
+                const url = new URL(link.href, window.location.origin);
+                for (const [key, value] of urlParams.entries()) {
+                    url.searchParams.set(key, value);
+                }
+                link.href = url.pathname + url.search;
+            }
+        });
+
+        if (isKiosk) {
+            // Kiosk is a display surface: no settings, no control center.
+            ['settings-nav-item', 'mobile-settings-nav-item', 'find-setting-nav-item',
+             'mobile-find-setting-nav-item', 'control-center-nav-item', 'mobile-cc-nav-item']
+                .forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = 'none';
+                });
+
+            // Intake is an admin surface (mail approvals, IMAP settings) —
+            // hide it on kiosk displays unless a card explicitly opts back
+            // in via ?tabs=...,intake.
+            const kioskTabs = (urlParams.get('tabs') || '').toLowerCase()
+                .split(',').map(s => s.trim());
+            if (!kioskTabs.includes('intake')) {
+                document.querySelectorAll('[data-slug="intake"]')
+                    .forEach(a => { a.style.display = 'none'; });
+            }
+        }
+
+        // Which destinations this surface shows. `allowed` of null means "all".
+        // Slugs now come off the elements themselves (data-slug) rather than
+        // being re-derived from hrefs — under ingress an href is a token path,
+        // and mapping it back to a page name was a second source of truth.
+        function applyTabs(allowed) {
+            if (allowed === null) return;
+            document.querySelectorAll('[data-slug]').forEach(a => {
+                if (!allowed.has(a.dataset.slug)) a.style.display = 'none';
+            });
+        }
+
+        // One request, shared by the shelf and the idle timer — they both want
+        // the same answer and asking twice on every page load is a request per
+        // navigation for nothing.
+        let _profile = null;
+        function panelProfile() {
+            if (!_profile) {
+                _profile = fetch(apiBase + 'api/panel/profile')
+                    .then(r => r.ok ? r.json() : null)
+                    .catch(() => null);
+            }
+            return _profile;
+        }
+
+        function showShelf() {
+            const shelf = document.getElementById('panel-shelf');
+            const bar = document.getElementById('top-nav-bar');
+            if (bar) bar.style.display = 'none';
+            if (shelf) shelf.classList.remove('hidden');
+        }
+
+        // Per-embed tab filtering, aimed at HA iframe cards: the URL is
+        // each card's own config channel (params propagate across links).
+        //   ?tabs=none                -> no nav bar at all (pure card)
+        //   ?tabs=schedule,chores     -> only those tabs visible
+        // Slugs: home, schedule, calendar, errands, shopping, occasions,
+        // chores, routines, intake, trips, map, moments. Unknown values are
+        // ignored.
+        const tabsParam = urlParams.get('tabs');
+        if (tabsParam !== null && (tabsParam.trim() === '' || tabsParam.trim().toLowerCase() === 'none')) {
+            const navEl = document.querySelector('nav');
+            if (navEl) navEl.style.display = 'none';       // takes the shelf with it
+        } else if (tabsParam !== null) {
+            applyTabs(new Set(tabsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)));
+            if (isPanel) showShelf();
+        } else if (isPanel) {
+            // No tabs in the URL: this is a standalone panel, so ask the
+            // server what THIS panel is configured to show. A display bolted
+            // to a wall should not need a two-hundred-character bookmark.
+            panelProfile()
+                .then(p => { if (p && p.tabs) applyTabs(new Set(p.tabs)); })
+                .finally(showShelf);
+        }
+
+        // Idle return. What makes the panel an appliance rather than a browser:
+        // whatever somebody wandered off into, the wall goes back to being the
+        // wall. Deliberately not applied on /home — there is nowhere to return
+        // to from there, and a page that reloads itself every few minutes for
+        // no reason is just a flicker.
+        if (isPanel) {
+            const here = window.location.pathname.split('/').filter(Boolean).pop() || '';
+            if (here !== 'home') {
+                panelProfile()
+                    .then(p => {
+                        const secs = p && p.idle_seconds;
+                        if (!secs) return;
+                        let timer;
+                        const goHome = () => { window.location.href = 'home' + window.location.search; };
+                        const reset = () => {
+                            clearTimeout(timer);
+                            timer = setTimeout(goHome, secs * 1000);
+                        };
+                        ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll']
+                            .forEach(ev => document.addEventListener(ev, reset, { passive: true }));
+                        reset();
+                    });
+            }
+        }
+    });
+</script>

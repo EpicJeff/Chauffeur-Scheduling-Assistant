@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body { background-color: #0b1020; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+        /* The clock is the one thing read from across the room. It scales with
+           the viewport rather than the root font size so it stays enormous on
+           a wall panel and stays sane in a browser tab. */
+        .hero-clock { font-size: clamp(2.75rem, 9vw, 6rem); line-height: 0.95; }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    {% include 'nav.html' %}
+
+    <div x-data="homeBoard()" x-init="start()" x-cloak class="px-4 py-4 md:px-6 md:py-6 max-w-[1600px] mx-auto">
+
+        <!-- ── The clock strip. Time, day, weather: the three things a wall
+             display owes you before you have asked it anything. -->
+        <div class="flex flex-wrap items-end justify-between gap-x-8 gap-y-3 mb-5">
+            <div class="flex items-end gap-4">
+                <div class="hero-clock font-black tracking-tighter text-white tabular-nums" x-text="clock"></div>
+                <div class="pb-2">
+                    <div class="text-sm font-bold uppercase tracking-widest text-blue-300/80" x-text="meridiem"></div>
+                    <div class="text-lg md:text-xl font-bold text-gray-300" x-text="board.date_label || ''"></div>
+                </div>
+            </div>
+            <div class="pb-2 text-right">
+                <div class="text-xl md:text-2xl font-semibold text-gray-200" x-text="board.weather || ''"></div>
+                <template x-for="s in (board.statuses || [])" :key="s.label">
+                    <div class="text-base text-indigo-200/90 mt-0.5">
+                        <span x-text="s.emoji"></span> <span x-text="s.label"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── The hero. A wall board that only tiles six lists is a worse
+             phone; the app already knows what is NEXT, so the panel leads
+             with it and the glances go underneath. -->
+        <div class="rounded-2xl border mb-5 overflow-hidden"
+            :class="hero.next ? 'bg-gray-900/70 border-gray-700' : 'bg-gray-900/40 border-gray-800'">
+
+            <template x-if="hero.next">
+                <div class="p-5 md:p-6 flex flex-wrap items-center gap-x-8 gap-y-4"
+                    :style="'border-left: 6px solid ' + (hero.next.color || '#3b82f6')">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-3 mb-1">
+                            <span class="text-xs font-black uppercase tracking-[0.2em]"
+                                :class="hero.next.live ? 'text-emerald-300' : 'text-blue-300'"
+                                x-text="hero.next.live ? 'Under way' : 'Next up'"></span>
+                            <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+                                :class="countdownClass"
+                                x-text="countdown"></span>
+                        </div>
+                        <div class="text-2xl md:text-4xl font-black text-white truncate"
+                            x-text="hero.next.title"></div>
+                        <div class="text-base md:text-lg text-gray-400 mt-1 truncate"
+                            x-show="hero.next.location" x-text="hero.next.location"></div>
+                    </div>
+                    <div class="text-right shrink-0">
+                        <div class="text-3xl md:text-5xl font-black tabular-nums text-white"
+                            x-text="hero.next.at"></div>
+                        <div class="text-lg md:text-xl font-bold mt-1"
+                            :style="'color: ' + (hero.next.color || '#93c5fd')"
+                            x-text="hero.next.driver"></div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- The two honest empty states. A blank hero reads as a broken
+                 panel, so both of these say something true instead. -->
+            <template x-if="!hero.next && hero.all_done">
+                <div class="p-6 text-center">
+                    <div class="text-2xl md:text-3xl font-black text-emerald-300">Everyone's home 🏠</div>
+                    <div class="text-gray-400 mt-1">Nothing left to drive today.</div>
+                </div>
+            </template>
+            <template x-if="!hero.next && !hero.all_done">
+                <div class="p-6 text-center">
+                    <div class="text-2xl md:text-3xl font-black text-gray-300">No drives today</div>
+                    <div class="text-gray-500 mt-1">Nothing on the schedule that needs a driver.</div>
+                </div>
+            </template>
+
+            <!-- What follows the next one. Three, because a wall panel is
+                 glanced at, not studied — the rest is on the tile below. -->
+            <div class="px-5 md:px-6 py-3 border-t border-gray-800 flex flex-wrap gap-x-6 gap-y-1"
+                x-show="(hero.later || []).length">
+                <template x-for="r in (hero.later || [])" :key="r.id">
+                    <div class="text-sm text-gray-400">
+                        <span class="font-bold tabular-nums text-gray-300" x-text="r.at"></span>
+                        <span x-text="r.title"></span>
+                        <span class="text-gray-600" x-text="'· ' + r.driver"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ── The glances. Only tiles that had something to say arrive here:
+             the server drops the empty ones rather than sending a placeholder,
+             so the grid never shows a box explaining that it is empty. -->
+        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+            <template x-for="t in (board.tiles || [])" :key="t.key">
+                <div class="bg-gray-900/70 border border-gray-800 rounded-2xl p-4 md:p-5 min-w-0">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-lg" x-text="t.icon"></span>
+                        <span class="text-xs font-black uppercase tracking-[0.15em] text-gray-500"
+                            x-text="t.label"></span>
+                    </div>
+
+                    <!-- the rest of the day -->
+                    <template x-if="t.key === 'drives'">
+                        <div class="space-y-3">
+                            <template x-for="d in t.data.drivers" :key="d.driver">
+                                <div>
+                                    <div class="text-sm font-bold mb-1" :style="'color:' + d.color"
+                                        x-text="d.driver"></div>
+                                    <template x-for="(r, i) in d.runs" :key="i">
+                                        <div class="flex gap-2 text-base text-gray-300">
+                                            <span class="tabular-nums font-semibold text-gray-400 shrink-0"
+                                                x-text="r.at"></span>
+                                            <span class="truncate" x-text="r.title"></span>
+                                            <span x-show="r.live" class="text-emerald-400 shrink-0">●</span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- each kid -->
+                    <template x-if="t.key === 'kids'">
+                        <div class="space-y-3">
+                            <template x-for="k in t.data.kids" :key="k.name">
+                                <div>
+                                    <div class="text-sm font-bold mb-1"
+                                        :style="'color:' + (k.color_code || '#a5b4fc')" x-text="k.name"></div>
+                                    <template x-for="(line, i) in k.lines.slice(0, 4)" :key="i">
+                                        <div class="text-base text-gray-300 truncate" x-text="line"></div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- tonight's plate -->
+                    <template x-if="t.key === 'meals'">
+                        <div class="flex flex-wrap gap-3">
+                            <template x-for="d in t.data.dishes" :key="d.name">
+                                <div class="flex items-center gap-2">
+                                    <img x-show="d.image" :src="d.image" alt=""
+                                        class="w-12 h-12 rounded-lg object-cover border border-gray-700">
+                                    <span class="text-lg font-semibold text-gray-200" x-text="d.name"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- lists -->
+                    <template x-if="t.key === 'shopping'">
+                        <div class="space-y-1.5">
+                            <template x-for="l in t.data.lists" :key="l.name">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base text-gray-300 truncate" x-text="l.name"></span>
+                                    <span class="text-xl font-black tabular-nums text-amber-300"
+                                        x-text="l.open"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- chore points -->
+                    <template x-if="t.key === 'chores'">
+                        <div class="space-y-1.5">
+                            <template x-for="b in t.data.balances" :key="b.member_id">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base text-gray-300 truncate">
+                                        <span x-show="b.status && b.status.emoji" x-text="b.status?.emoji"></span>
+                                        <span x-text="b.name"></span>
+                                    </span>
+                                    <span class="text-xl font-black tabular-nums text-blue-300"
+                                        x-text="b.balance"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- streaks -->
+                    <template x-if="t.key === 'routines'">
+                        <div class="space-y-1.5">
+                            <template x-for="s in t.data.streaks" :key="s.name">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base text-gray-300 truncate" x-text="s.name"></span>
+                                    <span class="text-xl font-black tabular-nums text-orange-300"
+                                        x-text="'🔥 ' + (s.streak.current || 0)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- coming up -->
+                    <template x-if="t.key === 'occasions'">
+                        <div class="space-y-2">
+                            <template x-for="o in t.data.occasions" :key="o.title + o.date">
+                                <div class="flex items-baseline justify-between gap-3">
+                                    <span class="text-base text-gray-300 truncate" x-text="o.title"></span>
+                                    <span class="text-sm font-bold shrink-0"
+                                        :class="o.days <= 3 ? 'text-pink-300' : 'text-gray-500'"
+                                        x-text="o.days === 0 ? 'today' : (o.days === 1 ? 'tomorrow' : o.days + ' days')"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- the week -->
+                    <template x-if="t.key === 'weather'">
+                        <div class="flex justify-between gap-2">
+                            <template x-for="d in t.data.days" :key="d.day">
+                                <div class="text-center min-w-0">
+                                    <div class="text-xs font-bold text-gray-500 uppercase" x-text="d.day"></div>
+                                    <div class="text-2xl" x-text="d.emoji"></div>
+                                    <div class="text-sm font-semibold text-gray-300 tabular-nums">
+                                        <span x-text="d.hi !== null ? d.hi + '°' : ''"></span>
+                                        <span class="text-gray-600" x-text="d.lo !== null ? d.lo + '°' : ''"></span>
+                                    </div>
+                                    <div class="text-[0.65rem] text-sky-400" x-show="d.rain"
+                                        x-text="d.rain + '%'"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- latest moments -->
+                    <template x-if="t.key === 'moments'">
+                        <div class="grid grid-cols-3 gap-2">
+                            <template x-for="(m, i) in t.data.moments" :key="i">
+                                <img :src="momentSrc(m)" alt=""
+                                    class="w-full aspect-square rounded-lg object-cover border border-gray-700">
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+
+        <!-- ── Panel setup. Hidden on the panel itself (it is a display, and a
+             display that can reconfigure itself is a display a four-year-old
+             can reconfigure) — this is the browser-side hand path, on the page
+             it configures, so you pick the tiles while looking at them. -->
+        <div id="panel-setup" x-show="!isPanel"
+            class="mt-10 bg-gray-900/60 border border-gray-800 rounded-2xl p-5 md:p-6">
+            <h2 class="text-lg font-black text-white mb-1">🖥️ Wall panel setup</h2>
+            <p class="text-sm text-gray-500 mb-5 max-w-3xl">
+                Open any page with <code class="text-sky-300">?panel=true</code> to turn this
+                install into a wall panel: the top bar becomes a shelf of touch-sized buttons
+                along the bottom and everything sized for a mouse gets bigger. What follows is
+                what a panel shows when its address says nothing more than that — a display
+                bolted to a wall should not need a bookmark only its author can maintain.
+                A <code class="text-sky-300">?widgets=</code> or <code class="text-sky-300">?tabs=</code>
+                on the URL still wins, so a Home Assistant card can differ.
+            </p>
+
+            <div class="grid gap-6 md:grid-cols-2">
+                <div>
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                        Home board tiles
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        In the order they appear. A tile with nothing to say hides itself
+                        regardless — an empty box is worse than a shorter board.
+                    </p>
+                    <div class="space-y-1.5 mb-3">
+                        <template x-for="(key, i) in draft.panel_widgets" :key="key">
+                            <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-2">
+                                <span x-text="widgetMeta(key).icon"></span>
+                                <span class="flex-1 min-w-0">
+                                    <span class="text-sm font-semibold text-gray-200"
+                                        x-text="widgetMeta(key).label"></span>
+                                    <span class="block text-[0.7rem] text-gray-500 truncate"
+                                        x-text="widgetMeta(key).blurb"></span>
+                                </span>
+                                <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
+                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
+                                <button @click="move(draft.panel_widgets, i, 1)"
+                                    :disabled="i === draft.panel_widgets.length - 1"
+                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
+                                <button @click="draft.panel_widgets.splice(i, 1)"
+                                    class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                            </div>
+                        </template>
+                        <div x-show="!draft.panel_widgets.length" class="text-sm text-gray-500 italic">
+                            None picked — the panel will show the default six.
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        <template x-for="w in unpickedWidgets()" :key="w.key">
+                            <button @click="draft.panel_widgets.push(w.key)"
+                                class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full px-3 py-1.5">
+                                <span x-text="w.icon"></span> <span x-text="w.label"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                        Shelf buttons
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        Six or seven fit at a size a thumb can hit on a 10&quot; display. Pick more
+                        and they get narrow.
+                    </p>
+                    <div class="flex flex-wrap gap-1.5 mb-6">
+                        <template x-for="t in (catalog.tabs || [])" :key="t.slug">
+                            <button @click="toggle(draft.panel_tabs, t.slug)"
+                                class="text-xs rounded-full px-3 py-1.5 border"
+                                :class="draft.panel_tabs.includes(t.slug)
+                                    ? 'bg-blue-600/30 border-blue-500/50 text-blue-100'
+                                    : 'bg-gray-800 border-gray-700 text-gray-400'"
+                                x-text="t.label"></button>
+                        </template>
+                    </div>
+                    <div x-show="!draft.panel_tabs.length" class="text-sm text-gray-500 italic -mt-4 mb-6">
+                        None picked — the panel will show the default six.
+                    </div>
+
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
+                        Return home when idle
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        How long the panel sits untouched somewhere else before it goes back to
+                        this board. Zero leaves it wherever it was left.
+                    </p>
+                    <div class="flex items-center gap-2">
+                        <input type="number" min="0" step="30" x-model.number="draft.panel_idle_return_seconds"
+                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm text-gray-500">seconds</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 flex items-center gap-3">
+                <button @click="save()" :disabled="saving"
+                    class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-xl px-5 py-2.5">
+                    <span x-text="saving ? 'Saving…' : 'Save panel setup'"></span>
+                </button>
+                <a :href="'home?panel=true'" target="_blank"
+                    class="text-sm text-sky-300 hover:text-sky-200 underline">Open it as a panel ↗</a>
+            </div>
+        </div>
+    </div>
+
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+
+    <script>
+        function homeBoard() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+                isPanel: params.get('panel') === 'true' || params.get('kiosk') === 'true',
+                board: {}, hero: {}, catalog: {},
+                clock: '', meridiem: '', countdown: '', countdownClass: '',
+                saving: false,
+                draft: { panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180 },
+
+                start() {
+                    this.tick();
+                    // The clock ticks LOCALLY. Refetching the board to move a
+                    // minute hand would be 1,440 requests a day to render a
+                    // number the browser already knows.
+                    setInterval(() => this.tick(), 1000);
+
+                    this.load();
+                    setInterval(() => { if (!document.hidden) this.load(); }, 60000);
+                    // A panel that was asleep or in a background tab should be
+                    // right the instant it is looked at again, not up to a
+                    // minute later.
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) this.load();
+                    });
+
+                    if (!this.isPanel) this.loadSetup();
+                },
+
+                tick() {
+                    const d = new Date();
+                    let h = d.getHours();
+                    this.meridiem = h >= 12 ? 'PM' : 'AM';
+                    h = h % 12 || 12;
+                    this.clock = h + ':' + String(d.getMinutes()).padStart(2, '0');
+                    this.recount();
+                },
+
+                async load() {
+                    try {
+                        const q = params.get('widgets')
+                            ? '?widgets=' + encodeURIComponent(params.get('widgets')) : '';
+                        const r = await fetch(this.apiBase + 'api/home_board' + q);
+                        if (!r.ok) return;
+                        this.board = await r.json();
+                        this.hero = this.board.hero || {};
+                        this.recount();
+                    } catch (e) { /* a wall panel keeps showing the last good board */ }
+                },
+
+                // Recomputed every second from the START TIME, not from the
+                // server's minutes_until — between polls a countdown that does
+                // not move is just a label, and "in 25 min" going stale for a
+                // minute at a time is exactly the number people trust least.
+                recount() {
+                    const n = this.hero && this.hero.next;
+                    if (!n) { this.countdown = ''; return; }
+                    if (n.live) {
+                        this.countdown = 'under way';
+                        this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
+                        return;
+                    }
+                    const mins = Math.round((new Date(n.start) - new Date()) / 60000);
+                    if (mins <= -1) {
+                        this.countdown = Math.abs(mins) + ' min ago';
+                        this.countdownClass = 'bg-amber-500/20 text-amber-300';
+                    } else if (mins <= 0) {
+                        this.countdown = 'now';
+                        this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
+                    } else if (mins < 60) {
+                        this.countdown = 'in ' + mins + ' min';
+                        this.countdownClass = mins <= 15
+                            ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300';
+                    } else {
+                        const h = Math.floor(mins / 60), m = mins % 60;
+                        this.countdown = 'in ' + h + ' hr' + (m ? ' ' + m + ' min' : '');
+                        this.countdownClass = 'bg-gray-700/60 text-gray-300';
+                    }
+                },
+
+                momentSrc(m) {
+                    const att = m.attachment || {};
+                    const u = m.poster_url || m.media_url || att.url || '';
+                    return u ? this.apiBase + String(u).replace(/^\//, '') : (att.data_url || '');
+                },
+
+                // --- setup (browser only) ---
+                async loadSetup() {
+                    try {
+                        const [c, s] = await Promise.all([
+                            fetch(this.apiBase + 'api/home_board/catalog').then(r => r.json()),
+                            fetch(this.apiBase + 'api/settings').then(r => r.json())
+                        ]);
+                        this.catalog = c;
+                        this.draft = {
+                            panel_widgets: (s.panel_widgets || []).slice(),
+                            panel_tabs: (s.panel_tabs || []).slice(),
+                            panel_idle_return_seconds:
+                                s.panel_idle_return_seconds === undefined
+                                    ? 180 : s.panel_idle_return_seconds
+                        };
+                    } catch (e) { /* setup stays on defaults */ }
+                },
+
+                widgetMeta(key) {
+                    return (this.catalog.widgets || []).find(w => w.key === key)
+                        || { key, icon: '▫️', label: key, blurb: '' };
+                },
+
+                unpickedWidgets() {
+                    return (this.catalog.widgets || [])
+                        .filter(w => !this.draft.panel_widgets.includes(w.key));
+                },
+
+                move(arr, i, delta) {
+                    const j = i + delta;
+                    if (j < 0 || j >= arr.length) return;
+                    arr.splice(j, 0, arr.splice(i, 1)[0]);
+                },
+
+                toggle(arr, v) {
+                    const i = arr.indexOf(v);
+                    if (i === -1) arr.push(v); else arr.splice(i, 1);
+                },
+
+                async save() {
+                    this.saving = true;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                panel_widgets: this.draft.panel_widgets,
+                                panel_tabs: this.draft.panel_tabs,
+                                panel_idle_return_seconds:
+                                    Number(this.draft.panel_idle_return_seconds) || 0
+                            })
+                        });
+                        if (!r.ok) throw new Error(await r.text());
+                        await this.load();
+                        showGlobalAlert('Panel setup saved.');
+                    } catch (e) {
+                        showGlobalAlert('Could not save the panel setup: ' + e.message);
+                    }
+                    this.saving = false;
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>

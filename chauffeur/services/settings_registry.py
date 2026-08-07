@@ -36,6 +36,7 @@ from typing import Dict, List, Optional
 GROUPS = [
     ('daily', '📅', 'The daily schedule'),
     ('household', '🏠', 'Household'),
+    ('panel', '🖥️', 'The wall panel'),
     ('meals', '🍽️', 'Meals & shopping'),
     ('kitchen', '🍳', 'The kitchen'),
     ('kids', '🎒', 'Kids & school'),
@@ -80,6 +81,21 @@ ENTRIES: List[dict] = [
        'Event hashtags that mark something as a trip rather than a normal day.'),
     _e('route_cache_duration_mins', 'household', 'Route cache',
        'How long a computed travel time is reused before being looked up again.'),
+
+    # --- the wall panel (owned by the home board, which is the thing being
+    # configured — you pick the tiles while looking at them)
+    _e('panel_widgets', 'panel', 'Home board tiles',
+       'Which tiles the wall panel home screen shows, and in what order. '
+       'A tile with nothing to say hides itself either way.',
+       page='home', anchor='panel-setup'),
+    _e('panel_tabs', 'panel', 'Shelf buttons',
+       'Which buttons appear on the wall panel bottom shelf. Six or seven fit '
+       'at a size a thumb can hit.',
+       page='home', anchor='panel-setup'),
+    _e('panel_idle_return_seconds', 'panel', 'Return home when idle',
+       'How long the wall panel sits untouched on some other page before it '
+       'goes back to the home board. Zero leaves it wherever it was left.',
+       page='home', anchor='panel-setup'),
 
     # --- meals & shopping
     _e('car_dining', 'meals', 'Eating in the car',

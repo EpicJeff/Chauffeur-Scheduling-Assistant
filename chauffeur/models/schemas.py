@@ -657,6 +657,22 @@ class Settings(BaseModel):
     # gets forwarded there). Each entry {pattern, calendar_id} prefills a
     # proposal's target calendar when the pattern appears in the From address.
     ingest_sender_defaults: List[dict] = Field(default_factory=list)
+    # --- The wall panel (a Chauffeur-only touch display, no Home Assistant
+    # around it). `?panel=true` turns any page into panel mode: the top nav
+    # becomes a bottom shelf of touch-sized buttons and everything already
+    # gated on `?kiosk=true` lights up. These three are the panel's PROFILE —
+    # what a standalone display shows when nobody is there to type a URL.
+    # URL params (?widgets=, ?tabs=) still win, because an HA dashboard card
+    # is a second panel with different needs and only the URL can say so.
+    # Empty list = "use the default", never "show nothing": a blank profile
+    # on a screen bolted to a wall is indistinguishable from a broken app.
+    panel_widgets: List[str] = Field(default_factory=list)
+    panel_tabs: List[str] = Field(default_factory=list)
+    # Untouched for this long, any panel page returns to the home board. This
+    # is what makes the panel an appliance rather than a browser: whatever
+    # somebody wandered off into, the wall goes back to being the wall.
+    # 0 disables it.
+    panel_idle_return_seconds: int = 180
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
