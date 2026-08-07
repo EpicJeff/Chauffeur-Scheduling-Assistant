@@ -3,8 +3,8 @@
 Status of the family-network pivot and the backlog for future phases.
 Shipped-feature details live in `system_capabilities.md` (the live spec) —
 this file tracks what is NOT built yet, with enough context to pick any item
-up cold. Last updated: 2026-08-05 (v2.76.0 — meals arc M1–M5;
-the old "meals" cut reversed).
+up cold. Last updated: 2026-08-06 (v2.89.0 — the occasions arc designed;
+meals arc M1–M11 shipped, the old "meals" cut reversed).
 
 ## Shipped (phase 1 + chores arc, v2.8.33 → v2.19.0)
 
@@ -282,6 +282,63 @@ won't eat in the car at all).
   entries. ~15–25 entries, surfaced as a filter result not a browsable page,
   no steps ever. Mealie import is the later on-ramp. Dietary constraints on
   FamilyMember, mirroring the solver's grammar: allergies hard, prefs soft.
+
+## The occasions arc (decided 2026-08-06 — designed, not started)
+
+Mental-load research keeps naming the same cluster — holidays and birthdays:
+meals, gifts, guests, travel, errands — and the app handles every piece
+individually while helping with none of them as the thing they belong to. The
+load is in **planning** (what to feed sixteen, what a shark party needs, what
+must be bought by when, and who is doing all of it), not in storage or
+visibility. Full design brief: `docs/occasion_design.md`.
+
+Named **Occasion**, not Holiday: "holiday" excludes birthdays/graduations and
+collides with Trip in British English.
+
+The brief survived a deliberate teardown; four conclusions not to relitigate
+casually. (1) The container must NOT be the system of record — every
+capability named already has a working home, and a container that owns copies
+is a second write path that is empty until a parent fills it by hand. (2) A
+30,000-ft view is still fine, because derivation is not ownership. (3) Trips
+earns container-hood because `TripPOI`/`TripFlight`/`TripRule` exist nowhere
+else and a solver needs them as input; an occasion only *borrows*. (4)
+Membership attaches to the coarsest wholly-owned entity — the list, the trip,
+the errand — with one documented exception (`ShoppingItem.occasion_id`) for
+the standing grocery list, mirroring the shipped `source_meal_id`.
+
+- **O0 — cooking for a crowd. Ships with NO occasion object, deliberately.**
+  The kitchen as a three-resource model (ovens + temperature, burners, cooks)
+  replacing the hardcoded cook=1 / oven=∞ constants in `_totals_from_dishes`;
+  dish `scope` (everyday|occasion) so holiday food stops polluting the Tuesday
+  pool; serving scale; CP-SAT run-sheet emitted as timed `PrepStep`s. This is
+  the expensive engineering, it stands alone, every party exercises it, and it
+  is the honest test of whether the rest of the arc earns itself. Traps in the
+  brief: leftovers must bypass `scope`, occasion days must be excluded from
+  `MealRule` accounting, eligibility ≠ selection, `_rank`'s 21-day cap already
+  handles recency.
+- **O1 — the occasion as context.** `Occasion` + `OccasionGuest`, a planning
+  thread (page context, as trips already do in `llm.py`), `occasion_id` on
+  list/errand/trip, themed list generation onto the shipped cart rails, guest
+  dietary constraints flowing into `_eater_diet`.
+- **O2 — template + gap report.** The template is an **interview**, not a
+  checklist — each answer generates logistics. The report is a **diff** against
+  the template and last year's instance, because a list can show what you have
+  and structurally cannot show what you forgot. Sorted by slack against the
+  anchor, no percentage, surfaced in the weekly digest and via watchers.
+- **O3 — the planning intelligence (do not cut this).** Load distribution
+  ("eleven of fourteen open items are on one parent"), open decisions as
+  blockers with a growing cost, schedule-aware deadline placement off solver
+  slack, deadlines derived from dishes (`needs_ahead: thaw` → the buy date),
+  conflict detection, outcome capture. O0–O2 without O3 is a very good
+  checklist, which is the failure the arc exists to avoid.
+- Explicitly cut, with reasons in the brief: local dated-event discovery (no
+  data source; the LLM invents a plausible tree lighting) · rentals and
+  borrowing (no API, new lifecycle, needs a social graph) · sending
+  invitations (external comms; the guest list is kept) · spend tracking ·
+  kitchen inventory beyond the three resources.
+- **Gift secrecy is unsolved and deliberately outside the brief.** The app has
+  no visibility scoping and lists render on kitchen kiosks. Either gifts stay
+  out, or `hidden_from` is designed first.
 
 ## The native app track (Capacitor wrapper — the big unlock)
 
