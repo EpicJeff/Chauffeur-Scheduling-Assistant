@@ -283,105 +283,51 @@ won't eat in the car at all).
   no steps ever. Mealie import is the later on-ramp. Dietary constraints on
   FamilyMember, mirroring the solver's grammar: allergies hard, prefs soft.
 
-## The occasions arc (decided 2026-08-06 — designed, not started)
+## The occasions arc (SHIPPED 2026-08-07, v2.90.0 → v2.96.0)
 
-Mental-load research keeps naming the same cluster — holidays and birthdays:
-meals, gifts, guests, travel, errands — and the app handles every piece
-individually while helping with none of them as the thing they belong to. The
-load is in **planning** (what to feed sixteen, what a shark party needs, what
-must be bought by when, and who is doing all of it), not in storage or
-visibility. Full design brief: `docs/occasion_design.md`.
+Holidays, birthdays and parties. The load is in **planning** — what to feed
+sixteen, what a shark party needs, what must be bought by when, and who is
+doing all of it — not in storage or visibility, which is why the container was
+rejected as the feature. Full brief: `docs/occasion_design.md`; shipped detail
+in `system_capabilities.md`.
 
 Named **Occasion**, not Holiday: "holiday" excludes birthdays/graduations and
 collides with Trip in British English.
 
-The brief survived a deliberate teardown; four conclusions not to relitigate
-casually. (1) The container must NOT be the system of record — every
-capability named already has a working home, and a container that owns copies
-is a second write path that is empty until a parent fills it by hand. (2) A
-30,000-ft view is still fine, because derivation is not ownership. (3) Trips
-earns container-hood because `TripPOI`/`TripFlight`/`TripRule` exist nowhere
-else and a solver needs them as input; an occasion only *borrows*. (4)
-Membership attaches to the coarsest wholly-owned entity — the list, the trip,
-the errand — with one documented exception (`ShoppingItem.occasion_id`) for
-the standing grocery list, mirroring the shipped `source_meal_id`.
+Four teardown conclusions, still not to relitigate: (1) the container is not
+the system of record; (2) a derived view is still fine, because derivation is
+not ownership; (3) Trips earns container-hood because its contents exist
+nowhere else, while an occasion only borrows; (4) membership attaches to the
+coarsest wholly-owned entity, with one documented exception on `ShoppingItem`
+for the standing grocery list.
 
-- **O0 — cooking for a crowd. Ships with NO occasion object, deliberately.**
-  The kitchen as a three-resource model (ovens + temperature, burners, cooks)
-  replacing the hardcoded cook=1 / oven=∞ constants in `_totals_from_dishes`;
-  dish `scope` (everyday|occasion) so holiday food stops polluting the Tuesday
-  pool; serving scale; CP-SAT run-sheet emitted as timed `PrepStep`s. This is
-  the expensive engineering, it stands alone, every party exercises it, and it
-  is the honest test of whether the rest of the arc earns itself. Traps in the
-  brief: leftovers must bypass `scope`, occasion days must be excluded from
-  `MealRule` accounting, eligibility ≠ selection, `_rank`'s 21-day cap already
-  handles recency.
-- **O1 — the occasion as context.** `Occasion` + `OccasionGuest`, a planning
-  thread (page context, as trips already do in `llm.py`), `occasion_id` on
-  list/errand/trip, themed list generation onto the shipped cart rails, guest
-  dietary constraints flowing into `_eater_diet`.
-- **O2 — template + gap report.** The template is an **interview**, not a
-  checklist — each answer generates logistics. The report is a **diff** against
-  the template and last year's instance, because a list can show what you have
-  and structurally cannot show what you forgot. Sorted by slack against the
-  anchor, no percentage, surfaced in the weekly digest and via watchers.
-- **O3 — the planning intelligence (do not cut this).** Load distribution
-  ("eleven of fourteen open items are on one parent"), open decisions as
-  blockers with a growing cost, schedule-aware deadline placement off solver
-  slack, deadlines derived from dishes (`needs_ahead: thaw` → the buy date),
-  conflict detection, outcome capture. O0–O2 without O3 is a very good
-  checklist, which is the failure the arc exists to avoid.
-- Explicitly cut, with reasons in the brief: local dated-event discovery (no
-  data source; the LLM invents a plausible tree lighting) · rentals and
-  borrowing (no API, new lifecycle, needs a social graph) · sending
-  invitations (external comms; the guest list is kept) · spend tracking ·
-  kitchen inventory beyond the three resources.
-- **Gift secrecy is unsolved and deliberately outside the brief.** The app has
-  no visibility scoping and lists render on kitchen kiosks. Either gifts stay
-  out, or `hidden_from` is designed first.
+- **O0 — cooking for a crowd. SHIPPED v2.90.0–v2.93.0**, deliberately with no
+  occasion object: the expensive engineering first, as the test of whether the
+  rest earned itself. `Dish.scope` (holiday food out of the Tuesday pool, with
+  leftovers bypassing the filter), `services/kitchen.py` replacing the
+  hardcoded cook=1 / oven=∞ (reduction to the old sum/max is an asserted
+  contract), serving scale, and the CP-SAT run sheet.
+- **O1 — the occasion as context. SHIPPED v2.94.0.** `Occasion` +
+  `OccasionGuest`, `/occasions`, full REST, four tools in both stacks, themed
+  list generation onto the shipped cart rails, guest diets binding like family
+  allergies. Deleting the context clears links and keeps every errand and list.
+- **O2 — the interview and the gap report. SHIPPED v2.95.0.** Templates as
+  static data whose answers *generate* logistics; the report a DIFF against
+  template and last year, sorted by slack with no percentage anywhere;
+  unanswered is not no; a watcher anticipating inside three weeks.
+- **O3 — the planning intelligence. SHIPPED v2.96.0.** Load distribution,
+  open decisions carrying what waiting costs, schedule-aware timing, deadlines
+  derived from the food, calendar clashes. This was the part flagged
+  do-not-cut, and it was not cut.
 
-## The native app track (Capacitor wrapper — the big unlock)
-
-Wrap the existing PWA (NOT a rewrite; days not months) and distribute via
-TestFlight/Android sideload. Unlocks, in value order:
-
-1. **Lock-screen / background audio** — the Sendspin phone player currently
-   stops when iOS locks the screen; the wrapper makes phones real speakers.
-   The sendspin-js client code carries over unchanged.
-2. **Reliable push** (APNs/FCM instead of iOS web push quirks).
-3. **Background location** — family members without the HA companion app,
-   and the ONLY route to live location for role=helper drivers (no HA person
-   entity; My Day intentionally hides "Where?" for helpers today).
-4. **Eventually: live calls** (WebRTC + CallKit/ConnectionService). Until
-   then the deliberate answer to "intercom" is voice memos, not calls.
-
-Frictions to plan for: iOS builds need a Mac — **available: a MacBook Pro
-(broken screen, works on an external monitor) and a MacBook Air in the
-house (noted 2026-08-01), so no cloud CI required** · $99/yr Apple
-Developer account · TestFlight builds expire after 90 days (recurring
-release cadence) · Apple scrutinizes always-on location permissions.
-
-**Distribution plan (decided 2026-08-01): TestFlight is the workshop, the
-App Store is the destination.**
-- Phase A — develop on **TestFlight internal testing**: no review at all,
-  instant builds; family joins the developer team as internal testers.
-- Phase B — once stable, submit as an **App Store release, likely via
-  Apple's unlisted-app distribution** (fully reviewed, never expires,
-  reachable only by direct link — not searchable; request it from Apple).
-  Kills the 90-day expiry treadmill permanently. Public listing is also
-  fine — the app is a config-screen shell without a server URL (same shape
-  as the HA companion / Plex / Nextcloud apps); strangers downloading it
-  get nothing.
-- Review hurdles to budget for (one-time, all solvable): Guideline 4.2
-  "minimum functionality" (Capacitor passes when the app feels native —
-  push/audio/navigation are the point of wrapping); reviewers must be able
-  to exercise the app → build a **bundled demo mode with fixture data**
-  (the no-hosting alternative to a demo server + credentials); background
-  location needs honest purpose strings + a privacy policy URL and is the
-  likeliest source of review back-and-forth.
-- Server-side prerequisite regardless of distribution: real APNs/FCM push
-  (replacing web push for the wrapper) — its own task, second-biggest
-  value item after lock-screen audio.
+Post-arc backlog: **outcome capture** ("three pies last year, one came back
+untouched" → suggest two) — highest compounding value, needs a recording
+surface nothing has yet · rentals and borrowing (still no API, still needs a
+social graph) · local dated-event discovery (still no data source) ·
+**gift secrecy**, which remains the blocker on ever modelling presents: the app
+has no visibility scoping and lists render on kitchen kiosks, so `hidden_from`
+must be designed first, enforced at storage and on every surface, or gifts stay
+out.
 
 ## Config is past its limit (raised 2026-08-07, do this before the next arc)
 

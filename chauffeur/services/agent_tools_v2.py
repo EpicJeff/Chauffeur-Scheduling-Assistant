@@ -1593,6 +1593,28 @@ def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[st
     return {"status": "success", "message": ' '.join(bits)}
 
 
+def get_occasion_insights(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "how's Thanksgiving looking?", "is anything going to go wrong with
+    the party?", "who's doing all the work for this?"
+
+    The part a checklist cannot do. Uses what only this app knows — who is
+    driving, where the schedule has slack, how this family cooks — and says it
+    plainly. Names an imbalance, never scores it.
+    """
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "success",
+                "message": "I don't have any occasions on the books yet."}
+    rows = _occ.insights(o['id']).get('insights') or []
+    if not rows:
+        return {"status": "success",
+                "message": f"{o['title']} looks straightforward from here — "
+                           "nothing clashing and nothing waiting on a decision."}
+    return {"status": "success",
+            "message": f"{o['title']}: " + " ".join(r['text'] for r in rows[:5])}
+
+
 def get_occasion_gaps(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
     """READ: "what still needs doing for Thanksgiving?", "am I forgetting
     anything for the party?"
@@ -2538,6 +2560,17 @@ def get_available_tools() -> List[Dict]:
         {
             "name": "get_occasion",
             "description": "Reads the state of a holiday or party: what's the state of Thanksgiving, who is coming to the party, what still needs doing for Ellie's birthday. Reports guests, headcount, lists and outstanding errands.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which one; omit for the next one coming up."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_occasion_insights",
+            "description": "The judgement calls around a holiday or party that a checklist cannot make: who is carrying all the work, what is still undecided and what waiting will cost, the clearest day in the schedule to get something done, deadlines that fall out of the food itself (a bird that needs thawing pushes back the buy date), and clashes between the cooking window and who is out driving. Use for how is Thanksgiving looking, is anything going to go wrong, who is doing all the work.",
             "parameters": {
                 "type": "object",
                 "properties": {

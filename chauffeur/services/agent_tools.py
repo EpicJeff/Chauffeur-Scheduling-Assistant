@@ -577,6 +577,12 @@ class GetOccasionTool(BaseModel):
     """
     occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
 
+class GetOccasionInsightsTool(BaseModel):
+    """
+    The judgement calls around a holiday or party that a checklist cannot make: who is carrying all the work, what is undecided and what waiting costs, the clearest day to act, deadlines that fall out of the food (thawing pushes back the buy date), and clashes between cooking and driving.
+    """
+    occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
+
 class GetOccasionGapsTool(BaseModel):
     """
     Says what is still MISSING for a holiday or party - a diff against the usual shape of that kind of occasion and against last year's, ordered by how little time is left. Use whenever someone asks whether they have forgotten something.
@@ -818,6 +824,7 @@ TOOL_SCHEMAS = {
     "add_occasion": AddOccasionTool.model_json_schema(),
     "get_occasion": GetOccasionTool.model_json_schema(),
     "get_occasion_gaps": GetOccasionGapsTool.model_json_schema(),
+    "get_occasion_insights": GetOccasionInsightsTool.model_json_schema(),
     "add_occasion_guests": AddOccasionGuestsTool.model_json_schema(),
     "source_for_occasion": SourceForOccasionTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
@@ -2009,6 +2016,10 @@ def handle_get_occasion(args: dict) -> dict:
     from services.agent_tools_v2 import get_occasion
     return get_occasion(args.get("occasion_name") or "")
 
+def handle_get_occasion_insights(args: dict) -> dict:
+    from services.agent_tools_v2 import get_occasion_insights
+    return get_occasion_insights(args.get("occasion_name") or "")
+
 def handle_get_occasion_gaps(args: dict) -> dict:
     from services.agent_tools_v2 import get_occasion_gaps
     return get_occasion_gaps(args.get("occasion_name") or "")
@@ -2207,6 +2218,7 @@ TOOL_HANDLERS = {
     "add_occasion": handle_add_occasion,
     "get_occasion": handle_get_occasion,
     "get_occasion_gaps": handle_get_occasion_gaps,
+    "get_occasion_insights": handle_get_occasion_insights,
     "add_occasion_guests": handle_add_occasion_guests,
     "source_for_occasion": handle_source_for_occasion,
     "set_dish_prep": handle_set_dish_prep,

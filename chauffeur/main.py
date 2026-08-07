@@ -5836,6 +5836,16 @@ def occasion_gaps(occasion_id: str):
         raise HTTPException(status_code=404, detail="Occasion not found")
     return res
 
+@app.get("/api/occasions/{occasion_id}/insights")
+def occasion_insights(occasion_id: str):
+    """What only this app can say: who is carrying it, what is undecided and
+    what that costs, the clearest day to act, deadlines that fall out of the
+    food, and clashes with the real schedule."""
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return _occ.insights(occasion_id)
+
 @app.post("/api/occasions/{occasion_id}/dismiss/{key}")
 def occasion_dismiss(occasion_id: str, key: str):
     from services import occasions as _occ

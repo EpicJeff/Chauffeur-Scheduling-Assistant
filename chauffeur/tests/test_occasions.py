@@ -374,6 +374,120 @@ def scenario_the_gap_report_is_sayable():
     check('%' not in res['message'], "and quotes no percentage")
 
 
+# --- O3: the planning intelligence -------------------------------------------
+
+def scenario_the_imbalance_is_named_never_scored():
+    """The research this arc came from is about WHO carries it. Every other
+    product ships a shared checklist and calls that equity."""
+    reset_db(); _members(); _settings()
+    from models.schemas import Errand
+    o = _occasion()
+    for i in range(5):
+        storage.add_errand(Errand(title=f'job {i}', duration_mins=30, location='X',
+                                  occasion_id=o['id'],
+                                  required_drivers=['mom']).model_dump())
+    rows = occasions.insights(o['id'])['insights']
+    load = [r for r in rows if r['kind'] == 'load']
+    check(load and 'mom' in load[0]['text'],
+          f"it names who is carrying it, got {load}")
+    check('%' not in load[0]['text'] and 'score' not in load[0]['text'].lower(),
+          "stated, never scored")
+
+
+def scenario_three_jobs_is_not_a_fairness_problem():
+    reset_db(); _members(); _settings()
+    from models.schemas import Errand
+    o = _occasion()
+    for i in range(3):
+        storage.add_errand(Errand(title=f'job {i}', duration_mins=30, location='X',
+                                  occasion_id=o['id'],
+                                  required_drivers=['mom']).model_dump())
+    rows = occasions.insights(o['id'])['insights']
+    check(not [r for r in rows if r['kind'] == 'load'],
+          "a short list is not an imbalance worth raising")
+
+
+def scenario_an_undecided_thing_carries_what_waiting_costs():
+    """The app cannot decide. Making the price of not deciding concrete is
+    most of the value."""
+    reset_db(); _members(); _settings()
+    o = occasions.create("Ellie's 8th", '2026-09-14', 'birthday')
+    rows = occasions.insights(o['id'])['insights']
+    dec = [r for r in rows if r['kind'] == 'decision']
+    check(dec, f"the unanswered questions surface as decisions, got {rows}")
+    check(any('cake' in d['text'].lower() for d in dec),
+          f"including the cake, got {dec}")
+    check(all('day' in d['text'] or 'today' in d['text'] or 'past' in d['text']
+              for d in dec),
+          f"and each says what waiting costs, got {dec}")
+
+    occasions.answer(o['id'], 'cake', True)
+    after = [r for r in occasions.insights(o['id'])['insights']
+             if r['kind'] == 'decision']
+    check(not any('cake' in d['text'].lower() for d in after),
+          "a decided thing stops being a decision")
+
+
+def scenario_a_thaw_pushes_the_buy_date_back_on_its_own():
+    """Nobody types this deadline — the meal model already knows."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   needs_ahead='thaw', serves=12)
+    meals.set_plate_lock(DAY, True, 'Thanksgiving', [turkey['id']])
+    rows = occasions.insights(o['id'])['insights']
+    lead = [r for r in rows if r['kind'] == 'lead']
+    check(lead and lead[0]['dish'] == 'turkey', f"the bird is flagged, got {rows}")
+    check(lead[0]['by'] < DAY, f"with a date BEFORE the meal, got {lead[0]['by']}")
+    check('bought before' in lead[0]['text'],
+          f"and says it has to be bought first, got {lead[0]['text']}")
+
+
+def scenario_an_ordered_dish_carries_its_lead_time():
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    cake = _dish('celebration cake', short_name='cake', type='dessert',
+                 source='ordered', order_lead_mins=4320)     # three days
+    meals.set_plate_lock(DAY, True, 'Thanksgiving', [cake['id']])
+    lead = [r for r in occasions.insights(o['id'])['insights'] if r['kind'] == 'lead']
+    check(lead and '3 day' in lead[0]['text'],
+          f"three days ahead, said plainly, got {lead}")
+
+
+def scenario_insights_fail_one_at_a_time():
+    """A broken schedule cache must cost the family the one insight that
+    needed it, never the whole panel."""
+    reset_db(); _members(); _settings()
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   needs_ahead='thaw', serves=12)
+    meals.set_plate_lock(DAY, True, 'Thanksgiving', [turkey['id']])
+    broken = storage.get_cached_schedule
+    storage.get_cached_schedule = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('boom'))
+    try:
+        rows = occasions.insights(o['id'])['insights']
+    finally:
+        storage.get_cached_schedule = broken
+    check([r for r in rows if r['kind'] == 'lead'],
+          f"the food-derived deadline survives a dead cache, got {rows}")
+
+
+def scenario_insights_are_sayable():
+    reset_db(); _members(); _settings()
+    from services import agent_tools, agent_tools_v2
+    check('get_occasion_insights' in {t['name'] for t in agent_tools_v2.get_available_tools()}
+          and 'get_occasion_insights' in agent_tools.TOOL_HANDLERS,
+          "the tool is in both stacks")
+    o = _occasion()
+    turkey = _dish('roast turkey', short_name='turkey', type='entree',
+                   needs_ahead='thaw', serves=12)
+    meals.set_plate_lock(DAY, True, 'Thanksgiving', [turkey['id']])
+    res = agent_tools.execute_tool('get_occasion_insights',
+                                   {'occasion_name': 'Thanksgiving'})
+    check('thaw' in res['message'].lower(),
+          f"it says the useful thing, got {res['message']}")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

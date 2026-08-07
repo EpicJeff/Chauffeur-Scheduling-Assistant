@@ -194,6 +194,24 @@
                         </button>
                     </div>
 
+                    <!-- What only this app can say. Everything above is a
+                         checklist; this is the part that reads the schedule,
+                         the kitchen and who is actually carrying it. -->
+                    <div x-show="((insights[o.id] || {}).insights || []).length" class="mb-4">
+                        <div class="text-xs font-black uppercase tracking-widest text-sky-200 mb-2">
+                            🧭 Worth knowing
+                        </div>
+                        <div class="space-y-1.5">
+                            <template x-for="(i, ix) in ((insights[o.id] || {}).insights || [])"
+                                :key="'i-' + o.id + ix">
+                                <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2 flex items-start gap-2.5">
+                                    <span class="shrink-0" x-text="insightIcon(i.kind)"></span>
+                                    <span class="text-sm text-gray-300" x-text="i.text"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- Guests. The list earns its place by feeding headcount and
                          allergies into the meal plan; there is deliberately no
                          invitation sending. -->
@@ -276,7 +294,7 @@
         return {
             apiBase: window.location.pathname.endsWith('/') ? '../' : '',
             occasions: [], detail: {}, sourceDraft: {},
-            gaps: {}, answerDraft: {},
+            gaps: {}, insights: {}, answerDraft: {},
             loading: true, busy: false, sourcing: false, showNew: false,
             kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering'],
             draft: { title: '', kind: 'gathering', anchor_date: '', tags: '',
@@ -309,12 +327,19 @@
             },
 
             async refresh(o) {
-                const [d, g] = await Promise.all([
+                const [d, g, i] = await Promise.all([
                     fetch(this.apiBase + 'api/occasions/' + o.id),
-                    fetch(this.apiBase + 'api/occasions/' + o.id + '/gaps')
+                    fetch(this.apiBase + 'api/occasions/' + o.id + '/gaps'),
+                    fetch(this.apiBase + 'api/occasions/' + o.id + '/insights')
                 ]);
                 if (d.ok) this.detail[o.id] = await d.json();
                 if (g.ok) this.gaps[o.id] = await g.json();
+                if (i.ok) this.insights[o.id] = await i.json();
+            },
+
+            insightIcon(kind) {
+                return { load: '⚖️', decision: '🤔', when: '📅',
+                         lead: '🧊', clash: '⚠️' }[kind] || '•';
             },
 
             slackLabel(g) {
