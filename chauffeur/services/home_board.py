@@ -10,11 +10,23 @@ are glances, not pages.
 Three rules the tiles follow, because a wall display fails differently from a
 web page:
 
-1. **A tile with nothing to say renders nothing and yields its space.** Every
-   builder here returns None on an empty day. A grid of six empty boxes is the
-   characteristic failure of every wall dashboard ever built, and it is worse
-   than showing four tiles, because it teaches the family that the panel is
-   usually wrong.
+1. **Hide what is not SET UP; never hide what is merely quiet.**
+
+   The first version of this rule was "a tile with nothing to say renders
+   nothing", and it was wrong in practice — the panel kept dropping to four
+   tiles and the family could not tell whether the map was empty or broken.
+   The mistake was conflating two different silences. A household that has
+   never made a shopping list wants no Lists tile; a household with a list
+   that happens to be empty tonight wants to SEE that it is empty. Same for
+   the map (where everyone is has no empty day), the calendar, and chores and
+   routines once any are configured.
+
+   So a builder returns `None` only when the feature is unconfigured, and
+   otherwise returns a payload — possibly `{'empty': "…"}`, which renders as
+   an honest sentence. The original instinct still holds where it belongs: a
+   grid of boxes explaining that they are empty is the characteristic failure
+   of every wall dashboard, and `{'empty': …}` is a real answer rather than a
+   placeholder. What it is NOT is a reason to make a configured feature vanish.
 2. **One request, one cache.** The tiles are assembled server-side and served
    as ONE payload, so a six-tile board costs one HTTP request per tick instead
    of six. `TTL_SECONDS` then protects the DB and Home Assistant when a second
@@ -69,9 +81,14 @@ WIDGETS = [
 ]
 WIDGET_KEYS = [w['key'] for w in WIDGETS]
 
-# Six tiles is what a 10" panel holds at a size you can read across a kitchen.
-# Driving, kids and food are the three the family looks at; the rest are opt-in.
-DEFAULT_WIDGETS = ['drives', 'kids', 'meals', 'shopping', 'chores', 'occasions']
+# Everything the household has actually set up, in a sensible reading order.
+# The earlier six-tile default was chosen when any quiet tile vanished, which
+# made "show them all" look like a wall of empty boxes; under rule 1 the board
+# prunes itself to what this family uses, so the honest default is everything.
+# `intake` is the one exclusion — it is an admin surface and stays opt-in.
+DEFAULT_WIDGETS = ['drives', 'calendar', 'kids', 'meals', 'map', 'chores',
+                   'routines', 'shopping', 'errands', 'occasions', 'trips',
+                   'weather', 'moments']
 
 # Long enough to collapse several panels onto one build, short enough that
 # checking a chore off in the kitchen and glancing at the wall agrees.
@@ -251,7 +268,10 @@ def _tile_drives(now, runs, **_):
     # the clock is what let the wall contradict itself.
     rest = [r for r in runs if not r['over']]
     if not rest:
-        return None
+        if not storage.get_all_drivers():
+            return None                      # no drivers: the feature is unused
+        return {'empty': "Nothing left to drive today." if runs
+                else "No drives on the schedule today."}
     by_driver = {}
     for r in rest:
         by_driver.setdefault(r['driver_id'], {'driver': r['driver'], 'color': r['color'],
@@ -276,7 +296,11 @@ def _tile_kids(now, kid_digest_fn=None, **_):
         return None
     kids = [k for k in (digest.get('kids') or {}).values() if k.get('lines')]
     if not kids:
-        return None
+        # No children in the household is unconfigured; children with a quiet
+        # day is a thing worth saying out loud.
+        if not any(m.get('role') == 'child' for m in storage.get_all_members()):
+            return None
+        return {'empty': "Nothing on for the kids today."}
     return {'label': digest.get('label'), 'kids': kids}
 
 
@@ -285,15 +309,21 @@ def _tile_meals(now, **_):
     writer of meal plans, on a timer, forever."""
     try:
         plate = storage.get_plate(now.date().isoformat())
-        if not plate or not (plate.get('items') or []):
-            return None
-        dishes = storage.get_dishes_by_ids([i['dish_id'] for i in plate['items']])
+        items = (plate or {}).get('items') or []
+        if not items:
+            # A household with no dishes has never used meals at all; one with
+            # dishes and no plate tonight has simply not decided yet.
+            if not storage.get_dishes():
+                return None
+            return {'empty': "Nothing pinned for tonight yet."}
+        dishes = storage.get_dishes_by_ids([i['dish_id'] for i in items])
         by_id = {d['id']: d for d in dishes}
         rows = [{'name': by_id[i['dish_id']].get('short_name')
                          or by_id[i['dish_id']].get('name'),
                  'image': by_id[i['dish_id']].get('image_url')}
-                for i in plate['items'] if i['dish_id'] in by_id]
-        return {'dishes': rows, 'edited': bool(plate.get('edited'))} if rows else None
+                for i in items if i['dish_id'] in by_id]
+        return {'dishes': rows, 'edited': bool(plate.get('edited'))} if rows \
+            else {'empty': "Nothing pinned for tonight yet."}
     except Exception as e:
         print(f"[home_board] plate failed: {e}")
         return None
@@ -301,15 +331,18 @@ def _tile_meals(now, **_):
 
 def _tile_shopping(now, **_):
     try:
+        all_lists = storage.get_shopping_lists()
+        if not all_lists:
+            return None                       # never made a list: feature unused
         lists = []
-        for l in storage.get_shopping_lists():
+        for l in all_lists:
             items = storage.get_shopping_items(l['id'])
             open_n = sum(1 for i in items if not i.get('is_checked'))
             if open_n:
                 lists.append({'name': l.get('name') or 'List', 'open': open_n,
                               'store': l.get('store')})
         if not lists:
-            return None
+            return {'empty': "Nothing on the lists."}
         lists.sort(key=lambda x: -x['open'])
         return {'lists': lists[:4], 'total': sum(l['open'] for l in lists)}
     except Exception as e:
@@ -323,7 +356,13 @@ def _tile_chores(now, **_):
         rows = storage.get_all_point_balances() or []
         rows = [r for r in rows if r.get('member_id')]
         if not rows:
-            return None
+            # Configured means the household set up the economy at all —
+            # chores, or rewards to spend points on. Zeroes across the board
+            # are a real answer ("nobody has earned anything yet"), not a
+            # reason for the tile to disappear.
+            if not (storage.get_all_chores() or storage.get_rewards()):
+                return None
+            return {'empty': "No points earned yet."}
         for r in rows:
             try:
                 r['status'] = status_tiers.compute_member_status(r['member_id'], 'chore')
@@ -350,7 +389,7 @@ def _tile_routines(now, **_):
                          'streak': storage.compute_streak(m['id'])})
         rows = [r for r in rows if r.get('streak')]
         if not rows:
-            return None
+            return {'empty': "No streaks going yet."}
         rows.sort(key=lambda r: (-(r['streak'].get('current') or 0), r['name'] or ''))
         return {'streaks': rows[:6]}
     except Exception as e:
@@ -373,7 +412,11 @@ def _tile_occasions(now, **_):
             rows.append({'title': o.get('title') or 'Occasion', 'date': d.isoformat(),
                          'kind': o.get('kind'), 'days': (d - today).days})
         if not rows:
-            return None
+            # Nothing upcoming, but the household clearly uses occasions if any
+            # exist at all (including ones already done).
+            if not storage.get_occasions(include_done=True):
+                return None
+            return {'empty': "Nothing coming up."}
         rows.sort(key=lambda r: r['days'])
         return {'occasions': rows[:3]}
     except Exception as e:
@@ -415,7 +458,10 @@ def _tile_weather(now, **_):
 def _tile_moments(now, **_):
     try:
         from services import presence
-        rows = presence.recent_moments(hours=48, limit=6) or []
+        # A generous window rather than 48h: on a wall, last week's photo from
+        # the game beats an empty frame, and the hearth overlay is what handles
+        # "brand new" anyway.
+        rows = presence.recent_moments(hours=24 * 30, limit=6) or []
         rows = [m for m in rows if m.get('media_url') or m.get('poster_url')
                 or (m.get('attachment') or {}).get('url')]
         return {'moments': rows} if rows else None
@@ -441,8 +487,10 @@ def _tile_calendar(now, **_):
                          'at': '' if ev.get('all_day') else _clock(start),
                          'title': ev.get('title') or 'Event',
                          'start': start.isoformat()})
+        # Never hidden. A family calendar with a quiet stretch is information;
+        # a calendar tile that vanishes just looks broken.
         if not rows:
-            return None
+            return {'empty': "Nothing on the calendar for the next few days."}
         rows.sort(key=lambda r: r['start'])
         return {'events': rows[:6]}
     except Exception as e:
@@ -452,8 +500,11 @@ def _tile_calendar(now, **_):
 
 def _tile_errands(now, **_):
     try:
+        every = storage.get_all_errands() or []
+        if not every:
+            return None                       # never made one: feature unused
         rows = []
-        for er in storage.get_all_errands() or []:
+        for er in every:
             if er.get('is_completed') or er.get('status') == 'completed':
                 continue
             rows.append({'title': er.get('title') or 'Errand',
@@ -461,7 +512,7 @@ def _tile_errands(now, **_):
                          'past_due': er.get('status') == 'past_due',
                          'priority': er.get('priority') or 2})
         if not rows:
-            return None
+            return {'empty': "Nothing waiting."}
         # Past-due first, then by priority: a wall panel shows the thing that
         # has already slipped before the thing that has not.
         rows.sort(key=lambda r: (not r['past_due'], r['priority']))
@@ -475,8 +526,11 @@ def _tile_trips(now, **_):
     """The next trip, counted down in days. Drafts are excluded — a trip
     nobody has committed to is not news."""
     try:
+        every = storage.get_all_trip_metadata() or []
+        if not every:
+            return None                       # no trips ever: feature unused
         rows = []
-        for t in storage.get_all_trip_metadata() or []:
+        for t in every:
             if t.get('is_draft'):
                 continue
             ts = t.get('mock_start_date')
@@ -493,7 +547,7 @@ def _tile_trips(now, **_):
                          'date': start.isoformat(),
                          'days': (start - now.date()).days})
         if not rows:
-            return None
+            return {'empty': "No trips planned."}
         rows.sort(key=lambda r: r['days'])
         return {'trips': rows[:2]}
     except Exception as e:
@@ -522,13 +576,15 @@ def _tile_map(now, runs=None, **_):
                 except Exception:
                     state = None
             leg = driving.get(m.get('driver_id'))
-            if not state and not leg:
-                continue
+            # Everyone appears, tracked or not. "Where is everyone" has no
+            # empty day, and a person silently missing from the list is worse
+            # than a person shown as unknown — you cannot tell the difference
+            # between "not tracked" and "not home".
             rows.append({'name': m.get('name'), 'color_code': m.get('color_code'),
                          'avatar': m.get('avatar'), 'image': m.get('image'),
-                         'state': state, 'driving': leg})
+                         'state': state or None, 'driving': leg})
         if not rows:
-            return None
+            return None                       # no family members at all
         # Anyone out ranks anyone home: "everybody is home" is the boring case.
         rows.sort(key=lambda r: (not r['driving'], (r['state'] or '') == 'home',
                                  r['name'] or ''))
@@ -545,10 +601,14 @@ def _tile_intake(now, **_):
     part of intake anybody needs from across a kitchen. The proposals
     themselves stay on /intake."""
     try:
+        # Unconfigured means intake is switched off entirely; switched on with
+        # an empty queue is "you are caught up", which is worth saying.
+        if not (storage.get_settings() or {}).get('ingest_email_enabled'):
+            return None
         # 'proposed' is the waiting-for-a-parent status — NOT 'pending', which
         # matches nothing and would have made this tile permanently silent.
         waiting = storage.get_proposals('proposed') or []
-        return {'pending': len(waiting)} if waiting else None
+        return {'pending': len(waiting)} if waiting else {'empty': "Nothing waiting."}
     except Exception as e:
         print(f"[home_board] intake failed: {e}")
         return None
@@ -600,10 +660,15 @@ def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> L
 # profile endpoint has to validate against it.
 NAV_SLUGS = ['home', 'schedule', 'calendar', 'errands', 'shopping', 'occasions',
              'chores', 'routines', 'intake', 'trips', 'map', 'moments']
-# Seven is what fits at a size a thumb can hit on a 10" display. Intake is
-# deliberately absent: it is an admin surface (mail approvals, IMAP settings)
-# and the kiosk rule has always been to keep it off shared screens.
-DEFAULT_TABS = ['home', 'schedule', 'chores', 'routines', 'shopping', 'moments']
+# Every destination except the admin one. An earlier six-slug default put more
+# than half the app out of reach from the panel, which is not a shelf, it is a
+# bookmark bar. The shelf measures itself and moves whatever does not fit into
+# a "More" flyout, so the number of destinations is no longer a design
+# constraint that has to be guessed here. Intake stays off: it is an admin
+# surface (mail approvals, IMAP settings) and the kiosk rule has always been to
+# keep it off shared screens.
+DEFAULT_TABS = ['home', 'schedule', 'calendar', 'chores', 'routines', 'shopping',
+                'errands', 'occasions', 'trips', 'map', 'moments']
 
 
 def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List[str]:

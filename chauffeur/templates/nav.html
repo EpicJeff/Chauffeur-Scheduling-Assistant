@@ -208,7 +208,24 @@
             <span class="text-[0.6rem] font-bold uppercase tracking-wide truncate max-w-full">{{ item.short }}</span>
         </a>
         {% endfor %}
+        <button id="panel-shelf-more" type="button" style="display:none"
+            onclick="document.getElementById('panel-shelf-flyout').classList.toggle('hidden')"
+            class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl text-gray-400">
+            <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"></path>
+            </svg>
+            <span class="text-[0.6rem] font-bold uppercase tracking-wide">More</span>
+        </button>
     </div>
+</div>
+
+{# Overflow. The shelf measures itself rather than trusting a guessed count:
+   a 7" portrait panel and a 27" landscape one disagree about how many buttons
+   fit, and both are wall panels. Whatever does not fit lands here. #}
+<div id="panel-shelf-flyout"
+    class="hidden fixed left-0 right-0 z-[69] bg-gray-900/97 backdrop-blur border-t border-gray-800 p-3"
+    style="bottom: var(--panel-shelf-h)">
+    <div class="grid grid-cols-4 sm:grid-cols-6 gap-2" id="panel-shelf-flyout-items"></div>
 </div>
 </nav>
 
@@ -276,11 +293,48 @@
             return _profile;
         }
 
+        // Measure, don't guess. A 7" portrait panel and a 27" landscape one
+        // disagree about how many buttons fit and both are wall panels, so the
+        // shelf works out its own capacity and pushes the remainder into the
+        // flyout. MIN_BTN is the narrowest a labelled icon stays readable at
+        // panel scale; below that they turn into unlabelled guesses.
+        const MIN_BTN = 92;
+        function layoutShelf() {
+            const row = document.getElementById('panel-shelf-items');
+            const more = document.getElementById('panel-shelf-more');
+            const drawer = document.getElementById('panel-shelf-flyout-items');
+            const flyout = document.getElementById('panel-shelf-flyout');
+            if (!row || !more || !drawer) return;
+
+            // Everything comes home first, so a resize can give buttons back.
+            drawer.querySelectorAll('[data-slug]').forEach(a => row.insertBefore(a, more));
+            const items = [...row.querySelectorAll('[data-slug]')]
+                .filter(a => a.style.display !== 'none');
+
+            const width = row.clientWidth || window.innerWidth;
+            let fits = Math.max(1, Math.floor(width / MIN_BTN));
+            if (fits >= items.length) {
+                more.style.display = 'none';
+                if (flyout) flyout.classList.add('hidden');
+                return;
+            }
+            // The More button costs a slot of its own.
+            fits = Math.max(1, fits - 1);
+            items.slice(fits).forEach(a => drawer.appendChild(a));
+            more.style.display = '';
+        }
+
         function showShelf() {
             const shelf = document.getElementById('panel-shelf');
             const bar = document.getElementById('top-nav-bar');
             if (bar) bar.style.display = 'none';
             if (shelf) shelf.classList.remove('hidden');
+            layoutShelf();
+            let t;
+            window.addEventListener('resize', () => {
+                clearTimeout(t);
+                t = setTimeout(layoutShelf, 150);
+            });
         }
 
         // Per-embed tab filtering, aimed at HA iframe cards: the URL is
@@ -304,6 +358,19 @@
             panelProfile()
                 .then(p => { if (p && p.tabs) applyTabs(new Set(p.tabs)); })
                 .finally(showShelf);
+        }
+
+        // Tapping anywhere else puts the flyout away. On a wall panel there is
+        // no Escape key and no click-outside instinct to rely on, so this also
+        // means the next idle return finds the page in a clean state.
+        if (isPanel) {
+            document.addEventListener('pointerdown', (e) => {
+                const flyout = document.getElementById('panel-shelf-flyout');
+                const more = document.getElementById('panel-shelf-more');
+                if (!flyout || flyout.classList.contains('hidden')) return;
+                if (flyout.contains(e.target) || (more && more.contains(e.target))) return;
+                flyout.classList.add('hidden');
+            }, true);
         }
 
         // Idle return. What makes the panel an appliance rather than a browser:

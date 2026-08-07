@@ -180,9 +180,11 @@ def scenario_the_hero_and_the_drives_tile_cannot_contradict_each_other():
         tile = home_board._tile_drives(evening, runs=runs)
 
         check(hero['all_done'], "the hero says the driving is done")
-        check(tile is None,
-              "so the drives tile must be gone, not listing the 5pm drive as "
-              "'the rest of the day'")
+        check(tile is not None and tile.get('empty'),
+              "so the drives tile must say it is done rather than list the 5pm "
+              f"drive under 'the rest of the day', got {tile}")
+        check('drivers' not in (tile or {}),
+              "and it must not still be rendering the finished drive")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
@@ -228,21 +230,84 @@ def scenario_mixed_timezone_stamps_do_not_raise():
 
 # --- the tiles ------------------------------------------------------------
 
-def scenario_a_tile_with_nothing_to_say_is_absent():
-    """Property 1, checked on the whole board rather than one builder: asking
-    for every tile on an empty household yields no tiles at all."""
+def scenario_an_unconfigured_feature_has_no_tile():
+    """Property 1, first half. A household that has never made a shopping list
+    or an errand wants no tile for either — asking for all fourteen on a blank
+    install yields nothing."""
     _clear_cache()
     orig = storage.get_cached_schedule
     try:
         storage.get_cached_schedule = lambda: {}
         board = home_board.build(requested=','.join(home_board.WIDGET_KEYS))
-        check(board['tiles'] == [],
-              f"empty household -> no tiles, got {[t['key'] for t in board['tiles']]}")
+        keys = [t['key'] for t in board['tiles']]
+        # The calendar is never hidden — a family calendar is not a feature you
+        # opt into, and a missing calendar tile reads as a broken panel. Every
+        # other tile belongs to something this blank install has not set up.
+        check(keys == ['calendar'],
+              f"blank install -> the calendar and nothing else, got {keys}")
+        check(board['tiles'][0]['data'].get('empty'),
+              "and it says what it is quiet about")
         check(board['hero']['next'] is None and not board['hero']['all_done'],
               "no drives at all is distinct from all drives done")
     finally:
         storage.get_cached_schedule = orig
         _clear_cache()
+
+
+def scenario_a_configured_feature_that_is_quiet_still_shows():
+    """Property 1, second half, and the correction that mattered: the panel
+    kept dropping to four tiles and the family could not tell whether the map
+    was empty or the app was broken. A feature that IS set up shows up, with a
+    sentence saying what it is quiet about."""
+    _clear_cache()
+    orig_lists, orig_items, orig_err = (storage.get_shopping_lists,
+                                        storage.get_shopping_items,
+                                        storage.get_all_errands)
+    try:
+        # A list exists but everything on it is checked off.
+        storage.get_shopping_lists = lambda: [{'id': 'l1', 'name': 'Groceries'}]
+        storage.get_shopping_items = lambda *a, **kw: [{'is_checked': True}]
+        tile = home_board._tile_shopping(datetime.datetime.now())
+        check(tile and tile.get('empty'),
+              f"a configured-but-empty list must still render, got {tile}")
+
+        # An errand exists but it is done.
+        storage.get_all_errands = lambda: [{'title': 'x', 'is_completed': True}]
+        tile = home_board._tile_errands(datetime.datetime.now())
+        check(tile and tile.get('empty'),
+              f"errands that are all finished still render, got {tile}")
+
+        # Nothing at all, either way -> genuinely unconfigured, so hidden.
+        storage.get_shopping_lists = lambda: []
+        storage.get_all_errands = lambda: []
+        check(home_board._tile_shopping(datetime.datetime.now()) is None,
+              "no lists ever -> no tile")
+        check(home_board._tile_errands(datetime.datetime.now()) is None,
+              "no errands ever -> no tile")
+    finally:
+        (storage.get_shopping_lists, storage.get_shopping_items,
+         storage.get_all_errands) = orig_lists, orig_items, orig_err
+        _clear_cache()
+
+
+def scenario_the_map_is_never_hidden_for_being_quiet():
+    """Where everyone is has no empty day. A member with no tracking appears as
+    unknown rather than silently missing — you cannot otherwise tell "not
+    tracked" from "not home"."""
+    orig = storage.get_all_members
+    try:
+        storage.get_all_members = lambda *a, **kw: [
+            {'id': 'm1', 'name': 'Sam', 'role': 'parent'},      # no HA entity
+            {'id': 'm2', 'name': 'Kit', 'role': 'child'},
+        ]
+        tile = home_board._tile_map(datetime.datetime.now(), runs=[])
+        check(tile and len(tile['people']) == 2,
+              f"everyone appears whether tracked or not, got {tile}")
+        storage.get_all_members = lambda *a, **kw: []
+        check(home_board._tile_map(datetime.datetime.now(), runs=[]) is None,
+              "no family members at all -> no tile")
+    finally:
+        storage.get_all_members = orig
 
 
 def scenario_the_meals_tile_reads_and_never_composes():

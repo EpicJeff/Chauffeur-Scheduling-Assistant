@@ -115,9 +115,9 @@
             </div>
         </div>
 
-        <!-- ── The glances. Only tiles that had something to say arrive here:
-             the server drops the empty ones rather than sending a placeholder,
-             so the grid never shows a box explaining that it is empty. -->
+        <!-- ── The glances. Tiles for features this household has actually set
+             up; a quiet one says what it is quiet about rather than vanishing,
+             because a hidden tile and a broken tile look identical on a wall. -->
         <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
             <template x-for="t in (board.tiles || [])" :key="t.key">
                 <div class="bg-gray-900/70 border border-gray-800 rounded-2xl p-4 md:p-5 min-w-0">
@@ -127,8 +127,16 @@
                             x-text="t.label"></span>
                     </div>
 
+                    <!-- A configured feature that is simply quiet says so. This
+                         is a real answer, and it is why tiles no longer vanish
+                         on a slow day: you cannot tell a hidden tile from a
+                         broken one. -->
+                    <template x-if="t.data.empty">
+                        <div class="text-base text-gray-600" x-text="t.data.empty"></div>
+                    </template>
+
                     <!-- the rest of the day -->
-                    <template x-if="t.key === 'drives'">
+                    <template x-if="t.key === 'drives' && !t.data.empty">
                         <div class="space-y-3">
                             <template x-for="d in t.data.drivers" :key="d.driver">
                                 <div>
@@ -148,7 +156,7 @@
                     </template>
 
                     <!-- each kid -->
-                    <template x-if="t.key === 'kids'">
+                    <template x-if="t.key === 'kids' && !t.data.empty">
                         <div class="space-y-3">
                             <template x-for="k in t.data.kids" :key="k.name">
                                 <div>
@@ -162,21 +170,28 @@
                         </div>
                     </template>
 
-                    <!-- tonight's plate -->
-                    <template x-if="t.key === 'meals'">
-                        <div class="flex flex-wrap gap-3">
-                            <template x-for="d in t.data.dishes" :key="d.name">
-                                <div class="flex items-center gap-2">
+                    <!-- tonight's plate, as a mosaic. The picture is not
+                         decoration: a child who cannot read fluently yet learns
+                         what is for dinner from it (arc K1), so the images lead
+                         and the names ride on top of them. -->
+                    <template x-if="t.key === 'meals' && !t.data.empty">
+                        <div class="grid grid-cols-2 gap-2" style="grid-auto-rows: 4.75rem">
+                            <template x-for="(d, i) in t.data.dishes" :key="i">
+                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
+                                    :style="collageSpan(i, t.data.dishes.length, 2)">
                                     <img x-show="d.image" :src="d.image" alt=""
-                                        class="w-12 h-12 rounded-lg object-cover border border-gray-700">
-                                    <span class="text-lg font-semibold text-gray-200" x-text="d.name"></span>
+                                        class="absolute inset-0 w-full h-full object-cover">
+                                    <div class="absolute inset-x-0 bottom-0 px-2 py-1.5"
+                                        style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent)">
+                                        <span class="text-sm font-bold text-white" x-text="d.name"></span>
+                                    </div>
                                 </div>
                             </template>
                         </div>
                     </template>
 
                     <!-- lists -->
-                    <template x-if="t.key === 'shopping'">
+                    <template x-if="t.key === 'shopping' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="l in t.data.lists" :key="l.name">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -189,7 +204,7 @@
                     </template>
 
                     <!-- chore points -->
-                    <template x-if="t.key === 'chores'">
+                    <template x-if="t.key === 'chores' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="b in t.data.balances" :key="b.member_id">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -205,7 +220,7 @@
                     </template>
 
                     <!-- streaks -->
-                    <template x-if="t.key === 'routines'">
+                    <template x-if="t.key === 'routines' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="s in t.data.streaks" :key="s.name">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -218,7 +233,7 @@
                     </template>
 
                     <!-- coming up -->
-                    <template x-if="t.key === 'occasions'">
+                    <template x-if="t.key === 'occasions' && !t.data.empty">
                         <div class="space-y-2">
                             <template x-for="o in t.data.occasions" :key="o.title + o.date">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -232,7 +247,7 @@
                     </template>
 
                     <!-- the week -->
-                    <template x-if="t.key === 'weather'">
+                    <template x-if="t.key === 'weather' && !t.data.empty">
                         <div class="flex justify-between gap-2">
                             <template x-for="d in t.data.days" :key="d.day">
                                 <div class="text-center min-w-0">
@@ -250,17 +265,20 @@
                     </template>
 
                     <!-- latest moments -->
-                    <template x-if="t.key === 'moments'">
-                        <div class="grid grid-cols-3 gap-2">
+                    <template x-if="t.key === 'moments' && !t.data.empty">
+                        <div class="grid grid-cols-3 gap-2" style="grid-auto-rows: 4.25rem">
                             <template x-for="(m, i) in t.data.moments" :key="i">
-                                <img :src="momentSrc(m)" alt=""
-                                    class="w-full aspect-square rounded-lg object-cover border border-gray-700">
+                                <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
+                                    :style="collageSpan(i, t.data.moments.length, 3)">
+                                    <img :src="momentSrc(m)" alt=""
+                                        class="absolute inset-0 w-full h-full object-cover">
+                                </div>
                             </template>
                         </div>
                     </template>
 
                     <!-- what's coming -->
-                    <template x-if="t.key === 'calendar'">
+                    <template x-if="t.key === 'calendar' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(e, i) in t.data.events" :key="i">
                                 <div class="flex gap-2 text-base text-gray-300">
@@ -275,7 +293,7 @@
                     </template>
 
                     <!-- errands waiting -->
-                    <template x-if="t.key === 'errands'">
+                    <template x-if="t.key === 'errands' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(e, i) in t.data.errands" :key="i">
                                 <div class="flex items-baseline gap-2">
@@ -292,7 +310,7 @@
                     </template>
 
                     <!-- next trip -->
-                    <template x-if="t.key === 'trips'">
+                    <template x-if="t.key === 'trips' && !t.data.empty">
                         <div class="space-y-2">
                             <template x-for="(tr, i) in t.data.trips" :key="i">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -310,7 +328,7 @@
                     </template>
 
                     <!-- where everyone is -->
-                    <template x-if="t.key === 'map'">
+                    <template x-if="t.key === 'map' && !t.data.empty">
                         <div class="space-y-1.5">
                             <template x-for="(p, i) in t.data.people" :key="i">
                                 <div class="flex items-baseline justify-between gap-3">
@@ -325,7 +343,7 @@
                     </template>
 
                     <!-- waiting to approve -->
-                    <template x-if="t.key === 'intake'">
+                    <template x-if="t.key === 'intake' && !t.data.empty">
                         <div class="flex items-baseline gap-3">
                             <span class="text-4xl font-black tabular-nums text-indigo-300"
                                 x-text="t.data.pending"></span>
@@ -527,6 +545,18 @@
                         this.countdown = 'in ' + h + ' hr' + (m ? ' ' + m + ' min' : '');
                         this.countdownClass = 'bg-gray-700/60 text-gray-300';
                     }
+                },
+
+                // Mosaic sizing, as inline grid spans rather than Tailwind
+                // classes: these are computed in JS and the CDN build only
+                // reliably generates classes it can see in the markup.
+                // One item fills the tile; a lone leader gets promoted so a
+                // 3-up never renders as a ragged row with a hole in it.
+                collageSpan(i, n, cols) {
+                    if (n === 1) return `grid-column: span ${cols}; grid-row: span 2;`;
+                    if (i === 0 && n === cols) return 'grid-row: span 2;';
+                    if (i === 0 && n > cols) return `grid-column: span ${cols - 1}; grid-row: span 2;`;
+                    return '';
                 },
 
                 momentSrc(m) {
