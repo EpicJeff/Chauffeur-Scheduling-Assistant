@@ -1086,12 +1086,27 @@ def delete_car(doc_id: int):
         cars_table.remove(doc_ids=[doc_id])
 
 # Family member CRUD (overlay entity; see FamilyMember in models/schemas.py)
-def get_all_members() -> List[dict]:
+def get_all_members(include_system: bool = False) -> List[dict]:
+    """The human family. **Argyle is excluded by default.**
+
+    Argyle is a `system: True` member so that agent replies have a sender
+    identity, and the original note said the flag "lets the UI exclude it from
+    the human family roster". Leaving that to each caller meant exactly one
+    surface ever did (`app.html`), so the assistant turned up in the People
+    config, in occasion attendance, in presence, in digests — anywhere people
+    are listed. A default that has to be remembered 57 times is not a default.
+
+    So exclusion moved here, to the boundary. `include_system=True` is for the
+    handful of places that resolve a message SENDER by id and would otherwise
+    render Argyle's own messages as "Unknown".
+    """
     with db_lock:
         members = []
         for m in members_table.all():
             doc = dict(m)
             doc['doc_id'] = m.doc_id
+            if not include_system and doc.get('system'):
+                continue
             members.append(doc)
         return members
 

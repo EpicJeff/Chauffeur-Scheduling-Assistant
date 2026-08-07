@@ -587,7 +587,9 @@ def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dic
     msgs = storage.get_channel_messages(channel['id'], limit=max(1, min(int(limit or 10), 25))) if channel else []
     if not msgs:
         return {"status": "success", "message": "No family messages yet."}
-    names = {m['id']: m.get('name', '?') for m in storage.get_all_members()}
+    # include_system: Argyle sends messages, so its own name has to resolve.
+    names = {m['id']: m.get('name', '?')
+             for m in storage.get_all_members(include_system=True)}
     lines = []
     for m in msgs:
         t = datetime.datetime.fromtimestamp(m.get('ts', 0)).strftime('%a %I:%M %p').lstrip('0')
