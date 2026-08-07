@@ -351,7 +351,7 @@
                      panel. The coverage audit could not catch that: grepping a
                      template proves a control EXISTS, not that it is reachable.
                      Anchors here are what /settings links to. -->
-                    <div id="how" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-4">
+                    <div id="how" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mt-4 mb-4">
                         <button @click="showMealSettings = !showMealSettings"
                             class="w-full flex items-center justify-between text-left">
                             <span class="text-xs font-black uppercase tracking-widest text-pink-200">
@@ -838,6 +838,40 @@
                     <div class="space-y-2">
                         <template x-for="m in shownDishes()" :key="'rp-' + m.id">
                             <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2.5 flex items-start gap-3">
+                                <!-- The picture, and the only place it can be set
+                                     by hand. "Your own photo outranks a stock one"
+                                     was true of the model and the agent tool and
+                                     of nothing a person could actually do — the
+                                     dish editor showed no image at all. The tile
+                                     IS the control: it shows what a child sees on
+                                     the board, and tapping it replaces that. -->
+                                <div class="shrink-0 flex flex-col items-center gap-1">
+                                    <label class="relative w-11 h-14 rounded-lg overflow-hidden border flex items-center
+                                                  justify-center cursor-pointer bg-gray-950 group"
+                                        :class="m.image_url ? 'border-gray-700 hover:border-pink-400/60'
+                                                            : 'border-dashed border-gray-700 hover:border-pink-400/60'"
+                                        :title="m.image_url
+                                            ? ((m.image_source === 'family' ? 'Your photo' : 'Stock picture')
+                                               + ' — tap to use a photo of your own')
+                                            : 'Add your own photo of this dish'">
+                                        <img x-show="m.image_url" :src="m.image_url" alt=""
+                                            class="absolute inset-0 w-full h-full object-cover">
+                                        <span x-show="!m.image_url"
+                                            class="text-base text-gray-700 group-hover:text-pink-300">📷</span>
+                                        <input type="file" accept="image/*" class="hidden"
+                                            @change="onDishPhotoPicked($event, m)">
+                                    </label>
+                                    <!-- Stock is the fallback, so it is offered only
+                                         while the good answer is still missing. -->
+                                    <button x-show="(m.image_source || '') !== 'family'"
+                                        @click="findDishPicture(m)" :disabled="dishPicBusy === m.id"
+                                        class="text-[10px] font-bold text-gray-600 hover:text-pink-300 disabled:opacity-40"
+                                        title="Look one up instead"
+                                        x-text="dishPicBusy === m.id ? '…' : 'stock'"></button>
+                                    <button x-show="m.image_url" @click="clearDishImage(m)"
+                                        class="text-[10px] font-bold text-gray-600 hover:text-red-400"
+                                        title="Remove this picture">remove</button>
+                                </div>
                                 <div class="min-w-0 flex-1">
                                     <button @click="renameDish(m)"
                                         class="text-sm font-semibold text-gray-200 hover:text-white text-left"
@@ -1336,7 +1370,7 @@
                 week: [], weekWindow: null, weekBusy: false,
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
-                staples: [], stapleBusy: null, picsBusy: false,
+                staples: [], stapleBusy: null, picsBusy: false, dishPicBusy: null,
                 pickerQuery: '', occasionDate: '',
                 // What the picker is currently answering FOR. One object
                 // rather than a nullable per caller: {kind:'night',date} |
@@ -1756,6 +1790,95 @@
                         showGlobalAlert('Could not reach the server.');
                     } finally {
                         this.picsBusy = false;
+                    }
+                },
+
+                async onDishPhotoPicked(event, dish) {
+                    const file = event.target.files && event.target.files[0];
+                    event.target.value = '';   // same file twice must re-fire
+                    if (!file) return;
+                    let dataUrl;
+                    try {
+                        dataUrl = await this.dishPhotoToDataUrl(file);
+                    } catch (e) {
+                        showGlobalAlert('Could not read that image file.');
+                        return;
+                    }
+                    await this.saveDishImage(dish, dataUrl, 'family');
+                },
+                // Deliberately larger than the 128px square used for people and
+                // cars: this picture becomes the FULL background of a card on a
+                // wall-mounted board, where a thumbnail reads as a smear. Aspect
+                // is preserved for the same reason a plate is photographed whole
+                // — a centre-square crop of a dinner cuts off the plate.
+                dishPhotoToDataUrl(file) {
+                    return new Promise((resolve, reject) => {
+                        if (!file || !file.type.startsWith('image/')) return reject(new Error('Not an image'));
+                        const img = new Image();
+                        img.onload = () => {
+                            const max = 640;
+                            const scale = Math.min(1, max / Math.max(img.width, img.height));
+                            const w = Math.max(1, Math.round(img.width * scale));
+                            const h = Math.max(1, Math.round(img.height * scale));
+                            const canvas = document.createElement('canvas');
+                            canvas.width = w; canvas.height = h;
+                            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                            URL.revokeObjectURL(img.src);
+                            resolve(canvas.toDataURL('image/jpeg', 0.75));
+                        };
+                        img.onerror = () => {
+                            URL.revokeObjectURL(img.src);
+                            reject(new Error('Could not read image'));
+                        };
+                        img.src = URL.createObjectURL(file);
+                    });
+                },
+                async saveDishImage(dish, url, source) {
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/dishes/' + dish.id + '/image', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: url, source: source })
+                        });
+                        if (!r.ok) { showGlobalAlert('Could not save that picture.'); return; }
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                        return;
+                    }
+                    // The board, the week strip and tonight's plate all carry the
+                    // picture, so all three have to catch up.
+                    await this.loadRepertoire();
+                    await this.loadWeek();
+                    this.loadPlate();
+                },
+                async clearDishImage(dish) {
+                    if (!await promptConfirm('Remove picture',
+                        'Remove the picture for ' + (dish.short_name || dish.name) + '?',
+                        'Remove')) return;
+                    // Source is required by the request model and ignored by the
+                    // service when the url is empty — it clears both fields.
+                    await this.saveDishImage(dish, '', 'family');
+                },
+                async findDishPicture(dish) {
+                    // The retry for one wrong picture — the bulk button only ever
+                    // touches dishes that have none.
+                    this.dishPicBusy = dish.id;
+                    try {
+                        const r = await fetch(this.apiBase + 'api/meals/dishes/'
+                                              + dish.id + '/image/auto', { method: 'POST' });
+                        const res = r.ok ? await r.json() : null;
+                        if (!res || res.status === 'error') {
+                            showGlobalAlert((res && res.message)
+                                || 'Could not look a picture up for that one.');
+                            return;
+                        }
+                        await this.loadRepertoire();
+                        await this.loadWeek();
+                        this.loadPlate();
+                    } catch (e) {
+                        showGlobalAlert('Could not reach the server.');
+                    } finally {
+                        this.dishPicBusy = null;
                     }
                 },
 
