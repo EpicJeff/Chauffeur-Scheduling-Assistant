@@ -115,6 +115,15 @@ class FamilyMember(BaseModel):
     role: str = 'adult'
     driver_id: Optional[str] = None
     passenger_id: Optional[str] = None
+    # Google calendars belonging to THIS PERSON — set in exactly one place
+    # (Config -> People -> Identity). Driver.calendar_ids and
+    # Passenger.calendar_ids are derived mirrors of this list, rewritten on
+    # every save (storage.set_member_calendars), so the solver and matcher can
+    # go on reading the records they always read. What a calendar MEANS still
+    # comes from the links: a passenger link makes its events ride demand, a
+    # driver link makes them busy-time, and a person with NEITHER link (drives
+    # themselves, chauffeurs nobody) simply appears on the family calendar.
+    calendar_ids: List[str] = Field(default_factory=list)
     ha_person_entity: Optional[str] = None    # e.g. person.jeff
     notify_service: Optional[str] = None      # e.g. notify.mobile_app_jeffs_iphone
     media_player_entity: Optional[str] = None

@@ -650,6 +650,9 @@
 
         window.hiddenMembers = new Set();
         let allLegendMembers = new Map(); // Store {id, name, color, type}
+        // Calendar summary ("Jeff's Calendar") -> person name ("Jeff"), so an
+        // event labelled by its calendar still answers to its owner's chip.
+        let memberAliases = new Map();
 
         function renderLegend() {
             const container = document.getElementById('filter-legend');
@@ -1106,9 +1109,30 @@
                             });
                         }
                         
-                        // Populate legend data
+                        // Populate legend data. People first: the legend is the
+                        // family, not the roster of solver roles — someone who
+                        // drives themselves and chauffeurs nobody has no driver
+                        // or passenger record and used to be missing entirely.
+                        // Their calendar summaries become aliases so events
+                        // labelled "Jeff's Calendar" still filter under "Jeff".
+                        if (data.members) {
+                            data.members.forEach(m => {
+                                const type = m.driver_id ? 'driver' : (m.passenger_id ? 'passenger' : 'member');
+                                allLegendMembers.set(m.name, { id: m.name, name: m.name,
+                                    color: m.color_code || '#3B82F6', type: type });
+                                (m.calendar_ids || []).forEach(cid => {
+                                    const meta = data.calendar_metadata && data.calendar_metadata[cid];
+                                    if (meta && meta.summary && meta.summary !== m.name) {
+                                        memberAliases.set(meta.summary, m.name);
+                                    }
+                                });
+                            });
+                        }
+                        // Fall back to the solver records for anyone the member
+                        // overlay hasn't caught up with yet.
                         if (data.passengers) {
                             data.passengers.forEach(p => {
+                                if (allLegendMembers.has(p.name)) return;
                                 let cColor = '#3B82F6';
                                 if (p.calendar_ids && p.calendar_ids.length > 0) {
                                     const meta = data.calendar_metadata && data.calendar_metadata[p.calendar_ids[0]];
@@ -1119,6 +1143,7 @@
                         }
                         if (data.drivers) {
                             data.drivers.forEach(d => {
+                                if (allLegendMembers.has(d.name)) return;
                                 // Use the driver's real color — the old hardcoded
                                 // #1F2937 (dark slate) was an unreadable blob on
                                 // light HA themes.
@@ -1138,7 +1163,8 @@
                         fcEvents = fcEvents.filter(ev => {
                             let participants = new Set();
                             if (ev.extendedProps.passengers) {
-                                ev.extendedProps.passengers.forEach(p => participants.add(p.name));
+                                ev.extendedProps.passengers.forEach(p =>
+                                    participants.add(memberAliases.get(p.name) || p.name));
                             }
                             if (participants.size === 0
                                 && ev.extendedProps.driverName && ev.extendedProps.driverName !== 'Multiple Drivers') {

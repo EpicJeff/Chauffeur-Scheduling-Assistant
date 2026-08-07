@@ -524,6 +524,7 @@ def ensure_members():
                 'role': 'adult',
                 'driver_id': None,
                 'passenger_id': None,
+                'calendar_ids': [],
                 'ha_person_entity': None,
                 'notify_service': None,
                 'media_player_entity': None,
@@ -621,6 +622,84 @@ def ensure_member_colors():
             members_table.update(updates, doc_ids=[m.doc_id])
 
 ensure_member_colors()
+
+def _mirror_calendars_to_links(driver_id, passenger_id, cal_ids) -> bool:
+    """Write a person's calendar list down onto their driver/passenger records.
+
+    Those two fields are MIRRORS, not inputs: the member owns the list, and
+    everything downstream (the solver's fetch set, matcher.py's ~20 reads of
+    passenger.calendar_ids, the kid day view) keeps reading the records it
+    always read. Caller holds db_lock. Returns True if anything moved."""
+    changed = False
+    if driver_id:
+        for d in drivers_table.search(Query().id == driver_id):
+            if (d.get('calendar_ids') or []) != list(cal_ids):
+                drivers_table.update({'calendar_ids': list(cal_ids)}, doc_ids=[d.doc_id])
+                changed = True
+    if passenger_id:
+        for p in passengers_table.search(Query().id == passenger_id):
+            if (p.get('calendar_ids') or []) != list(cal_ids):
+                passengers_table.update({'calendar_ids': list(cal_ids)}, doc_ids=[p.doc_id])
+                changed = True
+    return changed
+
+
+def ensure_member_calendars():
+    """Lift calendars from the driver/passenger records onto the person.
+
+    Calendars used to live only on Driver and Passenger, which meant a person
+    with neither profile could not have one at all — no presence on the family
+    calendar, no way to be seen without being enrolled in the solver. The
+    member now owns `calendar_ids`; this migrates existing setups by unioning
+    each link's list upward, then mirroring the result back down.
+
+    Runs the union every boot rather than once, so a legacy write straight to a
+    driver/passenger record self-heals into the person's list instead of
+    silently diverging. Idempotent."""
+    with db_lock:
+        drivers = {d.get('id'): dict(d) for d in drivers_table.all()}
+        pax = {p.get('id'): dict(p) for p in passengers_table.all()}
+        for m in members_table.all():
+            member = dict(m)
+            merged = [c for c in (member.get('calendar_ids') or []) if c and c.strip()]
+            before = list(merged)
+            for rec in (drivers.get(member.get('driver_id')),
+                        pax.get(member.get('passenger_id'))):
+                if not rec:
+                    continue
+                for c in (rec.get('calendar_ids') or []):
+                    if c and c.strip() and c not in merged:
+                        merged.append(c)
+            if merged != before:
+                members_table.update({'calendar_ids': merged}, doc_ids=[m.doc_id])
+            _mirror_calendars_to_links(member.get('driver_id'),
+                                       member.get('passenger_id'), merged)
+
+ensure_member_calendars()
+
+def set_member_calendars(member_id: str, cal_ids) -> bool:
+    """The one place calendars are set. Writes the person's list and rewrites
+    their driver/passenger mirrors to match, then drops the schedule caches —
+    the set of calendars fetched is a solver input."""
+    clean, seen = [], set()
+    for c in (cal_ids or []):
+        c = (c or '').strip()
+        if c and c not in seen:
+            seen.add(c)
+            clean.append(c)
+    with db_lock:
+        res = members_table.search(Query().id == member_id)
+        if not res:
+            return False
+        member = dict(res[0])
+        prior = member.get('calendar_ids') or []
+        members_table.update({'calendar_ids': clean}, Query().id == member_id)
+        moved = _mirror_calendars_to_links(member.get('driver_id'),
+                                           member.get('passenger_id'), clean)
+        if moved or prior != clean:
+            mark_all_daily_schedules_dirty()
+            cache_table.truncate()
+    return True
 
 def ensure_family_channel():
     """Singleton all-family chat channel (kind='family', empty member_ids =
@@ -938,6 +1017,9 @@ def add_driver(driver_data: dict) -> int:
         cache_table.truncate()
         doc_id = drivers_table.insert(driver_data)
         ensure_members()
+        # A new driving profile links to the person; push their calendars down
+        # onto it so the profile arrives already mirrored.
+        ensure_member_calendars()
         return doc_id
 
 def update_driver_fields(driver_id: str, updates: dict) -> bool:
@@ -1039,6 +1121,7 @@ def add_passenger(passenger_data: dict) -> int:
         cache_table.truncate()
         doc_id = passengers_table.insert(passenger_data)
         ensure_members()
+        ensure_member_calendars()
         return doc_id
 
 def update_passenger(doc_id: int, passenger_data: dict):
@@ -1155,10 +1238,20 @@ def merge_members(keep_id: str, absorb_id: str) -> Optional[dict]:
         for f in ('ha_person_entity', 'notify_service', 'media_player_entity', 'avatar', 'image'):
             if not keep.get(f) and absorb.get(f):
                 updates[f] = absorb[f]
+        # Calendars are the person's, so a merge unions them — the absorbed
+        # record is about to be deleted and its list would otherwise vanish
+        # (the link mirrors only carry the ones a driver/passenger profile had).
+        merged_cals = list(keep.get('calendar_ids') or [])
+        for c in (absorb.get('calendar_ids') or []):
+            if c and c not in merged_cals:
+                merged_cals.append(c)
+        if merged_cals != (keep.get('calendar_ids') or []):
+            updates['calendar_ids'] = merged_cals
         if updates:
             members_table.update(updates, Query().id == keep_id)
         members_table.remove(Query().id == absorb_id)
         keep.update(updates)
+        ensure_member_calendars()
         return keep
 
 def split_member(member_id: str, link: str) -> Optional[dict]:
@@ -1189,6 +1282,9 @@ def split_member(member_id: str, link: str) -> Optional[dict]:
             'is_child': member.get('is_child', False) if link == 'passenger' else False,
             'driver_id': link_value if link == 'driver' else None,
             'passenger_id': link_value if link == 'passenger' else None,
+            # Filled from the detached record's mirror by ensure_member_calendars
+            # below: both halves start with the calendars the merge had shared.
+            'calendar_ids': [],
             'ha_person_entity': None,
             'notify_service': None,
             'media_player_entity': None,
@@ -1200,6 +1296,7 @@ def split_member(member_id: str, link: str) -> Optional[dict]:
             clear['can_drive'] = False
         members_table.update(clear, Query().id == member_id)
         members_table.insert(new)
+        ensure_member_calendars()
         return new
 
 # --- Member PINs and device tokens ---

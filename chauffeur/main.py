@@ -3213,7 +3213,10 @@ def get_members():
 @app.post("/api/members")
 def create_member(member: FamilyMember):
     data = member.model_dump()
+    cal_ids = data.pop('calendar_ids', None)
     storage.add_member(data)
+    if cal_ids:
+        storage.set_member_calendars(data['id'], cal_ids)
     return {"id": data['id'], "status": "created"}
 
 @app.put("/api/members/{member_id}")
@@ -3222,12 +3225,20 @@ def update_member_endpoint(member_id: str, updates: dict):
     # endpoints — never via blind PUT.
     for field in ('id', 'doc_id', 'driver', 'passenger', 'pin_hash', 'pin_salt', 'has_pin', 'pin'):
         updates.pop(field, None)
+    # Calendars go through set_member_calendars, never a blind write: it also
+    # rewrites the driver/passenger mirrors and drops the schedule caches.
+    cal_ids = updates.pop('calendar_ids', None)
     if 'role' in updates:
         if updates['role'] not in ('parent', 'adult', 'child', 'helper'):
             raise HTTPException(status_code=400, detail="Invalid role")
         updates['is_child'] = updates['role'] == 'child'
-    if not storage.update_member(member_id, updates):
+    if updates:
+        if not storage.update_member(member_id, updates):
+            raise HTTPException(status_code=404, detail="Member not found")
+    elif not storage.get_member(member_id):
         raise HTTPException(status_code=404, detail="Member not found")
+    if cal_ids is not None:
+        storage.set_member_calendars(member_id, cal_ids)
     if 'color_code' in updates:
         # Identity color is the single source of truth — keep the legacy
         # driver record in step so anything still reading it agrees.
@@ -8504,7 +8515,11 @@ def _apply_identity_colors(cal_meta: dict) -> dict:
             color = m.get('color_code')
             if not color:
                 continue
-            keys = []
+            # The person's own calendars and (for a calendar-only person) the
+            # member id their events are attributed to, plus the legacy mirror
+            # keys — one color, every surface.
+            keys = [str(m.get('id'))]
+            keys.extend(m.get('calendar_ids') or [])
             d = drivers_by_id.get(m.get('driver_id'))
             if d:
                 keys.extend(d.get('calendar_ids') or [])
@@ -8942,11 +8957,30 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                 passenger_calendar_ids.add(c)
                 passenger_calendar_map[c] = p
                 
-    all_cals_to_fetch = sorted(list(set(calendar_ids) | driver_calendar_ids | passenger_calendar_ids))
-    
+    # Calendars belong to the PERSON (FamilyMember.calendar_ids); the driver and
+    # passenger lists above are mirrors of it. A member with neither link — a
+    # person who drives themselves and chauffeurs nobody — has no mirror to be
+    # read from, so their calendars are collected here directly. Their events
+    # are shown and count as busy, but never become ride demand: see
+    # `is_member_only` in the event loop below.
+    members_data = storage.get_all_members()
+    member_calendar_map = {}
+    member_only_calendar_ids = set()
+    for m in members_data:
+        if m.get('driver_id') or m.get('passenger_id'):
+            continue
+        for cid in (m.get('calendar_ids') or []):
+            if cid and cid.strip():
+                c = cid.strip()
+                member_only_calendar_ids.add(c)
+                member_calendar_map[c] = m
+
+    all_cals_to_fetch = sorted(list(set(calendar_ids) | driver_calendar_ids
+                                    | passenger_calendar_ids | member_only_calendar_ids))
+
     # If there are no calendars to fetch at all, return an error
     if not all_cals_to_fetch:
-        return {"error": "No calendar IDs configured in settings, drivers, or passengers."}
+        return {"error": "No calendar IDs configured in settings or on any person."}
     
     # The build horizon is deliberately NOT days_to_show: that setting only
     # controls how much the kiosk renders. Days are solved progressively and
@@ -8997,6 +9031,9 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
     # Removed global hash check. We now do day-by-day hashing and caching below.
     events = []
     all_events_for_ui = {} # To avoid duplicates in payload
+    # Events owned by a person with no driving/passenger profile: display-only,
+    # kept out of the solver, the inbox and duplicate detection.
+    member_only_event_ids = set()
 
     driver_events_map = {d.id: [] for d in drivers}
     driver_events_ids = {d.id: [] for d in drivers}
@@ -9105,11 +9142,19 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         driver_calendar_ids = [c for d in drivers for c in d.calendar_ids]
         is_driver_only = (
-            all(c in driver_calendar_ids for c in original_calendar_ids) and 
-            len(original_calendar_ids) > 0 and 
+            all(c in driver_calendar_ids for c in original_calendar_ids) and
+            len(original_calendar_ids) > 0 and
             not any(c in calendar_ids for c in original_calendar_ids)
         )
-        
+        # An event off a calendar-only person's calendar: theirs to attend, and
+        # nobody's to drive. It renders on the family calendar under their name
+        # and color, but never reaches the solver and never nags the inbox.
+        is_member_only = (
+            len(original_calendar_ids) > 0 and
+            all(c in member_only_calendar_ids for c in original_calendar_ids) and
+            not any(c in calendar_ids for c in original_calendar_ids)
+        )
+
         if config and config.get('passenger_ids'):
             is_passenger = True
             config_pax_ids = [str(x) for x in config.get('passenger_ids', [])]
@@ -9156,6 +9201,18 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         if matched_passengers:
             e.calendar_ids = [str(p.id) for p in matched_passengers]
+        elif is_member_only:
+            # Attribute to the person, exactly as passenger events are attributed
+            # to a passenger id — that is what makes their name and color show on
+            # the event and their legend chip filter it.
+            owners = []
+            for c in original_calendar_ids:
+                owner = member_calendar_map.get(c)
+                if owner and str(owner['id']) not in owners:
+                    owners.append(str(owner['id']))
+            if owners:
+                e.calendar_ids = owners
+                member_only_event_ids.add(e.id)
 
         # 3. Check Drivers
         driver_matched = False
@@ -9182,13 +9239,14 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
 
         # 4. Triage Logic
         # Every event we haven't seen before (no config) goes to the inbox.
-        # Driver-only events bypass the inbox to avoid clutter.
-        if not config and not is_driver_only:
+        # Driver-only and person-only events bypass the inbox to avoid clutter —
+        # neither is a ride waiting to be assigned.
+        if not config and not is_driver_only and not is_member_only:
             e.needs_triage = True
-                
+
         # 5. Append to events list if it's a passenger event AND has a location
         # (needs_triage events still go to the dashboard but are stripped out of solver below)
-        if is_passenger:
+        if is_passenger and not is_member_only:
             events.append(e)
 
     # Unroll events for passenger-specific times
@@ -9611,6 +9669,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     "foregroundColor": fg_color
                 }
 
+            # Same treatment for calendar-only people, keyed by member id — the
+            # id their events were attributed to above.
+            for m in members_data:
+                if m.get('driver_id') or m.get('passenger_id'):
+                    continue
+                calendar_metadata[str(m['id'])] = {
+                    "summary": m.get('name') or 'Family member',
+                    "backgroundColor": m.get('color_code') or '#3B82F6',
+                    "foregroundColor": "#ffffff"
+                }
+
         if draft and not force_refresh:
             diagnostics = {}
         else:
@@ -9644,7 +9713,12 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             # Skip driver-only events
             if cal_ids and all(c in driver_calendar_ids for c in cal_ids):
                 continue
-                
+            # ...and person-only ones: a recurring work block is not a duplicate
+            # ride to be collapsed.
+            if e.id in member_only_event_ids:
+                continue
+
+
             e_id = e.id
             e_title = e.title
 
@@ -9722,6 +9796,17 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "diagnostics": diagnostics,
             "matched_rules": matched_rules,
             "passengers": passengers,
+            # The people themselves — the calendar legend is built from this, so
+            # someone with no driving/passenger profile still gets a chip.
+            "members": [{
+                "id": m['id'],
+                "name": m.get('name') or '',
+                "color_code": m.get('color_code') or '#3B82F6',
+                "avatar": m.get('avatar'),
+                "driver_id": m.get('driver_id'),
+                "passenger_id": m.get('passenger_id'),
+                "calendar_ids": m.get('calendar_ids') or [],
+            } for m in members_data],
             "drivers": _identity_driver_colors(drivers),
             "solving_dates": schedule_coordinator.get_solving_dates(),
             "ai_metadata": combined_ai_metadata,

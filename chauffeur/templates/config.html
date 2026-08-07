@@ -923,79 +923,21 @@
                                 </div>
                             </div>
                             <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Personal Calendar IDs</label>
-                                <div class="flex gap-2 mb-2">
-                                    <input type="text" x-model="newDriverCalendarInput"
-                                        @keydown.enter="addDriverCalendarId()" placeholder="e.g. personal@gmail.com"
-                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
-                                    <button @click="addDriverCalendarId()"
-                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
-                                </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <template x-for="(calId, index) in newDriver.calendarIds" :key="index">
-                                        <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
-                                            :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm"
-                                                :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                <label class="block text-gray-400 mb-1 text-sm">Calendars</label>
+                                <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3">
+                                    <p class="text-xs text-gray-400">Set on the person, not here — <b>People → Identity
+                                            → 📅 Google Calendars</b>. This profile mirrors that list, so an event on
+                                        their calendar already marks them busy.</p>
+                                    <div class="flex flex-wrap gap-2 mt-2" x-show="driverMirrorCalendars().length">
+                                        <template x-for="calId in driverMirrorCalendars()" :key="calId">
+                                            <div class="flex items-center text-gray-300 px-2 py-1 rounded-full text-xs font-bold border border-gray-700 bg-gray-800">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1.5"
+                                                    :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                                </div>
+                                                <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"></span>
                                             </div>
-                                            <span
-                                                x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"
-                                                class="mr-1"></span>
-                                            <button @click="removeDriverCalendarId(index)"
-                                                class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                            <div class="w-full mt-4" x-show="editDriverId && newDriver.calendarIds.length">
-                                <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
-                                <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events
-                                    are created on this person's calendar and re-synced hourly, so reschedules and
-                                    cancellations propagate on their own. Past events are never touched.</p>
-                                <template x-for="feed in icsFeedsFor(newDriver.calendarIds)" :key="feed.id">
-                                    <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
-                                        :class="feed.enabled === false ? 'opacity-60' : ''">
-                                        <div class="flex-1 min-w-0">
-                                            <span class="text-sm font-bold text-white" x-text="feed.name"></span>
-                                            <span class="text-xs text-teal-300 ml-2" x-text="(feed.event_count || 0) + ' events'"></span>
-                                            <span x-show="feed.enabled === false"
-                                                class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
-                                            <p class="text-xs truncate"
-                                                :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
-                                                x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
-                                            </p>
-                                        </div>
-                                        <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
-                                            class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                            x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
-                                        <button @click="toggleIcsFeed(feed)"
-                                            class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                            x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
-                                        <button @click="deleteIcsFeed(feed)"
-                                            class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
-                                    </div>
-                                </template>
-                                <div class="flex gap-2">
-                                    <input type="text" x-model="newIcsFeed.url"
-                                        placeholder="https://... .ics or webcal://..."
-                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
-                                    <select x-show="newDriver.calendarIds.length > 1" x-model="newIcsFeed.calendar_id"
-                                        class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
-                                        <option value="">Onto calendar...</option>
-                                        <template x-for="c in newDriver.calendarIds" :key="c">
-                                            <option :value="c"
-                                                x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
                                         </template>
-                                    </select>
-                                    <button @click="addInlineIcsFeed(newDriver.calendarIds)" :disabled="icsFeedBusy"
-                                        class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
-                                        x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
+                                    </div>
                                 </div>
                             </div>
                             <div class="w-full mt-4">
@@ -1184,6 +1126,101 @@
                                                     <option :value="other.id" x-text="other.name"></option>
                                                 </template>
                                             </select>
+                                        </div>
+                                    </div>
+                                    <!-- Calendars live on the PERSON. The driving and passenger
+                                         profiles mirror this list automatically; there is nowhere
+                                         else to set it. -->
+                                    <div class="w-full mt-4 pt-4 border-t border-gray-600/50">
+                                        <label class="block text-gray-400 mb-1 text-sm font-semibold">📅 Google Calendars</label>
+                                        <p class="text-xs text-gray-500 mb-2">
+                                            <span x-show="member.passenger_id">Events here are rides to be scheduled, and</span>
+                                            <span x-show="member.driver_id && !member.passenger_id">Events here mark them busy, and</span>
+                                            <span x-show="!member.driver_id && !member.passenger_id">This person drives themselves — their events show on the family calendar and are never handed to a driver. They</span>
+                                            <span x-show="member.driver_id || member.passenger_id">they</span>
+                                            appear on the calendar in their color. The driving and passenger profiles copy
+                                            this list; you never set calendars there.
+                                        </p>
+                                        <div class="flex gap-2 mb-2">
+                                            <input type="text" x-model="newMemberCalendarInput"
+                                                @keydown.enter="addMemberCalendarId()" placeholder="e.g. personal@gmail.com"
+                                                class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
+                                            <button @click="addMemberCalendarId()"
+                                                class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="(calId, index) in memberEdit.calendar_ids" :key="index">
+                                                <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
+                                                    :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
+                                                    <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm"
+                                                        :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                                    </div>
+                                                    <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"
+                                                        class="mr-1"></span>
+                                                    <button @click="removeMemberCalendarId(index)"
+                                                        class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round"
+                                                                stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </template>
+                                            <span x-show="!memberEdit.calendar_ids.length"
+                                                class="text-gray-500 italic text-sm">No calendar yet — this person won't appear on the family calendar.</span>
+                                        </div>
+                                        <div class="mt-4" x-show="memberEdit.calendar_ids.length || memberEdit.role === 'child'">
+                                            <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
+                                            <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events
+                                                are created on this person's calendar and re-synced hourly, so reschedules and
+                                                cancellations propagate on their own. Past events are never touched. For a child, an
+                                                assignment feed (Canvas/Schoology) can target their <b>📚 school task list</b> instead —
+                                                homework lands as due-dated tasks, never as calendar events the driving solver would see.</p>
+                                            <template x-for="feed in icsFeedsFor(memberEdit.calendar_ids, member)" :key="feed.id">
+                                                <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
+                                                    :class="feed.enabled === false ? 'opacity-60' : ''">
+                                                    <div class="flex-1 min-w-0">
+                                                        <span class="text-sm font-bold text-white" x-text="feed.name"></span>
+                                                        <span class="text-xs text-teal-300 ml-2"
+                                                            x-text="(feed.event_count || 0) + (feed.target_kind === 'tasks' ? ' 📚 tasks' : ' events')"></span>
+                                                        <span x-show="feed.enabled === false"
+                                                            class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
+                                                        <p class="text-xs truncate"
+                                                            :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
+                                                            x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
+                                                        </p>
+                                                    </div>
+                                                    <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
+                                                        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                                        x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
+                                                    <button @click="toggleIcsFeed(feed)"
+                                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
+                                                        x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
+                                                    <button @click="deleteIcsFeed(feed)"
+                                                        class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
+                                                </div>
+                                            </template>
+                                            <div class="flex gap-2">
+                                                <input type="text" x-model="newIcsFeed.url"
+                                                    placeholder="https://... .ics or webcal://..."
+                                                    class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
+                                                <select x-show="memberEdit.calendar_ids.length > 1 || memberEdit.role === 'child'"
+                                                    x-model="newIcsFeed.calendar_id"
+                                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
+                                                    <option value="">Onto calendar...</option>
+                                                    <template x-for="c in memberEdit.calendar_ids" :key="c">
+                                                        <option :value="c"
+                                                            x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
+                                                    </template>
+                                                    <option x-show="memberEdit.role === 'child'" value="__tasks__"
+                                                        x-text="'📚 School task list (' + member.name + ')'"></option>
+                                                </select>
+                                                <button @click="addInlineIcsFeed(memberEdit.calendar_ids, member)" :disabled="icsFeedBusy"
+                                                    class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
+                                                    x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
+                                            </div>
+                                            <p class="text-xs text-amber-300/80 mt-2" x-show="!memberEdit.calendar_ids.length && memberEdit.role === 'child'">
+                                                Add a calendar above to subscribe event feeds; assignment feeds can go straight to the task list.</p>
                                         </div>
                                     </div>
                                     <div class="flex gap-4 items-end flex-wrap mt-4 pt-4 border-t border-gray-600/50">
@@ -1875,87 +1912,27 @@
                                 </div>
                             </div>
                             <div class="w-full lg:flex-1">
-                                <label class="block text-gray-400 mb-1 text-sm">Personal Calendar IDs</label>
-                                <div class="flex gap-2 mb-2">
-                                    <input type="text" x-model="newPassengerCalendarInput"
-                                        @keydown.enter="addPassengerCalendarId()" placeholder="e.g. personal@gmail.com"
-                                        class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono">
-                                    <button @click="addPassengerCalendarId()"
-                                        class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 rounded transition-colors flex items-center shadow-md">Add</button>
-                                </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <template x-for="(calId, index) in newPassenger.calendar_ids" :key="index">
-                                        <div class="flex items-center text-blue-200 px-2 py-1 rounded-full text-xs font-bold shadow-sm border border-gray-600"
-                                            :style="calendarMetadata[calId] ? ('background-color: ' + calendarMetadata[calId].backgroundColor + '40; border-color: ' + calendarMetadata[calId].backgroundColor) : 'background-color: #374151'">
-                                            <div class="w-2.5 h-2.5 rounded-full mr-1.5 shadow-sm"
-                                                :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                <label class="block text-gray-400 mb-1 text-sm">Calendars</label>
+                                <div class="bg-gray-900/60 border border-gray-700 rounded-lg p-3">
+                                    <p class="text-xs text-gray-400">Set on the person, not here — <b>People → Identity
+                                            → 📅 Google Calendars</b>. This profile mirrors that list; because they have
+                                        a passenger profile, events on it become rides to schedule.</p>
+                                    <div class="flex flex-wrap gap-2 mt-2" x-show="newPassenger.calendar_ids.length">
+                                        <template x-for="calId in newPassenger.calendar_ids" :key="calId">
+                                            <div class="flex items-center text-gray-300 px-2 py-1 rounded-full text-xs font-bold border border-gray-700 bg-gray-800">
+                                                <div class="w-2.5 h-2.5 rounded-full mr-1.5"
+                                                    :style="'background-color: ' + (calendarMetadata[calId] ? calendarMetadata[calId].backgroundColor : '#9CA3AF')">
+                                                </div>
+                                                <span x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"></span>
                                             </div>
-                                            <span
-                                                x-text="calendarMetadata[calId] ? calendarMetadata[calId].summary : calId"
-                                                class="mr-1"></span>
-                                            <button @click="removePassengerCalendarId(index)"
-                                                class="text-gray-400 hover:text-red-400 transition-colors focus:outline-none">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor"
-                                                    viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </template>
+                                        </template>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="w-full mt-4" x-show="editPassengerId && (newPassenger.calendar_ids.length || (passengerFormMember && passengerFormMember.role === 'child'))">
-                            <label class="block text-gray-400 mb-1 text-sm">Subscribed ICS Feeds</label>
-                            <p class="text-xs text-gray-500 mb-2">Paste a team or school calendar URL — its events are
-                                created on this passenger's calendar and re-synced hourly, so reschedules and
-                                cancellations propagate on their own. Past events are never touched. For a child, an
-                                assignment feed (Canvas/Schoology) can target their <b>📚 school task list</b> instead —
-                                homework lands as due-dated tasks, never as calendar events the driving solver would see.</p>
-                            <template x-for="feed in icsFeedsFor(newPassenger.calendar_ids, passengerFormMember)" :key="feed.id">
-                                <div class="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-2"
-                                    :class="feed.enabled === false ? 'opacity-60' : ''">
-                                    <div class="flex-1 min-w-0">
-                                        <span class="text-sm font-bold text-white" x-text="feed.name"></span>
-                                        <span class="text-xs text-teal-300 ml-2"
-                                            x-text="(feed.event_count || 0) + (feed.target_kind === 'tasks' ? ' 📚 tasks' : ' events')"></span>
-                                        <span x-show="feed.enabled === false"
-                                            class="text-xs text-yellow-300 ml-2 font-bold uppercase">paused</span>
-                                        <p class="text-xs truncate"
-                                            :class="(feed.last_status || '').startsWith('error') ? 'text-red-400' : 'text-gray-500'"
-                                            x-text="(feed.last_status || 'never synced') + (feed.last_synced ? ' · ' + new Date(feed.last_synced).toLocaleString() : '')">
-                                        </p>
-                                    </div>
-                                    <button @click="syncIcsFeed(feed)" :disabled="icsSyncingId === feed.id"
-                                        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                        x-text="icsSyncingId === feed.id ? '...' : 'Sync'"></button>
-                                    <button @click="toggleIcsFeed(feed)"
-                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors"
-                                        x-text="feed.enabled === false ? 'Resume' : 'Pause'"></button>
-                                    <button @click="deleteIcsFeed(feed)"
-                                        class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded font-bold text-white text-xs transition-colors">Delete</button>
-                                </div>
-                            </template>
-                            <div class="flex gap-2">
-                                <input type="text" x-model="newIcsFeed.url"
-                                    placeholder="https://... .ics or webcal://..."
-                                    class="flex-1 bg-gray-900 border border-gray-600 rounded p-3 text-white font-mono text-sm">
-                                <select x-show="newPassenger.calendar_ids.length > 1 || (passengerFormMember && passengerFormMember.role === 'child')"
-                                    x-model="newIcsFeed.calendar_id"
-                                    class="bg-gray-900 border border-gray-600 rounded p-3 text-white text-sm">
-                                    <option value="">Onto calendar...</option>
-                                    <template x-for="c in newPassenger.calendar_ids" :key="c">
-                                        <option :value="c"
-                                            x-text="calendarMetadata[c] ? calendarMetadata[c].summary : c"></option>
-                                    </template>
-                                    <option x-show="passengerFormMember && passengerFormMember.role === 'child'"
-                                        value="__tasks__" x-text="'📚 School task list' + (passengerFormMember ? ' (' + passengerFormMember.name + ')' : '')"></option>
-                                </select>
-                                <button @click="addInlineIcsFeed(newPassenger.calendar_ids)" :disabled="icsFeedBusy"
-                                    class="bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-bold px-4 rounded transition-colors flex items-center shadow-md"
-                                    x-text="icsFeedBusy ? 'Checking...' : 'Subscribe'"></button>
-                            </div>
+                        <div class="w-full mt-4" x-show="editPassengerId && passengerFormMember">
+                            <p class="text-xs text-gray-500">Subscribed ICS feeds moved to the person —
+                                <b>People → Identity → 📅 Google Calendars</b>, where the calendars they land on are set.</p>
                         </div>
                         <div class="w-full mt-4">
                             <div class="flex justify-between items-center mb-2">
@@ -3506,7 +3483,9 @@
                 editPassengerId: null,
                 members: [],
                 editMemberId: null,
-                memberEdit: {},
+                // calendar_ids seeded so the panel renders before a member is opened
+                memberEdit: { calendar_ids: [] },
+                newMemberCalendarInput: '',
                 // Status Days (Presence & Status arc P1)
                 statusProtocols: [],
                 statusDays: [],
@@ -4084,17 +4063,6 @@
                         this.saving = false;
                     }
                 },
-                async addDriverCalendarId() {
-                    const val = this.newDriverCalendarInput.trim();
-                    if (val && !this.newDriver.calendarIds.includes(val)) {
-                        this.newDriver.calendarIds.push(val);
-                        await this.fetchCalendarMetadata([val]);
-                    }
-                    this.newDriverCalendarInput = '';
-                },
-                removeDriverCalendarId(index) {
-                    this.newDriver.calendarIds.splice(index, 1);
-                },
                 addDriverHashtag() {
                     const val = this.newDriverHashtagInput.trim();
                     if (val && !this.newDriver.hashtags.includes(val)) {
@@ -4453,7 +4421,7 @@
                     const m = this.calendarMetadata[calId];
                     return m ? m.summary : calId;
                 },
-                async addInlineIcsFeed(calIds) {
+                async addInlineIcsFeed(calIds, member) {
                     const url = (this.newIcsFeed.url || '').trim();
                     if (!url) return showGlobalAlert('Paste an ICS feed URL first.');
                     const ids = calIds || [];
@@ -4461,8 +4429,10 @@
                         ? ids[0] : this.newIcsFeed.calendar_id;
                     if (!target) return showGlobalAlert('Pick which calendar the events go on.');
                     // K4b: '__tasks__' targets the child's school task list, not a calendar.
+                    const taskOwner = member || this.passengerFormMember;
+                    if (target === '__tasks__' && !taskOwner) return showGlobalAlert('Could not tell whose task list to use.');
                     const body = target === '__tasks__'
-                        ? { url: url, target_kind: 'tasks', member_id: this.passengerFormMember.id }
+                        ? { url: url, target_kind: 'tasks', member_id: taskOwner.id }
                         : { url: url, calendar_id: target };
                     this.icsFeedBusy = true;
                     try {
@@ -4528,6 +4498,11 @@
                         const res = await fetch(`${this.apiBase}api/members`);
                         const data = await res.json();
                         this.members = Array.isArray(data) ? data : [];
+                        const memberCals = [];
+                        this.members.forEach(m => {
+                            if (Array.isArray(m.calendar_ids)) memberCals.push(...m.calendar_ids);
+                        });
+                        if (memberCals.length) await this.fetchCalendarMetadata(memberCals);
                     } catch (e) {
                         console.error("Failed to load members", e);
                         this.members = [];
@@ -4747,7 +4722,12 @@
                     this.editMemberId = member.id;
                     this.memberMergeTarget = '';
                     this.testNotifyResult = '';
+                    this.newMemberCalendarInput = '';
+                    this.newIcsFeed = { url: '', calendar_id: '' };
+                    const cals = Array.isArray(member.calendar_ids) ? [...member.calendar_ids] : [];
+                    if (cals.length) this.fetchCalendarMetadata(cals);
                     this.memberEdit = {
+                        calendar_ids: cals,
                         name: member.name,
                         color_code: member.color_code || '#3b82f6',
                         avatar: member.avatar || '',
@@ -4766,6 +4746,24 @@
                         bus_pm_eta_entity: member.bus_pm_eta_entity || '',
                         bus_active_entity: member.bus_active_entity || '',
                     };
+                },
+                async addMemberCalendarId() {
+                    const val = (this.newMemberCalendarInput || '').trim();
+                    if (val && !this.memberEdit.calendar_ids.includes(val)) {
+                        this.memberEdit.calendar_ids.push(val);
+                        await this.fetchCalendarMetadata([val]);
+                    }
+                    this.newMemberCalendarInput = '';
+                },
+                removeMemberCalendarId(index) {
+                    this.memberEdit.calendar_ids.splice(index, 1);
+                },
+                // Read-only echo of the person's list on the driving profile —
+                // the driver record only ever mirrors it.
+                driverMirrorCalendars() {
+                    const m = (this.members || []).find(x => x.driver_id && x.driver_id === this.newDriver.id);
+                    if (m) return m.calendar_ids || [];
+                    return this.newDriver.calendarIds || [];
                 },
                 async resetMemberPin(member) {
                     if (!await promptConfirm('Reset PIN', `Reset ${member.name}'s PIN? They can set a new one next time they sign in.`, 'Reset PIN')) return;
@@ -4801,11 +4799,16 @@
                     updates.bus_am_eta_entity = (updates.bus_am_eta_entity || '').trim() || null;
                     updates.bus_pm_eta_entity = (updates.bus_pm_eta_entity || '').trim() || null;
                     updates.bus_active_entity = (updates.bus_active_entity || '').trim() || null;
+                    updates.calendar_ids = updates.calendar_ids || [];
                     await fetch(`${this.apiBase}api/members/${member.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(updates)
                     });
+                    // Calendars feed the driving profiles' mirrors — reload both
+                    // so the read-only echoes there are not stale.
+                    await this.loadDrivers();
+                    await this.loadPassengers();
                     if (this.memberMergeTarget) {
                         const other = this.members.find(m => m.id === this.memberMergeTarget);
                         if (other && await promptConfirm('Merge members', `Merge "${other.name}" into "${updates.name}"? "${other.name}" goes away; their driver/passenger links move here.`, 'Merge')) {
@@ -4874,12 +4877,6 @@
                     }
                 },
 
-                addPassengerCalendarId() {
-                    if (this.newPassengerCalendarInput) {
-                        this.newPassenger.calendar_ids.push(this.newPassengerCalendarInput);
-                        this.newPassengerCalendarInput = '';
-                    }
-                },
                 addPassengerHashtag() {
                     const val = this.newPassengerHashtagInput.trim();
                     if (val && !this.newPassenger.hashtags.includes(val)) {
@@ -4889,10 +4886,6 @@
                 },
                 removePassengerHashtag(index) {
                     this.newPassenger.hashtags.splice(index, 1);
-                },
-
-                removePassengerCalendarId(index) {
-                    this.newPassenger.calendar_ids.splice(index, 1);
                 },
 
                 async submitPassenger() {

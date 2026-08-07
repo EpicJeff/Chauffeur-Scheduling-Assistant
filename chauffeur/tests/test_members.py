@@ -174,8 +174,90 @@ def scenario_pins_and_tokens():
     check(not storage.get_member("mom")["pin_hash"], "pin cleared")
 
 
+def scenario_calendars_migrate_up_to_the_person():
+    storage.drivers_table.insert({"id": "jeff", "name": "Jeff", "calendar_ids": ["jeff@cal"]})
+    storage.passengers_table.insert({"id": "p-ben", "name": "Ben", "calendar_ids": ["ben@cal"]})
+    storage.ensure_members()
+    storage.ensure_member_calendars()
+
+    jeff = storage.get_member_by_driver_id("jeff")
+    ben = storage.get_member_by_passenger_id("p-ben")
+    check(jeff["calendar_ids"] == ["jeff@cal"], "driver calendar lifted onto the person")
+    check(ben["calendar_ids"] == ["ben@cal"], "passenger calendar lifted onto the person")
+
+    storage.ensure_member_calendars()
+    check(storage.get_member_by_driver_id("jeff")["calendar_ids"] == ["jeff@cal"],
+          "migration is idempotent")
+
+
+def scenario_person_with_no_profile_can_hold_a_calendar():
+    # The whole point: drives themselves, chauffeurs nobody, still on the calendar.
+    storage.add_member({"id": "vovo", "name": "Vovo", "role": "adult",
+                        "driver_id": None, "passenger_id": None, "calendar_ids": []})
+    check(storage.set_member_calendars("vovo", ["vovo@cal"]), "set calendars on an unlinked person")
+    check(storage.get_member("vovo")["calendar_ids"] == ["vovo@cal"], "stored on the member")
+    check(not storage.set_member_calendars("ghost", ["x@cal"]), "unknown member -> False")
+
+
+def scenario_links_mirror_the_person():
+    storage.drivers_table.insert({"id": "teen", "name": "Teen"})
+    storage.passengers_table.insert({"id": "p-teen", "name": "Teen"})
+    storage.ensure_members()
+    m = storage.get_member_by_driver_id("teen")
+    check(m["passenger_id"] == "p-teen", "precondition: one person, both profiles")
+
+    storage.set_member_calendars(m["id"], ["a@cal", "b@cal"])
+    d = next(d for d in storage.get_all_drivers() if d["id"] == "teen")
+    p = next(p for p in storage.get_all_passengers() if p["id"] == "p-teen")
+    check(d["calendar_ids"] == ["a@cal", "b@cal"], "driver record mirrors the person")
+    check(p["calendar_ids"] == ["a@cal", "b@cal"], "passenger record mirrors the person")
+
+    # Removal propagates too — the mirror is rewritten, never merged.
+    storage.set_member_calendars(m["id"], ["a@cal"])
+    d = next(d for d in storage.get_all_drivers() if d["id"] == "teen")
+    p = next(p for p in storage.get_all_passengers() if p["id"] == "p-teen")
+    check(d["calendar_ids"] == ["a@cal"], "removing a calendar shrinks the driver mirror")
+    check(p["calendar_ids"] == ["a@cal"], "removing a calendar shrinks the passenger mirror")
+
+    # ...and a later union pass must not resurrect what was removed.
+    storage.ensure_member_calendars()
+    check(storage.get_member(m["id"])["calendar_ids"] == ["a@cal"],
+          "self-heal union must not undo a deliberate removal")
+
+
+def scenario_calendar_writes_are_deduped_and_trimmed():
+    storage.add_member({"id": "m", "name": "M", "calendar_ids": []})
+    storage.set_member_calendars("m", ["  a@cal ", "a@cal", "", None, "b@cal"])
+    check(storage.get_member("m")["calendar_ids"] == ["a@cal", "b@cal"],
+          "blanks dropped, whitespace trimmed, duplicates collapsed")
+
+
+def scenario_new_profile_inherits_the_persons_calendars():
+    storage.add_member({"id": "solo", "name": "Solo", "calendar_ids": []})
+    storage.set_member_calendars("solo", ["solo@cal"])
+    # Adding a driving profile later must not leave it calendar-blind.
+    storage.add_driver({"id": "solo-d", "name": "Solo", "color_code": "#fff"})
+    d = next(d for d in storage.get_all_drivers() if d["id"] == "solo-d")
+    check(storage.get_member_by_driver_id("solo-d")["id"] == "solo", "linked to the existing person")
+    check(d["calendar_ids"] == ["solo@cal"], "new driving profile inherits the person's calendars")
+
+
+def scenario_merge_unions_calendars():
+    storage.add_member({"id": "keep", "name": "Keep", "calendar_ids": ["k@cal"]})
+    storage.add_member({"id": "gone", "name": "Gone", "calendar_ids": ["g@cal"]})
+    merged = storage.merge_members("keep", "gone")
+    check(merged["calendar_ids"] == ["k@cal", "g@cal"],
+          "merge keeps both people's calendars instead of dropping the absorbed one")
+
+
 SCENARIOS = [
     scenario_migration_links_drivers_and_passengers,
+    scenario_calendars_migrate_up_to_the_person,
+    scenario_person_with_no_profile_can_hold_a_calendar,
+    scenario_links_mirror_the_person,
+    scenario_calendar_writes_are_deduped_and_trimmed,
+    scenario_new_profile_inherits_the_persons_calendars,
+    scenario_merge_unions_calendars,
     scenario_roles,
     scenario_pins_and_tokens,
     scenario_migration_idempotent,

@@ -359,10 +359,12 @@ def learned_route(from_addr: str, kind: str):
 
 
 def _calendar_for_member_name(name: str):
-    """Resolve the LLM's member-name guess to that person's calendar (their
-    passenger calendar first — kid events land there — else their driver
-    calendar). Used to prefill a proposal's target when no sender default
-    matched; the parent still confirms on /intake."""
+    """Resolve the LLM's member-name guess to that person's calendar. Calendars
+    are person-level now, so their own list answers first — including for
+    someone with no passenger or driver profile at all. The link mirrors stay as
+    a fallback for a member the migration hasn't touched. Used to prefill a
+    proposal's target when no sender default matched; the parent still confirms
+    on /intake."""
     if not name:
         return None
     target = name.strip().lower()
@@ -370,6 +372,8 @@ def _calendar_for_member_name(name: str):
                    if (m.get('name') or '').strip().lower() == target), None)
     if not member:
         return None
+    if member.get('calendar_ids'):
+        return member['calendar_ids'][0]
     if member.get('passenger_id'):
         for p in storage.get_all_passengers():
             if p.get('id') == member['passenger_id'] and p.get('calendar_ids'):
