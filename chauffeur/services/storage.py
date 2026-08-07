@@ -406,6 +406,8 @@ with db_lock:
     plates_table = db.table('plates')
     walmart_items_table = db.table('walmart_items')
     meal_rules_table = db.table('meal_rules')
+    occasions_table = db.table('occasions')
+    occasion_guests_table = db.table('occasion_guests')
     rewards_table = db.table('rewards')
     redemptions_table = db.table('redemptions')
     pool_contributions_table = db.table('pool_contributions')
@@ -1953,6 +1955,62 @@ def prune_plates(before_date: str) -> int:
 
 def dishes_needing_detail() -> List[dict]:
     return [d for d in get_dishes() if d.get('needs_detail')]
+
+# --- Occasions (occasions arc O1) ---
+# Context objects, not containers: they own nothing and are passed IN to the
+# things that generate work. See docs/occasion_design.md.
+
+def get_occasions(include_done: bool = False) -> List[dict]:
+    with db_lock:
+        rows = [dict(o) for o in occasions_table.all()]
+    if not include_done:
+        rows = [o for o in rows if (o.get('status') or 'planning') != 'done']
+    rows.sort(key=lambda o: (o.get('anchor_date') or '9999-12-31'))
+    return rows
+
+def get_occasion(occasion_id: str) -> Optional[dict]:
+    with db_lock:
+        res = occasions_table.search(Query().id == occasion_id)
+        return dict(res[0]) if res else None
+
+def save_occasion(data: dict) -> dict:
+    with db_lock:
+        occasions_table.upsert(data, Query().id == data['id'])
+    return data
+
+def update_occasion(occasion_id: str, patch: dict) -> bool:
+    with db_lock:
+        return bool(occasions_table.update(patch, Query().id == occasion_id))
+
+def delete_occasion(occasion_id: str):
+    """Deleting the CONTEXT must not delete the work. Errands, lists and trips
+    outlive it with their `occasion_id` cleared — the whole point of a context
+    object is that nothing lives inside it."""
+    with db_lock:
+        occasions_table.remove(Query().id == occasion_id)
+        occasion_guests_table.remove(Query().occasion_id == occasion_id)
+        for table in (errands_table, shopping_lists_table, shopping_items_table):
+            table.update({'occasion_id': None}, Query().occasion_id == occasion_id)
+
+def get_occasion_guests(occasion_id: str) -> List[dict]:
+    with db_lock:
+        rows = [dict(g) for g in
+                occasion_guests_table.search(Query().occasion_id == occasion_id)]
+    rows.sort(key=lambda g: (g.get('created_at') or 0))
+    return rows
+
+def save_occasion_guest(data: dict) -> dict:
+    with db_lock:
+        occasion_guests_table.upsert(data, Query().id == data['id'])
+    return data
+
+def update_occasion_guest(guest_id: str, patch: dict) -> bool:
+    with db_lock:
+        return bool(occasion_guests_table.update(patch, Query().id == guest_id))
+
+def delete_occasion_guest(guest_id: str):
+    with db_lock:
+        occasion_guests_table.remove(Query().id == guest_id)
 
 # --- Leftovers (meals arc M3) ---
 # Date-scoped so they expire on their own; nobody has to remember to clear a
@@ -3571,6 +3629,10 @@ def delete_errand(doc_id: int):
         errands_table.remove(doc_ids=[doc_id])
 
 # --- Trip Metadata ---
+def get_all_trip_metadata() -> List[dict]:
+    with db_lock:
+        return [dict(t) for t in trip_metadata_table.all()]
+
 def get_trip_metadata(event_id: str) -> Optional[dict]:
     with db_lock:
         from tinydb import Query

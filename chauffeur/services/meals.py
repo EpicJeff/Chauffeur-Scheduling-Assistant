@@ -571,7 +571,8 @@ def plate_settings(settings: dict = None) -> tuple:
     return sides, (True if dessert is None else bool(dessert))
 
 
-def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set) -> bool:
+def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set,
+             open_tags: set = None) -> bool:
     """Hard filters only. An already-made dish skips the portability check —
     it exists, and it is going in a container either way.
 
@@ -581,13 +582,19 @@ def _dish_ok(dish: dict, avoid: set, binding_slot: dict, leftover_ids: set) -> b
     it naively here and the dish is blocked from the days it exists to cover.
     **Scope gates proposal, never presence** — which is also why hand-picking
     (the plate picker, `set_plate_lock`) never comes through this function.
+
+    `open_tags` is what an occasion's window opens up (O1): the turkey becomes
+    ELIGIBLE across Thanksgiving week, which is emphatically not the same as
+    proposing turkey for four days running. A dish still has to win on rank
+    against everything else, and the family still chooses the night.
     """
     tags = {str(t).strip().lower() for t in (dish.get('tags') or [])}
     if tags & avoid:
         return False
     if dish['id'] not in leftover_ids and str(
             dish.get('scope') or 'everyday') == 'occasion':
-        return False
+        if not (open_tags and (tags & open_tags)):
+            return False
     if binding_slot and dish['id'] not in leftover_ids:
         ok, _ = meal_fits_slot(dish, binding_slot)
         if not ok:
@@ -891,6 +898,14 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
     as_of = _as_of_ts(date_str)
     # How this household eats, resolved once for the day (M11).
     ctx = rule_context(as_of, served or {}, settings, runs or {})
+    # What an occasion's window opens up (O1) — eligibility, not selection.
+    from services import occasions as _occ
+    open_tags = _occ.dish_tags_for(date_str)
+    # A guest's allergy binds exactly like a family member's, or the guest
+    # list is decorative.
+    g_avoid, g_dislike = _occ.diet_on(date_str)
+    avoid = avoid | g_avoid
+    dislike = dislike | g_dislike
 
     # Big enough to dominate every term in _rank (which tops out around 100 for
     # an already-made dish): "not this one" is the family speaking, not another
@@ -910,7 +925,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
         # exists alongside something else is not the something else.
         cands = [d for d in pool
                  if d['id'] not in exclude
-                 and _dish_ok(d, avoid, binding, leftover_ids)
+                 and _dish_ok(d, avoid, binding, leftover_ids, open_tags)
                  and _pairing_ok(d, chosen)
                  and _rules_ok(d, ctx)]
         if not cands:
@@ -952,7 +967,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
                 mate = storage.get_dish(did)
                 if not mate or not mate.get('is_active', True):
                     continue
-                if not _dish_ok(mate, avoid, binding, leftover_ids):
+                if not _dish_ok(mate, avoid, binding, leftover_ids, open_tags):
                     continue          # allergy/portability still governs
                 if not _rules_ok(mate, ctx):
                     continue          # nor does a pairing bust a frequency cap
@@ -984,7 +999,7 @@ def compose_plate(date_str: str, plan: dict = None, settings: dict = None,
             taken_ids = {d['id'] for d in chosen}
             cands = [d for d in sides_pool
                      if d['id'] not in taken_ids
-                     and _dish_ok(d, avoid, binding, leftover_ids)
+                     and _dish_ok(d, avoid, binding, leftover_ids, open_tags)
                      and _pairing_ok(d, chosen)
                      and _rules_ok(d, ctx)]
             if not cands:

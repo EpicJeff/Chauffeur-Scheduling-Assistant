@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Occasions</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind = {
+            config: {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        fontFamily: { sans: ['Inter', 'sans-serif'] },
+                        colors: { gray: { 900: '#111827', 800: '#1F2937', 700: '#374151', 600: '#4B5563' } }
+                    }
+                }
+            }
+        };
+    </script>
+    {% include 'ha_theme.html' %}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        body { background-color: #111827; color: #e5e7eb; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+
+<body class="flex flex-col h-screen overflow-hidden">
+    {% include 'nav.html' %}
+
+    <div class="flex-1 overflow-y-auto bg-gray-900/50">
+<div x-data="occasionsPage()" x-init="load()" class="max-w-5xl mx-auto px-4 py-6">
+
+    <div class="flex items-baseline justify-between gap-3 mb-1">
+        <h2 class="text-2xl font-black text-white">🎉 Occasions</h2>
+        <button @click="showNew = !showNew"
+            class="text-xs font-bold px-3 py-1.5 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200"
+            x-text="showNew ? 'Cancel' : '+ New'"></button>
+    </div>
+    <p class="text-sm text-gray-500 mb-5">
+        A holiday, a birthday, a party. Nothing lives <em>inside</em> an occasion —
+        the lists, errands and trips stay where they already are, and this is
+        the context that ties them together and generates the work.
+    </p>
+
+    <!-- New occasion. Two required answers and everything else optional: the
+         window and the tags are what make it useful, not what make it exist. -->
+    <div x-show="showNew" x-cloak class="bg-gray-800 rounded-2xl border border-gray-700 p-5 mb-5">
+        <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">What is it?</label>
+                <input x-model="draft.title" type="text" placeholder="Thanksgiving 2026"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">Kind</label>
+                <select x-model="draft.kind"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-pink-400/60">
+                    <template x-for="k in kinds" :key="k">
+                        <option :value="k" x-text="k"></option>
+                    </template>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">The day itself</label>
+                <input x-model="draft.anchor_date" type="date"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-pink-400/60">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">
+                    Dish tags <span class="text-gray-600 font-normal">— what this brings out of the cupboard</span>
+                </label>
+                <input x-model="draft.tags" type="text" placeholder="thanksgiving, roast"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">Window starts</label>
+                <input x-model="draft.window_start" type="date"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-pink-400/60">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1 font-semibold">Window ends</label>
+                <input x-model="draft.window_end" type="date"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-pink-400/60">
+            </div>
+        </div>
+        <p class="text-[11px] text-gray-500 mt-3">
+            The window is when guests are in the house and prep is happening — it
+            makes holiday dishes <em>available</em>, which is not the same as
+            putting them on a plate. Leave it blank for the day alone.
+        </p>
+        <div class="flex justify-end mt-4">
+            <button @click="createOccasion()" :disabled="!draft.title.trim() || !draft.anchor_date || busy"
+                class="px-4 py-2 rounded-lg bg-pink-500/20 border border-pink-400/60 text-pink-200 text-sm font-bold disabled:opacity-40"
+                x-text="busy ? 'Adding…' : 'Add it'"></button>
+        </div>
+    </div>
+
+    <div x-show="!occasions.length && !loading" class="text-sm text-gray-500">
+        Nothing coming up. Add the next birthday or holiday and Chauffeur can
+        start carrying it.
+    </div>
+
+    <div class="space-y-3">
+        <template x-for="o in occasions" :key="o.id">
+            <div class="bg-gray-800 rounded-2xl border border-gray-700 p-5">
+                <div class="flex items-baseline justify-between gap-3">
+                    <button @click="open(o)" class="text-left min-w-0 flex-1">
+                        <div class="text-lg font-bold text-white truncate" x-text="o.title"></div>
+                        <div class="text-[11px] text-gray-500" x-text="whenLine(o)"></div>
+                    </button>
+                    <button @click="removeOccasion(o)" class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
+                </div>
+
+                <div x-show="detail[o.id]" x-cloak class="mt-4 border-t border-gray-700 pt-4">
+                    <!-- Guests. The list earns its place by feeding headcount and
+                         allergies into the meal plan; there is deliberately no
+                         invitation sending. -->
+                    <div class="text-xs font-black uppercase tracking-widest text-pink-200 mb-2">
+                        👥 Who's coming
+                        <span class="text-gray-500 font-bold normal-case tracking-normal ml-1"
+                            x-text="'· ' + (detail[o.id] ? detail[o.id].headcount : 0) + ' eating'"></span>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5 mb-2">
+                        <template x-for="g in ((detail[o.id] || {}).guests || [])" :key="g.id">
+                            <span class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-900 border border-gray-700 text-gray-300 flex items-center gap-1.5">
+                                <span x-text="g.name + (g.headcount > 1 ? ' ×' + g.headcount : '')"></span>
+                                <span x-show="(g.dietary_avoid || []).length" class="text-amber-300"
+                                    x-text="'no ' + (g.dietary_avoid || []).join('/')"></span>
+                                <button @click="removeGuest(o, g)" class="text-gray-600 hover:text-red-400">✕</button>
+                            </span>
+                        </template>
+                        <button @click="addGuest(o)" class="text-[11px] font-bold text-gray-600 hover:text-pink-300">
+                            + guest
+                        </button>
+                    </div>
+
+                    <!-- Sourcing: the generative half. A theme in, a real list out,
+                         onto the cart rails that already exist. -->
+                    <div class="text-xs font-black uppercase tracking-widest text-pink-200 mt-4 mb-2">
+                        🛒 What we need
+                    </div>
+                    <div class="flex gap-2 mb-2">
+                        <input x-model="sourceDraft[o.id]" @keydown.enter="sourceIt(o)" type="text"
+                            placeholder="party favours for a shark party"
+                            class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-pink-400/60">
+                        <button @click="sourceIt(o)" :disabled="sourcing"
+                            class="px-3 py-2 rounded-xl text-xs font-bold bg-pink-500/20 border border-pink-400/60 text-pink-200 disabled:opacity-40"
+                            x-text="sourcing ? 'Thinking…' : 'Build a list'"></button>
+                    </div>
+                    <div class="space-y-1.5">
+                        <template x-for="l in ((detail[o.id] || {}).lists || [])" :key="l.id">
+                            <a :href="'shopping?list=' + l.id"
+                                class="block bg-gray-900 rounded-xl border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:border-pink-400/60">
+                                <span x-text="l.name"></span>
+                                <span class="text-gray-600 text-[11px]" x-show="l.store" x-text="' · ' + l.store"></span>
+                            </a>
+                        </template>
+                        <!-- Items on a list this occasion does NOT own: the turkey
+                             on the standing grocery list, where it belongs. -->
+                        <div x-show="((detail[o.id] || {}).loose_items || []).length"
+                            class="text-[11px] text-gray-500 px-1"
+                            x-text="((detail[o.id] || {}).loose_items || []).length
+                                + ' item(s) for this on the regular shopping list'"></div>
+                    </div>
+
+                    <div x-show="((detail[o.id] || {}).errands || []).length
+                                 || ((detail[o.id] || {}).trips || []).length"
+                        class="text-xs font-black uppercase tracking-widest text-pink-200 mt-4 mb-2">
+                        🚗 Getting it done
+                    </div>
+                    <div class="space-y-1.5">
+                        <template x-for="e in ((detail[o.id] || {}).errands || [])" :key="e.id">
+                            <div class="bg-gray-900 rounded-xl border border-gray-700 px-4 py-2 text-sm text-gray-300 flex items-baseline gap-2">
+                                <span x-text="e.is_completed ? '✅' : '⬜'"></span>
+                                <span x-text="e.title"></span>
+                                <span class="text-gray-600 text-[11px]" x-text="e.location"></span>
+                            </div>
+                        </template>
+                        <template x-for="t in ((detail[o.id] || {}).trips || [])" :key="t.id">
+                            <a :href="'trip?event_id=' + t.event_id"
+                                class="block bg-gray-900 rounded-xl border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:border-pink-400/60">
+                                ✈️ <span x-text="t.title || t.location || 'Trip'"></span>
+                            </a>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<script>
+    function occasionsPage() {
+        return {
+            apiBase: window.location.pathname.endsWith('/') ? '../' : '',
+            occasions: [], detail: {}, sourceDraft: {},
+            loading: true, busy: false, sourcing: false, showNew: false,
+            kinds: ['thanksgiving', 'christmas', 'easter', 'birthday', 'party', 'gathering'],
+            draft: { title: '', kind: 'gathering', anchor_date: '', tags: '',
+                     window_start: '', window_end: '' },
+
+            async load() {
+                this.loading = true;
+                try {
+                    const r = await fetch(this.apiBase + 'api/occasions');
+                    this.occasions = r.ok ? await r.json() : [];
+                } catch (e) { this.occasions = []; }
+                this.loading = false;
+            },
+
+            whenLine(o) {
+                const bits = [o.kind];
+                const d = new Date(o.anchor_date + 'T12:00:00');
+                if (!isNaN(d)) bits.push(d.toLocaleDateString(undefined,
+                    { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }));
+                const away = Math.round((d - new Date()) / 86400000);
+                if (!isNaN(away)) bits.push(away === 0 ? 'today'
+                    : away > 0 ? 'in ' + away + ' days' : Math.abs(away) + ' days ago');
+                if ((o.dish_tags || []).length) bits.push(o.dish_tags.join('/'));
+                return bits.join(' · ');
+            },
+
+            async open(o) {
+                if (this.detail[o.id]) { delete this.detail[o.id]; return; }
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
+                if (r.ok) this.detail[o.id] = await r.json();
+            },
+
+            async createOccasion() {
+                this.busy = true;
+                try {
+                    const r = await fetch(this.apiBase + 'api/occasions', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            title: this.draft.title.trim(),
+                            kind: this.draft.kind,
+                            anchor_date: this.draft.anchor_date,
+                            window_start: this.draft.window_start || null,
+                            window_end: this.draft.window_end || null,
+                            dish_tags: this.draft.tags.split(',')
+                                .map(s => s.trim().toLowerCase()).filter(Boolean)
+                        })
+                    });
+                    if (!r.ok) throw new Error('save failed');
+                    this.draft = { title: '', kind: 'gathering', anchor_date: '',
+                                   tags: '', window_start: '', window_end: '' };
+                    this.showNew = false;
+                    await this.load();
+                } catch (e) {
+                    showGlobalAlert('Could not save that just now.');
+                }
+                this.busy = false;
+            },
+
+            async removeOccasion(o) {
+                // Say what deletion actually does. Nothing lives inside an
+                // occasion, so nothing is lost with it — and a family that
+                // believes otherwise will never delete one.
+                const ok = await promptConfirm('Remove ' + o.title + '?',
+                    'The lists, errands and trips stay exactly where they are — '
+                    + 'only the link between them goes.');
+                if (!ok) return;
+                await fetch(this.apiBase + 'api/occasions/' + o.id, { method: 'DELETE' });
+                delete this.detail[o.id];
+                await this.load();
+            },
+
+            async addGuest(o) {
+                const name = await promptInput('Who else is coming?',
+                    'A name, or a household — "the Wilsons".');
+                if (!name || !name.trim()) return;
+                const many = await promptInput('How many of them?',
+                    'One row can stand for a whole household.',
+                    { type: 'number', value: '1' });
+                if (many === null) return;
+                const avoid = await promptInput('Anything they cannot eat?',
+                    'Comma separated. These bind like a family allergy — the meal '
+                    + 'planner will not propose them. Leave blank for none.');
+                if (avoid === null) return;
+                await fetch(this.apiBase + 'api/occasions/' + o.id + '/guests', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name.trim(), headcount: parseInt(many, 10) || 1,
+                        dietary_avoid: (avoid || '').split(',')
+                            .map(s => s.trim().toLowerCase()).filter(Boolean)
+                    })
+                });
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
+                if (r.ok) this.detail[o.id] = await r.json();
+            },
+
+            async removeGuest(o, g) {
+                await fetch(this.apiBase + 'api/occasions/guests/' + g.id, { method: 'DELETE' });
+                const r = await fetch(this.apiBase + 'api/occasions/' + o.id);
+                if (r.ok) this.detail[o.id] = await r.json();
+            },
+
+            async sourceIt(o) {
+                const req = (this.sourceDraft[o.id] || '').trim();
+                if (!req) return;
+                this.sourcing = true;
+                try {
+                    const r = await fetch(this.apiBase + 'api/occasions/' + o.id + '/source', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ request: req })
+                    });
+                    const res = r.ok ? await r.json() : {};
+                    if (!r.ok) throw new Error(res.detail || 'failed');
+                    this.sourceDraft[o.id] = '';
+                    const d = await fetch(this.apiBase + 'api/occasions/' + o.id);
+                    if (d.ok) this.detail[o.id] = await d.json();
+                    showGlobalAlert((res.items || []).length + ' things on a new list — '
+                        + 'open it to check it over and send it to a cart.');
+                } catch (e) {
+                    showGlobalAlert('Could not work that out — ' + (e.message || 'try again'));
+                }
+                this.sourcing = false;
+            }
+        };
+    }
+</script>
+    </div>
+    {% include 'components/control_center.html' %}
+    {% include 'components/moments_hearth.html' %}
+</body>
+
+</html>

@@ -693,6 +693,7 @@ class Errand(BaseModel):
     time_window_end: Optional[str] = None
     group_id: Optional[str] = None
     valid_days_of_week: List[int] = Field(default_factory=list)
+    occasion_id: Optional[str] = None   # "pick up the cake" belongs to the party
 
 class ErrandRule(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -729,6 +730,11 @@ class ShoppingList(BaseModel):
     store: Optional[str] = None        # display name; matches Errand.location
     errand_tag: Optional[str] = None   # binds to whichever errand carries it
     is_default: bool = False
+    # Membership attaches to the coarsest entity the occasion WHOLLY owns
+    # (design principle 3). A list made for the shark party is the party's, so
+    # an item added to it belongs to the party regardless of which page the
+    # parent was standing on — there is no per-item tagging to keep in sync.
+    occasion_id: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
 
 class ShoppingItem(BaseModel):
@@ -743,6 +749,15 @@ class ShoppingItem(BaseModel):
     added_by: Optional[str] = None     # member id (attribution, not a gate)
     added_via: str = 'manual'          # manual|voice|photo|meal|barcode
     source_meal_id: Optional[str] = None   # M3 entries that drained here
+    # THE documented exception to list-level membership. The standing grocery
+    # list is a container the occasion owns only PART of: the turkey wants to
+    # be on the normal list, bought on the normal run, at the normal store,
+    # because everything downstream (errand, shop day, cart) is keyed per-list
+    # and a second list at the same store rots while the family puts the
+    # turkey on the main one anyway. Same shape as `source_meal_id` directly
+    # above — an item recording WHY it is here without the list belonging to
+    # the thing that caused it.
+    occasion_id: Optional[str] = None
     is_checked: bool = False
     checked_at: Optional[float] = None
     checked_by: Optional[str] = None
@@ -1095,6 +1110,69 @@ class Leftover(BaseModel):
     reheat_mins: int = 10
     created_at: float = Field(default_factory=time.time)
 
+class Occasion(BaseModel):
+    """A holiday, birthday, party or get-together — as CONTEXT, not a container.
+
+    It owns nothing. Errands, shopping lists, trips and plates all keep their
+    existing homes and their existing engines; this carries the anchor date,
+    the window, the headcount and the dish tags, and gets passed IN to the
+    things that generate work. See docs/occasion_design.md.
+
+    Called Occasion rather than Holiday on purpose: "holiday" excludes
+    birthdays, graduations and first-day-of-school (which are most instances)
+    and in British English means a vacation, which is `TripMetadata`.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    title: str                              # "Thanksgiving 2026", "Ellie's 8th"
+    kind: str = 'gathering'                 # thanksgiving|christmas|birthday|party|gathering
+    anchor_date: str                        # YYYY-MM-DD — the day the thing happens
+    # Guests in the house, prep, travel. Defaults to the anchor day alone.
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    # Which repertoire tags this occasion brings into play. Eligibility only —
+    # a specific plate still has to CHOOSE them (design principle 6).
+    dish_tags: List[str] = Field(default_factory=list)
+    # Hands available across the window, when it differs from the household
+    # default. Copied onto a plate by `set_plate_hosting`, never read behind
+    # its back — one owner per number.
+    cooks: Optional[int] = None
+    notes: Optional[str] = None
+    # Last year's instance. THE carryover link, and the whole reason the gap
+    # report can say "this had a rental line last year and does not now" —
+    # which is the only thing that can surface an absence.
+    prior_occasion_id: Optional[str] = None
+    status: str = 'planning'                # planning | done
+    created_at: float = Field(default_factory=time.time)
+
+
+class OccasionGuest(BaseModel):
+    """Who is coming. Family members link by id; everyone else is just a name.
+
+    Deliberately NOT an invitation system: outbound SMS/email to non-members
+    is a different animal (deliverability, opt-outs, RSVP state) and a group
+    text already works. The list earns its place by feeding HEADCOUNT and
+    DIETARY constraints into the meal composer — that is the cross-entity
+    payoff, and it needs no sending.
+    """
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    doc_id: Optional[int] = None
+    occasion_id: str
+    name: str
+    member_id: Optional[str] = None         # set when this is one of the family
+    headcount: int = 1                      # "the Wilsons, 4"
+    # Same grammar the solver and the meal composer already use: hard avoid,
+    # soft dislike. A guest's allergy has to bind exactly like a family
+    # member's, or the feature is decorative.
+    dietary_avoid: List[str] = Field(default_factory=list)
+    dietary_dislike: List[str] = Field(default_factory=list)
+    staying_over: bool = False
+    arrival: Optional[str] = None           # ISO datetime — airport runs, later
+    departure: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+
+
 class TripPOI(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
@@ -1218,6 +1296,10 @@ class TripMetadata(BaseModel):
     budget_max_usd: Optional[float] = None
     flight_preferences: Optional[str] = None
     travelers: int = 1
+    # An occasion may reference more than one trip (in-laws 22–26 Dec, then
+    # skiing 27–30). Many-to-one, and the occasion's window spans both — the
+    # trip keeps sole ownership of its own dates and its own scheduler.
+    occasion_id: Optional[str] = None
     attendees: List[str] = Field(default_factory=list)
     pois: List[TripPOI] = Field(default_factory=list)
     accommodations: List[TripAccommodation] = Field(default_factory=list)

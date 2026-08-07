@@ -560,6 +560,39 @@ class PairDishesTool(BaseModel):
     partner_names: str = Field(..., description="Comma separated dishes that come with it.")
     exclusive: Optional[bool] = Field(False, description="true for 'X is only ever served with Y'.")
 
+class AddOccasionTool(BaseModel):
+    """
+    Records a holiday, birthday, party or get-together ("Thanksgiving is on the 26th and my parents are here from the 25th to the 29th"). The window makes holiday dishes available without putting them on any plate.
+    """
+    title: str = Field(..., description="What to call it, e.g. Thanksgiving 2026.")
+    anchor_date: str = Field(..., description="The day itself.")
+    kind: Optional[str] = Field("gathering", description="thanksgiving|christmas|easter|birthday|party|gathering")
+    window_start: Optional[str] = Field("", description="YYYY-MM-DD when guests arrive. Optional.")
+    window_end: Optional[str] = Field("", description="YYYY-MM-DD when it ends. Optional.")
+    dish_tags: Optional[str] = Field("", description="Comma separated repertoire tags this brings out.")
+
+class GetOccasionTool(BaseModel):
+    """
+    Reads the state of a holiday or party - guests, headcount, lists and outstanding errands.
+    """
+    occasion_name: Optional[str] = Field("", description="Which one; omit for the next one coming up.")
+
+class AddOccasionGuestsTool(BaseModel):
+    """
+    Adds people to an occasion's guest list ("the Wilsons are coming, there are four of them"). Allergies bind like a family member's.
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    who: str = Field(..., description="A name or a household.")
+    headcount: Optional[int] = Field(1, description="How many people that is.")
+    cannot_eat: Optional[str] = Field("", description="Comma separated allergies/avoidances.")
+
+class SourceForOccasionTool(BaseModel):
+    """
+    Turns what an occasion needs into a real shopping list scaled to the headcount ("party favours for a shark party").
+    """
+    occasion_name: str = Field(..., description="Which occasion.")
+    needed: str = Field(..., description="What they need, in their words.")
+
 class GetRunSheetTool(BaseModel):
     """
     Works out when to start cooking and what goes on when, counting back from when the family eats ("when do I need to start on Thursday?", "what time does the turkey go in?"). Accounts for one oven at two temperatures and for how many people are cooking.
@@ -776,6 +809,10 @@ TOOL_SCHEMAS = {
     "set_dish_scope": SetDishScopeTool.model_json_schema(),
     "set_hosting": SetHostingTool.model_json_schema(),
     "get_run_sheet": GetRunSheetTool.model_json_schema(),
+    "add_occasion": AddOccasionTool.model_json_schema(),
+    "get_occasion": GetOccasionTool.model_json_schema(),
+    "add_occasion_guests": AddOccasionGuestsTool.model_json_schema(),
+    "source_for_occasion": SourceForOccasionTool.model_json_schema(),
     "set_dish_prep": SetDishPrepTool.model_json_schema(),
     "clear_dish_prep": ClearDishPrepTool.model_json_schema(),
     "get_prep_ahead": GetPrepAheadTool.model_json_schema(),
@@ -1954,6 +1991,29 @@ def handle_unpair_dishes(args: dict) -> dict:
     from services.agent_tools_v2 import unpair_dishes
     return unpair_dishes(args.get("dish_name") or "", args.get("partner_name") or "")
 
+def handle_add_occasion(args: dict) -> dict:
+    from services.agent_tools_v2 import add_occasion
+    return add_occasion(args.get("title") or "", args.get("anchor_date") or "",
+                        args.get("kind") or "gathering",
+                        args.get("window_start") or "", args.get("window_end") or "",
+                        args.get("dish_tags") or "")
+
+def handle_get_occasion(args: dict) -> dict:
+    from services.agent_tools_v2 import get_occasion
+    return get_occasion(args.get("occasion_name") or "")
+
+def handle_add_occasion_guests(args: dict) -> dict:
+    from services.agent_tools_v2 import add_occasion_guests
+    return add_occasion_guests(args.get("occasion_name") or "",
+                               args.get("who") or "",
+                               int(args.get("headcount") or 1),
+                               args.get("cannot_eat") or "")
+
+def handle_source_for_occasion(args: dict) -> dict:
+    from services.agent_tools_v2 import source_for_occasion
+    return source_for_occasion(args.get("occasion_name") or "",
+                               args.get("needed") or "")
+
 def handle_get_run_sheet(args: dict) -> dict:
     from services.agent_tools_v2 import get_run_sheet
     return get_run_sheet(args.get("target_date") or "today",
@@ -2133,6 +2193,10 @@ TOOL_HANDLERS = {
     "set_dish_scope": handle_set_dish_scope,
     "set_hosting": handle_set_hosting,
     "get_run_sheet": handle_get_run_sheet,
+    "add_occasion": handle_add_occasion,
+    "get_occasion": handle_get_occasion,
+    "add_occasion_guests": handle_add_occasion_guests,
+    "source_for_occasion": handle_source_for_occasion,
     "set_dish_prep": handle_set_dish_prep,
     "clear_dish_prep": handle_clear_dish_prep,
     "get_prep_ahead": handle_get_prep_ahead,

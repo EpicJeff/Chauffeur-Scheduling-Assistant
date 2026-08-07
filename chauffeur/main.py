@@ -797,6 +797,10 @@ def moment_popup(request: Request):
 def errands(request: Request):
     return templates.TemplateResponse(request=request, name="errands.html")
 
+@app.get("/occasions")
+def occasions_page(request: Request):
+    return templates.TemplateResponse(request=request, name="occasions.html")
+
 @app.get("/chores")
 def chores_page(request: Request):
     response = templates.TemplateResponse(request=request, name="chores.html")
@@ -5699,6 +5703,108 @@ def plate_runsheet(date: Optional[str] = None, serve: Optional[str] = None):
     import datetime as _dt
     from services import meals as _meals
     return _meals.plate_run_sheet(date or _dt.date.today().isoformat(), serve)
+
+# --- Occasions (arc O1) -----------------------------------------------------
+# The occasion is CONTEXT, not a container: nothing lives inside it, and these
+# endpoints read across the homes each thing already has.
+
+class OccasionRequest(BaseModel):
+    title: str
+    anchor_date: str
+    kind: str = 'gathering'
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    dish_tags: List[str] = []
+    notes: Optional[str] = None
+    cooks: Optional[int] = None
+
+class OccasionPatch(BaseModel):
+    title: Optional[str] = None
+    kind: Optional[str] = None
+    anchor_date: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    dish_tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+    cooks: Optional[int] = None
+    status: Optional[str] = None
+
+class GuestRequest(BaseModel):
+    name: str
+    headcount: int = 1
+    member_id: Optional[str] = None
+    dietary_avoid: List[str] = []
+    dietary_dislike: List[str] = []
+    staying_over: bool = False
+    notes: Optional[str] = None
+
+class SourcingRequest(BaseModel):
+    request: str
+    list_name: Optional[str] = None
+    store: Optional[str] = None
+    added_by: Optional[str] = None
+
+@app.get("/api/occasions")
+def list_occasions(include_done: bool = False):
+    return storage.get_occasions(include_done)
+
+@app.post("/api/occasions")
+def create_occasion(req: OccasionRequest):
+    from services import occasions as _occ
+    if not (req.title or '').strip():
+        raise HTTPException(status_code=400, detail="An occasion needs a name")
+    return _occ.create(req.title, req.anchor_date, req.kind, req.window_start,
+                       req.window_end, req.dish_tags, req.notes, req.cooks)
+
+@app.get("/api/occasions/{occasion_id}")
+def get_occasion_detail(occasion_id: str):
+    from services import occasions as _occ
+    res = _occ.contents(occasion_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return res
+
+@app.patch("/api/occasions/{occasion_id}")
+def patch_occasion(occasion_id: str, req: OccasionPatch):
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    patch = {k: v for k, v in req.model_dump().items() if v is not None}
+    if patch:
+        storage.update_occasion(occasion_id, patch)
+    return storage.get_occasion(occasion_id)
+
+@app.delete("/api/occasions/{occasion_id}")
+def remove_occasion(occasion_id: str):
+    """Deleting the context never deletes the work — the errands, lists and
+    trips outlive it with their link cleared."""
+    storage.delete_occasion(occasion_id)
+    return {"status": "ok"}
+
+@app.post("/api/occasions/{occasion_id}/guests")
+def add_occasion_guest(occasion_id: str, req: GuestRequest):
+    from services import occasions as _occ
+    if not storage.get_occasion(occasion_id):
+        raise HTTPException(status_code=404, detail="Occasion not found")
+    return _occ.add_guest(occasion_id, req.name, req.headcount, req.member_id,
+                          req.dietary_avoid, req.dietary_dislike,
+                          req.staying_over, req.notes)
+
+@app.delete("/api/occasions/guests/{guest_id}")
+def remove_occasion_guest(guest_id: str):
+    storage.delete_occasion_guest(guest_id)
+    return {"status": "ok"}
+
+@app.post("/api/occasions/{occasion_id}/source")
+def source_for_occasion(occasion_id: str, req: SourcingRequest):
+    """"Party favours for a shark party" → a list the occasion owns, ready for
+    the cart rails that already exist."""
+    from services import occasions as _occ
+    res = _occ.generate_list(occasion_id, req.request, req.list_name,
+                             req.store, req.added_by)
+    if res.get('error'):
+        raise HTTPException(status_code=400, detail=res['error'])
+    _touch_stream()
+    return res
 
 @app.post("/api/meals/migrate-dishes")
 def migrate_dishes():

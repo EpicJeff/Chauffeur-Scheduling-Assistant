@@ -1527,6 +1527,118 @@ def pair_dishes(dish_name: str, partner_names: str, exclusive: bool = False,
             "message": f"Got it — {nm} always comes with {names}.{tail}"}
 
 
+def _find_occasion(name: str) -> Optional[dict]:
+    from services import storage
+    low = (name or '').strip().lower()
+    rows = storage.get_occasions(include_done=True)
+    if not low:
+        return rows[0] if rows else None
+    for o in rows:
+        if (o.get('title') or '').strip().lower() == low:
+            return o
+    for o in rows:
+        if low in (o.get('title') or '').strip().lower() or low == (o.get('kind') or ''):
+            return o
+    return None
+
+
+def add_occasion(title: str, anchor_date: str, kind: str = "gathering",
+                 window_start: str = "", window_end: str = "",
+                 dish_tags: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "Thanksgiving is on the 26th and my parents are here from the
+    25th to the 29th", "Ellie's birthday party is on the 14th"."""
+    from services import occasions as _occ
+    if not (title or '').strip():
+        return {"status": "error", "message": "What should I call it?"}
+    day = _parse_fuzzy_date(anchor_date or 'today')
+    tags = [t.strip().lower() for t in str(dish_tags or '').replace(' and ', ',').split(',')
+            if t.strip()]
+    o = _occ.create(title, day.isoformat(), kind,
+                    (window_start or '').strip() or None,
+                    (window_end or '').strip() or None, tags)
+    lo, hi = _occ.window(o)
+    span = "" if lo == hi else f", running {lo.strftime('%a %-d')} to {hi.strftime('%a %-d')}" \
+        if hasattr(lo, 'strftime') else ""
+    prior = " I've linked it to last year's, so I can tell you what's missing." \
+        if o.get('prior_occasion_id') else ""
+    return {"status": "success",
+            "message": f"Got it — {o['title']} on {day.strftime('%A %d %B')}{span}.{prior}"}
+
+
+def get_occasion(occasion_name: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """READ: "what's the state of Thanksgiving?", "who's coming to the party?"."""
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "success",
+                "message": "I don't have any occasions on the books yet."}
+    c = _occ.contents(o['id'])
+    away = c.get('days_away')
+    bits = [f"{o['title']} — {o['anchor_date']}"
+            + (f", {away} days away" if isinstance(away, int) and away >= 0 else "")
+            + f". {c['headcount']} people eating."]
+    if c['guests']:
+        bits.append("Coming: " + ', '.join(
+            g['name'] + (f" ×{g['headcount']}" if g['headcount'] > 1 else '')
+            for g in c['guests']) + ".")
+    if c['lists']:
+        bits.append("Lists: " + ', '.join(l['name'] for l in c['lists']) + ".")
+    if c['loose_items']:
+        bits.append(f"{len(c['loose_items'])} things for it on the regular shopping list.")
+    if c['errands']:
+        left = [e for e in c['errands'] if not e.get('is_completed')]
+        bits.append(f"{len(left)} of {len(c['errands'])} errands still to do.")
+    if not (c['guests'] or c['lists'] or c['errands'] or c['loose_items']):
+        bits.append("Nothing attached to it yet.")
+    return {"status": "success", "message": ' '.join(bits)}
+
+
+def add_occasion_guests(occasion_name: str, who: str, headcount: int = 1,
+                        cannot_eat: str = "", acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "the Wilsons are coming, there are four of them", "Grandma's
+    coming and she can't have shellfish".
+
+    A guest's allergy binds exactly like a family member's — the meal planner
+    stops proposing it — which is the whole reason the guest list exists at
+    all, given this app deliberately does not send invitations.
+    """
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "error",
+                "message": f"I don't have an occasion called '{occasion_name}'."}
+    avoid = [t.strip().lower() for t in str(cannot_eat or '').replace(' and ', ',').split(',')
+             if t.strip()]
+    g = _occ.add_guest(o['id'], who, headcount, dietary_avoid=avoid)
+    n = _occ.headcount(o['id'])
+    tail = (f" I'll keep {', '.join(avoid)} off the plan." if avoid else "")
+    return {"status": "success",
+            "message": f"Added {g['name']}"
+                       + (f" (×{g['headcount']})" if g['headcount'] > 1 else "")
+                       + f" to {o['title']} — that's {n} eating now.{tail}"}
+
+
+def source_for_occasion(occasion_name: str, needed: str,
+                        acting_member: dict = None) -> Dict[str, Any]:
+    """WRITE: "I need party favours for a shark party", "we need decorations
+    and paper plates for sixteen"."""
+    from services import occasions as _occ
+    o = _find_occasion(occasion_name)
+    if not o:
+        return {"status": "error",
+                "message": f"I don't have an occasion called '{occasion_name}'."}
+    res = _occ.generate_list(o['id'], needed,
+                             added_by=(acting_member or {}).get('id'))
+    if res.get('error'):
+        return {"status": "error", "message": f"Couldn't work that out — {res['error']}."}
+    names = ', '.join(i['name'] for i in res['items'][:6])
+    more = f" and {len(res['items']) - 6} more" if len(res['items']) > 6 else ""
+    return {"status": "success",
+            "message": f"Built a list of {len(res['items'])} for {o['title']} "
+                       f"({res['headcount']} people): {names}{more}. It's on the "
+                       "Shopping page — check it over and it'll go to a cart."}
+
+
 def get_run_sheet(target_date: str = "today", serve_at: str = "",
                   acting_member: dict = None) -> Dict[str, Any]:
     """READ: "when do I need to start cooking on Thursday?", "what time does
@@ -2365,6 +2477,59 @@ def get_available_tools() -> List[Dict]:
                     "exclusive": {"type": "boolean", "description": "true for 'X is only ever served with Y'."}
                 },
                 "required": ["dish_name", "partner_names"]
+            }
+        },
+        {
+            "name": "add_occasion",
+            "description": "Records a holiday, birthday, party or get-together so the app can carry it: Thanksgiving is on the 26th and my parents are here from the 25th to the 29th, Ellie's birthday party is on the 14th. The window is when guests are around and prep happens - it makes holiday dishes available without putting them on any plate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "What to call it, e.g. Thanksgiving 2026."},
+                    "anchor_date": {"type": "string", "description": "The day itself, e.g. 2026-11-26 or the 26th."},
+                    "kind": {"type": "string", "description": "thanksgiving|christmas|easter|birthday|party|gathering"},
+                    "window_start": {"type": "string", "description": "YYYY-MM-DD when guests arrive / prep starts. Optional."},
+                    "window_end": {"type": "string", "description": "YYYY-MM-DD when it is over. Optional."},
+                    "dish_tags": {"type": "string", "description": "Comma separated repertoire tags this occasion brings out, e.g. thanksgiving."}
+                },
+                "required": ["title", "anchor_date"]
+            }
+        },
+        {
+            "name": "get_occasion",
+            "description": "Reads the state of a holiday or party: what's the state of Thanksgiving, who is coming to the party, what still needs doing for Ellie's birthday. Reports guests, headcount, lists and outstanding errands.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which one; omit for the next one coming up."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "add_occasion_guests",
+            "description": "Adds people to an occasion's guest list: the Wilsons are coming and there are four of them, Grandma is coming and she cannot have shellfish. Allergies here bind exactly like a family member's - the meal planner stops proposing them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which occasion."},
+                    "who": {"type": "string", "description": "A name or a household, e.g. the Wilsons."},
+                    "headcount": {"type": "integer", "description": "How many people that is. Default 1."},
+                    "cannot_eat": {"type": "string", "description": "Comma separated allergies/avoidances."}
+                },
+                "required": ["occasion_name", "who"]
+            }
+        },
+        {
+            "name": "source_for_occasion",
+            "description": "Turns what an occasion needs into a real shopping list, scaled to the headcount: I need party favours for a shark party, we need decorations and paper plates. The list belongs to the occasion and goes to a cart from the Shopping page.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "occasion_name": {"type": "string", "description": "Which occasion."},
+                    "needed": {"type": "string", "description": "What they need, in their words."}
+                },
+                "required": ["occasion_name", "needed"]
             }
         },
         {

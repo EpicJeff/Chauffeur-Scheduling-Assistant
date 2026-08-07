@@ -59,6 +59,10 @@ INDEX_SPEC = {
     # Looked up by normalized name on every list read that builds a cart.
     "walmart_items": [["name_key"]],
     "meal_rules": [["id"]],
+    # Read by date window on every page that asks "is anything on?", so the
+    # anchor is indexed alongside the id.
+    "occasions": [["id"], ["anchor_date"]],
+    "occasion_guests": [["id"], ["occasion_id"]],
 }
 
 # '!=' is deliberately absent: TinyDB matches a stored null against `!= x`,

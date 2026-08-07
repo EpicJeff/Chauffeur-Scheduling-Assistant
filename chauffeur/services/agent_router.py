@@ -624,6 +624,27 @@ sending or claiming, and never pass from_member/member_name for them.
                         res = _atv2.unpair_dishes(args.get("dish_name", "") or "",
                                                   args.get("partner_name", "") or "",
                                                   acting_member=actor)
+                    elif func_name == "add_occasion":
+                        res = _atv2.add_occasion(
+                            args.get("title", "") or "",
+                            args.get("anchor_date", "") or "",
+                            args.get("kind", "gathering") or "gathering",
+                            args.get("window_start", "") or "",
+                            args.get("window_end", "") or "",
+                            args.get("dish_tags", "") or "", acting_member=actor)
+                    elif func_name == "get_occasion":
+                        res = _atv2.get_occasion(args.get("occasion_name", "") or "",
+                                                 acting_member=actor)
+                    elif func_name == "add_occasion_guests":
+                        res = _atv2.add_occasion_guests(
+                            args.get("occasion_name", "") or "",
+                            args.get("who", "") or "",
+                            int(args.get("headcount") or 1),
+                            args.get("cannot_eat", "") or "", acting_member=actor)
+                    elif func_name == "source_for_occasion":
+                        res = _atv2.source_for_occasion(
+                            args.get("occasion_name", "") or "",
+                            args.get("needed", "") or "", acting_member=actor)
                     elif func_name == "get_run_sheet":
                         res = _atv2.get_run_sheet(
                             args.get("target_date", "today") or "today",
