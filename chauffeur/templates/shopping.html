@@ -352,7 +352,11 @@
                      template proves a control EXISTS, not that it is reachable.
                      Anchors here are what /settings links to. -->
                     <div id="how" class="bg-gray-900 rounded-xl border border-gray-700 p-4 mt-4 mb-4">
-                        <button @click="showMealSettings = !showMealSettings"
+                        <!-- One way to open this drawer. Flipping the flag here
+                             directly was the bug: only openMealSettings() loads
+                             the rules, so opening from THIS control showed a
+                             populated household "No rules yet". -->
+                        <button @click="openMealSettings()"
                             class="w-full flex items-center justify-between text-left">
                             <span class="text-xs font-black uppercase tracking-widest text-pink-200">
                                 ⚙️ How this works
@@ -500,9 +504,17 @@
                                     class="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                             </div>
                         </template>
-                        <div x-show="!rules.length" class="text-xs text-gray-500">
+                        <div x-show="!rules.length && rulesLoaded" class="text-xs text-gray-500">
                             No rules yet — the plan just rotates what you cook.
                         </div>
+                        <div x-show="!rules.length && !rulesLoaded && rulesError"
+                            class="text-xs text-amber-300 flex items-center gap-2 flex-wrap">
+                            <span x-text="rulesError"></span>
+                            <button @click="loadRules()"
+                                class="font-bold text-pink-300 hover:text-white">Try again</button>
+                        </div>
+                        <div x-show="!rules.length && !rulesLoaded && !rulesError"
+                            class="text-xs text-gray-600">Loading your rules…</div>
                     </div>
                 </div>
 
@@ -1378,6 +1390,9 @@
                 pickerOpen: false, pickerFor: null,
                 pickerSelected: [], pickerBusy: false,
                 rules: [], showRules: false, showRuleForm: false, ruleBusy: false,
+                // rulesLoaded distinguishes "read the table, it was empty" from
+                // "never got an answer" — the empty state may not conflate them.
+                rulesLoaded: false, rulesError: '',
                 ruleDraft: { id: null, kind: 'frequency_cap', name: '', applies: '',
                              takeout: false, max_servings: 1, window_days: 7,
                              dwell_days: 3 },
@@ -1406,6 +1421,14 @@
                 get checked() { return this.items.filter(i => i.is_checked); },
 
                 async init() {
+                    // The drawer's contents load lazily, and for a while exactly
+                    // one of the two controls that open it remembered to fetch
+                    // the rules. Watching the flag makes the load a property of
+                    // BEING OPEN rather than of which button was pressed — the
+                    // only version of this that a third control can't break.
+                    this.$watch('showMealSettings', open => {
+                        if (open && !this.rulesLoaded) this.loadRules();
+                    });
                     await this.loadMembers();
                     await this.loadLists();
                     await this.loadItems();
@@ -1580,10 +1603,22 @@
                 },
 
                 async loadRules() {
+                    // "We couldn't read your rules" and "you have no rules" are
+                    // opposite claims, and this reported both as the second one —
+                    // which is why a household with rules on file was told it had
+                    // none and had no way to tell the difference.
                     try {
                         const r = await fetch(this.apiBase + 'api/meals/rules');
-                        this.rules = r.ok ? (await r.json()).rules || [] : [];
-                    } catch (e) { this.rules = []; }
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        this.rules = (await r.json()).rules || [];
+                        this.rulesLoaded = true;
+                        this.rulesError = '';
+                    } catch (e) {
+                        this.rules = [];
+                        this.rulesLoaded = false;
+                        this.rulesError = 'Could not load your rules (' + e.message
+                            + '). They are still on file — this is the page failing to read them.';
+                    }
                 },
 
                 blankRule() {
@@ -2321,8 +2356,9 @@
                 },
 
                 openMealSettings() {
+                    // Loading is handled by the $watch on showMealSettings, so
+                    // opening the drawer from anywhere fetches what it shows.
                     this.showMealSettings = !this.showMealSettings;
-                    if (this.showMealSettings && !this.rules.length) this.loadRules();
                 },
 
                 // A deep link from Find-a-setting names an anchor INSIDE the
@@ -2334,8 +2370,7 @@
                     const mine = ['how', 'rules', 'dining', 'plate', 'planning',
                                   'prep', 'walmart', 'kitchen', 'pictures'];
                     if (!mine.includes(id)) return;
-                    this.showMealSettings = true;
-                    if (!this.rules.length) this.loadRules();
+                    this.showMealSettings = true;   // the $watch loads the rules
                     this.$nextTick(() => {
                         const el = document.getElementById(id);
                         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
