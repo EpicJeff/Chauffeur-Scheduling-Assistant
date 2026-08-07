@@ -8535,6 +8535,24 @@ def _apply_identity_colors(cal_meta: dict) -> dict:
     return cal_meta
 
 
+def _calendar_legend_members() -> list:
+    """The people the calendar legend is built from — everyone, including the
+    ones with no driving or passenger profile, who exist on no other list.
+
+    Read live rather than out of a schedule cache: like the identity-color
+    overlay, a rename, a recolor or a newly added person must show without
+    waiting for a cache rebuild."""
+    return [{
+        "id": m['id'],
+        "name": m.get('name') or '',
+        "color_code": m.get('color_code') or '#3B82F6',
+        "avatar": m.get('avatar'),
+        "driver_id": m.get('driver_id'),
+        "passenger_id": m.get('passenger_id'),
+        "calendar_ids": m.get('calendar_ids') or [],
+    } for m in storage.get_all_members()]
+
+
 def _identity_driver_colors(driver_list) -> list:
     """Serve drivers with their member identity color so dashboard columns
     match event bars and pills; the driver record's own color_code is a
@@ -9798,15 +9816,7 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
             "passengers": passengers,
             # The people themselves — the calendar legend is built from this, so
             # someone with no driving/passenger profile still gets a chip.
-            "members": [{
-                "id": m['id'],
-                "name": m.get('name') or '',
-                "color_code": m.get('color_code') or '#3B82F6',
-                "avatar": m.get('avatar'),
-                "driver_id": m.get('driver_id'),
-                "passenger_id": m.get('passenger_id'),
-                "calendar_ids": m.get('calendar_ids') or [],
-            } for m in members_data],
+            "members": _calendar_legend_members(),
             "drivers": _identity_driver_colors(drivers),
             "solving_dates": schedule_coordinator.get_solving_dates(),
             "ai_metadata": combined_ai_metadata,
@@ -10483,6 +10493,12 @@ def get_schedule(background_tasks: BackgroundTasks, start_date: str = None, end_
                 # predate any color edit made since the cache was built.
                 cached["calendar_metadata"] = _apply_identity_colors(cached.get("calendar_metadata") or {})
                 cached["drivers"] = _identity_driver_colors(cached.get("drivers"))
+                # The legend roster likewise: the combined-daily and custom-range
+                # caches are assembled from per-day solver output, which knows
+                # about drivers and passengers and nothing else. Without this a
+                # person with no profile lost their chip on every warm response —
+                # which is the whole surface this exists for.
+                cached["members"] = _calendar_legend_members()
                 # Rate limit background refreshes to every 5 minutes per date range
                 import time
                 global last_bg_refresh
