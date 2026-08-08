@@ -53,6 +53,64 @@ def scenario_one_shelf_height_feeds_everything_that_must_clear_it():
         check(needle in THEME, f"'{needle}...' no longer derives from the shared height")
 
 
+SKIN = open(os.path.join(TPL, 'panel_skin.html'), encoding='utf-8').read()
+
+
+def scenario_the_skin_reaches_every_page():
+    """A look that stops at the home board is worse than no look — tapping
+    DRIVES on the shelf dropped you out of a photographic display and into a
+    flat dark web page, which makes the other ten look broken rather than
+    plain. The skin is included from ha_theme, which is in every page's head,
+    and maps the Tailwind greys the pages are already written in."""
+    check("{% include 'panel_skin.html' %}" in THEME,
+          "the skin is no longer included from ha_theme, so only /home has it")
+    import glob
+    pages = [p for p in glob.glob(os.path.join(TPL, '*.html'))
+             if os.path.basename(p) not in
+             ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
+              'moment.html', 'trip_kiosk.html', 'trip.html')]
+    for path in pages:
+        body = open(path, encoding='utf-8').read()
+        check("{% include 'ha_theme.html' %}" in body,
+              f"{os.path.basename(path)} does not include ha_theme, so it "
+              f"gets no panel skin")
+
+
+def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
+    """Eleven templates were not going to be rewritten. The greys they already
+    use are mapped onto the tokens instead — surfaces, ink and edges."""
+    for needle in ('html[data-panel] .bg-gray-800', 'html[data-panel] .text-gray-300',
+                   'html[data-panel] .border-gray-700', 'html[data-panel] input'):
+        check(needle in SKIN, f"the skin no longer maps {needle}")
+    check('--panel-card' in SKIN and '--panel-fg' in SKIN,
+          "the tokens moved out of the shared skin")
+
+
+def scenario_the_skin_stays_out_of_the_browser():
+    """Silently restyling every page of a working app for people at a laptop is
+    a much bigger promise than the one being made. Every mapping rule is scoped
+    to panel mode."""
+    import re
+    body = SKIN[SKIN.index('html[data-panel] body'):]
+    rules = re.findall(r'^\s{4}([^\s@}][^{]*)\{', body, re.M)
+    for sel in rules:
+        check('html[data-panel]' in sel,
+              f"a skin rule escapes panel mode and hits the browser: {sel.strip()[:60]}")
+
+
+def scenario_a_page_can_have_its_own_picture():
+    from services import home_board
+    got = home_board.backgrounds({
+        'panel_background': 'mountains at dusk',
+        'panel_page_backgrounds': {'schedule': 'empty highway at dawn',
+                                   'nonsense': 'x', 'map': '   '}})
+    check(got['default'].startswith('api/unsplash/background?query=mountains'),
+          "the default picture is gone")
+    check('highway' in got['schedule'], "a page's own picture is not resolved")
+    check('nonsense' not in got, "an unknown page slug is stored anyway")
+    check('map' not in got, "a blank entry is treated as a picture")
+
+
 def scenario_the_shelf_has_no_background_and_the_content_fades_behind_it():
     """The shelf carries nothing of its own; a separate fixed strip ramps a
     backdrop blur in via a mask so content dissolves on the way down.

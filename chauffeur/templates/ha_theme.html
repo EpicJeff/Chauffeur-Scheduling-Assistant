@@ -74,6 +74,12 @@
         });
     }
 </script>
+{# The panel design system — tokens, the photographic background, and the
+   mapping that carries both onto every page written in Tailwind greys. Kept
+   in its own file because it is a design system rather than theme plumbing,
+   and included from here because ha_theme is already in every page's head. #}
+{% include 'panel_skin.html' %}
+
 <style>
     /* --- Panel mode: the whole app, sized for a finger.
        The lever is the ROOT FONT SIZE, not a pile of per-control overrides.

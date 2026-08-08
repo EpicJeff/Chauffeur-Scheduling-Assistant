@@ -19,99 +19,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <style>
-        /* Light and dark as REAL variables rather than a pile of Tailwind
-           overrides. The board is the one surface built after the light-theme
-           mapping in ha_theme.html turned out to be incomplete, so it does not
-           inherit that debt: three tokens, both themes, and `auto` follows the
-           device (which under Home Assistant means following HA). */
-        /* The substrate is a PHOTOGRAPH with a scrim, not a flat slab. That one
-           choice is most of the difference between a display and a web page on
-           a wall — every reference board works this way — so the cards are
-           glass floating on it rather than opaque boxes with outlines. */
-        :root {
-            --panel-bg: #0b1020;
-            --panel-card: rgb(12 16 28 / 0.55);
-            --panel-card-hi: rgb(20 26 42 / 0.72);
-            --panel-line: rgb(255 255 255 / 0.10);
-            --panel-fg: #f3f4f6;
-            --panel-dim: rgb(255 255 255 / 0.55);
-            --panel-accent: #7dd3fc;
-            --panel-shadow: 0 8px 32px rgb(0 0 0 / 0.22);
-            --panel-glow: 0 2px 24px rgb(0 0 0 / 0.35);
-            --panel-scrim: linear-gradient(180deg, rgb(6 8 16 / .72) 0%, rgb(6 8 16 / .58) 45%, rgb(6 8 16 / .78) 100%);
-        }
-        /* Light mode is NOT dark mode with the colours flipped. Dark glass
-           works because a translucent dark card is always darker than a photo;
-           a translucent WHITE card on a white scrim is the same value as its
-           background, which is exactly how v2.113 shipped — bleached, foggy,
-           card edges invisible. The fix is to move the contrast the other way:
-           a much weaker scrim so the photograph keeps its colour, and much more
-           opaque cards so they read as paper laid ON it. */
-        html[data-panel-theme="light"] {
-            --panel-bg: #eef1f6;
-            --panel-card: rgb(255 255 255 / 0.88);
-            --panel-card-hi: rgb(255 255 255 / 0.96);
-            --panel-line: rgb(15 23 42 / 0.13);
-            --panel-fg: #0f172a;
-            --panel-dim: rgb(15 23 42 / 0.62);
-            --panel-accent: #0369a1;
-            --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
-            --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
-            --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
-        }
-        @media (prefers-color-scheme: light) {
-            html[data-panel-theme="auto"] {
-                --panel-bg: #eef1f6;
-                --panel-card: rgb(255 255 255 / 0.88);
-                --panel-card-hi: rgb(255 255 255 / 0.96);
-                --panel-line: rgb(15 23 42 / 0.13);
-                --panel-fg: #0f172a;
-                --panel-dim: rgb(15 23 42 / 0.62);
-                --panel-accent: #0369a1;
-                --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
-                --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
-                --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
-            }
-        }
-
-        body {
-            background-color: var(--panel-bg);
-            color: var(--panel-fg);
-            min-height: 100vh;
-        }
-        /* Two fixed layers under everything: the picture, then the scrim that
-           keeps white text legible over a photo nobody vetted. */
-        #panel-bg-image, #panel-bg-scrim {
-            position: fixed; inset: 0; z-index: -2; pointer-events: none;
-        }
-        #panel-bg-image { background-size: cover; background-position: center; }
-        #panel-bg-scrim { z-index: -1; background: var(--panel-scrim); }
-
+        /* Tokens, the background layers and .panel-card/.panel-label all come
+           from panel_skin.html now, so every page shares them. What stays here
+           is what only the board has. */
+        body { background-color: var(--panel-bg); color: var(--panel-fg); min-height: 100vh; }
         [x-cloak] { display: none !important; }
-        .panel-text { color: var(--panel-fg); }
-        .panel-dim { color: var(--panel-dim); }
-
-        .panel-card {
-            background: var(--panel-card);
-            -webkit-backdrop-filter: blur(16px) saturate(140%);
-            backdrop-filter: blur(16px) saturate(140%);
-            border: 1px solid var(--panel-line);
-            color: var(--panel-fg);
-            text-decoration: none;
-            box-shadow: var(--panel-shadow);
-        }
-        .panel-card:hover { background: var(--panel-card-hi); }
-
-        /* Tiny muted uppercase label over a very large value — the type
-           hierarchy every reference board runs on. The label is an accent
-           colour, not grey: "EVENTS" / "ANNOUNCEMENTS" read as section marks. */
-        .panel-label {
-            color: var(--panel-accent);
-            font-size: 0.66rem;
-            font-weight: 900;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-        }
 
         /* The clock is the one thing read from across the room. It scales with
            the viewport rather than the root font size so it stays enormous on
@@ -640,7 +552,28 @@
                     </p>
                     <input type="text" x-model="draft.panel_background"
                         placeholder="mountains at dusk"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-600 mb-6">
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-600 mb-4">
+
+                    <!-- Per page. A highway behind the driving schedule, the
+                         kitchen behind the meals page — the panel stops being
+                         one screen with tabs and starts being rooms. -->
+                    <details class="mb-6">
+                        <summary class="text-xs font-bold text-sky-300 cursor-pointer mb-2">
+                            A different picture per page…
+                        </summary>
+                        <div class="space-y-1.5 mt-2">
+                            <template x-for="t in (catalog.tabs || [])" :key="t.slug">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs text-gray-400 w-20 shrink-0" x-text="t.label"></span>
+                                    <input type="text"
+                                        :value="draft.panel_page_backgrounds[t.slug] || ''"
+                                        @input="setPageBg(t.slug, $event.target.value)"
+                                        placeholder="uses the one above"
+                                        class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white placeholder-gray-600">
+                                </div>
+                            </template>
+                        </div>
+                    </details>
 
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
                         Theme
@@ -691,12 +624,14 @@
             return {
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
                 isPanel: params.get('panel') === 'true' || params.get('kiosk') === 'true',
+                isPanelMode: params.get('panel') === 'true',
                 board: {}, hero: {}, catalog: {},
                 clock: '', seconds: '', meridiem: '', countdown: '', countdownClass: '',
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
-                    panel_tile_spans: {}, panel_theme: 'dark', panel_background: ''
+                    panel_tile_spans: {}, panel_theme: 'dark', panel_background: '',
+                    panel_page_backgrounds: {}
                 },
 
                 // Theme first, before anything paints: a board that flashes
@@ -758,7 +693,7 @@
                         if (!r.ok) return;
                         this.board = await r.json();
                         this.hero = this.board.hero || {};
-                        this.applyBackground();
+                        if (!this.isPanelMode) this.applyBackground();
                         this.recount();
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
@@ -909,7 +844,8 @@
                                     ? 180 : s.panel_idle_return_seconds,
                             panel_tile_spans: { ...(s.panel_tile_spans || {}) },
                             panel_theme: s.panel_theme || 'dark',
-                            panel_background: s.panel_background || ''
+                            panel_background: s.panel_background || '',
+                            panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
                         };
                     } catch (e) { /* setup stays on defaults */ }
                 },
@@ -922,6 +858,14 @@
                 unpickedWidgets() {
                     return (this.catalog.widgets || [])
                         .filter(w => !this.draft.panel_widgets.includes(w.key));
+                },
+
+                // An emptied field stops being stored rather than persisting
+                // a blank that means the same as absent.
+                setPageBg(slug, value) {
+                    const v = (value || '').trim();
+                    if (v) this.draft.panel_page_backgrounds[slug] = v;
+                    else delete this.draft.panel_page_backgrounds[slug];
                 },
 
                 spanOf(key, axis) {
@@ -966,7 +910,8 @@
                                     Number(this.draft.panel_idle_return_seconds) || 0,
                                 panel_tile_spans: this.draft.panel_tile_spans,
                                 panel_theme: this.draft.panel_theme,
-                                panel_background: this.draft.panel_background
+                                panel_background: this.draft.panel_background,
+                                panel_page_backgrounds: this.draft.panel_page_backgrounds
                             })
                         });
                         if (!r.ok) throw new Error(await r.text());

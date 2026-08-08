@@ -697,19 +697,40 @@ _BUILDERS: dict = {
 
 # --- assembly -------------------------------------------------------------
 
-def _background_url(settings: dict) -> Optional[str]:
+def _as_background(raw: Optional[str]) -> Optional[str]:
     """A URL is used as-is; anything else is treated as a search phrase and
     handed to the Unsplash endpoint that already backs trip artwork (which
     redirects, caches for a day, and falls back on its own). So "mountains at
-    dusk" is a valid value for this setting, which is the point — nobody wants
-    to go and find an image URL to hang a picture on their kitchen wall."""
-    raw = str((settings or {}).get('panel_background') or '').strip()
+    dusk" is a valid value, which is the point — nobody wants to go and find an
+    image URL to hang a picture on their kitchen wall, and a household that has
+    to find eleven of them will set none."""
+    raw = str(raw or '').strip()
     if not raw:
         return None
     if raw.startswith(('http://', 'https://', '/', 'data:')):
         return raw
     import urllib.parse
     return f"api/unsplash/background?query={urllib.parse.quote(raw)}"
+
+
+def _background_url(settings: dict) -> Optional[str]:
+    return _as_background((settings or {}).get('panel_background'))
+
+
+def backgrounds(settings: dict = None) -> dict:
+    """`{'default': url|None, '<nav slug>': url}` — every page's picture,
+    resolved. The whole map travels in the panel profile so a page change does
+    not cost a round trip: the panel already has the answer before you tap."""
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    out = {'default': _background_url(settings)}
+    per_page = settings.get('panel_page_backgrounds') or {}
+    if isinstance(per_page, dict):
+        for slug, raw in per_page.items():
+            slug = str(slug).strip().lower()
+            url = _as_background(raw)
+            if slug in NAV_SLUGS and url:
+                out[slug] = url
+    return out
 
 
 def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> List[str]:
@@ -806,6 +827,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
             'widgets': resolve_widgets(widgets, settings),
             'spans': settings.get('panel_tile_spans') or {},
             'theme': theme if theme in ('light', 'dark', 'auto') else 'dark',
+            'backgrounds': backgrounds(settings),
             'idle_seconds': max(0, idle)}
 
 

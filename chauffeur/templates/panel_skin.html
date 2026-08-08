@@ -1,0 +1,230 @@
+{#
+  The wall panel's design system, for EVERY page.
+
+  The home board shipped its own look and nothing else got it, so tapping
+  DRIVES on the shelf dropped you out of a photographic display and into a
+  flat dark web page. A skin that stops at one surface is worse than no skin —
+  it makes the other ten look broken rather than plain.
+
+  Rewriting eleven templates was not the answer. This file does what
+  ha_theme.html has always done for Home Assistant themes — map the Tailwind
+  greys the pages are already written in onto a small set of tokens — except
+  the tokens here are ours and they carry light/dark with them. A page written
+  a year ago in `bg-gray-800` becomes glass on a photograph without being
+  touched, and keeps working exactly as before outside panel mode.
+
+  Everything is scoped to `html[data-panel]` on purpose. In an ordinary
+  browser the admin pages stay exactly as they are: the panel is where the
+  look matters, and silently restyling every page of a working app for people
+  sitting at a laptop is a much bigger promise than the one being made here.
+#}
+<style>
+    /* ── Tokens. The only place light and dark are defined. */
+    :root {
+        --panel-bg: #0b1020;
+        --panel-card: rgb(12 16 28 / 0.55);
+        --panel-card-hi: rgb(20 26 42 / 0.72);
+        --panel-card-lo: rgb(8 11 20 / 0.38);
+        --panel-line: rgb(255 255 255 / 0.10);
+        --panel-fg: #f3f4f6;
+        --panel-dim: rgb(255 255 255 / 0.55);
+        --panel-accent: #7dd3fc;
+        --panel-shadow: 0 8px 32px rgb(0 0 0 / 0.22);
+        --panel-glow: 0 2px 24px rgb(0 0 0 / 0.35);
+        --panel-scrim: linear-gradient(180deg, rgb(6 8 16 / .72) 0%, rgb(6 8 16 / .58) 45%, rgb(6 8 16 / .78) 100%);
+    }
+
+    /* Light is NOT dark with the colours flipped. A translucent dark card is
+       always darker than the photo behind it, which is what makes dark glass
+       work; a translucent WHITE card on a WHITE scrim is the same value as its
+       own background and disappears. So on light the scrim gets much weaker
+       (the photograph keeps its colour) and the cards get much more opaque
+       (they read as paper laid on it). */
+    html[data-panel-theme="light"] {
+        --panel-bg: #eef1f6;
+        --panel-card: rgb(255 255 255 / 0.88);
+        --panel-card-hi: rgb(255 255 255 / 0.96);
+        --panel-card-lo: rgb(255 255 255 / 0.72);
+        --panel-line: rgb(15 23 42 / 0.13);
+        --panel-fg: #0f172a;
+        --panel-dim: rgb(15 23 42 / 0.62);
+        --panel-accent: #0369a1;
+        --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
+        --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
+        --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+    }
+
+    @media (prefers-color-scheme: light) {
+        html[data-panel-theme="auto"] {
+            --panel-bg: #eef1f6;
+            --panel-card: rgb(255 255 255 / 0.88);
+            --panel-card-hi: rgb(255 255 255 / 0.96);
+            --panel-card-lo: rgb(255 255 255 / 0.72);
+            --panel-line: rgb(15 23 42 / 0.13);
+            --panel-fg: #0f172a;
+            --panel-dim: rgb(15 23 42 / 0.62);
+            --panel-accent: #0369a1;
+            --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
+            --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
+            --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+        }
+    }
+
+    /* ── The photograph, on every page. Two fixed layers under everything:
+       the picture, then a scrim that keeps text legible over an image nobody
+       vetted. Injected by nav.html so no page template has to carry them. */
+    #panel-bg-image,
+    #panel-bg-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: -2;
+        pointer-events: none;
+    }
+
+    #panel-bg-image {
+        background-size: cover;
+        background-position: center;
+        /* A page's own picture crossfades in rather than snapping. */
+        transition: background-image .4s ease;
+    }
+
+    #panel-bg-scrim {
+        z-index: -1;
+        background: var(--panel-scrim);
+    }
+
+    /* ── The shared vocabulary, used directly by the home board. */
+    .panel-text { color: var(--panel-fg); }
+    .panel-dim { color: var(--panel-dim); }
+
+    .panel-card {
+        background: var(--panel-card);
+        -webkit-backdrop-filter: blur(16px) saturate(140%);
+        backdrop-filter: blur(16px) saturate(140%);
+        border: 1px solid var(--panel-line);
+        color: var(--panel-fg);
+        text-decoration: none;
+        box-shadow: var(--panel-shadow);
+    }
+
+    .panel-card:hover { background: var(--panel-card-hi); }
+
+    /* A tiny uppercase ACCENT-coloured label over a very large value. Grey
+       section marks do not scan from across a room. */
+    .panel-label {
+        color: var(--panel-accent);
+        font-size: 0.66rem;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+    }
+
+    .panel-chip {
+        background: rgb(125 211 252 / 0.14);
+        border: 1px solid rgb(125 211 252 / 0.28);
+        color: var(--panel-fg);
+    }
+
+    html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
+
+    /* ══ Everything below applies ONLY in panel mode, and only to pages that
+       were written in Tailwind greys — which is all of them. This is the part
+       that carries the look past the home board. */
+
+    /* The page itself gets out of the way so the photograph shows through. */
+    html[data-panel] body {
+        background-color: transparent !important;
+        color: var(--panel-fg);
+    }
+
+    /* Surfaces. The grey scale the pages are written in maps onto the glass
+       scale: 900 is the quiet backdrop layer, 800 the ordinary card, 700 the
+       raised/hover one. Opacity suffixes are enumerated rather than matched
+       because CSS has no wildcard for them — the same limitation, and the same
+       explicit list, that the HA theme mapping above already lives with. */
+    html[data-panel] .bg-gray-950,
+    html[data-panel] .bg-gray-900,
+    html[data-panel] .bg-gray-900\/30,
+    html[data-panel] .bg-gray-900\/40,
+    html[data-panel] .bg-gray-900\/50,
+    html[data-panel] .bg-gray-900\/60,
+    html[data-panel] .bg-gray-900\/70,
+    html[data-panel] .bg-gray-900\/80,
+    html[data-panel] .bg-gray-900\/90 {
+        background-color: var(--panel-card-lo) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(135%);
+        backdrop-filter: blur(14px) saturate(135%);
+    }
+
+    html[data-panel] .bg-gray-800,
+    html[data-panel] .bg-gray-800\/30,
+    html[data-panel] .bg-gray-800\/40,
+    html[data-panel] .bg-gray-800\/50,
+    html[data-panel] .bg-gray-800\/60,
+    html[data-panel] .bg-gray-800\/70,
+    html[data-panel] .bg-gray-800\/80,
+    html[data-panel] .bg-gray-800\/90 {
+        background-color: var(--panel-card) !important;
+        -webkit-backdrop-filter: blur(16px) saturate(140%);
+        backdrop-filter: blur(16px) saturate(140%);
+    }
+
+    html[data-panel] .bg-gray-700,
+    html[data-panel] .bg-gray-700\/30,
+    html[data-panel] .bg-gray-700\/40,
+    html[data-panel] .bg-gray-700\/50,
+    html[data-panel] .bg-gray-700\/60,
+    html[data-panel] .bg-gray-700\/70,
+    html[data-panel] .bg-gray-700\/80,
+    html[data-panel] .bg-gray-700\/90,
+    html[data-panel] .bg-gray-600 {
+        background-color: var(--panel-card-hi) !important;
+    }
+
+    /* Ink. */
+    html[data-panel] .text-white,
+    html[data-panel] .text-gray-50,
+    html[data-panel] .text-gray-100,
+    html[data-panel] .text-gray-200 {
+        color: var(--panel-fg) !important;
+    }
+
+    html[data-panel] .text-gray-300,
+    html[data-panel] .text-gray-400,
+    html[data-panel] .text-gray-500,
+    html[data-panel] .text-gray-600 {
+        color: var(--panel-dim) !important;
+    }
+
+    /* Edges. */
+    html[data-panel] .border-gray-950,
+    html[data-panel] .border-gray-900,
+    html[data-panel] .border-gray-800,
+    html[data-panel] .border-gray-800\/50,
+    html[data-panel] .border-gray-800\/60,
+    html[data-panel] .border-gray-700,
+    html[data-panel] .border-gray-700\/40,
+    html[data-panel] .border-gray-700\/50,
+    html[data-panel] .border-gray-700\/60,
+    html[data-panel] .border-gray-600,
+    html[data-panel] .border-gray-600\/50 {
+        border-color: var(--panel-line) !important;
+    }
+
+    /* Form controls have to stay obviously interactive on glass — without
+       this an input on a photograph is indistinguishable from a caption. */
+    html[data-panel] input,
+    html[data-panel] textarea,
+    html[data-panel] select {
+        background-color: var(--panel-card-hi) !important;
+        color: var(--panel-fg) !important;
+        border-color: var(--panel-line) !important;
+    }
+
+    html[data-panel] ::placeholder { color: var(--panel-dim) !important; }
+
+    /* Anything already carrying its own colour — the accent buttons, the
+       status pills, the member chips — is deliberately left alone. Colour is
+       how those things mean what they mean, and washing them into the token
+       set would flatten exactly the information they carry. */
+</style>

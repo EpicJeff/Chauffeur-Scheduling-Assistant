@@ -275,6 +275,11 @@
             }
         }
 
+        // The profile is wanted on EVERY panel page, not just the branches that
+        // happen to need tabs: it carries the theme correction and the
+        // background map too. It caches, so asking here costs nothing.
+        if (isPanel) panelProfile();
+
         // Which destinations this surface shows. `allowed` of null means "all".
         // Slugs now come off the elements themselves (data-slug) rather than
         // being re-derived from hrefs — under ingress an href is a token path,
@@ -284,6 +289,39 @@
             document.querySelectorAll('[data-slug]').forEach(a => {
                 if (!allowed.has(a.dataset.slug)) a.style.display = 'none';
             });
+        }
+
+        // Which nav slug this page is, from the same NAV_ITEMS the shelf is
+        // built from — so "the drives page" means the same thing to the
+        // background chooser as it does to the shelf and the tabs filter.
+        const PAGE_SLUGS = {
+            {% for item in NAV_ITEMS %}'{{ item.href }}': '{{ item.slug }}',
+            {% endfor %}
+        };
+
+        function currentSlug() {
+            const page = window.location.pathname.split('/').filter(Boolean).pop() || '';
+            return PAGE_SLUGS[page] || '';
+        }
+
+        // The photograph, on every page. The layers are injected rather than
+        // added to eleven templates, and the map arrives with the profile so
+        // moving between pages costs no extra request.
+        function applyBackground(map) {
+            if (!map) return;
+            let img = document.getElementById('panel-bg-image');
+            if (!img) {
+                img = document.createElement('div');
+                img.id = 'panel-bg-image';
+                const scrim = document.createElement('div');
+                scrim.id = 'panel-bg-scrim';
+                document.body.prepend(scrim);
+                document.body.prepend(img);
+            }
+            const url = map[currentSlug()] || map.default;
+            img.style.backgroundImage = url
+                ? `url("${url.startsWith('api/') ? apiBase + url : url}")`
+                : 'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
         }
 
         // One request, shared by the shelf and the idle timer — they both want
@@ -303,6 +341,7 @@
                             try { localStorage.setItem('chauffeurPanelTheme', p.theme); }
                             catch (e) { /* private mode: cache is a nicety */ }
                         }
+                        if (p) applyBackground(p.backgrounds);
                         return p;
                     })
                     .catch(() => null);
