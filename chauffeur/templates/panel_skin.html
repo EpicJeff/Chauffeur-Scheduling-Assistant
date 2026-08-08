@@ -27,7 +27,7 @@
         --panel-card-lo: rgb(8 11 20 / 0.38);
         /* Mapped page surfaces. More opaque than the board's glass because
            they carry no blur — see the surfaces block below. */
-        --panel-surface-1: rgb(10 13 22 / 0.62);
+        --panel-surface-1: rgb(10 13 22 / 0.45);
         --panel-surface-2: rgb(18 24 38 / 0.55);
         --panel-surface-3: rgb(32 40 60 / 0.68);
         --panel-line: rgb(255 255 255 / 0.10);
@@ -224,28 +224,36 @@
        Because there is no blur to help legibility, the mapped surfaces are
        more opaque than the board's own glass — these are separate tokens for
        exactly that reason. */
-    /* The blur below is on the CARD tiers only (800/700/600) and never on the
-       page tiers (900/950). That is what makes it safe: a filter turns an
-       element into a containing block for fixed descendants, and the pages
-       that put a grey on <body> use 900 or 950 — never 800. The panel's fixed
-       chrome (shelf, fade, orb, chat bar, background layers) all sit as direct
-       children of <body>, so nothing above them ever filters.
+    /* ── Surfaces.
+       The split is by USAGE, not by shade, because this codebase uses
+       `bg-gray-900` for both things. Bare `bg-gray-900` is a CARD — the
+       schedule's driver column, the dashboard's rule sidebar — so it becomes
+       glass. The opacity variants (`/30`…`/90`) are the page-level scroll
+       WRAPPERS that fill the content area — errands, moments, settings,
+       routines — so they go transparent and let the photograph through.
+       Getting this backwards is what put a slab over the picture one way and
+       deleted the schedule's panes the other.
 
-       900 and 950 are the PAGE background in Tailwind's convention, not a
-       card — pages use them on the big wrapper that fills the content area.
-       Mapping them to a surface laid an opaque slab straight over the
-       photograph: you could see the picture behind the shelf, where the fade
-       is transparent, and nowhere else. They are transparent here, and only
-       800/700/600 — the actual cards — become surfaces. */
+       The blur is safe on every tier here only because <body> forces
+       `filter: none` below. A filter makes an element a containing block for
+       fixed descendants, and `config` and `map` put `bg-gray-900` on their
+       body — without that override the shelf, the orb and the background
+       layers would all be trapped inside it. */
     html[data-panel] .bg-gray-950,
-    html[data-panel] .bg-gray-900,
+    html[data-panel] .bg-gray-900 {
+        background-color: var(--panel-surface-1) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(135%);
+        backdrop-filter: blur(14px) saturate(135%);
+    }
+
     html[data-panel] .bg-gray-900\/30,
     html[data-panel] .bg-gray-900\/40,
     html[data-panel] .bg-gray-900\/50,
     html[data-panel] .bg-gray-900\/60,
     html[data-panel] .bg-gray-900\/70,
     html[data-panel] .bg-gray-900\/80,
-    html[data-panel] .bg-gray-900\/90 {
+    html[data-panel] .bg-gray-900\/90,
+    html[data-panel] .panel-page {
         background-color: transparent !important;
     }
 
@@ -308,6 +316,14 @@
         --fc-page-bg-color: transparent;
         --fc-neutral-bg-color: transparent;
         --fc-today-bg-color: rgb(125 211 252 / 0.10);
+    }
+
+    html[data-panel] .fc-day {
+        background-color: transparent !important;
+    }
+
+    html[data-panel] .fc-day-today {
+        background-color: var(--fc-today-bg-color) !important;
     }
 
     html[data-panel] .fc-theme-standard td,

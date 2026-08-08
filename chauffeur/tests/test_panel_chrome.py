@@ -119,39 +119,26 @@ def scenario_the_grey_mapping_never_applies_a_filter():
     """This one broke the whole panel once and the reason is not obvious.
 
     A filter — `backdrop-filter` included — makes an element a CONTAINING BLOCK
-    for every fixed-position descendant and opens a new stacking context.
-    Several pages carry `bg-gray-900` on <body>, so blurring the mapped greys
-    put a filter on the body itself, which captured the shelf, the orb and the
-    two `z-index: -2` background layers — trapping the photograph behind the
-    element it was supposed to sit behind. Blur belongs on `.panel-card`, which
-    is applied deliberately to leaf cards that contain no fixed chrome."""
-    import re
-    # The PAGE tiers must stay filter-free — those are the ones pages put on
-    # <body>, and that is exactly how the panel got flattened.
-    page_tier = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
-    page_tier = page_tier[:page_tier.index('}')]
-    check('backdrop-filter' not in page_tier,
-          "the page-level greys carry a filter again — they are on <body> on "
-          "several pages, which traps the shelf and the background layers")
-
+    for every fixed-position descendant and opens a new stacking context. The
+    mapped greys ARE blurred (that is the glass everyone wanted), and `config`
+    and `map` carry `bg-gray-900` on <body>. So the whole scheme rests on one
+    override: the body must force `filter: none`. Without it the shelf, the orb
+    and the two `z-index: -2` background layers are captured by the body and
+    the photograph ends up behind the element it was meant to sit behind."""
+    # <body> is the safety net for the whole scheme. A filter makes an element
+    # a containing block for fixed descendants, and `config` and `map` put
+    # `bg-gray-900` on their body — the tier that is now blurred. Without this
+    # override the shelf, the orb and both background layers get trapped
+    # inside the body and the panel goes flat, which is exactly what v2.115
+    # shipped.
     body_rule = SKIN[SKIN.index('html[data-panel] body,'):]
     body_rule = body_rule[:body_rule.index('}')]
-    check('filter: none' in body_rule,
-          "the body no longer forces filter: none")
-
-    # Blur IS allowed on the card tiers, and this is the condition that makes
-    # it safe: no page may put a card-tier grey on <body>. Checked against the
-    # templates rather than asserted in prose, because the day one does, the
-    # panel's fixed chrome quietly breaks again.
-    import glob
-    for path in glob.glob(os.path.join(TPL, '*.html')):
-        body_tag = re.search(r'<body[^>]*class="([^"]*)"', open(path, encoding='utf-8').read())
-        if not body_tag:
-            continue
-        for tier in ('bg-gray-800', 'bg-gray-700', 'bg-gray-600'):
-            check(tier not in body_tag.group(1),
-                  f"{os.path.basename(path)} puts {tier} on <body>; that tier is "
-                  f"blurred, and a filter on the body traps every fixed element")
+    for prop in ('backdrop-filter: none', 'filter: none', 'background-color: transparent'):
+        check(prop in body_rule, f"the body no longer forces {prop}")
+    for tier in ('bg-gray-950', 'bg-gray-900', 'bg-gray-800'):
+        check(f'body.{tier}' in body_rule,
+              f"body.{tier} is no longer neutralised, so a page using it on "
+              f"<body> would trap the panel's fixed chrome")
 
 
 def scenario_the_panel_canvas_is_never_browser_white():
@@ -204,10 +191,21 @@ def scenario_the_page_background_never_covers_the_photograph():
     is Tailwind's PAGE background and pages put it on the wrapper that fills the
     content area, so mapping it to a surface laid a slab over the photo. Only
     800/700/600 — actual cards — are surfaces."""
-    block = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
+    """The split is by USAGE, not shade: bare `bg-gray-900` is a card (the
+    schedule's driver column), while the opacity variants are the page-level
+    scroll wrappers that fill the content area. Getting it backwards put a slab
+    over the picture one way, and deleted the schedule's panes the other."""
+    block = SKIN[SKIN.index('html[data-panel] .bg-gray-900\/30,'):]
     block = block[:block.index('}')]
     check('transparent' in block,
-          "the page-level greys are painting a surface over the background again")
+          "the page-level wrappers are painting a surface over the background")
+    check('.panel-page' in block,
+          "the page frame is not among the transparent wrappers")
+    card = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
+    card = card[:card.index('}')]
+    check('--panel-surface-1' in card and 'backdrop-filter' in card,
+          "bare bg-gray-900 is no longer glass — the schedule's driver columns "
+          "and the dashboard's sidebar are cards, not page wrappers")
 
 
 def scenario_the_skin_stays_out_of_the_browser():
