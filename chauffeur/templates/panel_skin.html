@@ -130,6 +130,37 @@
         text-transform: uppercase;
     }
 
+    /* ── Page headings. Every page said its name differently — some in a
+       `text-2xl font-black`, one in a 4xl gradient, several not at all — and
+       sat in a container of its own width, so walking the shelf moved the
+       title around the screen on every tap. Two classes fix it in one place:
+       `.panel-page-title` is the name, `.panel-page` is the frame it sits in.
+       Chores & Rewards was already the shape everything else should be, so it
+       is the reference. */
+    .panel-page-title {
+        font-size: 1.875rem;
+        line-height: 1.15;
+        font-weight: 800;
+        letter-spacing: -0.015em;
+        color: var(--panel-fg);
+        margin: 0 0 0.5rem 0;
+    }
+
+    /* The frame is only forced full width ON THE PANEL. In a browser a
+       reading column is still the better shape for these pages, and widening
+       them there is a change nobody asked for. */
+    html[data-panel] .panel-page {
+        max-width: none !important;
+        width: 100%;
+        margin-left: 0;
+        margin-right: 0;
+        padding: 1.5rem;
+    }
+
+    @media (min-width: 1024px) {
+        html[data-panel] .panel-page { padding: 2.5rem; }
+    }
+
     .panel-chip {
         background: rgb(125 211 252 / 0.14);
         border: 1px solid rgb(125 211 252 / 0.28);
@@ -193,6 +224,12 @@
        Because there is no blur to help legibility, the mapped surfaces are
        more opaque than the board's own glass — these are separate tokens for
        exactly that reason. */
+    /* 900 and 950 are the PAGE background in Tailwind's convention, not a
+       card — pages use them on the big wrapper that fills the content area.
+       Mapping them to a surface laid an opaque slab straight over the
+       photograph: you could see the picture behind the shelf, where the fade
+       is transparent, and nowhere else. They are transparent here, and only
+       800/700/600 — the actual cards — become surfaces. */
     html[data-panel] .bg-gray-950,
     html[data-panel] .bg-gray-900,
     html[data-panel] .bg-gray-900\/30,
@@ -202,7 +239,7 @@
     html[data-panel] .bg-gray-900\/70,
     html[data-panel] .bg-gray-900\/80,
     html[data-panel] .bg-gray-900\/90 {
-        background-color: var(--panel-surface-1) !important;
+        background-color: transparent !important;
     }
 
     html[data-panel] .bg-gray-800,
@@ -239,6 +276,15 @@
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
         filter: none !important;
+    }
+
+    /* The calendar rolls its own glass (`.glass-panel`, rgba + blur) from
+       before any of this existed. It is the one page-level container that is
+       SUPPOSED to be a surface, so it is pointed at the token rather than
+       left on its own hard-coded slate. */
+    html[data-panel] .glass-panel {
+        background: var(--panel-card) !important;
+        border-color: var(--panel-line) !important;
     }
 
     /* Ink. */

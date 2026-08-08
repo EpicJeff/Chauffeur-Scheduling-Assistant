@@ -160,6 +160,36 @@ def scenario_the_orb_opens_from_the_middle():
           "the collapsed orb loses its centring and jumps to the left edge")
 
 
+def scenario_every_page_says_its_name_in_the_same_place():
+    """Some pages had no title, some a 2xl, one a 4xl gradient, and each sat in
+    a container of its own width — so walking the shelf moved the title around
+    the screen on every tap. One class for the name, one for the frame."""
+    import glob
+    pages = [p for p in glob.glob(os.path.join(TPL, '*.html'))
+             if os.path.basename(p) not in
+             ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
+              'moment.html', 'trip_kiosk.html', 'trip.html', 'home.html',
+              'config.html', 'settings.html')]
+    for path in pages:
+        body = open(path, encoding='utf-8').read()
+        name = os.path.basename(path)
+        check('panel-page-title' in body, f"{name} has no page title")
+        check('panel-page' in body.replace('panel-page-title', ''),
+              f"{name}'s title is not in a .panel-page frame, so it will not "
+              f"line up with the others")
+
+
+def scenario_the_page_background_never_covers_the_photograph():
+    """You could see the picture behind the shelf and nowhere else: `bg-gray-900`
+    is Tailwind's PAGE background and pages put it on the wrapper that fills the
+    content area, so mapping it to a surface laid a slab over the photo. Only
+    800/700/600 — actual cards — are surfaces."""
+    block = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
+    block = block[:block.index('}')]
+    check('transparent' in block,
+          "the page-level greys are painting a surface over the background again")
+
+
 def scenario_the_skin_stays_out_of_the_browser():
     """Silently restyling every page of a working app for people at a laptop is
     a much bigger promise than the one being made. Every mapping rule is scoped

@@ -50,10 +50,10 @@
         <!-- 3xl (768px) was right for a single column and wastes half a wide
                  screen once Our meals and Shopping sit side by side. Kiosk stays
                  unbounded; phones are unaffected either way. -->
-            <div class="mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-6xl'">
+            <div class="panel-page mx-auto p-6 lg:p-10 w-full" :class="isKiosk ? 'max-w-none' : 'max-w-6xl'">
 
             <header class="mb-8" x-show="!hideTitle">
-                <h2 class="text-3xl font-bold text-white">Shopping &amp; Meals</h2>
+                <h2 class="panel-page-title">Shopping &amp; Meals</h2>
             </header>
 
             <!-- ===== KIOSK BOARD (K1) =====
