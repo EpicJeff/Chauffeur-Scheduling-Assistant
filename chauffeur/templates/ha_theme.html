@@ -16,6 +16,17 @@
         const p = new URLSearchParams(window.location.search);
         if (p.get('panel') !== 'true') return;
         document.documentElement.setAttribute('data-panel', '');
+        // The theme has to be on the element BEFORE the first paint or the
+        // panel flashes dark and settles light, which looks like a fault. The
+        // real value needs a round trip, so the last known one is cached and
+        // applied synchronously here; nav.html corrects it when the profile
+        // lands. Every panel page gets this, not just the home board.
+        try {
+            document.documentElement.setAttribute('data-panel-theme',
+                localStorage.getItem('chauffeurPanelTheme') || 'dark');
+        } catch (e) {
+            document.documentElement.setAttribute('data-panel-theme', 'dark');
+        }
         if (p.get('kiosk') !== 'true') {
             p.set('kiosk', 'true');
             history.replaceState(null, '',
@@ -86,8 +97,10 @@
         overscroll-behavior: none;
         -webkit-user-select: none;
         user-select: none;
-        /* Room for the shelf, which is fixed over the bottom of the page. */
-        padding-bottom: calc(var(--panel-shelf-h) + 0.75rem);
+        /* Room for the shelf and the orb. The Argyle bar itself is a transient
+           overlay now, so the page does not reserve space for it — it is only
+           on screen while somebody is actually talking to it. */
+        padding-bottom: calc(var(--panel-shelf-h) + 1.5rem);
     }
 
     /* The Argyle bar is `fixed bottom-6` at z-80 and the shelf is at z-70, so
@@ -95,8 +108,165 @@
        it clear rather than hide it: asking Argyle a question from the kitchen
        is one of the better reasons to have a panel on the wall at all. An
        individual display that genuinely wants none of it still has ?chat=none. */
+    /* ── The shelf has NO background. The content fades out as it travels
+       down behind it.
+
+       The mechanism is a PROGRESSIVE BLUR: one fixed strip whose
+       `backdrop-filter` is revealed by a `mask-image` ramp. Where the mask is
+       transparent the strip does nothing at all and the page shows through
+       untouched; as the mask ramps to opaque the blur comes fully on, so a
+       line of text sliding down does not get chopped off at an edge — it
+       dissolves into the photograph and is gone before it reaches the icons.
+
+       Why not the obvious approaches:
+       - Masking the scrolling content directly is the textbook answer and is
+         wrong here twice: a mask on <body> is sized to the whole DOCUMENT, so
+         the fade lands at the bottom of the page rather than the bottom of the
+         screen, and a mask creates a containing block that would capture the
+         fixed shelf and fade the buttons along with everything else.
+       - A solid gradient to the page colour cannot work: the page colour is a
+         photograph, so any flat gradient reads as a smear laid over it.
+
+       The blur alone does most of the work; the faint tint underneath it is
+       insurance, because a heavily blurred bright headline is still a bright
+       smudge and the buttons have to stay legible over literally anything. */
+    html[data-panel] #panel-fade {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: calc(var(--panel-shelf-h) + 4.5rem);
+        z-index: 65;                 /* under the shelf (70), over the content */
+        pointer-events: none;
+        -webkit-backdrop-filter: blur(22px) saturate(125%);
+        backdrop-filter: blur(22px) saturate(125%);
+        background: linear-gradient(to bottom,
+                    rgb(8 10 18 / 0) 0%, rgb(8 10 18 / 0.42) 100%);
+        -webkit-mask-image: linear-gradient(to bottom,
+                    rgba(0, 0, 0, 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0) 100%);
+        mask-image: linear-gradient(to bottom,
+                    rgba(0, 0, 0, 0) 0%, rgb(0 0 0) 58%, rgb(0 0 0) 100%);
+    }
+
+    html[data-panel][data-panel-theme="light"] #panel-fade {
+        background: linear-gradient(to bottom,
+                    rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.55) 100%);
+    }
+
+    @media (prefers-color-scheme: light) {
+        html[data-panel][data-panel-theme="auto"] #panel-fade {
+            background: linear-gradient(to bottom,
+                        rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.55) 100%);
+        }
+    }
+
+    /* Nothing of its own. The fade behind it is the whole treatment. */
+    html[data-panel] #panel-shelf {
+        background: none;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        border-top: none;
+    }
+
+    /* The icons now sit on an unknown photograph, so they carry their own
+       legibility rather than relying on a bar to sit on. */
+    html[data-panel] #panel-shelf a,
+    html[data-panel] #panel-shelf button {
+        text-shadow: 0 1px 8px rgb(0 0 0 / 0.55);
+    }
+
+    html[data-panel] #panel-shelf svg {
+        filter: drop-shadow(0 1px 6px rgb(0 0 0 / 0.5));
+    }
+
+    /* The flyout is a MENU, not chrome — it has to be opaque enough to read a
+       list against, so it keeps its glass. */
+    html[data-panel] #panel-shelf-flyout {
+        background: linear-gradient(to top,
+                    rgb(8 10 18 / 0.86) 0%, rgb(8 10 18 / 0.72) 100%);
+        -webkit-backdrop-filter: blur(28px) saturate(150%);
+        backdrop-filter: blur(28px) saturate(150%);
+        border-top: 1px solid rgb(255 255 255 / 0.12);
+    }
+
+    html[data-panel][data-panel-theme="light"] #panel-shelf,
+    html[data-panel][data-panel-theme="light"] #panel-shelf a,
+    html[data-panel][data-panel-theme="light"] #panel-shelf button {
+        text-shadow: 0 1px 6px rgb(255 255 255 / 0.85);
+        color: rgb(15 23 42 / 0.66);
+    }
+
+    html[data-panel][data-panel-theme="light"] #panel-shelf svg {
+        filter: drop-shadow(0 1px 5px rgb(255 255 255 / 0.9));
+    }
+
+    html[data-panel][data-panel-theme="light"] #panel-shelf-flyout {
+        background: linear-gradient(to top,
+                    rgb(255 255 255 / 0.90) 0%, rgb(255 255 255 / 0.76) 100%);
+        border-top: 1px solid rgb(15 23 42 / 0.12);
+    }
+
+    /* Shelf buttons follow the surface they sit on rather than staying dark. */
+    html[data-panel][data-panel-theme="light"] #panel-shelf a,
+    html[data-panel][data-panel-theme="light"] #panel-shelf button {
+        color: rgb(15 23 42 / 0.62);
+    }
+
     html[data-panel] #chat-overlay-container {
         bottom: calc(var(--panel-shelf-h) + 1rem);
+        /* Collapsed by default on a panel — see #panel-chat-orb below. */
+        opacity: 0;
+        visibility: hidden;
+        transform: translate(-50%, 1rem) scale(0.96);
+        transition: opacity .18s ease, transform .18s ease, visibility .18s;
+    }
+
+    html[data-panel] #chat-overlay-container.panel-chat-open {
+        opacity: 1;
+        visibility: visible;
+        transform: translate(-50%, 0) scale(1);
+    }
+
+    /* The orb. Small, calm, unmistakably a thing you can ask — and gone the
+       moment you do, so the board is the board again. */
+    #panel-chat-orb {
+        position: fixed;
+        right: 1.25rem;
+        bottom: calc(var(--panel-shelf-h) + 1rem);
+        z-index: 80;
+        width: 3.25rem;
+        height: 3.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgb(255 255 255 / 0.22);
+        border-radius: 999px;
+        color: #fff;
+        background: radial-gradient(120% 120% at 30% 25%, #a78bfa 0%, #6366f1 45%, #2563eb 100%);
+        box-shadow: 0 6px 22px rgb(79 70 229 / .45), 0 0 0 6px rgb(99 102 241 / .12);
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+        cursor: pointer;
+        transition: opacity .18s ease, transform .18s ease, visibility .18s;
+    }
+
+    html[data-panel] #panel-chat-orb svg { width: 1.4rem; height: 1.4rem; }
+
+    #panel-chat-orb.panel-chat-hidden {
+        opacity: 0;
+        visibility: hidden;
+        transform: scale(0.8);
+    }
+
+    /* A slow breath, so it reads as available rather than as a notification.
+       Anything faster is a thing demanding to be tapped. */
+    @media (prefers-reduced-motion: no-preference) {
+        #panel-chat-orb { animation: panel-orb-breathe 4.5s ease-in-out infinite; }
+    }
+
+    @keyframes panel-orb-breathe {
+        0%, 100% { box-shadow: 0 6px 22px rgb(79 70 229 / .40), 0 0 0 5px rgb(99 102 241 / .10); }
+        50%      { box-shadow: 0 6px 26px rgb(79 70 229 / .55), 0 0 0 9px rgb(99 102 241 / .05); }
     }
 
     /* Typing still has to work — the no-select rule is about stray long

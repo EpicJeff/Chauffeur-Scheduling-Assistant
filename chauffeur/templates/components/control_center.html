@@ -860,11 +860,57 @@ function closeChatHelpModal() {
     // Per-instance switch to hide the Argyle chat bar — e.g. a display-only
     // wall-panel card. ?chat=none (also off / 0 / false / hide).
     document.addEventListener('DOMContentLoaded', () => {
-        const chatParam = (new URLSearchParams(window.location.search).get('chat') || '').toLowerCase();
+        const params = new URLSearchParams(window.location.search);
+        const chatParam = (params.get('chat') || '').toLowerCase();
+        const el = document.getElementById('chat-overlay-container');
         if (['none', 'off', '0', 'false', 'hide'].includes(chatParam)) {
-            const el = document.getElementById('chat-overlay-container');
             if (el) el.style.display = 'none';
+            return;
         }
+
+        // On a wall panel the bar is a black slab lying across the bottom of a
+        // display for the 99% of the day nobody is talking to it. So it
+        // collapses to an orb and opens on a tap. Deliberately an ORB rather
+        // than a small bar: it reads as "something you can ask", takes almost
+        // no pixels, and does not compete with the board for attention.
+        if (params.get('panel') !== 'true' || !el) return;
+
+        const orb = document.createElement('button');
+        orb.id = 'panel-chat-orb';
+        orb.type = 'button';
+        orb.setAttribute('aria-label', 'Ask Argyle');
+        orb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            + '<path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>';
+        document.body.appendChild(orb);
+
+        function openChat() {
+            el.classList.add('panel-chat-open');
+            orb.classList.add('panel-chat-hidden');
+            const input = document.getElementById('chat-input');
+            if (input) input.focus();
+        }
+        function closeChat() {
+            el.classList.remove('panel-chat-open');
+            orb.classList.remove('panel-chat-hidden');
+            const input = document.getElementById('chat-input');
+            if (input) input.blur();
+        }
+        window.closePanelChat = closeChat;
+
+        orb.addEventListener('click', openChat);
+        document.addEventListener('pointerdown', (e) => {
+            if (!el.classList.contains('panel-chat-open')) return;
+            if (el.contains(e.target) || orb.contains(e.target)) return;
+            closeChat();
+        }, true);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeChat();
+        });
+        // Sending is the end of the conversation turn, so the panel goes back
+        // to being a panel rather than leaving a keyboard-shaped hole open.
+        const submit = document.getElementById('chat-submit-btn');
+        if (submit) submit.addEventListener('click', () => setTimeout(closeChat, 400));
     });
 
     document.addEventListener('DOMContentLoaded', () => {

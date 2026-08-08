@@ -194,8 +194,14 @@
   Hidden until the profile resolves so the family never sees eleven buttons
   flash down to six.
 #}
+{# The fade strip: a progressive blur that dissolves page content on its way
+   down behind the shelf. Injected here rather than per page so every panel
+   surface gets it, and it lives OUTSIDE #panel-shelf so the shelf itself can
+   carry no background at all. See ha_theme.html for the mechanism. #}
+<div id="panel-fade" class="hidden" aria-hidden="true"></div>
+
 <div id="panel-shelf" style="min-height: var(--panel-shelf-h)"
-    class="hidden fixed bottom-0 left-0 right-0 z-[70] bg-gray-900/95 backdrop-blur border-t border-gray-800 px-2 py-1.5">
+    class="hidden fixed bottom-0 left-0 right-0 z-[70] px-2 py-1.5">
     <div class="flex items-stretch gap-1" id="panel-shelf-items">
         {% for item in NAV_ITEMS %}
         <a href="{{ item.href }}" data-slug="{{ item.slug }}"
@@ -288,6 +294,17 @@
             if (!_profile) {
                 _profile = fetch(apiBase + 'api/panel/profile')
                     .then(r => r.ok ? r.json() : null)
+                    .then(p => {
+                        // Correct the theme ha_theme applied from cache, and
+                        // leave the fresh value behind for the next page load
+                        // so the panel never flashes the wrong one.
+                        if (p && p.theme) {
+                            document.documentElement.setAttribute('data-panel-theme', p.theme);
+                            try { localStorage.setItem('chauffeurPanelTheme', p.theme); }
+                            catch (e) { /* private mode: cache is a nicety */ }
+                        }
+                        return p;
+                    })
                     .catch(() => null);
             }
             return _profile;
@@ -326,8 +343,10 @@
 
         function showShelf() {
             const shelf = document.getElementById('panel-shelf');
+            const fade = document.getElementById('panel-fade');
             const bar = document.getElementById('top-nav-bar');
             if (bar) bar.style.display = 'none';
+            if (fade) fade.classList.remove('hidden');
             if (shelf) shelf.classList.remove('hidden');
             layoutShelf();
             let t;
