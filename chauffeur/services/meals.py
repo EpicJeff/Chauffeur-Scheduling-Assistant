@@ -1214,6 +1214,44 @@ def get_or_compose_plate(date_str: str, plan: dict = None,
             'dishes': compose_plate(date_str, plan, settings), 'edited': False}
 
 
+def dishes_showing_on(date_str: str, plan: dict = None,
+                      settings: dict = None) -> list:
+    """What this night is SHOWING — not what it would get if it were the only
+    night in the world.
+
+    `compose_plate` ranks one date in isolation. `compose_week` composes the
+    span IN ORDER, threading what each earlier night took, and that threading
+    is the whole reason a week is not the same top-ranked entree seven times.
+    So the two disagree for every night except the first, and anything that
+    FREEZES a night — locking it, pinning it, adding or dropping a chip — has
+    to freeze the answer the family is looking at.
+
+    Without this, locking Thursday wrote Thursday's dishes as if the week
+    started there, which is the plate the FIRST night of the strip was already
+    showing: click the padlock and the dinner changed to one further up the
+    page. It was not a display bug. `set_plate_lock` persists what it locks, so
+    the wrong dinner was genuinely stored, which is why the night then offered
+    a Reset.
+
+    A date outside both spans (a birthday three weeks out, reached through
+    "plan a specific night") has no week context to be read in, and the
+    standalone composition is exactly what that picker showed. That is the one
+    case where isolation is the right answer.
+    """
+    saved = storage.get_plate(date_str)
+    if saved and saved.get('edited'):
+        return get_or_compose_plate(date_str, plan, settings)['dishes']
+    win = plan_window(settings)
+    for span in win.get('spans') or []:
+        if not span.get('days'):
+            continue
+        dates = week_dates(span['start'], span['days'])
+        if date_str in dates:
+            week = compose_week(span['start'], dates.index(date_str) + 1, settings)
+            return week[-1]['dishes'] if week else []
+    return get_or_compose_plate(date_str, plan, settings)['dishes']
+
+
 def _persist_plate(date_str: str, dishes: list, reconcile: bool = True) -> dict:
     from models.schemas import Plate, PlateItem
     # Prune relative to TODAY, never to the plate being written. Pruning by the
@@ -1263,7 +1301,9 @@ def set_plate_lock(date_str: str, locked: bool = True, note: str = None,
     """
     from models.schemas import Plate, PlateItem
     if dish_ids is None:
-        cur = get_or_compose_plate(date_str)['dishes']
+        # What the night is SHOWING. Composing it standalone here is what made
+        # the padlock change the dinner — see dishes_showing_on.
+        cur = dishes_showing_on(date_str)
     else:
         by_id = {d['id']: d for d in storage.get_dishes_by_ids(dish_ids)}
         cur = [by_id[i] for i in dish_ids if i in by_id]
@@ -1928,7 +1968,9 @@ def pin_plate(date_str: str, dishes: list = None) -> dict:
     ingredients are bought, a plan that quietly recomposed itself would have
     spent the family's money on a dinner they are no longer having."""
     if dishes is None:
-        dishes = get_or_compose_plate(date_str)['dishes']
+        # The night as SHOWN, not as composed in isolation — pinning has the
+        # same failure mode locking had. See dishes_showing_on.
+        dishes = dishes_showing_on(date_str)
     _persist_plate(date_str, dishes)
     return {'date': date_str, 'dishes': dishes, 'pinned': True}
 
@@ -1938,7 +1980,7 @@ def add_to_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
     dish = storage.get_dish(dish_id)
     if not dish:
         return {'error': 'no such dish'}
-    cur = get_or_compose_plate(date_str, plan)['dishes']
+    cur = dishes_showing_on(date_str, plan)
     if any(d['id'] == dish_id for d in cur):
         return {'dishes': cur, 'unchanged': True}
     cur = cur + [dish]
@@ -1953,7 +1995,10 @@ def remove_from_plate(date_str: str, dish_id: str, plan: dict = None) -> dict:
     while the dish is ON the plate, and leaving it behind meant re-adding the
     dish brought back a struck-through chip nobody asked for.
     """
-    cur = get_or_compose_plate(date_str, plan)['dishes']
+    # Not the standalone composition: dropping a chip off an unpinned night
+    # would otherwise be asked to remove a dish that night was never showing,
+    # report "unchanged", and freeze a different dinner on the way past.
+    cur = dishes_showing_on(date_str, plan)
     kept = [d for d in cur if d['id'] != dish_id]
     if len(kept) == len(cur):
         return {'dishes': cur, 'unchanged': True}

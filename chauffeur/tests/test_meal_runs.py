@@ -246,6 +246,68 @@ def scenario_approving_the_span_buys_for_the_run_that_covers_it():
     check(not stray, f"items landed on the wrong run: {stray}")
 
 
+def _week_pantry():
+    """Enough dishes that the week has to rotate. With one entree every night
+    composes to the same thing and the bug under test cannot appear."""
+    reset_db(); _seed_people()
+    _settings(grocery_weekday=5, grocery_cadence_days=7,
+              sides_per_meal=0, include_dessert=False)
+    return [_dish(n, short_name=n, type='meal', finish_mins=20,
+                  ingredients=[{'name': n + ' stuff', 'kind': 'fresh'}])
+            for n in ('lasagna', 'tacos', 'stir fry', 'chili', 'roast')]
+
+
+def scenario_locking_a_night_freezes_the_dinner_that_is_on_it():
+    """Reported from the kitchen: clicking the padlock changed the dinner to
+    one from further up the page.
+
+    `compose_plate` ranks a date in ISOLATION; `compose_week` composes the span
+    in order, threading what each earlier night took — which is the whole
+    reason a week is not the same top-ranked entree seven times. Locking read
+    the isolated answer, so it froze the plate that night would have had if the
+    week started there: the first night's dinner. And it really did store it,
+    which is why the night then offered a Reset."""
+    _week_pantry()
+    win = meals.plan_window()
+    span = next(s for s in win['spans'] if s['key'] == 'next')
+    week = meals.compose_week(span['start'], span['days'])
+    check(len({d['dishes'][0]['id'] for d in week if d['dishes']}) > 1,
+          "setup: the week must rotate or this proves nothing")
+
+    third = week[2]
+    shown = [d['id'] for d in third['dishes']]
+    meals.set_plate_lock(third['date'], True, note='Mom’s birthday')
+
+    after = storage.get_plate(third['date'])
+    check([i['dish_id'] for i in after['items']] == shown,
+          "locking changed the dinner: the night showed "
+          f"{shown} and was frozen as {[i['dish_id'] for i in after['items']]}")
+    check(after.get('locked'), "the night did not actually lock")
+
+    again = meals.compose_week(span['start'], span['days'])
+    check([d['id'] for d in again[2]['dishes']] == shown,
+          "the week reads back differently after locking a night in it")
+
+
+def scenario_dropping_a_chip_from_an_unpinned_night_drops_the_right_one():
+    """Same isolation bug, different button: the ✕ on a week night was handed
+    a dish list that night was never showing, so it reported "unchanged" and
+    froze somebody else's dinner on the way past."""
+    _week_pantry()
+    win = meals.plan_window()
+    span = next(s for s in win['spans'] if s['key'] == 'next')
+    week = meals.compose_week(span['start'], span['days'])
+    third = week[2]
+    check(third['dishes'], "setup: the night has nothing on it")
+    victim = third['dishes'][0]['id']
+
+    res = meals.remove_from_plate(third['date'], victim)
+    check(not res.get('unchanged'),
+          "the night was told it does not have the dish it is showing")
+    check(victim not in [d['id'] for d in res['dishes']],
+          "the dish is still there after being dropped")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
