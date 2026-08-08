@@ -76,6 +76,35 @@ def scenario_the_skin_reaches_every_page():
               f"gets no panel skin")
 
 
+def scenario_the_panel_never_flashes_the_browser_chrome():
+    """Every page load showed the desktop nav bar for a frame or two before JS
+    swapped it for the shelf, which reads as a hack rather than a product. The
+    switch has to be CSS in the head — `data-panel` is set synchronously before
+    the body exists, so these rules hold at the first paint. If this reverts to
+    a DOMContentLoaded hide, the flash comes straight back."""
+    check('html[data-panel] #top-nav-bar' in SKIN,
+          "the top bar is no longer hidden by CSS — the flash is back")
+    block = SKIN[SKIN.index('html[data-panel] #top-nav-bar'):]
+    check('display: none !important' in block[:block.index('}')],
+          "the top bar rule no longer hides it")
+    for el in ('#panel-shelf', '#panel-fade'):
+        check(f'html[data-panel] {el}.hidden' in SKIN,
+              f"{el} still waits for JS to reveal it")
+
+
+def scenario_the_shelf_does_not_flash_the_wrong_buttons():
+    """One level down: a shelf visible from the first paint would show all
+    twelve destinations and snap to six when the profile lands. The URL wins
+    when it says anything; otherwise the last known list decides before
+    anything renders, and the guess is retired once the real answer arrives."""
+    check("id = 'panel-early-tabs'" in THEME or "st.id = 'panel-early-tabs'" in THEME,
+          "there is no head-time tab filter")
+    check('chauffeurPanelTabs' in THEME, "the head never reads the cached tabs")
+    check('chauffeurPanelTabs' in NAV, "the resolved tabs are never cached")
+    check("getElementById('panel-early-tabs')" in NAV and 'early.remove()' in NAV,
+          "the head-time guess is never retired, so it outranks the real answer")
+
+
 def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
     """Eleven templates were not going to be rewritten. The greys they already
     use are mapped onto the tokens instead — surfaces, ink and edges."""
@@ -84,6 +113,51 @@ def scenario_the_skin_maps_the_greys_the_pages_are_written_in():
         check(needle in SKIN, f"the skin no longer maps {needle}")
     check('--panel-card' in SKIN and '--panel-fg' in SKIN,
           "the tokens moved out of the shared skin")
+
+
+def scenario_the_grey_mapping_never_applies_a_filter():
+    """This one broke the whole panel once and the reason is not obvious.
+
+    A filter — `backdrop-filter` included — makes an element a CONTAINING BLOCK
+    for every fixed-position descendant and opens a new stacking context.
+    Several pages carry `bg-gray-900` on <body>, so blurring the mapped greys
+    put a filter on the body itself, which captured the shelf, the orb and the
+    two `z-index: -2` background layers — trapping the photograph behind the
+    element it was supposed to sit behind. Blur belongs on `.panel-card`, which
+    is applied deliberately to leaf cards that contain no fixed chrome."""
+    seg = SKIN[SKIN.index('── Surfaces.'):SKIN.index('/* Ink. */')]
+    import re
+    for line in re.findall(r'^\s*-?(?:webkit-)?backdrop-filter:.*$', seg, re.M):
+        check('none' in line,
+              f"the grey mapping applies a filter again: {line.strip()}")
+    check('html[data-panel] body.bg-gray-900' in SKIN,
+          "the body is no longer excluded from the surface mapping")
+
+
+def scenario_the_panel_canvas_is_never_browser_white():
+    """The body is transparent in panel mode so the photograph shows through —
+    which means the ROOT has to carry the base colour. Without it the canvas is
+    browser white, and every page showed either a white band or (on the board,
+    where a dark scrim sits over it) a flat mid-grey."""
+    check('html[data-panel] {' in SKIN, "the root rule is gone")
+    block = SKIN[SKIN.index('html[data-panel] {'):]
+    block = block[:block.index('}')]
+    check('background-color: var(--panel-bg)' in block,
+          "the root no longer carries the base colour — the canvas goes white")
+
+
+def scenario_the_orb_opens_from_the_middle():
+    """It shares the chat bar's centring transform, so tapping it reads as one
+    thing growing rather than a swap between two corners. If the collapse ever
+    drops `translateX(-50%)`, the orb jumps to the left edge on its way out."""
+    block = THEME[THEME.index('#panel-chat-orb {'):]
+    block = block[:block.index('}')]
+    check('left: 50%' in block and 'translateX(-50%)' in block,
+          "the orb is no longer centred on the chat bar's axis")
+    hidden = THEME[THEME.index('#panel-chat-orb.panel-chat-hidden {'):]
+    hidden = hidden[:hidden.index('}')]
+    check('translateX(-50%)' in hidden,
+          "the collapsed orb loses its centring and jumps to the left edge")
 
 
 def scenario_the_skin_stays_out_of_the_browser():

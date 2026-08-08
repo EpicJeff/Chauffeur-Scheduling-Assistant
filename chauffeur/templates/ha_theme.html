@@ -27,6 +27,54 @@
         } catch (e) {
             document.documentElement.setAttribute('data-panel-theme', 'dark');
         }
+
+        // Same problem one level down: with the shelf now visible from the
+        // first paint, it would show all twelve destinations and then snap to
+        // the six this panel wants the moment the profile lands. The answer is
+        // the same — decide before anything renders. The URL is authoritative
+        // when it says anything; otherwise the last known list is used, which
+        // is right on every load after the first. nav.js re-applies and
+        // refreshes the cache when the real answer arrives.
+        function shelfCss(slugs) {
+            if (!slugs || !slugs.length) return '';
+            const keep = slugs.map(s => '[data-slug="' + s + '"]').join(',');
+            return '[data-slug]:not(' + keep + '){display:none !important}';
+        }
+        let css = '';
+        const tabsParam = p.get('tabs');
+        if (tabsParam !== null && ['', 'none'].includes(tabsParam.trim().toLowerCase())) {
+            css = 'nav{display:none !important}';
+        } else if (tabsParam !== null) {
+            css = shelfCss(tabsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+        } else {
+            try {
+                css = shelfCss(JSON.parse(localStorage.getItem('chauffeurPanelTabs') || 'null'));
+            } catch (e) { css = ''; }
+        }
+        if (css) {
+            const st = document.createElement('style');
+            st.id = 'panel-early-tabs';
+            st.textContent = css;
+            document.head.appendChild(st);
+        }
+
+        // And the picture. Same reasoning a third time: the background layers
+        // are injected once the body exists, so without this the first frames
+        // of every page are the bare base colour and the photograph drops in
+        // afterwards. The resolved URL for THIS page is cached by nav.js under
+        // its path, so the rule can be written before the element it styles
+        // even exists — CSS does not mind which order those happen in.
+        try {
+            const page = window.location.pathname.split('/').filter(Boolean).pop() || '';
+            const bg = localStorage.getItem('chauffeurPanelBg:' + page);
+            if (bg) {
+                const bst = document.createElement('style');
+                bst.id = 'panel-early-bg';
+                bst.textContent = '#panel-bg-image{background-image:url("'
+                    + bg.replace(/"/g, '%22') + '")}';
+                document.head.appendChild(bst);
+            }
+        } catch (e) { /* no cache yet: the picture simply fades in */ }
         if (p.get('kiosk') !== 'true') {
             p.set('kiosk', 'true');
             history.replaceState(null, '',
@@ -223,8 +271,9 @@
         /* Collapsed by default on a panel — see #panel-chat-orb below. */
         opacity: 0;
         visibility: hidden;
-        transform: translate(-50%, 1rem) scale(0.96);
-        transition: opacity .18s ease, transform .18s ease, visibility .18s;
+        transform: translate(-50%, 0) scale(0.55);
+        transform-origin: 50% 100%;
+        transition: opacity .22s ease, transform .26s cubic-bezier(.2, .8, .3, 1), visibility .22s;
     }
 
     html[data-panel] #chat-overlay-container.panel-chat-open {
@@ -235,9 +284,16 @@
 
     /* The orb. Small, calm, unmistakably a thing you can ask — and gone the
        moment you do, so the board is the board again. */
+    /* Centred, on exactly the axis the chat bar opens on, so tapping it reads
+       as the orb GROWING into the bar rather than one thing vanishing at the
+       right edge and another appearing in the middle. Both share the same
+       `translateX(-50%)` origin, which is what makes the two transforms line
+       up into a single movement. */
     #panel-chat-orb {
         position: fixed;
-        right: 1.25rem;
+        left: 50%;
+        transform: translateX(-50%);
+        transform-origin: 50% 100%;
         bottom: calc(var(--panel-shelf-h) + 1rem);
         z-index: 80;
         width: 3.25rem;
@@ -258,10 +314,12 @@
 
     html[data-panel] #panel-chat-orb svg { width: 1.4rem; height: 1.4rem; }
 
+    /* The collapse keeps the centring transform, or the orb would jump to the
+       left edge on its way out. */
     #panel-chat-orb.panel-chat-hidden {
         opacity: 0;
         visibility: hidden;
-        transform: scale(0.8);
+        transform: translateX(-50%) scale(0.72);
     }
 
     /* A slow breath, so it reads as available rather than as a notification.

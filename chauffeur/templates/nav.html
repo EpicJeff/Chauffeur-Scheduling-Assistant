@@ -286,8 +286,13 @@
         // and mapping it back to a page name was a second source of truth.
         function applyTabs(allowed) {
             if (allowed === null) return;
+            // Drop the head-time guess first: it is a broad
+            // `:not(...)` rule and would keep overriding the per-element
+            // answer for anything it had already hidden.
+            const early = document.getElementById('panel-early-tabs');
+            if (early) early.remove();
             document.querySelectorAll('[data-slug]').forEach(a => {
-                if (!allowed.has(a.dataset.slug)) a.style.display = 'none';
+                a.style.display = allowed.has(a.dataset.slug) ? '' : 'none';
             });
         }
 
@@ -318,10 +323,18 @@
                 document.body.prepend(scrim);
                 document.body.prepend(img);
             }
-            const url = map[currentSlug()] || map.default;
+            const raw = map[currentSlug()] || map.default;
+            const url = raw ? (raw.startsWith('api/') ? apiBase + raw : raw) : '';
             img.style.backgroundImage = url
-                ? `url("${url.startsWith('api/') ? apiBase + url : url}")`
+                ? `url("${url}")`
                 : 'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
+            // Leave the answer under THIS page's path so the next load can put
+            // the picture up in the head, before anything paints.
+            try {
+                const page = window.location.pathname.split('/').filter(Boolean).pop() || '';
+                if (url) localStorage.setItem('chauffeurPanelBg:' + page, url);
+                else localStorage.removeItem('chauffeurPanelBg:' + page);
+            } catch (e) { /* private mode: the cache is a nicety */ }
         }
 
         // One request, shared by the shelf and the idle timer — they both want
@@ -342,6 +355,10 @@
                             catch (e) { /* private mode: cache is a nicety */ }
                         }
                         if (p) applyBackground(p.backgrounds);
+                        if (p && p.tabs) {
+                            try { localStorage.setItem('chauffeurPanelTabs', JSON.stringify(p.tabs)); }
+                            catch (e) { /* private mode: the cache is a nicety */ }
+                        }
                         return p;
                     })
                     .catch(() => null);

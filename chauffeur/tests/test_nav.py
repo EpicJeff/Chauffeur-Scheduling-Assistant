@@ -100,6 +100,20 @@ def scenario_every_nav_page_has_a_route():
               f"nav links to '{it['href']}' but nothing serves it")
 
 
+def scenario_the_bare_address_lands_on_the_board():
+    """An address with nothing after it is asking "what is going on", which is
+    the board's whole job — the driver schedule was the right answer only when
+    it was the whole app. The query string has to survive the redirect or a
+    panel pointed at the bare host arrives as an ordinary web page."""
+    import main
+    import inspect
+    src = inspect.getsource(main.root_redirect)
+    check('"home"' in src or "'home'" in src,
+          "the root no longer redirects to the home board")
+    check('query' in src,
+          "the redirect drops the query string, so ?panel=true is lost")
+
+
 def scenario_the_home_board_is_in_the_nav():
     """The shelf drops the wordmark, so Home stops being a logo and has to be
     a destination. Named explicitly: a parity check passes just as happily

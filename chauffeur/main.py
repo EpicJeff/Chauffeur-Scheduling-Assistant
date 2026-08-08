@@ -739,8 +739,14 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # --- UI Routes ---
 @app.get("/")
-def root_redirect():
-    return RedirectResponse(url="dashboard_v2")
+def root_redirect(request: Request):
+    """The board, not the solver's output. Landing on the driver schedule made
+    sense when that was the whole app; the home board is now the thing that
+    answers "what is going on" without being asked, which is what an address
+    with nothing after it is asking for. Query params are carried across so a
+    panel pointed at the bare host still arrives in panel mode."""
+    q = request.url.query
+    return RedirectResponse(url="home" + (f"?{q}" if q else ""))
 
 @app.get("/dashboard")
 def dashboard_legacy():

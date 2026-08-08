@@ -25,6 +25,11 @@
         --panel-card: rgb(12 16 28 / 0.55);
         --panel-card-hi: rgb(20 26 42 / 0.72);
         --panel-card-lo: rgb(8 11 20 / 0.38);
+        /* Mapped page surfaces. More opaque than the board's glass because
+           they carry no blur — see the surfaces block below. */
+        --panel-surface-1: rgb(10 13 22 / 0.62);
+        --panel-surface-2: rgb(18 24 38 / 0.78);
+        --panel-surface-3: rgb(30 38 56 / 0.88);
         --panel-line: rgb(255 255 255 / 0.10);
         --panel-fg: #f3f4f6;
         --panel-dim: rgb(255 255 255 / 0.55);
@@ -45,6 +50,9 @@
         --panel-card: rgb(255 255 255 / 0.88);
         --panel-card-hi: rgb(255 255 255 / 0.96);
         --panel-card-lo: rgb(255 255 255 / 0.72);
+        --panel-surface-1: rgb(255 255 255 / 0.78);
+        --panel-surface-2: rgb(255 255 255 / 0.90);
+        --panel-surface-3: rgb(241 245 249 / 0.96);
         --panel-line: rgb(15 23 42 / 0.13);
         --panel-fg: #0f172a;
         --panel-dim: rgb(15 23 42 / 0.62);
@@ -60,6 +68,9 @@
             --panel-card: rgb(255 255 255 / 0.88);
             --panel-card-hi: rgb(255 255 255 / 0.96);
             --panel-card-lo: rgb(255 255 255 / 0.72);
+            --panel-surface-1: rgb(255 255 255 / 0.78);
+            --panel-surface-2: rgb(255 255 255 / 0.90);
+            --panel-surface-3: rgb(241 245 249 / 0.96);
             --panel-line: rgb(15 23 42 / 0.13);
             --panel-fg: #0f172a;
             --panel-dim: rgb(15 23 42 / 0.62);
@@ -131,17 +142,57 @@
        were written in Tailwind greys — which is all of them. This is the part
        that carries the look past the home board. */
 
-    /* The page itself gets out of the way so the photograph shows through. */
+    /* ── The panel/browser switch happens HERE, in the head, not in JS.
+       `data-panel` is set synchronously by ha_theme before the body exists, so
+       these rules are in force at the very first paint. Doing it in
+       DOMContentLoaded meant the desktop nav bar painted, sat there for a
+       frame or two, and then vanished — which reads as a hack rather than a
+       product, and was the single most visible tell that this is a web page
+       wearing a panel costume. JS still hides the bar as well; that is now a
+       belt-and-braces no-op rather than the mechanism. */
+    html[data-panel] #top-nav-bar {
+        display: none !important;
+    }
+
+    /* The shelf and its fade ship with Tailwind's `hidden` so that they never
+       appear on a normal page. In panel mode they are wanted from the first
+       frame, and an id beats a utility class. */
+    html[data-panel] #panel-shelf,
+    html[data-panel] #panel-shelf.hidden {
+        display: block;
+    }
+
+    html[data-panel] #panel-fade,
+    html[data-panel] #panel-fade.hidden {
+        display: block;
+    }
+
+    /* The page itself gets out of the way so the photograph shows through —
+       but the ROOT keeps the base colour, or the moment before the picture
+       loads is a flash of browser white on a dark wall panel. */
+    html[data-panel] {
+        background-color: var(--panel-bg);
+    }
+
     html[data-panel] body {
         background-color: transparent !important;
         color: var(--panel-fg);
     }
 
-    /* Surfaces. The grey scale the pages are written in maps onto the glass
-       scale: 900 is the quiet backdrop layer, 800 the ordinary card, 700 the
-       raised/hover one. Opacity suffixes are enumerated rather than matched
-       because CSS has no wildcard for them — the same limitation, and the same
-       explicit list, that the HA theme mapping above already lives with. */
+    /* ── Surfaces.
+       NO `backdrop-filter` here, and that is a correctness rule rather than a
+       taste one. A filter (backdrop or otherwise) makes an element a
+       CONTAINING BLOCK for every fixed-position descendant and a new stacking
+       context. Several pages carry `bg-gray-900` on <body> itself, so blurring
+       the mapped greys put a filter on the body — which captured the shelf,
+       the orb and the two `z-index: -2` background layers, trapping the
+       photograph behind the very element it was supposed to sit behind. The
+       whole panel went flat. Blur stays on `.panel-card`, which is applied
+       deliberately to leaf cards that contain no fixed chrome.
+
+       Because there is no blur to help legibility, the mapped surfaces are
+       more opaque than the board's own glass — these are separate tokens for
+       exactly that reason. */
     html[data-panel] .bg-gray-950,
     html[data-panel] .bg-gray-900,
     html[data-panel] .bg-gray-900\/30,
@@ -151,9 +202,7 @@
     html[data-panel] .bg-gray-900\/70,
     html[data-panel] .bg-gray-900\/80,
     html[data-panel] .bg-gray-900\/90 {
-        background-color: var(--panel-card-lo) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(135%);
-        backdrop-filter: blur(14px) saturate(135%);
+        background-color: var(--panel-surface-1) !important;
     }
 
     html[data-panel] .bg-gray-800,
@@ -164,9 +213,7 @@
     html[data-panel] .bg-gray-800\/70,
     html[data-panel] .bg-gray-800\/80,
     html[data-panel] .bg-gray-800\/90 {
-        background-color: var(--panel-card) !important;
-        -webkit-backdrop-filter: blur(16px) saturate(140%);
-        backdrop-filter: blur(16px) saturate(140%);
+        background-color: var(--panel-surface-2) !important;
     }
 
     html[data-panel] .bg-gray-700,
@@ -178,7 +225,20 @@
     html[data-panel] .bg-gray-700\/80,
     html[data-panel] .bg-gray-700\/90,
     html[data-panel] .bg-gray-600 {
-        background-color: var(--panel-card-hi) !important;
+        background-color: var(--panel-surface-3) !important;
+    }
+
+    /* The body is never a surface. It carries a grey on several pages, and the
+       mapping above would otherwise paint an opaque slab straight over the
+       photograph. Higher specificity than the class rules on purpose. */
+    html[data-panel] body,
+    html[data-panel] body.bg-gray-950,
+    html[data-panel] body.bg-gray-900,
+    html[data-panel] body.bg-gray-800 {
+        background-color: transparent !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+        filter: none !important;
     }
 
     /* Ink. */
@@ -216,7 +276,7 @@
     html[data-panel] input,
     html[data-panel] textarea,
     html[data-panel] select {
-        background-color: var(--panel-card-hi) !important;
+        background-color: var(--panel-surface-3) !important;
         color: var(--panel-fg) !important;
         border-color: var(--panel-line) !important;
     }
