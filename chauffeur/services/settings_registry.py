@@ -89,12 +89,14 @@ ENTRIES: List[dict] = [
        'A tile with nothing to say hides itself either way.',
        page='home', anchor='panel-setup'),
     _e('panel_tabs', 'panel', 'Shelf buttons',
-       'Which buttons appear on the wall panel bottom shelf. Six or seven fit '
-       'at a size a thumb can hit.',
+       'Which buttons appear on the wall panel bottom shelf, and in what order '
+       'left to right. Six or seven fit at a size a thumb can hit; the rest '
+       'move into a More button, so the order decides what stays one tap away.',
        page='home', anchor='panel-setup'),
     _e('panel_tile_spans', 'panel', 'Tile sizes',
-       'How much room each tile gets on the home board — one column or two, '
-       'one row or two. The map and the calendar usually earn more than a count.',
+       'How much room each tile gets on the home board — up to four columns '
+       'wide (the full board) and three rows tall. The map and the calendar '
+       'usually earn more than a count.',
        page='home', anchor='panel-setup'),
     _e('panel_background', 'panel', 'Panel background',
        'The photograph the wall panel floats on. A web address, or just a '

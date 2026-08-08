@@ -894,3 +894,19 @@ From two photographs of the running panel — "dark mode is pretty good, light m
 
 - Occasions (🎉), Moments (📸) and Intake (📥) were the only three of eleven with an icon in the title. Three of eleven is worse than all or none: the icon shifts the first letter right, so those titles did not line up down the left edge with the rest — the exact thing the shared title class exists to guarantee. The shelf already carries an icon for every destination, so the title was saying it twice.
 - Guarded by a test that scans every `panel-page-title` for emoji, rather than relying on the next person to notice.
+
+## The shelf is an ordered list (v2.119.0)
+
+- **The shelf buttons could be picked but never ordered.** `panel_tabs` was already a list and `resolve_tabs()` already preserved its order — nav.html collapsed it into a `Set` at the door (`applyTabs(new Set(p.tabs))`) and rendered the shelf in whatever sequence `NAV_ITEMS` happens to be written in. So the setup UI offered a bag of chips while the tiles beside it offered ▲▼✕, and the only way to move a button on a wall panel was to edit a template.
+- **`applyTabs()` now takes the list**, and `orderShelf()` walks it, parking each button before the More button — `insertBefore` moves a node it already contains, so the row ends in exactly the picked order with anything unpicked (and hidden) left at the front, where `layoutShelf()`'s display filter already skips it. Overflow follows for free: the order IS the choice of which destinations stay under a thumb and which go behind **More**.
+- **Only the shelf reorders.** The desktop row and the mobile menu are ordinary web chrome read left to right by someone already looking at a screen; the shelf is reached for by position by someone standing in front of a wall.
+- Slugs are looked up through a `Map`, not a `[data-slug="…"]` selector — they can arrive from `?tabs=` on the URL, and a stray quote would throw out of `querySelector` and take the rest of the handler with it (a plain object would have the same problem with `__proto__`). `?tabs=schedule,chores` now orders an embedded HA card's shelf too.
+- **`/home#panel-setup` gives shelf buttons the same editor as the tiles**: a numbered ordered list with ▲▼✕ and a row of unpicked chips to add from.
+- **One visible consequence for installs that never configured a shelf**: `DEFAULT_TABS` order now reaches the wall, so the default shelf reads home, drives, calendar, chores, routines, meals, errands, occasions, trips, map, moments rather than nav.html's declaration order.
+- `tests/test_nav_runtime.py` grew a real shelf row — children, one parent per node, honest `insertBefore` move semantics — because ordering and overflow are things the script does BY moving nodes, and the old stub swallowed every move and would have agreed with anything. The profile it asserts against is deliberately not in declaration order.
+
+## The board fills the wall (v2.119.0)
+
+- **The home board was capped at `max-w-[1600px] mx-auto`.** Every other page is a document and reads better in a column; the board is a WALL, and a 2500px panel spending 900px of itself on two empty margins is a smaller board with a bigger television around it. The page padding is now the only inset.
+- **Four tiles across** (`sm:2 lg:3 xl:4`). Three was the right number under the 1600px cap; edge to edge it made 500px-wide tiles carrying a four-item list, and the board ran off the bottom of the screen rather than filling it. The ladder still steps down — a 10" tablet in portrait gets one column, not four columns of nothing.
+- **Tile widths go to 4** in `panel_tile_spans` (rows stay at 3). A grid four wide whose tiles top out at three is a full-width layout the household can see but cannot ask for. Clamped in `spanStyle()` as well as the picker, because it is stored config.

@@ -289,12 +289,20 @@
         // background map too. It caches, so asking here costs nothing.
         if (isPanel) panelProfile();
 
-        // Which destinations this surface shows. `allowed` of null means "all".
-        // Slugs now come off the elements themselves (data-slug) rather than
-        // being re-derived from hrefs — under ingress an href is a token path,
-        // and mapping it back to a page name was a second source of truth.
-        function applyTabs(allowed) {
-            if (allowed === null) return;
+        // Which destinations this surface shows, AND in what order. `allowed`
+        // of null means "all, as declared". Slugs now come off the elements
+        // themselves (data-slug) rather than being re-derived from hrefs —
+        // under ingress an href is a token path, and mapping it back to a page
+        // name was a second source of truth.
+        //
+        // The argument is a LIST rather than a Set, and that is the whole
+        // difference: the picked order is the shelf's order. It used to be
+        // thrown away at the door, so the shelf rendered in whatever sequence
+        // NAV_ITEMS happens to be written in and the only way to move a button
+        // was to edit this file.
+        function applyTabs(order) {
+            if (order === null) return;
+            const allowed = new Set(order);
             // Drop the head-time guess first: it is a broad
             // `:not(...)` rule and would keep overriding the per-element
             // answer for anything it had already hidden.
@@ -302,6 +310,32 @@
             if (early) early.remove();
             document.querySelectorAll('[data-slug]').forEach(a => {
                 a.style.display = allowed.has(a.dataset.slug) ? '' : 'none';
+            });
+            orderShelf(order);
+        }
+
+        // Only the shelf reorders. The desktop row and the mobile menu are
+        // ordinary web chrome, read left to right by someone already looking at
+        // a screen; the shelf is reached for by position by someone standing in
+        // front of a wall, and which buttons stay under a thumb rather than
+        // behind "More" is decided by this order.
+        function orderShelf(order) {
+            const row = document.getElementById('panel-shelf-items');
+            const more = document.getElementById('panel-shelf-more');
+            if (!row || !more) return;
+            // A Map keyed by slug, not a `[data-slug="..."]` selector: slugs can
+            // arrive from `?tabs=` on the URL, and a stray quote in one would
+            // throw out of querySelector and take the rest of the handler with
+            // it. (A plain object would have the same problem with `__proto__`.)
+            const byslug = new Map();
+            row.querySelectorAll('[data-slug]').forEach(a => byslug.set(a.dataset.slug, a));
+            // insertBefore MOVES a node that is already in the row, so walking
+            // the picked order and parking each one in front of the More button
+            // leaves the row in exactly that order, with anything unpicked (and
+            // therefore hidden above) left behind at the front.
+            order.forEach(slug => {
+                const a = byslug.get(slug);
+                if (a) row.insertBefore(a, more);
             });
         }
 
@@ -423,7 +457,7 @@
         // Per-embed tab filtering, aimed at HA iframe cards: the URL is
         // each card's own config channel (params propagate across links).
         //   ?tabs=none                -> no nav bar at all (pure card)
-        //   ?tabs=schedule,chores     -> only those tabs visible
+        //   ?tabs=schedule,chores     -> only those tabs, shelved in that order
         // Slugs: home, schedule, calendar, errands, shopping, occasions,
         // chores, routines, intake, trips, map, moments. Unknown values are
         // ignored.
@@ -432,14 +466,14 @@
             const navEl = document.querySelector('nav');
             if (navEl) navEl.style.display = 'none';       // takes the shelf with it
         } else if (tabsParam !== null) {
-            applyTabs(new Set(tabsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)));
+            applyTabs(tabsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
             if (isPanel) showShelf();
         } else if (isPanel) {
             // No tabs in the URL: this is a standalone panel, so ask the
             // server what THIS panel is configured to show. A display bolted
             // to a wall should not need a two-hundred-character bookmark.
             panelProfile()
-                .then(p => { if (p && p.tabs) applyTabs(new Set(p.tabs)); })
+                .then(p => { if (p && p.tabs) applyTabs(p.tabs); })
                 .finally(showShelf);
         }
 

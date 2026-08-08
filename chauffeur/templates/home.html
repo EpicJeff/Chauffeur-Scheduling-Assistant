@@ -50,7 +50,11 @@
     <div id="panel-bg-scrim"></div>
     {% include 'nav.html' %}
 
-    <div x-data="homeBoard()" x-init="start()" x-cloak class="px-4 py-4 md:px-6 md:py-6 max-w-[1600px] mx-auto">
+    <!-- Full width, deliberately. Every other page is a document and reads
+         better in a column; the board is a WALL, and a 2500px panel spending
+         900px of itself on two empty margins is a smaller board with a bigger
+         television around it. The padding is the only inset. -->
+    <div x-data="homeBoard()" x-init="start()" x-cloak class="px-4 py-4 md:px-6 md:py-6">
 
         <!-- ── The clock strip. Time, day, weather: the three things a wall
              display owes you before you have asked it anything. -->
@@ -183,7 +187,12 @@
         <!-- ── The glances. Tiles for features this household has actually set
              up; a quiet one says what it is quiet about rather than vanishing,
              because a hidden tile and a broken tile look identical on a wall. -->
-        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 items-start">
+        <!-- Four across on a wide panel. Three was chosen when the board was
+             capped at 1600px; edge to edge that made 500px tiles carrying a
+             four-item list, and the board ran off the bottom of the screen
+             instead of filling it. The ladder still steps down — a 10" tablet
+             in portrait gets one column, not four columns of nothing. -->
+        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-start">
             <template x-for="t in tiles()" :key="t.key">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
@@ -489,6 +498,7 @@
                                     <option value="1">1 col</option>
                                     <option value="2">2 col</option>
                                     <option value="3">3 col</option>
+                                    <option value="4">4 col</option>
                                 </select>
                                 <select :value="spanOf(key, 'rows')"
                                     @change="setSpan(key, 'rows', $event.target.value)"
@@ -507,7 +517,7 @@
                             </div>
                         </template>
                         <div x-show="!draft.panel_widgets.length" class="text-sm text-gray-500 italic">
-                            None picked — the panel will show the default six.
+                            None picked — the panel will show every tile but Intake.
                         </div>
                     </div>
                     <div class="flex flex-wrap gap-1.5">
@@ -525,21 +535,38 @@
                         Shelf buttons
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
-                        Six or seven fit at a size a thumb can hit on a 10&quot; display. Pick more
-                        and they get narrow.
+                        Left to right along the bottom, in this order. Six or seven fit at a size
+                        a thumb can hit on a 10&quot; display and the rest move into a
+                        <em>More</em> button — so the order is also the choice of which
+                        destinations stay one tap away.
                     </p>
-                    <div class="flex flex-wrap gap-1.5 mb-6">
-                        <template x-for="t in (catalog.tabs || [])" :key="t.slug">
-                            <button @click="toggle(draft.panel_tabs, t.slug)"
-                                class="text-xs rounded-full px-3 py-1.5 border"
-                                :class="draft.panel_tabs.includes(t.slug)
-                                    ? 'bg-blue-600/30 border-blue-500/50 text-blue-100'
-                                    : 'bg-gray-800 border-gray-700 text-gray-400'"
-                                x-text="t.label"></button>
+                    <div class="space-y-1.5 mb-3">
+                        <template x-for="(slug, i) in draft.panel_tabs" :key="slug">
+                            <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-1.5">
+                                <span class="text-[0.7rem] font-mono text-gray-600 w-4 shrink-0"
+                                    x-text="i + 1"></span>
+                                <span class="flex-1 min-w-0 text-sm font-semibold text-gray-200 truncate"
+                                    x-text="tabMeta(slug).label"></span>
+                                <button @click="move(draft.panel_tabs, i, -1)" :disabled="i === 0"
+                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
+                                <button @click="move(draft.panel_tabs, i, 1)"
+                                    :disabled="i === draft.panel_tabs.length - 1"
+                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
+                                <button @click="draft.panel_tabs.splice(i, 1)"
+                                    class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                            </div>
                         </template>
                     </div>
-                    <div x-show="!draft.panel_tabs.length" class="text-sm text-gray-500 italic -mt-4 mb-6">
-                        None picked — the panel will show the default six.
+                    <div x-show="!draft.panel_tabs.length" class="text-sm text-gray-500 italic mb-3">
+                        None picked — the panel will show every destination but Intake.
+                    </div>
+                    <div class="flex flex-wrap gap-1.5 mb-6">
+                        <template x-for="t in unpickedTabs()" :key="t.slug">
+                            <button @click="draft.panel_tabs.push(t.slug)"
+                                class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-full px-3 py-1.5">
+                                + <span x-text="t.label"></span>
+                            </button>
+                        </template>
                     </div>
 
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
@@ -785,7 +812,10 @@
                 // value typed in setup needs no matching Tailwind class.
                 spanStyle(key) {
                     const s = (this.board.spans || {})[key] || {};
-                    const c = Math.min(3, Math.max(1, parseInt(s.cols, 10) || 1));
+                    // Four, because the grid is now four wide and a tile that
+                    // cannot fill the row is a layout the household can see but
+                    // not ask for. Clamped, not trusted: this is stored config.
+                    const c = Math.min(4, Math.max(1, parseInt(s.cols, 10) || 1));
                     const r = Math.min(3, Math.max(1, parseInt(s.rows, 10) || 1));
                     return (c > 1 ? `grid-column: span ${c};` : '')
                         + (r > 1 ? `grid-row: span ${r};` : '');
@@ -860,6 +890,16 @@
                         .filter(w => !this.draft.panel_widgets.includes(w.key));
                 },
 
+                tabMeta(slug) {
+                    return (this.catalog.tabs || []).find(t => t.slug === slug)
+                        || { slug, label: slug };
+                },
+
+                unpickedTabs() {
+                    return (this.catalog.tabs || [])
+                        .filter(t => !this.draft.panel_tabs.includes(t.slug));
+                },
+
                 // An emptied field stops being stored rather than persisting
                 // a blank that means the same as absent.
                 setPageBg(slug, value) {
@@ -873,7 +913,8 @@
                 },
 
                 setSpan(key, axis, value) {
-                    const n = Math.min(3, Math.max(1, parseInt(value, 10) || 1));
+                    const max = axis === 'cols' ? 4 : 3;
+                    const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
                     const cur = { ...(this.draft.panel_tile_spans[key] || {}) };
                     cur[axis] = n;
                     // 1x1 is the default, so a tile back at its normal size
@@ -886,15 +927,13 @@
                     }
                 },
 
+                // Shared by both pickers: a tile list and a shelf list are the
+                // same object — an ordered selection — so they get the same
+                // ▲▼✕ rather than one of them settling for a bag of chips.
                 move(arr, i, delta) {
                     const j = i + delta;
                     if (j < 0 || j >= arr.length) return;
                     arr.splice(j, 0, arr.splice(i, 1)[0]);
-                },
-
-                toggle(arr, v) {
-                    const i = arr.indexOf(v);
-                    if (i === -1) arr.push(v); else arr.splice(i, 1);
                 },
 
                 async save() {
