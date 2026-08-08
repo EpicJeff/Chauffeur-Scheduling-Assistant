@@ -68,7 +68,7 @@ def scenario_the_skin_reaches_every_page():
     pages = [p for p in glob.glob(os.path.join(TPL, '*.html'))
              if os.path.basename(p) not in
              ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
-              'moment.html', 'trip_kiosk.html', 'trip.html')]
+              'moment.html', 'trip_kiosk.html')]
     for path in pages:
         body = open(path, encoding='utf-8').read()
         check("{% include 'ha_theme.html' %}" in body,
@@ -133,7 +133,11 @@ def scenario_the_grey_mapping_never_applies_a_filter():
     # shipped.
     body_rule = SKIN[SKIN.index('html[data-panel] body,'):]
     body_rule = body_rule[:body_rule.index('}')]
-    for prop in ('backdrop-filter: none', 'filter: none', 'background-color: transparent'):
+    # `background:` not `background-color:` — Calendar and Trips give the body
+    # a gradient, and clearing only the colour leaves its background-IMAGE to
+    # cover the photograph.
+    for prop in ('backdrop-filter: none', 'filter: none',
+                 'background: transparent', 'background-image: none'):
         check(prop in body_rule, f"the body no longer forces {prop}")
     for tier in ('bg-gray-950', 'bg-gray-900', 'bg-gray-800'):
         check(f'body.{tier}' in body_rule,
@@ -199,7 +203,7 @@ def scenario_every_page_says_its_name_in_the_same_place():
     pages = [p for p in glob.glob(os.path.join(TPL, '*.html'))
              if os.path.basename(p) not in
              ('nav.html', 'ha_theme.html', 'panel_skin.html', 'app.html',
-              'moment.html', 'trip_kiosk.html', 'trip.html', 'home.html',
+              'moment.html', 'trip_kiosk.html', 'home.html',
               'config.html', 'settings.html')]
     for path in pages:
         body = open(path, encoding='utf-8').read()

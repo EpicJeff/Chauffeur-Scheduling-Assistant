@@ -129,7 +129,7 @@
             <p class="text-gray-400 text-center max-w-md">We couldn't find any events marked as trips. Add one of your trip hashtags to an event in Google Calendar, or mark an event as a trip in Chauffeur's settings.</p>
         </div>
 
-        <div id="trips-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 hidden">
+        <div id="trips-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5 hidden">
             <!-- Trip Cards Will Be Injected Here -->
         </div>
 
@@ -289,7 +289,7 @@
                     const bgUrl = searchQuery.startsWith('http') ? searchQuery : `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
                     
                     html += `
-                        <a href="trip?event_id=${encodeURIComponent(trip.id)}${carryParams}" class="trip-card rounded-2xl aspect-[4/3] block group cursor-pointer shadow-lg">
+                        <a href="trip?event_id=${encodeURIComponent(trip.id)}${carryParams}" class="trip-card rounded-2xl aspect-[16/10] max-h-[20rem] block group cursor-pointer shadow-lg">
                             <!-- Background Image -->
                             <img src="${bgUrl}" class="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity duration-500" />
                             

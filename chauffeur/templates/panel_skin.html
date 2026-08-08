@@ -291,7 +291,16 @@
     html[data-panel] body.bg-gray-950,
     html[data-panel] body.bg-gray-900,
     html[data-panel] body.bg-gray-800 {
-        background-color: transparent !important;
+        /* The SHORTHAND, not just the colour. Calendar and Trips give the
+           body a `background: linear-gradient(...)` of their own, and clearing
+           `background-color` leaves that gradient's background-IMAGE untouched.
+           It then covers the photograph, because `#panel-bg-image` sits at
+           `z-index: -2` and negative layers paint BEFORE the body's own
+           background — so those two pages showed a gradient where every other
+           page showed the picture. (No literal braces in this comment: the
+           guard in test_panel_chrome slices this rule at the first one.) */
+        background: transparent !important;
+        background-image: none !important;
         -webkit-backdrop-filter: none !important;
         backdrop-filter: none !important;
         filter: none !important;
