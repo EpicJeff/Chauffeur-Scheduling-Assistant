@@ -5,6 +5,28 @@
     #operations-sidebar ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 4px; }
     #operations-sidebar ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
     #operations-sidebar * { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent; }
+
+    /* The Argyle bar sits on a surface that is not one colour: dark grey on the
+       app pages, near-white on a light HA theme, and translucent glass over a
+       photograph on a wall panel. A fixed `hover:bg-gray-800` pill therefore
+       read as a dark hole punched in the light bar and as a flat smudge on the
+       glass one. Tint with the accent the bar already uses instead — a low
+       alpha wash takes the colour of whatever it is sitting on, so it lands as
+       "lit up" on every surface rather than as a second, wrong background. */
+    #chat-help-btn {
+        transition: background-color .15s ease, color .15s ease;
+    }
+    #chat-help-btn:hover,
+    #chat-help-btn:focus-visible {
+        background-color: rgba(99, 102, 241, 0.18);
+        /* !important because ha_theme.html maps `.text-gray-400` to the HA
+           secondary-text variable with !important — without it the icon never
+           picks up the accent on an HA-themed page. */
+        color: #6366f1 !important;
+    }
+    #chat-help-btn:active {
+        background-color: rgba(99, 102, 241, 0.28);
+    }
 </style>
 
 <!-- Control Center Confirm Modal -->
@@ -485,8 +507,8 @@ function closeChatHelpModal() {
         </button>
 
         <!-- Help Button -->
-        <button type="button" onclick="openChatHelpModal()" title="What can Argyle do?"
-            class="text-gray-400 hover:text-indigo-400 hover:bg-gray-800 p-2 rounded-full transition-colors focus:outline-none flex items-center justify-center h-10 w-10 ml-1 flex-shrink-0">
+        <button type="button" id="chat-help-btn" onclick="openChatHelpModal()" title="What can Argyle do?"
+            class="text-gray-400 p-2 rounded-full focus:outline-none flex items-center justify-center h-10 w-10 ml-1 flex-shrink-0">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
