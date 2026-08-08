@@ -414,6 +414,36 @@ def scenario_the_page_background_never_covers_the_photograph():
           "and the dashboard's sidebar are cards, not page wrappers")
 
 
+def scenario_the_panel_brings_its_own_emoji():
+    """Reported from the Raspberry Pi on the wall: the emoji in the tiles do
+    not render. Nothing in the app was wrong — Raspberry Pi OS ships no colour
+    emoji font, so every 🚗 🍽️ ⭐ in the board, the shelf and the kid digests
+    came out as a tofu box. A phone and a laptop have one built in, which is
+    why it only ever showed up on the panel.
+
+    Two things have to be true. The font has to be REQUESTED, and the family
+    has to be in the stack — and every page in this app overrides Tailwind's
+    `fontFamily.sans` with `['Inter', 'sans-serif']`, which drops the three
+    emoji families Tailwind's own default ends with. That override is the trap
+    a new page will fall into again, so the fix lives here, centrally, and this
+    guards it."""
+    check('Noto+Color+Emoji' in SKIN,
+          "the panel no longer asks for an emoji font — on a device with none "
+          "installed, every emoji on the board is a tofu box")
+    # Only on a display surface: a phone with a perfectly good emoji font of
+    # its own should not download a megabyte and a half of this one.
+    gate = SKIN[:SKIN.index('Noto+Color+Emoji')]
+    check("query_params.get('panel')" in gate and "query_params.get('kiosk')" in gate,
+          "the emoji font is fetched for every browser, not just the panel")
+
+    for rule in ('html[data-display] body', 'html[data-display] .font-mono'):
+        block = SKIN[SKIN.index(rule):]
+        block = block[:block.index('}')]
+        check('"Noto Color Emoji"' in block,
+              f"`{rule}` no longer names the emoji family, so the font is "
+              "downloaded and then never used for anything")
+
+
 def scenario_the_skin_stays_out_of_the_browser():
     """Silently restyling every page of a working app for people at a laptop is
     a much bigger promise than the one being made. Every mapping rule is scoped

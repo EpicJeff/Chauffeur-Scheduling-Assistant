@@ -18,7 +18,56 @@
   look matters, and silently restyling every page of a working app for people
   sitting at a laptop is a much bigger promise than the one being made here.
 #}
+{# ── Emoji, on a device that has none.
+
+   Reported from the Raspberry Pi on the wall: the emoji in the tiles do not
+   render. Nothing in the app is wrong — Raspberry Pi OS ships no colour emoji
+   font at all, so every 🚗 🍽️ ⭐ in the board, the shelf and the kid digests
+   comes out as a tofu box. A phone and a laptop have one built in, which is
+   why this only ever shows up on the panel.
+
+   Two things had to be true and only one was. Tailwind's DEFAULT sans stack
+   already ends in "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji" —
+   but every page in this app overrides `fontFamily.sans` with
+   `['Inter', 'sans-serif']`, which drops all three. So the font is requested
+   here and the families are put back into the stack below.
+
+   Only on a display surface, and not because of the weight: Google serves this
+   one in `unicode-range` slices, so a page pulls the two or three its emoji
+   actually fall in rather than the whole 1.5 MB face. The reason is the family
+   NAME. Android's own emoji font is also called "Noto Color Emoji", and an
+   `@font-face` beats a system font of the same name — so every phone in the
+   house would download a font it already has. iOS and Windows match their own
+   ("Apple Color Emoji", "Segoe UI Emoji") earlier in the stack and never ask.
+
+   A panel with no internet has bigger problems than emoji — Tailwind, Alpine
+   and Inter all come from a CDN too — but if that day comes, this is the piece
+   to vendor into the add-on. #}
+{% if request.query_params.get('panel') == 'true'
+      or request.query_params.get('kiosk') == 'true' %}
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap">
+{% endif %}
 <style>
+    /* The emoji families, back on the end of the stack a page took them off.
+       `body` carries the default everything inherits; `.font-sans` is the one
+       utility that re-declares it; mono keeps its own faces and gains the
+       emoji, because a monospaced tofu box is still a tofu box. */
+    html[data-display] body,
+    html[data-display] .font-sans {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+            Roboto, "Helvetica Neue", Arial, sans-serif,
+            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    }
+
+    html[data-display] .font-mono,
+    html[data-display] code,
+    html[data-display] pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            "Liberation Mono", "Courier New", monospace,
+            "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    }
+
     /* ── Tokens. The only place light and dark are defined. */
     :root {
         --panel-bg: #0b1020;
