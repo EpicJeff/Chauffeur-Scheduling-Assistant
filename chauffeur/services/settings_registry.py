@@ -103,6 +103,11 @@ ENTRIES: List[dict] = [
        'are measured in these, so a 2-row tile is twice this tall — including '
        'in the bottom row, which is where sizes used to do nothing at all.',
        page='home', anchor='panel-setup'),
+    _e('panel_agenda_days', 'panel', 'Agenda length',
+       'How many days the calendar tile shows. Each day is a card three '
+       'columns of the board wide, so the tile fits as many across as it is '
+       'wide and wraps the rest onto another line.',
+       page='home', anchor='panel-setup'),
     _e('panel_tile_spans', 'panel', 'Tile sizes',
        'How much room each tile gets on the home board — up to four columns '
        'wide (the full board) and three rows tall. The map and the calendar '

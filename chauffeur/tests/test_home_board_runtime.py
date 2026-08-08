@@ -2,10 +2,10 @@
 
 The board's tiles are Alpine templates, so most of what they do can only be
 seen in a browser. What can be checked here is the arithmetic underneath them —
-and on these three tiles the arithmetic IS the tile. A timeline block is a
-`top`/`height` pair in percent; get the sign wrong and a wall panel draws an
-empty box with no error anywhere, which is precisely the failure mode this
-whole board exists to avoid (you cannot tell a broken tile from a quiet one).
+and the agenda's layout IS arithmetic: a day card is three of twelve board
+columns, and getting that wrong is what the family reported as "squishes each
+day down very narrow". A wall panel draws a wrong-but-valid layout with no
+error anywhere, which is the failure mode this whole board exists to avoid.
 
 Same technique as test_nav_runtime: pull the script out of the rendered
 template, run it in node against a DOM thin enough to be honest, and assert on
@@ -60,29 +60,24 @@ globalThis.setInterval = function () { return 0; };
 PROBE = r"""
 const b = homeBoard();
 b.board = BOARD;
-b.nowTs = new Date(NOW).getTime();
 
-const drives = BOARD.tiles.find(t => t.key === 'drives').data;
 const map = BOARD.tiles.find(t => t.key === 'map').data;
-const w = drives.window;
-
-const blocks = [];
-drives.lanes.forEach(l => l.runs.forEach(r => blocks.push({
-  id: r.id, style: b.blockStyle(r, w, l.color),
-  top: b.pctFor(r.start, w), bottom: b.pctFor(r.end, w)
-})));
 
 console.log(JSON.stringify({
-  ticks: b.hourTicks(w),
-  nowPct: b.nowPct(w),
-  outsideWindow: (() => { b.nowTs = new Date(w.end).getTime() + 3600000;
-                          const v = b.nowPct(w);
-                          b.nowTs = new Date(NOW).getTime(); return v; })(),
-  blocks: blocks,
-  unmapped: b.unmapped(map.people).map(p => p.name),
+  // A day card is three of twelve board columns, so the count is the
+  // calendar tile's own span measured in quarters.
+  agenda: [
+    { span: 12, lg: b.agendaCols('lg'), md: b.agendaCols('md') }
+  ],
+  agendaBySpan: [12, 9, 6, 3, 1].map(c => {
+    b.board.spans = { calendar: { cols: c } };
+    return { cols: c, across: b.agendaCols('lg') };
+  }),
+  mapped: map.mapped,
   fills: ['map', 'drives', 'meals', 'moments', 'trips', 'calendar', 'chores']
     .filter(k => b.fillsTile(k)),
-  badWindow: b.hourTicks({ start: 'nonsense', end: 'nonsense' })
+  gone: ['hourTicks', 'blockStyle', 'nowPct', 'pctFor', 'unmapped']
+    .filter(k => typeof b[k] === 'function')
 }));
 """
 
@@ -106,25 +101,15 @@ def _run(board, now):
 # The fixture is one ordinary weekday evening: a drive under way, a second
 # driver overlapping it, and a family half of whom Home Assistant can see.
 BOARD = {
+    'columns': 12,
+    'spans': {'calendar': {'cols': 12}},
     'tiles': [
         {'key': 'drives', 'data': {
-            'window': {'start': '2026-08-08T15:00:00', 'end': '2026-08-08T20:00:00'},
-            'count': 3,
-            'lanes': [
-                {'driver_id': 'drv1', 'driver': 'Sam', 'color': '#ef4444', 'runs': [
-                    {'id': 'e1', 'title': 'Practice', 'at': '4:00 PM', 'live': True,
-                     'start': '2026-08-08T16:00:00', 'end': '2026-08-08T17:30:00'},
-                    {'id': 'e3', 'title': 'Piano', 'at': '7:00 PM', 'live': False,
-                     'start': '2026-08-08T19:00:00', 'end': '2026-08-08T20:00:00'}]},
-                {'driver_id': 'drv2', 'driver': 'Vovo', 'color': '#8b5cf6', 'runs': [
-                    {'id': 'e2', 'title': 'Pickup', 'at': '5:45 PM', 'live': False,
-                     'start': '2026-08-08T17:45:00', 'end': '2026-08-08T18:15:00'}]},
-            ]}},
+            'count': 3, 'next_event_id': 'e1',
+            'schedule': {'date': '2026-08-08', 'events': [], 'drivers': []}}},
         {'key': 'map', 'data': {'mapped': 2, 'people': [
             {'name': 'Sam', 'member_id': 'm1', 'latitude': 41.5, 'longitude': -81.6,
              'state': 'not_home', 'driving': {'leg_title': 'Practice'}},
-            {'name': 'Vovo', 'member_id': 'm2', 'latitude': 41.4, 'longitude': -81.7,
-             'state': 'home', 'driving': None},
             {'name': 'Addison', 'member_id': 'm3', 'latitude': None, 'longitude': None,
              'state': None, 'driving': None},
         ]}},
@@ -133,72 +118,35 @@ BOARD = {
 NOW = '2026-08-08T16:30:00'
 
 
-def scenario_a_block_is_where_and_as_tall_as_its_drive():
-    """The whole tile is this sum. A 90-minute drive on a five-hour window is
-    30% of the tile, one hour in from the top — and `height` must never come
-    out negative, which is what a `bottom - top` on a clamped pair does the
-    moment a drive runs past the end of the window."""
+def scenario_a_day_card_is_three_columns_of_the_board():
+    """Reported from the wall: the agenda "squishes each day down very narrow".
+    It was flowing as many days as it had into whatever width the tile was, so
+    seven days in a half-width tile came out at 90px each.
+
+    A day card is three of twelve board columns — a quarter, the same unit a
+    tile is measured in. Widening the tile adds cards; the days that do not fit
+    wrap onto the next line rather than getting thinner."""
     got = _run(BOARD, NOW)
     if got is None:
         return
-    by_id = {b['id']: b for b in got['blocks']}
-    e1 = by_id['e1']
-    check(abs(e1['top'] - 20) < 0.01,
-          f"a 4pm drive on a 3pm-8pm window starts a fifth of the way down, got {e1['top']}")
-    check(abs((e1['bottom'] - e1['top']) - 30) < 0.01,
-          f"90 minutes of five hours is 30% of the tile, got {e1['bottom'] - e1['top']}")
-    check('height: 30%' in e1['style'] and 'top: 20%' in e1['style'],
-          f"the style says something else than the numbers do: {e1['style']}")
-    check('outline' in e1['style'],
-          "the drive under way is not marked, so the one block that is HAPPENING "
-          "looks like the three that are not")
-    check('outline' not in by_id['e3']['style'], "and the others are not marked")
-    for b in got['blocks']:
-        check(b['bottom'] >= b['top'],
-              f"block {b['id']} has negative height: {b}")
+    across = {r['cols']: r['across'] for r in got['agendaBySpan']}
+    check(across == {12: 4, 9: 3, 6: 2, 3: 1, 1: 1},
+          f"a card is not a quarter of the board any more: {across}")
+    check(got['agenda'][0]['md'] >= 1,
+          "the mid breakpoint has to resolve to at least one card or the grid "
+          "collapses to zero tracks")
 
 
-def scenario_now_is_on_the_tile_or_it_is_not_drawn():
-    """A "now" line pinned to the top or bottom edge is a line that LIES —
-    it says the present moment is the start of the evening. Outside the window
-    it is simply not drawn."""
+def scenario_the_board_no_longer_draws_its_own_timeline():
+    """The tile draws the Drives page's renderer now. The helpers that drew the
+    board's own version are gone rather than left lying about — two drawings of
+    the same thing is what the family reported, and a dead one is the one that
+    comes back."""
     got = _run(BOARD, NOW)
     if got is None:
         return
-    check(abs(got['nowPct'] - 30) < 0.01,
-          f"4:30pm on a 3pm-8pm window is 30% down, got {got['nowPct']}")
-    check(got['outsideWindow'] is None,
-          f"an hour past the last drive there is no line to draw, got {got['outsideWindow']}")
-
-
-def scenario_the_hour_rail_is_readable_at_tile_size():
-    """Hour lines are what make a block's height read as a duration. But one
-    per hour on a twelve-hour Saturday is a hatched box, so the step opens up
-    rather than the labels overlapping."""
-    got = _run(BOARD, NOW)
-    if got is None:
-        return
-    labels = [t['label'] for t in got['ticks']]
-    check(labels == ['3p', '4p', '5p', '6p', '7p', '8p'],
-          f"an hour a line across a five-hour window, got {labels}")
-    check(all(0 <= t['pct'] <= 100 for t in got['ticks']),
-          f"a tick outside the tile, got {got['ticks']}")
-    check(got['badWindow'] == [],
-          "a window the server could not compute must draw no rail rather than "
-          "loop forever building one")
-
-
-def scenario_a_pin_cannot_say_where_somebody_is_going():
-    """The chips are not a leftovers list. Somebody with no pin belongs there
-    because there is nowhere else to say where they are — and somebody DRIVING
-    belongs there too, pin or not, because "en route to practice" is the more
-    useful half and a marker cannot carry it."""
-    got = _run(BOARD, NOW)
-    if got is None:
-        return
-    check(got['unmapped'] == ['Sam', 'Addison'],
-          f"the driver and the untracked child, and not the parent sitting at "
-          f"home with a pin on her, got {got['unmapped']}")
+    check(got['gone'] == [],
+          f"the board still carries its own timeline math: {got['gone']}")
 
 
 def scenario_the_drawn_tiles_are_the_ones_given_their_slot():

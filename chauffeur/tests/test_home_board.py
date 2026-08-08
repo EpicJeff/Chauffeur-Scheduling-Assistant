@@ -352,54 +352,61 @@ def scenario_the_map_tile_carries_pins_not_just_zone_words():
          storage.get_all_cars) = orig_m, orig_s, orig_c
 
 
-def scenario_the_drives_tile_is_a_timeline_not_a_list():
-    """A list of times said what was left. It could not say that two drives
-    overlap, or that one parent has the whole evening — which is the question
-    somebody in the kitchen is actually asking. So the tile sends lanes and a
-    window, and the panel draws blocks as tall as the drives are long.
+def scenario_the_drives_tile_hands_over_a_schedule_not_a_drawing():
+    """The tile draws the Drives page's OWN timeline now — same renderer, from
+    components/schedule_timeline.html — so what it sends is the schedule that
+    renderer reads, sliced to one day.
 
-    The window must contain NOW, because a drive under way started behind us
-    and a timeline that begins after the "now" line has nowhere to draw it."""
+    What it must never do is call `GET /api/schedule`: that endpoint SAVES a
+    combined range cache and kicks a background refresh, so a panel polling it
+    would keep the solver warm forever for a display nobody is looking at.
+    Rule 3, in the one place it would be easiest to break."""
     orig = (storage.get_cached_schedule, storage.get_all_drivers,
             storage.get_completed_drives, storage.get_in_progress_drives)
     try:
-        storage.get_cached_schedule = lambda: _sched(
-            ({'id': 'a', 'title': 'Practice', 'start': _at(16).isoformat(),
-              'end': _at(17, 30).isoformat()}, 'drv1'),
-            ({'id': 'b', 'title': 'Pickup', 'start': _at(18).isoformat(),
-              'end': _at(19).isoformat()}, 'drv2'))
+        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+        sched = {
+            'events': [
+                {'id': 'a', 'title': 'Practice', 'start': _at(16).isoformat(),
+                 'end': _at(17, 30).isoformat()},
+                {'id': 'b', 'title': 'Pickup', 'start': _at(18).isoformat(),
+                 'end': _at(19).isoformat()},
+                {'id': 'far', 'title': 'Next week',
+                 'start': datetime.datetime.combine(tomorrow, datetime.time(9)).isoformat(),
+                 'end': datetime.datetime.combine(tomorrow, datetime.time(10)).isoformat()},
+            ],
+            'assignments': {'a': 'drv1', 'b': 'drv2', 'far': 'drv1'},
+            'scheduled_errands': [],
+            'initial_edges': {'drv1': {'a': {'travel_mins': 12}, 'far': {'travel_mins': 40}}},
+            'route_edges': {'drv2': {'b': {'travel_mins': 8}}},
+            'unassigned': ['far'],
+        }
+        storage.get_cached_schedule = lambda: sched
         storage.get_all_drivers = lambda: [
             {'id': 'drv1', 'name': 'Sam', 'color_code': '#f00'},
             {'id': 'drv2', 'name': 'Vovo', 'color_code': '#00f'}]
         storage.get_completed_drives = lambda: []
-        storage.get_in_progress_drives = lambda: ['init_a']
-
-        now = _at(16, 40)
-        tile = home_board._tile_drives(now, runs=home_board.todays_runs(now=now))
-        check([l['driver'] for l in tile['lanes']] == ['Sam', 'Vovo'],
-              f"a lane per driver, earliest first, got {tile['lanes']}")
-        w_start = datetime.datetime.fromisoformat(tile['window']['start'])
-        w_end = datetime.datetime.fromisoformat(tile['window']['end'])
-        check(w_start <= now <= w_end,
-              f"now must be inside the window, got {w_start}..{w_end}")
-        check(w_start <= _at(16) and w_end >= _at(19),
-              "the window covers every drive still to come")
-        run = tile['lanes'][0]['runs'][0]
-        check(run['start'] and run['end'] and run['live'],
-              f"a block needs both its edges and its live flag, got {run}")
-
-        # A single short drive must still be drawn against a readable stretch
-        # of clock rather than as one rectangle filling the tile.
-        storage.get_cached_schedule = lambda: _sched(
-            ({'id': 'solo', 'title': 'Dentist', 'start': _at(15).isoformat(),
-              'end': _at(15, 30).isoformat()}, 'drv1'))
         storage.get_in_progress_drives = lambda: []
-        now = _at(14, 50)
-        tile = home_board._tile_drives(now, runs=home_board.todays_runs(now=now))
-        span = (datetime.datetime.fromisoformat(tile['window']['end'])
-                - datetime.datetime.fromisoformat(tile['window']['start']))
-        check(span >= datetime.timedelta(hours=3),
-              f"one short drive is still a timeline, got a {span} window")
+
+        now = _at(15, 20)
+        tile = home_board._tile_drives(now, runs=home_board.todays_runs(now=now),
+                                       sched=sched)
+        slice_ = tile['schedule']
+        check([e['id'] for e in slice_['events']] == ['a', 'b'],
+              f"one day, not the whole horizon: {[e['id'] for e in slice_['events']]}")
+        check(slice_['date'] == datetime.date.today().isoformat(),
+              "the slice names its day, which is what dateFilter matches on")
+        check('far' not in slice_['assignments'] and 'far' not in slice_['unassigned'],
+              "tomorrow's event must not drag its assignment along")
+        check(slice_['initial_edges']['drv1'] == {'a': {'travel_mins': 12}},
+              f"edges prune to the same day's events, got {slice_['initial_edges']}")
+        check([d['id'] for d in slice_['drivers']] == ['drv1', 'drv2'],
+              "the renderer names its columns from `drivers`, so they travel too")
+        check(tile['next_event_id'] == 'a',
+              "the tile says where to open, or it opens on breakfast")
+        for control in ('ai_metadata', 'duplicate_groups', 'solving_dates'):
+            check(control not in slice_,
+                  f"`{control}` renders a BUTTON, and a wall board is a display")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = orig
@@ -440,6 +447,12 @@ def scenario_the_calendar_tile_is_an_agenda_of_days():
         days = {d['day']: d for d in tile['days']}
         check(len(tile['days']) == home_board.AGENDA_DAYS,
               f"a card per day whether or not it has anything on it, got {len(tile['days'])}")
+        check(len(home_board._tile_calendar(_at(12), settings={'panel_agenda_days': 9})['days']) == 9,
+              "how many days is the household's call — it depends on how wide "
+              "they made the tile and what they use the board for")
+        for bad, want in ((0, 1), (99, 14), ('a week', home_board.AGENDA_DAYS)):
+            got = home_board.agenda_days({'panel_agenda_days': bad})
+            check(got == want, f"agenda_days({bad!r}) -> {got}, wanted {want}")
         check(days['Today']['today'] and days['Today']['dom'] == datetime.date.today().day,
               "today knows it is today")
         titles = [e['title'] for e in days['Today']['events']]

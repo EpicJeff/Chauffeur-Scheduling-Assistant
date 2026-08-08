@@ -716,6 +716,12 @@ class Settings(BaseModel):
     # quarter is 3 and an eighth is 1.5 rounded to 2. Existing sizes were
     # multiplied through on upgrade (migrations.migrate_tile_columns_v21212).
     panel_grid_columns: int = 12
+    # How many days the calendar tile's agenda shows. A number the
+    # household picks because the right one depends on how wide they made
+    # the tile and what they use the board for — a fortnight is a planning
+    # surface, three days is "what is happening now". Clamped 1-14, the
+    # same range the calendar page's own agenda offers.
+    panel_agenda_days: int = 5
     # light | dark | auto. `auto` follows the device, which under Home
     # Assistant means following the HA theme the panel is embedded in.
     panel_theme: str = 'dark'

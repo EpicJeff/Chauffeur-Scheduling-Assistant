@@ -262,25 +262,92 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
 # --- tile builders --------------------------------------------------------
 # Each returns the tile's payload, or None when it has nothing to say.
 
-def _tile_drives(now, runs, **_):
-    """The rest of the day as the Drives page draws it: a lane per driver, time
-    running down the tile, and every drive a block whose HEIGHT is how long it
-    takes.
+def _schedule_slice(day: datetime.date, sched: dict) -> dict:
+    """One day of the cached schedule, in the shape `renderSchedule` reads.
 
-    A list of times told you what is left; it did not tell you that two of them
-    overlap, or that one driver has the whole evening while another has a
-    single run. That is the question a family standing in the kitchen is
-    actually asking, and it is the question a timeline answers by its shape
-    rather than by being read.
+    The drives tile draws the REAL Drives timeline — the same function, from
+    `components/schedule_timeline.html` — and that function wants a schedule
+    payload, not a summary. What it must not be given is `GET /api/schedule`:
+    that endpoint SAVES a combined custom-range cache and kicks a background
+    refresh every five minutes, so a wall panel polling it would keep the
+    solver warm forever for a display nobody is looking at. Rule 3 of this
+    module, exactly.
 
-    What the tile deliberately does NOT copy from the Drives page is the
-    condensed dead time. That machinery exists because the page draws a whole
-    day, gaps and all; the tile draws from now to the last drive, which is
-    rarely more than a few hours, and a compressed gap in a 240px box costs
-    more in confusion than it buys in space.
+    So the slice is assembled here, from the cache the board already holds,
+    and it is a slice rather than the whole thing because the panel does not
+    need three weeks of events to draw this afternoon. The edge maps are
+    `edges[driver_id][event_id]`, so they prune against the same day's ids.
+    """
+    events = [e for e in (sched.get('events') or [])
+              if (_parse(e.get('start')) or datetime.datetime.min).date() == day]
+    keep = {e.get('id') for e in events}
 
-    The window is sent as timestamps, not percentages, so the panel can put the
-    "now" line where it belongs every second instead of once a minute.
+    def prune(edges):
+        out = {}
+        for d_id, by_event in (edges or {}).items():
+            rows = {k: v for k, v in (by_event or {}).items() if k in keep}
+            if rows:
+                out[d_id] = rows
+        return out
+
+    errands = [er for er in (sched.get('scheduled_errands') or [])
+               if (_parse(er.get('start_time')) or datetime.datetime.min).date() == day]
+
+    try:
+        completed = storage.get_completed_drives()
+        in_progress = storage.get_in_progress_drives()
+    except Exception:
+        completed, in_progress = [], []
+
+    return {
+        'events': events,
+        'scheduled_errands': errands,
+        'assignments': {k: v for k, v in (sched.get('assignments') or {}).items()
+                        if k in keep},
+        'ghost_assignments': {k: v for k, v in (sched.get('ghost_assignments') or {}).items()
+                              if k in keep},
+        'ghost_drivers': sched.get('ghost_drivers') or [],
+        'car_assignments': {k: v for k, v in (sched.get('car_assignments') or {}).items()
+                            if k in keep},
+        'unassigned': [e for e in (sched.get('unassigned') or []) if e in keep],
+        'no_location': [e for e in (sched.get('no_location') or []) if e in keep],
+        'overridden_events': [e for e in (sched.get('overridden_events') or []) if e in keep],
+        'lateness_warnings': [w for w in (sched.get('lateness_warnings') or [])
+                              if (w.get('event_id') if isinstance(w, dict) else w) in keep],
+        'route_edges': prune(sched.get('route_edges')),
+        'initial_edges': prune(sched.get('initial_edges')),
+        'final_edges': prune(sched.get('final_edges')),
+        'driver_events': {d: [e for e in evs if e in keep]
+                          for d, evs in (sched.get('driver_events') or {}).items()},
+        'calendar_metadata': sched.get('calendar_metadata') or {},
+        'home_location': sched.get('home_location') or '',
+        'drivers': [d for d in (storage.get_all_drivers() or [])
+                    if not d.get('is_disabled')],
+        'cars': [c for c in (storage.get_all_cars() or []) if not c.get('is_disabled')],
+        'completed_drives': completed,
+        'in_progress_drives': in_progress,
+        # Deliberately absent: `ai_metadata`, `duplicate_groups`,
+        # `solving_dates`. Every one of them renders a BUTTON — approve this
+        # suggestion, create this rule — and a wall board is a display. The
+        # renderer treats them as optional, so leaving them out leaves the
+        # timeline and drops the controls.
+        'date': day.isoformat(),
+    }
+
+
+def _tile_drives(now, runs, sched=None, **_):
+    """The rest of the day, drawn by the DRIVES PAGE'S OWN TIMELINE.
+
+    The first version of this tile drew a timeline of its own — lanes, blocks,
+    an hour rail — and the family's report was the obvious one: it did not look
+    like the page it was summarising. Two drawings of the same thing is exactly
+    what a shelf of surfaces must not be, and the answer was never to copy the
+    chips more carefully. `renderSchedule` moved to a shared component and the
+    tile calls it; what arrives here is the data that function reads.
+
+    The tile still decides WHAT to show — the same `over` rule as the hero, so
+    the two halves of the board cannot disagree about what is behind us — and
+    the page decides how it looks.
     """
     # `over`, not `done` — the heading says "the rest of the day", so a drive
     # whose end time has passed does not belong here whether or not anybody
@@ -293,31 +360,16 @@ def _tile_drives(now, runs, **_):
         return {'empty': "Nothing left to drive today." if runs
                 else "No drives on the schedule today."}
 
-    lanes = {}
-    for r in rest:
-        lane = lanes.setdefault(r['driver_id'], {
-            'driver_id': r['driver_id'], 'driver': r['driver'], 'color': r['color'],
-            'avatar': r.get('avatar'), 'image': r.get('image'), 'runs': []})
-        lane['runs'].append({'id': r['id'], 'title': r['title'], 'at': r['at'],
-                             'location': r.get('location'), 'kind': r['kind'],
-                             'start': r['start'], 'end': r['end'], 'live': r['live']})
-
-    starts = [_parse(r['start']) or now for r in rest]
-    ends = [_parse(r['end']) or now for r in rest]
-    # `now` is in the window because a drive under way starts behind us, and a
-    # timeline that begins after the "now" line has nowhere to draw it.
-    lo = min(starts + [now]).replace(minute=0, second=0, microsecond=0)
-    hi = max(ends + [now])
-    if hi.minute or hi.second:
-        hi = (hi + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-    # A single half-hour drive would otherwise be one block filling the tile,
-    # which is a rectangle rather than a timeline.
-    hi = max(hi, lo + datetime.timedelta(hours=3))
-
-    # Earliest first: the lane you read first should be the one leaving first.
-    ordered = sorted(lanes.values(), key=lambda l: min(r['start'] for r in l['runs']))
-    return {'lanes': ordered, 'count': len(rest),
-            'window': {'start': lo.isoformat(), 'end': hi.isoformat()}}
+    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    return {
+        'count': len(rest),
+        'schedule': _schedule_slice(now.date(), sched),
+        # Where to scroll the timeline so the tile opens on the part of the day
+        # that has not happened. The whole day is drawn — a wall panel showing
+        # a drive that finished an hour ago at the top of the tile is showing
+        # the past.
+        'next_event_id': rest[0]['id'],
+    }
 
 
 def _tile_kids(now, kid_digest_fn=None, **_):
@@ -515,16 +567,32 @@ def _tile_moments(now, **_):
         return None
 
 
-# How far the calendar tile looks ahead. Five days is a working week seen from
-# a Monday and still fits as day cards across a wide tile; the calendar page's
-# agenda offers 3–14 and this is the middle of that.
+# How far the calendar tile looks ahead when the household has not said. Five
+# days is a working week seen from a Monday; the calendar page's agenda offers
+# 3–14 and this is the middle of that.
 AGENDA_DAYS = 5
 # Per day, before the card says "+3 more". A day card taller than the tile is
 # the tile scrolling for one busy Saturday.
 AGENDA_PER_DAY = 5
 
 
-def _tile_calendar(now, **_):
+def agenda_days(settings: dict = None) -> int:
+    """How many days the calendar tile shows.
+
+    A number the household picks, because the right one depends on how wide
+    they made the tile and on what they use the board for: a fortnight is a
+    planning surface, three days is "what is happening now". Clamped to the
+    same 1–14 the calendar page's own agenda offers, so the two cannot disagree
+    about what an agenda is.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        return max(1, min(14, int(settings.get('panel_agenda_days', AGENDA_DAYS))))
+    except (TypeError, ValueError):
+        return AGENDA_DAYS
+
+
+def _tile_calendar(now, sched=None, settings=None, **_):
     """What this family is doing, laid out the way the calendar page's AGENDA
     view lays it out: a card per day, the day's events under it by start time.
 
@@ -543,15 +611,16 @@ def _tile_calendar(now, **_):
     halves of the board cannot disagree about what is behind us.
     """
     try:
-        sched = storage.get_cached_schedule() or {}
+        sched = sched if sched is not None else (storage.get_cached_schedule() or {})
         assignments = sched.get('assignments') or {}
         unassigned = set(sched.get('unassigned') or [])
         drivers = _driver_index()
         today = now.date()
+        span = agenda_days(settings)
 
         days = {}
         order = []
-        for i in range(AGENDA_DAYS):
+        for i in range(span):
             d = today + datetime.timedelta(days=i)
             days[d] = []
             order.append(d)
@@ -1017,8 +1086,12 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
 
     from services import family_digest
     # `now` threaded through, not left to default: the hero, the tiles and the
-    # `over` flag must all be reasoning about the same instant.
-    runs = todays_runs(now.date(), now=now)
+    # `over` flag must all be reasoning about the same instant. The schedule is
+    # read ONCE and handed round for the same reason it is fetched once — three
+    # tiles asking storage for it separately is three chances to draw a board
+    # out of step with itself.
+    sched = storage.get_cached_schedule() or {}
+    runs = todays_runs(now.date(), sched=sched, now=now)
 
     tiles = []
     for key in keys:
@@ -1026,7 +1099,8 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         if not builder:
             continue
         try:
-            payload = builder(now, runs=runs, kid_digest_fn=kid_digest_fn)
+            payload = builder(now, runs=runs, sched=sched, settings=settings,
+                              kid_digest_fn=kid_digest_fn)
         except Exception as e:
             print(f"[home_board] tile '{key}' failed: {e}")
             payload = None
