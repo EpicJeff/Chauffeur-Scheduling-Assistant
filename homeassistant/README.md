@@ -40,19 +40,62 @@ Docker network.
 
 ## 2. Create the Argyle wake word
 
-HA's stock wake words don't include "Hey Argyle", so train one (it's free,
-~1 hour, no recordings of your own voice needed):
+HA's stock wake words don't include "Hey Argyle". **How you add one depends
+entirely on the satellite**, and the two engines are not interchangeable:
 
-1. Open the openWakeWord training notebook linked from the HA docs
-   (https://www.home-assistant.io/voice_control/create_wake_word/).
-2. Train on the phrase `hey argyle` (the notebook synthesizes thousands of TTS
-   samples). Download the resulting `hey_argyle.tflite`.
-3. Install the **openWakeWord** add-on, and place the file in
+| | openWakeWord | microWakeWord |
+|---|---|---|
+| Runs on | the HA server (add-on) | the device itself |
+| Satellite streams audio first | yes | no |
+| Custom words | train a `.tflite`, drop it in `/share/openwakeword/` | model must be **compiled into the firmware** |
+| Used by | ATOM Echo, ESP32-S3-BOX-3, `wyoming-satellite` on a Pi | **Voice Preview Edition**, S3-BOX-3, Companion app |
+
+> **Voice Preview Edition does NOT do openWakeWord.** It runs microWakeWord
+> on-device and there is no "process the wake word in Home Assistant" setting
+> to switch it over — the wake-word select only lists models baked into the
+> firmware it is running (Okay Nabu / Hey Jarvis / Hey Mycroft). An earlier
+> version of this file said to flip that setting; the setting does not exist,
+> and no amount of `/share/openwakeword/` will make Voice PE see a custom word.
+> Getting one onto a Voice PE means building and flashing firmware. There is no
+> path around that.
+
+### On a Voice Preview Edition — custom firmware
+
+1. Get a **microWakeWord** model for the phrase. Training your own is a
+   different pipeline from the openWakeWord notebook below; the community
+   [Tater-Wake-Words](https://github.com/Tater-Wake-Words) collection is where
+   most people start, and a ready-made model saves the training run entirely.
+2. In **ESPHome Builder**, *take control* of the device (this is what makes the
+   YAML yours to edit — and hands you its updates from then on: Nabu Casa's
+   OTA releases stop applying, which is the real cost of this route).
+3. Add a `micro_wake_word:` block listing your model alongside the stock ones,
+   then **Install** — OTA once the device is adopted, no cable.
+4. Reconfigure the integration so the new word shows in the wake-word select.
+
+If the flash goes wrong the device is recoverable with the **Voice PE Imager**,
+so this is reversible — it is just not a setting.
+
+### On a streaming satellite — openWakeWord
+
+For an ATOM Echo, an S3-BOX-3, or `wyoming-satellite` on a Raspberry Pi, the
+server-side route works and is much less work (free, ~1 hour, no recordings of
+your own voice):
+
+1. Open the [openWakeWord training notebook](https://www.home-assistant.io/voice_control/create_wake_word/)
+   from the HA docs and train on `hey argyle` — it synthesizes thousands of TTS
+   samples. Download `hey_argyle.tflite`.
+2. Install the **openWakeWord** add-on and put the file in
    `/share/openwakeword/`.
-4. On your voice satellite (ESPHome device / Voice Preview Edition), set wake
-   word processing to run **in Home Assistant** and select `hey argyle`.
-   (On-device microWakeWord only ships stock words; streaming to openWakeWord
-   is how custom words work.)
+3. On the satellite, set wake word processing to run **in Home Assistant** and
+   select `hey argyle`.
+
+### Or skip the wake word
+
+The wake word is not part of Chauffeur — it only decides what wakes the
+satellite up. **Any** wake word (or Voice PE's push-to-talk button) reaches
+Argyle just as well, because the routing happens at the pipeline's conversation
+agent in step 3. "Okay Nabu, have Celma drive Like to practice tomorrow" works
+today, with nothing flashed.
 
 ## 3. Build the pipeline
 
