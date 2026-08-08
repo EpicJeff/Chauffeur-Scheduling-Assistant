@@ -197,9 +197,31 @@
                         <div class="text-base md:text-lg panel-dim mt-1 truncate"
                             x-show="hero.next.location" x-text="hero.next.location"></div>
                     </div>
+                    <!-- LEAVE time leads, start time supports it. The start is
+                         when somebody else expects you; the departure is the
+                         one a family sets an alarm by, and the board was
+                         printing the wrong one of the two big. When the
+                         schedule has no travel time for the drive there is no
+                         honest departure to show, and the start time takes the
+                         big slot back. -->
                     <div class="text-right shrink-0">
-                        <div class="text-3xl md:text-5xl font-black tabular-nums panel-text"
-                            x-text="hero.next.at"></div>
+                        <template x-if="hero.next.leave_label && !onNow()">
+                            <div>
+                                <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">
+                                    Leave</div>
+                                <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none"
+                                    x-text="hero.next.leave_label"></div>
+                                <div class="text-sm md:text-base panel-dim mt-1 tabular-nums">
+                                    <span x-text="'for ' + hero.next.at"></span>
+                                    <span x-show="hero.next.travel_mins"
+                                        x-text="'· ' + hero.next.travel_mins + ' min drive'"></span>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="!hero.next.leave_label || onNow()">
+                            <div class="text-3xl md:text-5xl font-black tabular-nums panel-text"
+                                x-text="hero.next.at"></div>
+                        </template>
                         <div class="text-lg md:text-xl font-bold mt-1"
                             :style="'color: ' + tone(hero.next.color, '#3b82f6')"
                             x-text="hero.next.driver"></div>
@@ -1000,6 +1022,27 @@
                         this.countdown = left > 0 ? 'ends in ' + this.spell(left)
                             : (n.live ? 'under way' : 'ending now');
                         this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
+                        return;
+                    }
+                    // The DEPARTURE, when the schedule knows it. "In 2 hr 26
+                    // min" is a fact about somebody else's start time; "leave
+                    // in 1 hr 46 min" is the one this family plans around, and
+                    // the difference between them is the drive.
+                    if (n.leave_at) {
+                        const go = Math.round((new Date(n.leave_at) - new Date()) / 60000);
+                        if (go > 0) {
+                            this.countdown = 'leave in ' + this.spell(go);
+                            this.countdownClass = go <= 15
+                                ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300';
+                        } else if (go > -2) {
+                            this.countdown = 'leave now';
+                            this.countdownClass = 'bg-amber-500/20 text-amber-300';
+                        } else {
+                            // Past the departure and not yet started: the one
+                            // state on this board worth shouting about.
+                            this.countdown = 'should have left ' + this.spell(-go) + ' ago';
+                            this.countdownClass = 'bg-red-500/25 text-red-300';
+                        }
                         return;
                     }
                     const mins = Math.round((new Date(n.start) - new Date()) / 60000);

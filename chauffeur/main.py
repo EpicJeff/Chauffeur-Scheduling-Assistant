@@ -4783,24 +4783,26 @@ def member_day(member_id: str, date: Optional[str] = None):
         candidates = [str(first.get('id'))]
         if first.get('legs'):
             candidates.append(f"{first.get('id')}_dropoff")
-        init_edges = sched.get('initial_edges') or {}
+        # The arithmetic moved to services/leave_by, which the wall panel's
+        # hero now shares — one definition of "leave by", or the kitchen and
+        # the phone eventually disagree about it. `from_home_only` keeps this
+        # caller's meaning exactly: a child reading "leave by 4:20" is being
+        # told when to put their shoes on, so a driver arriving from somewhere
+        # else does not count.
+        from services import leave_by as leave_by_svc
         for ev_key in candidates:
             d_id = assignments.get(ev_key)
-            if not d_id or str(d_id).startswith('ghost_'):
-                continue
-            edge = (init_edges.get(d_id) or {}).get(ev_key)
-            if not edge or not edge.get('travel_mins'):
+            if not d_id:
                 continue
             try:
                 start_dt = _dt.datetime.fromisoformat(first['start'])
             except (ValueError, TypeError):
                 break
-            lead = int(edge['travel_mins']) + int(edge.get('buffer_before_mins') or 0)
-            leave = start_dt - _dt.timedelta(minutes=lead)
-            launch = {'leave_at': leave.isoformat(),
-                      'leave_label': leave.strftime('%I:%M %p').lstrip('0'),
-                      'travel_mins': int(edge['travel_mins']),
-                      'title': first.get('title'),
+            found = leave_by_svc.for_run(sched, d_id, ev_key, start_dt,
+                                         from_home_only=True)
+            if not found:
+                continue
+            launch = {**found, 'title': first.get('title'),
                       'driver': _driver_member(d_id)}
             break
 

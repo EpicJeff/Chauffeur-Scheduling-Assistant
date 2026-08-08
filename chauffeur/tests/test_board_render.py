@@ -49,9 +49,14 @@ TOMORROW = (_D.date.today() + _D.timedelta(days=1)).isoformat()
 _NOW = _D.datetime.now()
 UNDERWAY_START = (_NOW - _D.timedelta(minutes=53)).isoformat()
 UNDERWAY_END = (_NOW + _D.timedelta(minutes=7)).isoformat()
+# The upcoming case: 2 hr 26 min until it starts, 1 hr 46 min until you have to
+# be out of the door. The exact numbers from the request.
+SOON_START = (_NOW + _D.timedelta(minutes=146)).isoformat()
+SOON_END = (_NOW + _D.timedelta(minutes=206)).isoformat()
+SOON_LEAVE = (_NOW + _D.timedelta(minutes=106)).isoformat()
 
 
-def _board():
+def _board(hero=None):
     at = lambda h, m=0: f"{TODAY}T{h:02d}:{m:02d}:00"
     return {
         'now': at(15, 20), 'date_label': 'Saturday, August 8', 'weather': None,
@@ -61,7 +66,7 @@ def _board():
         'spans': {'calendar': {'cols': 12}, 'drives': {'cols': 6, 'rows': 2}},
         # A hero that is ON: it started before `now` and has not ended. This is
         # the state photographed off the wall as "NEXT UP · 53 min ago".
-        'hero': {'remaining': 1, 'later': [], 'all_done': False, 'kids': [],
+        'hero': hero or {'remaining': 1, 'later': [], 'all_done': False, 'kids': [],
                  'next': {'id': 'e1', 'kind': 'event', 'title': 'Pre Jazz/Ballet',
                           'location': 'Starpath Dance Academy', 'at': '1:00 PM',
                           'start': UNDERWAY_START, 'end': UNDERWAY_END,
@@ -192,7 +197,11 @@ setTimeout(() => {
         const l = doc.querySelector('.panel-card .panel-label');
         return l && l.nextElementSibling ? l.nextElementSibling.textContent.trim() : '';
       })(),
-      title: (doc.querySelector('.panel-card .text-2xl') || {}).textContent
+      title: (doc.querySelector('.panel-card .text-2xl') || {}).textContent,
+      right: (() => {
+        const t = doc.querySelector('.panel-card .text-right');
+        return t ? t.textContent.replace(/\s+/g, ' ').trim() : '';
+      })()
     },
     map: { mounted: !!doc.getElementById('board-map'),
            listRows: doc.querySelectorAll('.panel-chip').length }
@@ -290,6 +299,44 @@ def _board_json():
         with open(data, 'w', encoding='utf-8') as f:
             json.dump(_board(), f)
     return data
+
+
+# The same board, with a hero that has not started yet and knows its departure.
+LEAVING = {'remaining': 1, 'later': [], 'all_done': False, 'unbuilt': False,
+           'kids': [],
+           'next': {'id': 'e1', 'kind': 'event', 'title': 'Pre Jazz/Ballet',
+                    'location': 'Starpath Dance Academy', 'at': '5:00 PM',
+                    'start': SOON_START, 'end': SOON_END,
+                    'leave_at': SOON_LEAVE, 'leave_label': '4:20 PM',
+                    'travel_mins': 26, 'from_home': True,
+                    'driver': 'Vovo', 'color': '#8b5cf6', 'driver_id': 'drv2',
+                    'done': False, 'live': False, 'underway': False,
+                    'over': False, 'minutes_until': 146, 'minutes_to_leave': 106}}
+_LEAVING = {}
+
+
+def _run_leaving():
+    if _LEAVING:
+        return _LEAVING.get('data')
+    _LEAVING['data'] = None
+    node = shutil.which('node')
+    if not node or not _jsdom_ready(node):
+        print("  skip  node/jsdom unavailable — the hero was not drawn")
+        return None
+    probe = os.path.join(SCRATCH, 'harness.js')
+    with open(probe, 'w', encoding='utf-8') as f:
+        f.write(HARNESS)
+    page = os.path.join(SCRATCH, 'home.html')
+    with open(page, 'w', encoding='utf-8') as f:
+        f.write(_render_home())
+    data = os.path.join(SCRATCH, 'board_leaving.json')
+    with open(data, 'w', encoding='utf-8') as f:
+        json.dump(_board(hero=LEAVING), f)
+    proc = subprocess.run([node, probe, page, data], capture_output=True,
+                          text=True, cwd=SCRATCH, timeout=120)
+    check(proc.returncode == 0, f"the board threw:\n{proc.stderr[:1500]}")
+    _LEAVING['data'] = json.loads(proc.stdout.strip().splitlines()[-1])
+    return _LEAVING['data']
 
 
 def _run_dashboard():
@@ -392,6 +439,23 @@ def scenario_a_day_card_is_three_columns_wide_on_the_real_page():
           f"this morning's appointment vanished off the card: {ag['text'][:160]}")
     check(len(ag['dimmed']) == 1 and 'Dentist' in ag['dimmed'][0],
           f"exactly the past events are greyed, got {ag['dimmed']}")
+
+
+def scenario_the_hero_leads_with_the_leave_time():
+    """*"The leave time is the more important of the two pieces of
+    information."* So the pill counts down to the departure and the big number
+    is the departure; the start time stays, smaller, because it is still true
+    and still the thing everyone else is expecting."""
+    got = _run_leaving()
+    if got is None:
+        return
+    hero = got['hero']
+    check(hero['pill'] == 'leave in 1 hr 46 min',
+          f"the pill counts down to the wrong thing: {hero['pill']!r}")
+    check('4:20 PM' in (hero['right'] or ''),
+          f"the departure is not the big number: {hero['right']!r}")
+    check('for 5:00 PM' in (hero['right'] or '') and '26 min drive' in (hero['right'] or ''),
+          f"the start time and the drive have to survive as support: {hero['right']!r}")
 
 
 def scenario_a_thing_that_has_started_says_so():

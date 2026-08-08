@@ -43,7 +43,7 @@ import re
 import time
 from typing import Callable, List, Optional
 
-from services import storage
+from services import leave_by, storage
 
 # The catalog. `label` is what the setup UI calls the tile; `blurb` is the
 # sentence explaining what it is FOR, which is the thing a person picking six
@@ -250,6 +250,21 @@ def day_schedule(day: datetime.date, sched: dict = None) -> dict:
     return merged
 
 
+def _errand_leave(start: datetime.datetime, er: dict) -> dict:
+    """An errand's own travel time, as the same `leave_at` an event gets from
+    the solver's edges. Nothing when it is unknown or zero — see
+    services/leave_by on why a guessed departure is worse than none."""
+    try:
+        mins = int(round(float(er.get('travel_to_mins') or 0)))
+    except (TypeError, ValueError):
+        return {}
+    if mins <= 0:
+        return {}
+    when = start - datetime.timedelta(minutes=mins)
+    return {'leave_at': when.isoformat(), 'leave_label': _clock(when),
+            'travel_mins': mins, 'from_home': False}
+
+
 def todays_runs(target: datetime.date = None, sched: dict = None,
                 now: datetime.datetime = None) -> List[dict]:
     """Every assigned drive and scheduled errand on one day, sorted by time,
@@ -298,6 +313,13 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
             'done': done, 'live': live,
+            # WHEN TO LEAVE, which is the number a family actually plans
+            # around — the start time is when somebody else expects you.
+            # Absent when the schedule cannot support the claim; a guessed
+            # departure gets a household burned once and then the board is
+            # never believed again. Shared with the kid digest's "Leave by"
+            # (services/leave_by), so the kitchen and the phone cannot differ.
+            **(leave_by.for_run(sched, d_id, ev_id, start) or {}),
             # UNDER WAY, read off the clock. `live` is the manual flag from
             # somebody tapping a leg as started, and the same thing that makes
             # `over` clock-based makes this one: nobody taps. A drive between
@@ -324,6 +346,10 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
             'done': False, 'live': False,
+            # An errand carries its own travel time rather than an edge: the
+            # solver inserts it into a driver's chain and records what the
+            # detour costs.
+            **_errand_leave(start, er),
             'underway': bool(start <= now <= end),
             'over': bool(end < now),
         })
@@ -361,8 +387,13 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
     if nxt:
         start = _parse(nxt['start']) or now
         end = _parse(nxt['end']) or start
+        leave = _parse(nxt.get('leave_at'))
         hero['next'] = {**nxt,
                         'minutes_until': int(round((start - now).total_seconds() / 60)),
+                        # The one somebody sets an alarm by. Absent when the
+                        # schedule has no travel time for the drive.
+                        'minutes_to_leave': (int(round((leave - now).total_seconds() / 60))
+                                             if leave else None),
                         # How long it has LEFT, which is the useful number once
                         # it has started — "53 min ago" answers a question
                         # nobody standing in the kitchen is asking.

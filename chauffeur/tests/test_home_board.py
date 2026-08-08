@@ -127,6 +127,79 @@ def scenario_the_hero_is_the_next_drive_that_has_not_happened():
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
 
 
+def scenario_the_hero_says_when_to_leave():
+    """Asked for from the wall: *"it would be nice if the hero said 'leave at
+    4:20pm' or 'leave in 1 hr 46 min' instead of just telling me the event
+    starts in 2 hr 26 min — the leave time is the more important of the two."*
+
+    The app has always had the number: the solver computes the travel into
+    every drive it assigns, and the kid digest has printed "🚀 Leave by 8:47 AM"
+    since arc K5. It lived inside `main.member_day`, out of reach of the board.
+    One rule now (services/leave_by), or the kitchen and the phone eventually
+    disagree about when to put your shoes on.
+
+    The rule includes its own silence: **no travel time, no leave time**. A
+    guessed departure gets a household burned once and then the whole board is
+    never believed again."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers, storage.get_completed_drives,
+            storage.get_in_progress_drives)
+    try:
+        sched = {
+            'events': [
+                {'id': 'ballet', 'title': 'Pre Jazz/Ballet',
+                 'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+                {'id': 'later', 'title': 'Pickup',
+                 'start': _at(19).isoformat(), 'end': _at(19, 30).isoformat()},
+                {'id': 'blind', 'title': 'Unknown route',
+                 'start': _at(21).isoformat(), 'end': _at(22).isoformat()},
+            ],
+            'assignments': {'ballet': 'drv1', 'later': 'drv1', 'blind': 'drv1'},
+            'scheduled_errands': [],
+            # From home for the first, mid-chain for the second, nothing at all
+            # for the third.
+            'initial_edges': {'drv1': {'ballet': {'travel_mins': 26,
+                                                  'buffer_before_mins': 14}}},
+            'route_edges': {'drv1': {'ballet': {'from_event': 'ballet',
+                                                'to_event': 'later',
+                                                'travel_mins': 10}}},
+        }
+        storage.get_cached_schedule = lambda: sched
+        storage.get_cached_daily_schedule = lambda d: None
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        runs = {r['id']: r for r in home_board.todays_runs(now=_at(14, 34))}
+        check(runs['ballet']['leave_label'] == '4:20 PM',
+              f"5:00 start − 26 min drive − 14 min buffer = 4:20, got "
+              f"{runs['ballet'].get('leave_label')}")
+        check(runs['ballet']['from_home'],
+              "an initial edge is the driver setting out from home")
+        check(runs['later']['leave_label'] == '6:50 PM' and not runs['later']['from_home'],
+              f"a mid-chain drive has a real departure too, got {runs['later']}")
+        check('leave_at' not in runs['blind'],
+              "no travel time means no leave time — a guessed departure is "
+              "worse than none")
+
+        hero = home_board._hero(_at(14, 34), list(runs.values()))
+        check(hero['next']['id'] == 'ballet', "the hero is still the next drive")
+        check(hero['next']['minutes_to_leave'] == 106,
+              f"1 hr 46 min to leave, not 2 hr 26 min to start, got "
+              f"{hero['next']['minutes_to_leave']}")
+        check(hero['next']['minutes_until'] == 146,
+              "and the start time is still carried, because it is still true")
+
+        hero = home_board._hero(_at(21, 30), [runs['blind']])
+        check(hero['next'].get('minutes_to_leave') is None,
+              "a drive with no known travel leaves the countdown on the start")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers, storage.get_completed_drives,
+         storage.get_in_progress_drives) = orig
+
+
 def scenario_a_thing_that_has_started_is_not_next():
     """Photographed from the wall at 1:53 PM: **"NEXT UP · 53 min ago — Pre
     Jazz/Ballet"**, for a class that began at one o'clock and still had ten
