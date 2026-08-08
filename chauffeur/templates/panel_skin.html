@@ -526,6 +526,13 @@
 
     html[data-panel] ::placeholder { color: var(--panel-dim) !important; }
 
+    /* The schedule's day bands are `text-blue-200` — a pale blue picked to sit
+       on a near-black card, which is the one thing a light panel does not give
+       it. Pale blue on a pale surface is the day heading you cannot read from
+       the kitchen. It is a section mark rather than meaningful colour, so it
+       takes the accent token like every other one and flips with the theme. */
+    html[data-panel] .schedule-date-title { color: var(--panel-accent) !important; }
+
     /* Anything already carrying its own colour — the accent buttons, the
        status pills, the member chips — is deliberately left alone. Colour is
        how those things mean what they mean, and washing them into the token

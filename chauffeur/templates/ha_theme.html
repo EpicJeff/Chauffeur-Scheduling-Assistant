@@ -579,6 +579,25 @@
        `#page-header` wholesale, title and all, from before that convention
        existed. */
     html[data-display] #header-buttons { display: none !important; }
+
+    /* ...and once they are gone, the container they shared with the title has
+       nothing left to hold. The schedule's `#page-header` predates the
+       one-title-per-page convention: it is a sticky CARD, built to keep the day
+       controls in reach while the timeline scrolls under them. Hide the
+       controls and that card survives as a slab with a single word in it, while
+       every other page says its name bare against the background. Strip it back
+       to the title, and unpin it — a sticky bar with no surface of its own
+       smears the heading over the schedule as it scrolls past. */
+    html[data-display] #page-header {
+        position: static !important;
+        background: none !important;
+        border: none !important;
+        box-shadow: none !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+        padding: 0 !important;
+        display: block !important;   /* no flex row to justify a lone title in */
+    }
 </style>
 
 {# The panel design system — tokens, the photographic background, and the
