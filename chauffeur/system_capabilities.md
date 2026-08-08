@@ -910,3 +910,8 @@ From two photographs of the running panel — "dark mode is pretty good, light m
 - **The home board was capped at `max-w-[1600px] mx-auto`.** Every other page is a document and reads better in a column; the board is a WALL, and a 2500px panel spending 900px of itself on two empty margins is a smaller board with a bigger television around it. The page padding is now the only inset.
 - **Four tiles across** (`sm:2 lg:3 xl:4`). Three was the right number under the 1600px cap; edge to edge it made 500px-wide tiles carrying a four-item list, and the board ran off the bottom of the screen rather than filling it. The ladder still steps down — a 10" tablet in portrait gets one column, not four columns of nothing.
 - **Tile widths go to 4** in `panel_tile_spans` (rows stay at 3). A grid four wide whose tiles top out at three is a full-width layout the household can see but cannot ask for. Clamped in `spanStyle()` as well as the picker, because it is stored config.
+
+## The tiles line up (v2.119.1)
+
+- **`items-start` let every card shrink to its own content**, so a row of four ended on four different lines — and a tile the household had given two rows drew itself one row tall with a hole underneath, which reads as a bug rather than as the size somebody chose. The grid is `items-stretch` now: tiles fill their row, content stays top-aligned inside.
+- The trade is real and taken deliberately: the shortest card in a row carries some empty space. A ragged bottom edge costs the board its shape, and shape is what you read from across a room; slack inside one card costs nothing at that distance.
