@@ -368,6 +368,38 @@
         color: var(--panel-dim) !important;
     }
 
+    /* Ink ON A PHOTOGRAPH is not page ink.
+       The mapping above is right for text on a surface: it follows the panel
+       theme, so light mode gets dark ink. A trip card is not a surface — it is
+       a photograph with a dark scrim ramped over its lower half, and the text
+       is a caption on that scrim. Mapped like page ink it turned dark grey on
+       a dark scrim in light mode, which is the "text on trip blocks is hard to
+       read" reported from the wall.
+       A caption over a scrim is white in BOTH themes, because the thing under
+       it is dark in both themes. */
+    html[data-panel] .trip-card h2,
+    html[data-panel] .trip-card .text-white,
+    html[data-panel] .trip-card .text-gray-200,
+    html[data-panel] .trip-card .text-gray-300,
+    html[data-panel] .trip-card .text-gray-400 {
+        color: #fff !important;
+    }
+    html[data-panel] .trip-card .text-gray-300,
+    html[data-panel] .trip-card .text-gray-400 {
+        color: rgba(255, 255, 255, 0.88) !important;
+    }
+
+    /* And the scrim has to earn that white. The card's own gradient fades to
+       20% opacity by 60% of the height, which is enough over the dark page it
+       was designed for and not enough over a bright photograph — the titles in
+       the screenshot sit exactly there. Deeper and taller on a panel only. */
+    html[data-panel] .trip-card::before {
+        background: linear-gradient(to top,
+            rgba(2, 6, 23, 0.92) 0%,
+            rgba(2, 6, 23, 0.62) 45%,
+            rgba(2, 6, 23, 0.15) 100%) !important;
+    }
+
     /* Edges. */
     html[data-panel] .border-gray-950,
     html[data-panel] .border-gray-900,

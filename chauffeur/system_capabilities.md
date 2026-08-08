@@ -1037,3 +1037,12 @@ Reported from using it: *"It only generates meals up until the next grocery run.
 - **The picture rides on the page's own row now**, the way a tile's size rides on the tile's row. One list: order it, remove from it, add to it from the chips, and set each page's photograph where the page already is.
 - **A page dropped from the shelf keeps its picture.** Making room for Chores must not silently discard the photograph somebody chose for the meals page — put it back and it is still there. The honest cost of one list instead of two: a page that is not on the shelf has nowhere to edit its picture. Tiles can still open such a page, so this is a real (small) loss, taken deliberately.
 - The board-wide background keeps its own field and is now described as what it is: the picture behind every page that has not been given its own.
+
+## Ink on a photograph is not page ink (v2.123.1)
+
+Two light-mode readability faults from the wall, one root cause: the skin maps Tailwind greys to the panel's ink, which is right for text on a SURFACE and wrong for text on a PICTURE.
+
+- **Trip card captions went dark on a dark scrim.** A trip card is a photograph with a scrim ramped over its lower half; its title and dates are a caption on that scrim, not page text. Mapped as page ink they followed the theme and turned dark grey in light mode — over a scrim that is dark in both themes. They are forced white on a panel now. A caption over a scrim is white in both themes, because what is under it is dark in both.
+- **The scrim was deepened to earn that white.** The card's own gradient fades to 20% opacity by 60% of its height — enough over the dark page it was drawn for, not enough over a bright photograph, which is exactly where the titles sit. Panel-only, so the browser card is untouched.
+- **The cart chips had no surface at all**, so there was nothing for the skin to map: an outline and a word floating on a bright sky. Fixed with `bg-gray-800` in the app's own grey vocabulary rather than a panel-only override — the skin maps it to glass and the browser keeps its dark chip.
+- Worth remembering: **the grey mapping assumes a surface underneath.** Anything drawn over an image needs its own answer, and anything with no background class is invisible to the mapping entirely.

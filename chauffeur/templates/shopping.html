@@ -1227,13 +1227,19 @@
                              of…", which described them as a list of things the
                              family was already out of rather than as the way to
                              say so. The heading is now the ACTION and the chips
-                             carry a + until they are on the list. -->
+                             carry a + until they are on the list.
+                             The un-picked state carries `bg-gray-800` so it has
+                             a SURFACE. Without one it was an outline and a word
+                             floating on the panel's photograph, and in light
+                             mode it disappeared into a bright sky. The grey is
+                             the app's own vocabulary, so the panel skin maps it
+                             to glass and the browser keeps its dark chip. -->
                         <button @click="outOf(s.name)" :disabled="stapleBusy === s.name"
                             class="px-4 py-3 rounded-xl text-sm font-bold border-2 shadow-sm transition-all
                                    disabled:opacity-50 active:scale-95 flex items-center gap-2"
                             :class="isOnList(s.name)
                                 ? 'bg-pink-500/20 border-pink-400 text-pink-300'
-                                : 'border-gray-600 hover:border-pink-400'">
+                                : 'bg-gray-800 border-gray-600 hover:border-pink-400'">
                             <span class="text-base leading-none"
                                 x-text="isOnList(s.name) ? '✓' : '+'"></span>
                             <span x-text="s.name"></span>

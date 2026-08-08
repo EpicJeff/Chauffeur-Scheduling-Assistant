@@ -319,6 +319,39 @@ def scenario_a_page_never_hides_its_own_name_on_a_panel():
               f"?{param} does not mark a display surface, so it still flashes")
 
 
+def scenario_ink_on_a_photograph_is_not_page_ink():
+    """Reported from the wall in light mode: the text on the trip cards is hard
+    to read, and the cart chips get lost in the background.
+
+    Two shapes of the same mistake. The skin maps Tailwind greys to the panel's
+    ink, which is right for text on a SURFACE and wrong for text on a
+    photograph: a trip card is a picture with a dark scrim ramped over it, so
+    light mode turned the caption dark grey on a dark scrim. A caption over a
+    scrim is white in both themes, because what is under it is dark in both.
+
+    And a control with no background at all has nothing for the skin to map —
+    the cart chips were an outline and a word floating on a bright sky. The fix
+    is to give them a surface in the app's own grey vocabulary, not a
+    panel-only override.
+    """
+    check('html[data-panel] .trip-card h2' in SKIN,
+          "trip card captions are mapped as page ink again, so they go dark on "
+          "a dark scrim in light mode")
+    ink = SKIN[SKIN.index('html[data-panel] .trip-card h2'):]
+    ink = ink[:ink.index('/* Edges. */')]
+    check('#fff' in ink, "the caption is no longer forced white over the photo")
+    check('.trip-card::before' in ink,
+          "the scrim is not deepened on a panel, so white text still has to "
+          "survive whatever the photograph happens to be")
+
+    shopping = open(os.path.join(TPL, 'shopping.html'), encoding='utf-8').read()
+    chip = shopping[shopping.index("@click=\"outOf(s.name)\""):]
+    chip = chip[:chip.index('</button>')]
+    check('bg-gray-800' in chip,
+          "the cart chips have no surface, so on a panel they are an outline "
+          "and a word on a photograph")
+
+
 def scenario_no_page_title_carries_an_emoji():
     """Three of eleven had one, which is worse than all or none: the icon
     shifts the first letter right, so those titles did not line up with the
