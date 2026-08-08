@@ -6386,9 +6386,13 @@ def _build_kid_digests(target_date=None):
             if r.get('event_type') != 'background_trip':
                 continue
             lines.append(_kid_trip_line(r, target))
-            span = _kid_trip_span(r)
-            if span[0] is not None:
-                away.append(span)
+            # Suppression takes the span whether or not its EDGES are
+            # trustworthy: a clipped span still covers the days it does cover,
+            # and every one of those is a day the kid is genuinely away. Only
+            # the announcements need certainty.
+            first, last, _trusted = _kid_trip_span(r)
+            if first is not None:
+                away.append((first, last))
         for r in rides:
             if r.get('event_type') == 'background_trip':
                 continue
@@ -6474,8 +6478,12 @@ def _kid_trip_span(ride):
     one. Every morning of a camp already under way, the kids were told it was
     beginning.
 
-    The old scan stays as the fallback for slices cached before this shipped,
-    and it is still honest-but-short rather than a guess.
+    Returns (first, last, trusted). `trusted` is False when the answer came
+    from the slice scan AND the scan ran into the edge of the window, so the
+    span may be a clipping rather than the trip. A caller must not announce a
+    beginning or a homecoming it cannot prove — that is what this whole
+    function exists to stop, and a cache written before `span_start` shipped
+    would otherwise go on doing it until the next refresh.
     """
     import datetime as _dt
 
@@ -6485,20 +6493,30 @@ def _kid_trip_span(ride):
         except (ValueError, TypeError):
             return None
 
-    span = (_naive(ride.get('span_start')), _naive(ride.get('span_end')))
-    if span[0] and span[1]:
-        return span
+    first, last = _naive(ride.get('span_start')), _naive(ride.get('span_end'))
+    if first and last:
+        return first, last, True
 
     base_id = str(ride.get('id') or '').split('_slice_')[0]
-    starts, ends = [], []
+    starts, ends, all_days = [], [], []
     for ev in (storage.get_cached_schedule() or {}).get('events', []):
-        if str(ev.get('id', '')).split('_slice_')[0] != base_id:
-            continue
         s, e = _naive(ev.get('start')), _naive(ev.get('end'))
-        if s and e:
+        if not (s and e):
+            continue
+        all_days.append(s.date())
+        if str(ev.get('id', '')).split('_slice_')[0] == base_id:
             starts.append(s)
             ends.append(e)
-    return (min(starts), max(ends)) if starts else (None, None)
+    if not starts:
+        return None, None, False
+    first, last = min(starts), max(ends)
+    # The window is what clips. If the trip's first slice sits on the earliest
+    # day the cache holds, there may well be more trip behind it that was never
+    # sliced; same at the far end. Only a trip with daylight on both sides can
+    # be trusted to be the whole trip.
+    trusted = bool(all_days) and (first.date() > min(all_days)
+                                  and last.date() < max(all_days))
+    return first, last, trusted
 
 
 def _kid_trip_line(ride, target):
@@ -6506,7 +6524,7 @@ def _kid_trip_line(ride, target):
     background_trip slice into a span-aware line."""
     import datetime as _dt
     title = (ride.get('title') or 'Trip').replace('✈️', '').strip()
-    first, last = _kid_trip_span(ride)
+    first, last, trusted = _kid_trip_span(ride)
     if first is None:
         return f"🧳 {title}"
     # An all-day calendar event ends at midnight of the day AFTER the last day
@@ -6517,6 +6535,14 @@ def _kid_trip_line(ride, target):
     if last_date > first.date() and last.time() == _dt.time(0, 0):
         last_date -= _dt.timedelta(days=1)
     n_days = max(1, (last_date - first.date()).days + 1)
+    # A span the window may have clipped is not something to make an
+    # announcement out of. "Away" is true whatever the real dates are;
+    # "begins!", "day 3 of 5" and "coming home" are all claims about edges this
+    # span might not have. The kids read these lines as facts about their day,
+    # and being told a camp is starting on the morning of its last day is worse
+    # than being told nothing about which day it is.
+    if not trusted:
+        return f"🏕️ {title} — away"
     if target == first.date():
         line = f"🧳 {title} — {n_days}-day adventure begins! 🎉" if n_days > 1 \
             else f"🧳 {title} begins! 🎉"

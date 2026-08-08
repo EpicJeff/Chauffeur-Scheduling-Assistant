@@ -221,7 +221,53 @@ def scenario_an_all_day_trip_does_not_come_home_a_day_late():
           "an exclusive midnight end invented an extra day of trip")
 
 
+def scenario_a_cache_with_no_span_never_announces_what_it_cannot_prove():
+    """The state a running install is actually in the moment the fix ships:
+    every cached slice predates `span_start`, so the code falls back to the
+    scan — which is the very thing that was wrong. Shipping a fix that only
+    starts working after the next schedule refresh means the family goes on
+    reading the bug and being told it was fixed.
+
+    The window is what clips, so a trip whose slices run to the edge of the
+    cache cannot be shown to start or end there. "Away" is true whatever the
+    real dates turn out to be; "begins!" is a claim about an edge this span
+    might not have.
+    """
+    import main
+    day = lambda n: TODAY + datetime.timedelta(days=n)  # noqa: E731
+
+    def slice_ev(date, start_h=0):
+        return {'id': f'camp_slice_{date.isoformat()}', 'title': 'Camp Kesem',
+                'event_type': 'background_trip',
+                'start': datetime.datetime.combine(date, datetime.time(start_h, 0)).isoformat(),
+                'end': datetime.datetime.combine(date + datetime.timedelta(days=1),
+                                                 datetime.time(0, 0)).isoformat()}
+
+    # A camp that started before the window: its slices reach the first day the
+    # cache holds, so the scan cannot see behind them.
+    clipped = [slice_ev(TODAY), slice_ev(day(1))]
+    storage.set_cached_schedule({'events': clipped})
+    line = main._kid_trip_line(clipped[0], TODAY)
+    check('begins' not in line, f"an unprovable span still announced a start: {line}")
+    check('away' in line.lower(), f"expected an honest away line, got {line}")
+
+    # The same cache with a day of ordinary schedule on either side: nothing
+    # was clipped, so the edges are real and the fanfare is earned.
+    bounded = [{'id': 'e1', 'title': 'Practice', 'event_type': 'standard',
+                'start': datetime.datetime.combine(day(-1), datetime.time(17, 0)).isoformat(),
+                'end': datetime.datetime.combine(day(-1), datetime.time(18, 0)).isoformat()},
+               slice_ev(TODAY, start_h=10), slice_ev(day(1)),
+               {'id': 'e2', 'title': 'Practice', 'event_type': 'standard',
+                'start': datetime.datetime.combine(day(3), datetime.time(17, 0)).isoformat(),
+                'end': datetime.datetime.combine(day(3), datetime.time(18, 0)).isoformat()}]
+    storage.set_cached_schedule({'events': bounded})
+    line2 = main._kid_trip_line(bounded[1], TODAY)
+    check('begins' in line2, f"a span with daylight on both sides is real: {line2}")
+    storage.set_cached_schedule({'events': []})
+
+
 SCENARIOS = [
+    scenario_a_cache_with_no_span_never_announces_what_it_cannot_prove,
     scenario_a_trip_already_under_way_does_not_keep_beginning,
     scenario_an_all_day_trip_does_not_come_home_a_day_late,
     scenario_builder_rides_and_reassurance,
