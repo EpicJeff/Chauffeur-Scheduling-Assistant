@@ -125,13 +125,33 @@ def scenario_the_grey_mapping_never_applies_a_filter():
     two `z-index: -2` background layers — trapping the photograph behind the
     element it was supposed to sit behind. Blur belongs on `.panel-card`, which
     is applied deliberately to leaf cards that contain no fixed chrome."""
-    seg = SKIN[SKIN.index('── Surfaces.'):SKIN.index('/* Ink. */')]
     import re
-    for line in re.findall(r'^\s*-?(?:webkit-)?backdrop-filter:.*$', seg, re.M):
-        check('none' in line,
-              f"the grey mapping applies a filter again: {line.strip()}")
-    check('html[data-panel] body.bg-gray-900' in SKIN,
-          "the body is no longer excluded from the surface mapping")
+    # The PAGE tiers must stay filter-free — those are the ones pages put on
+    # <body>, and that is exactly how the panel got flattened.
+    page_tier = SKIN[SKIN.index('html[data-panel] .bg-gray-950,'):]
+    page_tier = page_tier[:page_tier.index('}')]
+    check('backdrop-filter' not in page_tier,
+          "the page-level greys carry a filter again — they are on <body> on "
+          "several pages, which traps the shelf and the background layers")
+
+    body_rule = SKIN[SKIN.index('html[data-panel] body,'):]
+    body_rule = body_rule[:body_rule.index('}')]
+    check('filter: none' in body_rule,
+          "the body no longer forces filter: none")
+
+    # Blur IS allowed on the card tiers, and this is the condition that makes
+    # it safe: no page may put a card-tier grey on <body>. Checked against the
+    # templates rather than asserted in prose, because the day one does, the
+    # panel's fixed chrome quietly breaks again.
+    import glob
+    for path in glob.glob(os.path.join(TPL, '*.html')):
+        body_tag = re.search(r'<body[^>]*class="([^"]*)"', open(path, encoding='utf-8').read())
+        if not body_tag:
+            continue
+        for tier in ('bg-gray-800', 'bg-gray-700', 'bg-gray-600'):
+            check(tier not in body_tag.group(1),
+                  f"{os.path.basename(path)} puts {tier} on <body>; that tier is "
+                  f"blurred, and a filter on the body traps every fixed element")
 
 
 def scenario_the_panel_canvas_is_never_browser_white():

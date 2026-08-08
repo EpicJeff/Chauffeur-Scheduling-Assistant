@@ -28,8 +28,8 @@
         /* Mapped page surfaces. More opaque than the board's glass because
            they carry no blur — see the surfaces block below. */
         --panel-surface-1: rgb(10 13 22 / 0.62);
-        --panel-surface-2: rgb(18 24 38 / 0.78);
-        --panel-surface-3: rgb(30 38 56 / 0.88);
+        --panel-surface-2: rgb(18 24 38 / 0.55);
+        --panel-surface-3: rgb(32 40 60 / 0.68);
         --panel-line: rgb(255 255 255 / 0.10);
         --panel-fg: #f3f4f6;
         --panel-dim: rgb(255 255 255 / 0.55);
@@ -50,9 +50,9 @@
         --panel-card: rgb(255 255 255 / 0.88);
         --panel-card-hi: rgb(255 255 255 / 0.96);
         --panel-card-lo: rgb(255 255 255 / 0.72);
-        --panel-surface-1: rgb(255 255 255 / 0.78);
-        --panel-surface-2: rgb(255 255 255 / 0.90);
-        --panel-surface-3: rgb(241 245 249 / 0.96);
+        --panel-surface-1: rgb(255 255 255 / 0.62);
+        --panel-surface-2: rgb(255 255 255 / 0.72);
+        --panel-surface-3: rgb(255 255 255 / 0.86);
         --panel-line: rgb(15 23 42 / 0.13);
         --panel-fg: #0f172a;
         --panel-dim: rgb(15 23 42 / 0.62);
@@ -68,9 +68,9 @@
             --panel-card: rgb(255 255 255 / 0.88);
             --panel-card-hi: rgb(255 255 255 / 0.96);
             --panel-card-lo: rgb(255 255 255 / 0.72);
-            --panel-surface-1: rgb(255 255 255 / 0.78);
-            --panel-surface-2: rgb(255 255 255 / 0.90);
-            --panel-surface-3: rgb(241 245 249 / 0.96);
+            --panel-surface-1: rgb(255 255 255 / 0.62);
+            --panel-surface-2: rgb(255 255 255 / 0.72);
+            --panel-surface-3: rgb(255 255 255 / 0.86);
             --panel-line: rgb(15 23 42 / 0.13);
             --panel-fg: #0f172a;
             --panel-dim: rgb(15 23 42 / 0.62);
@@ -224,7 +224,14 @@
        Because there is no blur to help legibility, the mapped surfaces are
        more opaque than the board's own glass — these are separate tokens for
        exactly that reason. */
-    /* 900 and 950 are the PAGE background in Tailwind's convention, not a
+    /* The blur below is on the CARD tiers only (800/700/600) and never on the
+       page tiers (900/950). That is what makes it safe: a filter turns an
+       element into a containing block for fixed descendants, and the pages
+       that put a grey on <body> use 900 or 950 — never 800. The panel's fixed
+       chrome (shelf, fade, orb, chat bar, background layers) all sit as direct
+       children of <body>, so nothing above them ever filters.
+
+       900 and 950 are the PAGE background in Tailwind's convention, not a
        card — pages use them on the big wrapper that fills the content area.
        Mapping them to a surface laid an opaque slab straight over the
        photograph: you could see the picture behind the shelf, where the fade
@@ -251,6 +258,8 @@
     html[data-panel] .bg-gray-800\/80,
     html[data-panel] .bg-gray-800\/90 {
         background-color: var(--panel-surface-2) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(135%);
+        backdrop-filter: blur(14px) saturate(135%);
     }
 
     html[data-panel] .bg-gray-700,
@@ -263,6 +272,8 @@
     html[data-panel] .bg-gray-700\/90,
     html[data-panel] .bg-gray-600 {
         background-color: var(--panel-surface-3) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(135%);
+        backdrop-filter: blur(14px) saturate(135%);
     }
 
     /* The body is never a surface. It carries a grey on several pages, and the
@@ -284,6 +295,25 @@
        left on its own hard-coded slate. */
     html[data-panel] .glass-panel {
         background: var(--panel-card) !important;
+        border-color: var(--panel-line) !important;
+    }
+
+    /* FullCalendar draws its grid from its OWN variables, which default to a
+       light `#ddd` — over a photograph that is a cage of white lines, and no
+       amount of Tailwind mapping touches it because the borders are not
+       Tailwind. Pointing its variables at the token set is the whole fix; the
+       explicit td/th rule catches the cells that hard-code the colour. */
+    html[data-panel] {
+        --fc-border-color: var(--panel-line);
+        --fc-page-bg-color: transparent;
+        --fc-neutral-bg-color: transparent;
+        --fc-today-bg-color: rgb(125 211 252 / 0.10);
+    }
+
+    html[data-panel] .fc-theme-standard td,
+    html[data-panel] .fc-theme-standard th,
+    html[data-panel] .fc-theme-standard .fc-scrollgrid,
+    html[data-panel] .fc-scrollgrid-section > * {
         border-color: var(--panel-line) !important;
     }
 
