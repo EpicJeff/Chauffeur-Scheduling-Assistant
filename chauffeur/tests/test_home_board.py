@@ -247,6 +247,113 @@ def scenario_the_hero_and_the_drives_tile_cannot_contradict_each_other():
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
 
 
+def scenario_the_board_reads_the_day_the_drives_page_reads():
+    """Reported from the wall: an event changed, the schedule re-solved, and
+    the board said there was nothing left to drive today — while the Drives
+    page, two taps away, listed the drives. It came back on its own several
+    minutes later.
+
+    The two surfaces were reading different caches. `/api/schedule?start&end`
+    (the page) assembles its answer from the PER-DAY rows, rewritten the moment
+    the solver finishes a day. `get_cached_schedule()` (the board) returns the
+    combined global cache, which `main.refresh_schedule_logic` writes **only
+    when called with no date range** — so a single day re-solving never touches
+    it, and the five-minute poller is what eventually repairs it.
+
+    The daily row can never be the staler of the two, because the global cache
+    is compiled from those rows. So the board reads the day's own row first."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers, storage.get_completed_drives,
+            storage.get_in_progress_drives)
+    try:
+        today = datetime.date.today()
+        # The global cache: yesterday's compile. The 5pm practice is there but
+        # nobody is assigned to it any more, and it names a drive that has since
+        # been dropped from the day.
+        storage.get_cached_schedule = lambda: {
+            'events': [{'id': 'stale', 'title': 'Cancelled thing',
+                        'start': _at(17).isoformat(), 'end': _at(18).isoformat()},
+                       {'id': 'ballet', 'title': 'Ballet',
+                        'start': _at(19).isoformat(), 'end': _at(20).isoformat()}],
+            'assignments': {'stale': 'drv1'},
+            'scheduled_errands': [],
+            'initial_edges': {'drv1': {'stale': {'travel_mins': 30}}},
+        }
+        # The day's own row, written by the solve that has just finished.
+        storage.get_cached_daily_schedule = lambda d: ({
+            'schedule': {
+                'events': [{'id': 'ballet', 'title': 'Pre Jazz/Ballet',
+                            'start': _at(17, 30).isoformat(),
+                            'end': _at(18, 30).isoformat()}],
+                'assignments': {'ballet': 'drv1'},
+                'scheduled_errands': [],
+                'initial_edges': {'drv1': {'ballet': {'travel_mins': 12}}},
+            }} if d == today.isoformat() else None)
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []
+
+        sched = home_board.day_schedule(today)
+        titles = {e['id']: e['title'] for e in sched['events']}
+        check(titles['ballet'] == 'Pre Jazz/Ballet',
+              f"the day's own copy of the event wins, got {titles}")
+        check(sched['assignments'] == {'ballet': 'drv1'},
+              "an assignment the re-solve took away must not survive the merge — "
+              f"that is a driver's name on the wall for a drive nobody is doing: "
+              f"{sched['assignments']}")
+        check(sched['initial_edges'] == {'drv1': {'ballet': {'travel_mins': 12}}},
+              f"the edge maps prune with their events, got {sched['initial_edges']}")
+
+        now = _at(16)
+        runs = home_board.todays_runs(now=now, sched=sched)
+        check([r['id'] for r in runs] == ['ballet'],
+              f"the board sees exactly what the Drives page sees, got {runs}")
+        check(home_board._hero(now, runs)['next']['id'] == 'ballet',
+              "and the hero stops saying the day is empty")
+
+        # No row for the day at all -> the global cache is all there is, and
+        # nothing about it may be broken by the merge.
+        storage.get_cached_daily_schedule = lambda d: None
+        check(home_board.day_schedule(today)['assignments'] == {'stale': 'drv1'},
+              "without a daily row the global cache is used untouched")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers, storage.get_completed_drives,
+         storage.get_in_progress_drives) = orig
+
+
+def scenario_an_empty_cache_is_not_a_day_with_no_drives():
+    """Two different sentences. "No drives today" is a claim about the day;
+    an empty cache is the absence of any claim — a fresh install, a cleared
+    cache, the minute before the first refresh lands. A wall panel that says
+    the first when it means the second is how a board stops being believed."""
+    orig = (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+            storage.get_all_drivers)
+    try:
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo'}]
+        storage.get_cached_daily_schedule = lambda d: None
+
+        storage.get_cached_schedule = lambda: {}
+        tile = home_board._tile_drives(_at(12), runs=[], sched={})
+        check('Waiting' in tile['empty'],
+              f"an empty cache must say so, got {tile}")
+        check(home_board._hero_unbuilt({}), "and the hero must know too")
+
+        # A real day that simply has no drives on it still says the confident
+        # thing, because there it is true.
+        sched = {'events': [{'id': 'x', 'title': 'Dentist',
+                             'start': _at(9).isoformat(), 'end': _at(10).isoformat()}],
+                 'assignments': {}}
+        tile = home_board._tile_drives(_at(12), runs=[], sched=sched)
+        check(tile['empty'] == "No drives on the schedule today.",
+              f"a real empty day keeps its own sentence, got {tile}")
+        check(not home_board._hero_unbuilt(sched), "which is not the unbuilt state")
+    finally:
+        (storage.get_cached_schedule, storage.get_cached_daily_schedule,
+         storage.get_all_drivers) = orig
+
+
 def scenario_ghost_drivers_never_reach_the_wall():
     """A ghost driver is the solver's "nobody real can do this" placeholder.
     Naming one on the kitchen wall would be inventing a person."""

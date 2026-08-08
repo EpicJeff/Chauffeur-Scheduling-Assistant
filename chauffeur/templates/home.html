@@ -215,10 +215,24 @@
                     <div class="panel-dim mt-1">Nothing left to drive today.</div>
                 </div>
             </template>
-            <template x-if="!hero.next && !hero.all_done">
+            <template x-if="!hero.next && !hero.all_done && !hero.unbuilt">
                 <div class="p-6 text-center">
                     <div class="text-2xl md:text-3xl font-black panel-text">No drives today</div>
                     <div class="panel-dim mt-1">Nothing on the schedule that needs a driver.</div>
+                </div>
+            </template>
+
+            <!-- The third empty state, and the one that was wearing the second
+                 one's clothes: there is no schedule in the cache AT ALL. A
+                 fresh install, a cleared cache, the minute before the first
+                 refresh lands. "No drives today" is a confident claim about a
+                 day; this is the absence of any claim, and a wall panel that
+                 says the first when it means the second is how a board stops
+                 being believed. -->
+            <template x-if="!hero.next && hero.unbuilt">
+                <div class="p-6 text-center">
+                    <div class="text-2xl md:text-3xl font-black panel-text">Building the schedule…</div>
+                    <div class="panel-dim mt-1">Nothing has been worked out yet — this page will fill in.</div>
                 </div>
             </template>
 

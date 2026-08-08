@@ -157,6 +157,99 @@ def _driver_index() -> dict:
     return idx
 
 
+def day_schedule(day: datetime.date, sched: dict = None) -> dict:
+    """The cached schedule, with ONE day taken from the freshest source there is.
+
+    Reported from the wall: an event changed, the schedule re-solved, and the
+    board said there was nothing left to drive today — while the Drives page,
+    two taps away, listed the drives. It came back on its own several minutes
+    later.
+
+    The two surfaces were reading different caches. `/api/schedule?start&end`
+    (the page) assembles its answer from the PER-DAY rows, which the solver
+    rewrites the moment it finishes a day. `storage.get_cached_schedule()` (the
+    board, and this module's only source until now) returns the combined
+    global cache — and that is written **only by a refresh with no date range**
+    (`main.refresh_schedule_logic`: `if not start_date_str and not
+    end_date_str`). A single day re-solving never touches it. It is repaired by
+    the five-minute poller, which is precisely the "wait a few minutes and it
+    fixes itself" the family saw.
+
+    So the board reads the day's own row first. This cannot go the other way:
+    the global cache is COMPILED FROM these rows, so a daily row is never the
+    staler of the two. The global cache still supplies everything that is not
+    per-day — calendar colours, the driver roster, the home location.
+    """
+    sched = sched if sched is not None else (storage.get_cached_schedule() or {})
+    try:
+        daily = (storage.get_cached_daily_schedule(day.isoformat()) or {}).get('schedule')
+    except Exception as e:
+        print(f"[home_board] daily schedule read failed: {e}")
+        daily = None
+    if not daily:
+        return sched
+
+    day_ids = {e.get('id') for e in (daily.get('events') or [])}
+    if not day_ids:
+        return sched
+
+    # Authoritative for the whole DAY, not only for the ids it happens to list.
+    # An event the re-solve dropped is gone from the daily row, so keying the
+    # merge on that row's ids alone would leave its assignment behind — a
+    # driver's name on the wall for a drive nobody is doing.
+    drop = set(day_ids)
+    for e in (sched.get('events') or []):
+        start = _parse(e.get('start'))
+        if start and start.date() == day:
+            drop.add(e.get('id'))
+
+    merged = dict(sched)
+
+    # The day's own events replace the global copies of themselves — same ids,
+    # possibly new times, which is the whole reason the day was re-solved. It is
+    # a UNION rather than a replacement because a daily row holds the events the
+    # solver was given, which is not the whole day: an appointment nobody drives
+    # to is on the calendar tile and never in there.
+    events = {e.get('id'): e for e in (sched.get('events') or [])}
+    for e in (daily.get('events') or []):
+        events[e.get('id')] = e
+    merged['events'] = list(events.values())
+
+    def rekey(key):
+        """Drop the global cache's entries for this day, then lay the day's own
+        over the top. Merging without the drop would keep an assignment the
+        re-solve has since taken away, which is a driver's name on the wall for
+        a drive they are no longer doing."""
+        out = {k: v for k, v in (sched.get(key) or {}).items() if k not in drop}
+        out.update(daily.get(key) or {})
+        return out
+
+    merged['assignments'] = rekey('assignments')
+    merged['ghost_assignments'] = rekey('ghost_assignments')
+    merged['car_assignments'] = rekey('car_assignments')
+
+    for key in ('unassigned', 'no_location'):
+        rest = [e for e in (sched.get(key) or []) if e not in drop]
+        merged[key] = rest + list(daily.get(key) or [])
+
+    # The timeline slice reads these; `edges[driver][event]` is keyed by event
+    # underneath, so the same drop-then-overlay applies one level down.
+    for key in ('route_edges', 'initial_edges', 'final_edges'):
+        out = {}
+        for d_id, by_event in (sched.get(key) or {}).items():
+            rows = {k: v for k, v in (by_event or {}).items() if k not in drop}
+            if rows:
+                out[d_id] = rows
+        for d_id, by_event in (daily.get(key) or {}).items():
+            out.setdefault(d_id, {}).update(by_event or {})
+        merged[key] = out
+
+    errands = [er for er in (sched.get('scheduled_errands') or [])
+               if str(_parse(er.get('start_time')) or '')[:10] != day.isoformat()]
+    merged['scheduled_errands'] = errands + list(daily.get('scheduled_errands') or [])
+    return merged
+
+
 def todays_runs(target: datetime.date = None, sched: dict = None,
                 now: datetime.datetime = None) -> List[dict]:
     """Every assigned drive and scheduled errand on one day, sorted by time,
@@ -264,7 +357,7 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
     nxt = now_on or (upcoming[0] if upcoming else None)
 
     hero = {'next': None, 'remaining': len(upcoming), 'later': [], 'all_done': False,
-            'kids': []}
+            'unbuilt': False, 'kids': []}
     if nxt:
         start = _parse(nxt['start']) or now
         end = _parse(nxt['end']) or start
@@ -280,6 +373,14 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
         # answer; a blank hero reads as a broken panel.
         hero['all_done'] = True
     return hero
+
+
+def _hero_unbuilt(sched: dict) -> bool:
+    """No schedule in the cache at all — a fresh install, a cleared cache, or
+    the window before the first refresh finishes. "No drives today" is a
+    confident claim about a day; this is the absence of any claim, and the two
+    must not read the same on a wall."""
+    return not (sched or {}).get('events')
 
 
 # --- tile builders --------------------------------------------------------
@@ -380,8 +481,16 @@ def _tile_drives(now, runs, sched=None, **_):
     if not rest:
         if not storage.get_all_drivers():
             return None                      # no drivers: the feature is unused
-        return {'empty': "Nothing left to drive today." if runs
-                else "No drives on the schedule today."}
+        if runs:
+            return {'empty': "Nothing left to drive today."}
+        # NOTHING IN THE CACHE AT ALL is not the same claim as a day with no
+        # drives on it, and saying the confident version of a sentence you
+        # cannot support is how this board loses the family's trust. An empty
+        # cache happens on a fresh install, after the caches are cleared, and
+        # in the window before the first refresh finishes.
+        if not (sched or {}).get('events'):
+            return {'empty': "Waiting for the schedule to be built."}
+        return {'empty': "No drives on the schedule today."}
 
     sched = sched if sched is not None else (storage.get_cached_schedule() or {})
     return {
@@ -1128,7 +1237,17 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # read ONCE and handed round for the same reason it is fetched once — three
     # tiles asking storage for it separately is three chances to draw a board
     # out of step with itself.
+    # Every day the board can show comes off its OWN cache row, which the
+    # solver rewrites the moment it finishes that day; the global cache they
+    # are merged into is only rebuilt by a full-range refresh, five minutes
+    # apart. That gap is what made the board say there was nothing left to
+    # drive while the Drives page, two taps away, listed it. The calendar tile
+    # reaches further than today, so the merge does too — one wall that
+    # disagrees with itself by a few minutes per day is not better than one
+    # that disagrees by five.
     sched = storage.get_cached_schedule() or {}
+    for i in range(max(1, agenda_days(settings))):
+        sched = day_schedule(now.date() + datetime.timedelta(days=i), sched)
     runs = todays_runs(now.date(), sched=sched, now=now)
 
     tiles = []
@@ -1152,6 +1271,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     # child is the thing a family actually walks up to the panel to read, and
     # "Each Kid" was never a phrase anybody says out loud.
     hero = _hero(now, runs)
+    hero['unbuilt'] = _hero_unbuilt(sched)
     kid_tile = next((t for t in tiles if t['key'] == 'kids'), None)
     if kid_tile:
         hero['kids'] = kid_tile['data'].get('kids') or []
