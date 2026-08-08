@@ -870,3 +870,8 @@ From two photographs of the running panel — "dark mode is pretty good, light m
 - **`trip.html` never included `ha_theme.html` at all**, so it got no `data-panel` attribute and not one panel rule could reach it — which is why it stayed fixed-width with a gradient-text title while everything else changed. It now has the include, the `.panel-page` frame and `.panel-page-title`, and it is **no longer exempt** from either the skin test or the title test. `config.html` had the identical omission (found in v2.115.0); these two were the last.
 - **Trip tiles were a screen and a half each.** Three columns on a 2500px panel is an 800px-wide card, and `aspect-[4/3]` makes that 600px tall. Now up to five columns with `aspect-[16/10]` and a height cap.
 - A note for the next time a rule "does nothing": two of the last three theme bugs were a *losing* rule, not a wrong value — an `!important` at equal specificity from `ha_theme`, and a shorthand that only looked cleared. Read the computed style and find the rule that wins before touching the one that lost.
+
+## A field that is its own container (v2.117.5)
+
+- The Argyle bar is **one textarea inside a rounded shell**, and the panel's input mapping gave every field its own surface — so it drew a second, differently-coloured box inside the first: a pale slab in light mode, a darker one in dark.
+- **`.bg-transparent` is the app saying "this field IS its container."** Those fields now keep only the ink and the caret; everything else still gets a surface, because an input on a photograph does need to look like an input. General rather than a special case for the chat bar — any field the app deliberately made transparent is left alone.

@@ -169,6 +169,21 @@ def scenario_panel_mode_turns_the_ha_theme_off():
           "equal-specificity !important tie the HA rule wins")
 
 
+def scenario_a_field_that_is_its_own_container_stays_transparent():
+    """The Argyle bar is one textarea inside a rounded shell. Giving every
+    field a surface drew a second, differently-coloured box inside the first —
+    visible as a pale slab in light mode and a dark one in dark. `.bg-transparent`
+    is the app saying "this field IS its container", so the mapping leaves it
+    alone and only sets the ink."""
+    check('input:not(.bg-transparent)' in SKIN,
+          "the input mapping paints over deliberately transparent fields again")
+    check('html[data-panel] textarea.bg-transparent' in SKIN,
+          "transparent fields are not explicitly kept transparent")
+    check('bg-transparent' in CC,
+          "the Argyle input no longer declares itself transparent, so the "
+          "mapping will give it a box of its own")
+
+
 def scenario_the_panel_canvas_is_never_browser_white():
     """The body is transparent in panel mode so the photograph shows through —
     which means the ROOT has to carry the base colour. Without it the canvas is

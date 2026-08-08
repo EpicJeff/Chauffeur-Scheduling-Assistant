@@ -374,12 +374,23 @@
 
     /* Form controls have to stay obviously interactive on glass — without
        this an input on a photograph is indistinguishable from a caption. */
-    html[data-panel] input,
-    html[data-panel] textarea,
-    html[data-panel] select {
+    html[data-panel] input:not(.bg-transparent),
+    html[data-panel] textarea:not(.bg-transparent),
+    html[data-panel] select:not(.bg-transparent) {
         background-color: var(--panel-surface-3) !important;
         color: var(--panel-fg) !important;
         border-color: var(--panel-line) !important;
+    }
+
+    /* `.bg-transparent` is the app saying "this field IS its container" — the
+       Argyle bar is one field inside a rounded shell, and giving the field its
+       own surface drew a second, differently-coloured box inside the first.
+       Those fields keep the ink and the caret, and nothing else. */
+    html[data-panel] input.bg-transparent,
+    html[data-panel] textarea.bg-transparent,
+    html[data-panel] select.bg-transparent {
+        background-color: transparent !important;
+        color: var(--panel-fg) !important;
     }
 
     html[data-panel] ::placeholder { color: var(--panel-dim) !important; }
