@@ -43,6 +43,12 @@ def check(cond, msg):
 _D = __import__('datetime')
 TODAY = _D.date.today().isoformat()
 TOMORROW = (_D.date.today() + _D.timedelta(days=1)).isoformat()
+# Relative to the machine's real clock, because the panel re-checks the hero
+# against the browser's own time between polls — a fixture pinned to a wall
+# time would test nothing after midnight.
+_NOW = _D.datetime.now()
+UNDERWAY_START = (_NOW - _D.timedelta(minutes=53)).isoformat()
+UNDERWAY_END = (_NOW + _D.timedelta(minutes=7)).isoformat()
 
 
 def _board():
@@ -53,7 +59,15 @@ def _board():
         'background': None, 'statuses': [], 'widgets': ['drives', 'calendar', 'map'],
         'row_height': 240, 'columns': 12,
         'spans': {'calendar': {'cols': 12}, 'drives': {'cols': 6, 'rows': 2}},
-        'hero': {'next': None, 'remaining': 0, 'later': [], 'all_done': False, 'kids': []},
+        # A hero that is ON: it started before `now` and has not ended. This is
+        # the state photographed off the wall as "NEXT UP · 53 min ago".
+        'hero': {'remaining': 1, 'later': [], 'all_done': False, 'kids': [],
+                 'next': {'id': 'e1', 'kind': 'event', 'title': 'Pre Jazz/Ballet',
+                          'location': 'Starpath Dance Academy', 'at': '1:00 PM',
+                          'start': UNDERWAY_START, 'end': UNDERWAY_END,
+                          'driver': 'Vovo', 'color': '#8b5cf6', 'driver_id': 'drv2',
+                          'done': False, 'live': False, 'underway': True,
+                          'over': False, 'minutes_until': -53, 'minutes_left': 7}},
         'tiles': [
             {'key': 'drives', 'icon': '🚗', 'label': 'The rest of the day', 'data': {
                 'count': 2, 'next_event_id': 'e1',
@@ -163,6 +177,14 @@ setTimeout(() => {
       cards: ag ? [...ag.children].filter(c => c.tagName !== 'TEMPLATE').length : 0,
       style: ag ? ag.getAttribute('style') : '',
       text: ag ? ag.textContent.replace(/\s+/g, ' ').trim() : ''
+    },
+    hero: {
+      label: (doc.querySelector('.panel-card .panel-label') || {}).textContent,
+      pill: (() => {
+        const l = doc.querySelector('.panel-card .panel-label');
+        return l && l.nextElementSibling ? l.nextElementSibling.textContent.trim() : '';
+      })(),
+      title: (doc.querySelector('.panel-card .text-2xl') || {}).textContent
     },
     map: { mounted: !!doc.getElementById('board-map'),
            listRows: doc.querySelectorAll('.panel-chip').length }
@@ -355,6 +377,24 @@ def scenario_a_day_card_is_three_columns_wide_on_the_real_page():
     check('Nothing scheduled' in ag['text'],
           "a quiet day has to say so — a card that renders empty is the reason "
           "the agenda is day cards rather than a list")
+
+
+def scenario_a_thing_that_has_started_says_so():
+    """The pair photographed off the wall — "NEXT UP" beside "53 min ago" —
+    for a ballet class already in its last ten minutes. Either half alone is
+    fine; together they argue with the clock two feet above them."""
+    got = _run()
+    if got is None:
+        return
+    hero = got['hero']
+    check(hero['title'] == 'Pre Jazz/Ballet',
+          f"the hero drew something else: {hero}")
+    check(hero['label'] == 'Happening now',
+          f"a thing that has started is not next up, got {hero['label']!r}")
+    check('ago' not in hero['pill'],
+          f"the pill still counts up from a start that has passed: {hero['pill']!r}")
+    check(hero['pill'].startswith('ends in'),
+          f"what is left of it is the useful number, got {hero['pill']!r}")
 
 
 def scenario_the_drives_page_still_draws_its_own_timeline():

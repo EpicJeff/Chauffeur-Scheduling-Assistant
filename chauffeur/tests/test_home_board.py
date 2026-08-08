@@ -127,6 +127,63 @@ def scenario_the_hero_is_the_next_drive_that_has_not_happened():
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
 
 
+def scenario_a_thing_that_has_started_is_not_next():
+    """Photographed from the wall at 1:53 PM: **"NEXT UP · 53 min ago — Pre
+    Jazz/Ballet"**, for a class that began at one o'clock and still had ten
+    minutes to run. Both halves were right on their own and the sentence they
+    made together was nonsense.
+
+    The cause is the one that has bitten this board twice already: `live` is a
+    MANUAL flag from somebody tapping a leg as started, and nobody taps. So
+    "under way" is read off the clock, exactly as `over` already is, and the
+    hero says so instead of counting down to something in progress."""
+    orig = (storage.get_cached_schedule, storage.get_all_drivers,
+            storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        storage.get_cached_schedule = lambda: _sched(
+            ({'id': 'ballet', 'title': 'Pre Jazz/Ballet', 'start': _at(13).isoformat(),
+              'end': _at(14).isoformat()}, 'drv1'),
+            ({'id': 'bus', 'title': 'Kesem Bus Pick-Up', 'start': _at(17, 45).isoformat(),
+              'end': _at(18).isoformat()}, 'drv1'))
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Vovo',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: []       # nobody ever taps this
+
+        # 1:53 PM, the moment in the photograph.
+        now = _at(13, 53)
+        runs = home_board.todays_runs(now=now)
+        ballet = next(r for r in runs if r['id'] == 'ballet')
+        check(ballet['underway'] and not ballet['live'],
+              "a class between its start and its end is on, whatever anybody "
+              f"remembered to press: {ballet}")
+        check(not ballet['over'], "and it is certainly not behind us")
+
+        hero = home_board._hero(now, runs)
+        check(hero['next']['id'] == 'ballet', "the thing happening is the hero")
+        check(hero['next']['underway'],
+              "and the panel is told so, or it prints NEXT UP over it")
+        check(hero['next']['minutes_left'] == 7,
+              f"what is LEFT of it is the useful number, got "
+              f"{hero['next']['minutes_left']}")
+
+        # The moment it ends, the board moves on and counts down again.
+        after = _at(14, 1)
+        hero = home_board._hero(after, home_board.todays_runs(now=after))
+        check(hero['next']['id'] == 'bus', "once it is over, the next one is next")
+        check(not hero['next']['underway'] and hero['next']['minutes_until'] == 224,
+              f"and it is a countdown again, got {hero['next']}")
+
+        # Before it starts it is exactly what it says: next up.
+        before = _at(12, 30)
+        hero = home_board._hero(before, home_board.todays_runs(now=before))
+        check(hero['next']['id'] == 'ballet' and not hero['next']['underway'],
+              "before one o'clock the ballet class really is next")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = orig
+
+
 def scenario_a_drive_under_way_outranks_a_later_one():
     """Somebody walking past needs to see the drive that is happening, even
     though its start time is behind them."""

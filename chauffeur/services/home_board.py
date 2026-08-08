@@ -205,6 +205,13 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
             'done': done, 'live': live,
+            # UNDER WAY, read off the clock. `live` is the manual flag from
+            # somebody tapping a leg as started, and the same thing that makes
+            # `over` clock-based makes this one: nobody taps. A drive between
+            # its start and its end is happening, whatever anybody remembered
+            # to press, and a board that calls it "next up" is arguing with the
+            # clock two feet above it.
+            'underway': bool(start <= now <= end),
             'over': bool(not live and (done or end < now)),
         })
 
@@ -223,7 +230,9 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             'end': end.isoformat(),
             'driver_id': d_id, 'driver': d['name'], 'color': d['color'],
             'avatar': d.get('avatar'), 'image': d.get('image'),
-            'done': False, 'live': False, 'over': bool(end < now),
+            'done': False, 'live': False,
+            'underway': bool(start <= now <= end),
+            'over': bool(end < now),
         })
 
     runs.sort(key=lambda r: r['start'])
@@ -238,19 +247,33 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
     A wall board that only tiles six lists is a worse phone — the app already
     KNOWS what is next, so the panel should lead with it. `next` is the first
     run not yet done; `minutes_until` is what makes it a countdown rather than
-    a timetable, and negative values mean it should already be underway, which
-    is exactly when somebody walking past needs to see it.
+    a timetable.
+
+    What it is NOT is a countdown to something that has already begun.
+    Photographed from the wall at 1:53: **"NEXT UP · 53 min ago — Pre
+    Jazz/Ballet"**, for a class that started at one o'clock and still had ten
+    minutes to run. Both halves were computed correctly and the sentence they
+    made together was nonsense. A thing that has started is not next; it is on.
+    So a run between its start and its end is the hero and says so, and the
+    board goes back to counting down only once that run is behind us.
     """
     upcoming = [r for r in runs if not r['over']]
-    live = next((r for r in upcoming if r['live']), None)
-    nxt = live or (upcoming[0] if upcoming else None)
+    # Under way outranks not-yet-started. The manual flag and the clock are the
+    # same claim, and the clock is the one that is always kept up to date.
+    now_on = next((r for r in upcoming if r['live'] or r.get('underway')), None)
+    nxt = now_on or (upcoming[0] if upcoming else None)
 
     hero = {'next': None, 'remaining': len(upcoming), 'later': [], 'all_done': False,
             'kids': []}
     if nxt:
         start = _parse(nxt['start']) or now
+        end = _parse(nxt['end']) or start
         hero['next'] = {**nxt,
-                        'minutes_until': int(round((start - now).total_seconds() / 60))}
+                        'minutes_until': int(round((start - now).total_seconds() / 60)),
+                        # How long it has LEFT, which is the useful number once
+                        # it has started — "53 min ago" answers a question
+                        # nobody standing in the kitchen is asking.
+                        'minutes_left': int(round((end - now).total_seconds() / 60))}
         hero['later'] = [r for r in upcoming if r['id'] != nxt['id']][:3]
     elif runs:
         # There WERE drives and they are all behind us. Saying so is a real

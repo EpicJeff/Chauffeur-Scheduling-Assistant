@@ -181,9 +181,13 @@
                     :style="'border-left: 6px solid ' + tone(hero.next.color, '#3b82f6')">
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-3 mb-1">
+                            <!-- "NEXT UP · 53 min ago" was photographed off the
+                                 wall for a ballet class that had started at
+                                 one o'clock. A thing that has started is not
+                                 next; it is on. -->
                             <span class="panel-label"
-                                :class="hero.next.live ? 'text-emerald-300' : ''"
-                                x-text="hero.next.live ? 'Under way' : 'Next up'"></span>
+                                :class="onNow() ? 'text-emerald-300' : ''"
+                                x-text="onNow() ? 'Happening now' : 'Next up'"></span>
                             <span class="text-xs font-bold px-2 py-0.5 rounded-full"
                                 :class="countdownClass"
                                 x-text="countdown"></span>
@@ -854,6 +858,12 @@
                 isPanelMode: params.get('panel') === 'true',
                 board: {}, hero: {}, catalog: {},
                 clock: '', seconds: '', meridiem: '', countdown: '', countdownClass: '',
+                // The clock the hero's own state is judged against, ticked
+                // once a second. Alpine re-evaluates a binding when something
+                // REACTIVE in it changes, and Date.now() is not that — read
+                // straight, "Next up" would stay "Next up" until the next
+                // fetch landed.
+                nowTs: Date.now(),
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
@@ -911,6 +921,7 @@
                     h = h % 12 || 12;
                     this.clock = h + ':' + String(d.getMinutes()).padStart(2, '0');
                     this.seconds = String(d.getSeconds()).padStart(2, '0');
+                    this.nowTs = d.getTime();
                     this.recount();
                 },
 
@@ -932,33 +943,56 @@
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
 
-                // Recomputed every second from the START TIME, not from the
-                // server's minutes_until — between polls a countdown that does
-                // not move is just a label, and "in 25 min" going stale for a
+                // Is the hero's event ON, right now? The server says so from
+                // its own clock (`underway`), and the panel re-checks against
+                // the browser's between polls — a board that only learns the
+                // class has started when the next fetch lands spends up to a
+                // minute counting down to something already happening.
+                onNow() {
+                    const n = this.hero && this.hero.next;
+                    if (!n) return false;
+                    if (n.live) return true;
+                    const t = this.nowTs;
+                    return new Date(n.start) <= t && t <= new Date(n.end);
+                },
+
+                // Minutes, said the way a person says them.
+                spell(mins) {
+                    if (mins < 60) return mins + ' min';
+                    const h = Math.floor(mins / 60), m = mins % 60;
+                    return h + ' hr' + (m ? ' ' + m + ' min' : '');
+                },
+
+                // Recomputed every second from the event's own times, not from
+                // the server's minutes_until — between polls a countdown that
+                // does not move is just a label, and "in 25 min" going stale a
                 // minute at a time is exactly the number people trust least.
                 recount() {
                     const n = this.hero && this.hero.next;
                     if (!n) { this.countdown = ''; return; }
-                    if (n.live) {
-                        this.countdown = 'under way';
+                    if (this.onNow()) {
+                        // What is LEFT of it. "53 min ago" beside "next up" was
+                        // the pair the family caught; either half alone is fine
+                        // and together they contradict.
+                        const left = Math.round((new Date(n.end) - new Date()) / 60000);
+                        this.countdown = left > 0 ? 'ends in ' + this.spell(left)
+                            : (n.live ? 'under way' : 'ending now');
                         this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
                         return;
                     }
                     const mins = Math.round((new Date(n.start) - new Date()) / 60000);
                     if (mins <= -1) {
+                        // A drive with no duration to be inside of — it should
+                        // have left and has not been marked done.
                         this.countdown = Math.abs(mins) + ' min ago';
                         this.countdownClass = 'bg-amber-500/20 text-amber-300';
                     } else if (mins <= 0) {
                         this.countdown = 'now';
                         this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
-                    } else if (mins < 60) {
-                        this.countdown = 'in ' + mins + ' min';
+                    } else {
+                        this.countdown = 'in ' + this.spell(mins);
                         this.countdownClass = mins <= 15
                             ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300';
-                    } else {
-                        const h = Math.floor(mins / 60), m = mins % 60;
-                        this.countdown = 'in ' + h + ' hr' + (m ? ' ' + m + ' min' : '');
-                        this.countdownClass = 'bg-gray-700/60 text-gray-300';
                     }
                 },
 
