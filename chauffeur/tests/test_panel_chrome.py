@@ -259,6 +259,21 @@ def scenario_every_page_says_its_name_in_the_same_place():
               f"line up with the others")
 
 
+def scenario_no_page_title_carries_an_emoji():
+    """Three of eleven had one, which is worse than all or none: the icon
+    shifts the first letter right, so those titles did not line up with the
+    rest down the left edge — the exact thing the shared title class exists to
+    guarantee. The shelf already carries an icon for every destination."""
+    import glob, re
+    emoji = re.compile('[🀀-🫿←-⇿☀-➿]')
+    for path in glob.glob(os.path.join(TPL, '*.html')):
+        body = open(path, encoding='utf-8').read()
+        for title in re.findall(r'class="panel-page-title"[^>]*>([^<]*)<', body):
+            check(not emoji.search(title),
+                  f"{os.path.basename(path)}: page title {title.strip()!r} "
+                  f"carries an emoji, so it does not line up with the others")
+
+
 def scenario_the_page_background_never_covers_the_photograph():
     """You could see the picture behind the shelf and nowhere else: `bg-gray-900`
     is Tailwind's PAGE background and pages put it on the wrapper that fills the

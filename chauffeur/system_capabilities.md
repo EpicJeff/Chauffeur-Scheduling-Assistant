@@ -889,3 +889,8 @@ From two photographs of the running panel — "dark mode is pretty good, light m
 - Everything v2.118.0 did to `trip.html` is now done to `trip_kiosk.html` as well: the hero banner is a standard page header, the trip name is the page title, the photograph is the page background through the shared layer, and the frame is full width. The "All trips" link, location, dates and countdown all moved with it — the way back matters most here, since `?tabs=none` hides the nav on exactly this surface.
 - **The test now checks BOTH templates.** Checking one of a pair where the other is what actually ships is precisely how a whole release went unnoticed, so the scenario loops over both and names the template in every failure.
 - Worth remembering when a change "does nothing": before assuming a stale build, check whether the surface being looked at is served by a *different template*. Two of these now exist — `trip`/`trip_kiosk`, and the kiosk variants generally.
+
+## No page title carries an emoji (v2.118.2)
+
+- Occasions (🎉), Moments (📸) and Intake (📥) were the only three of eleven with an icon in the title. Three of eleven is worse than all or none: the icon shifts the first letter right, so those titles did not line up down the left edge with the rest — the exact thing the shared title class exists to guarantee. The shelf already carries an icon for every destination, so the title was saying it twice.
+- Guarded by a test that scans every `panel-page-title` for emoji, rather than relying on the next person to notice.
