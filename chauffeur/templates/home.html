@@ -320,7 +320,7 @@
                                     :style="collageSpan(i, t.data.dishes.length, 2)">
                                     <img x-show="d.image" :src="d.image" alt=""
                                         class="absolute inset-0 w-full h-full object-cover">
-                                    <div class="absolute inset-x-0 bottom-0 px-2 py-1.5"
+                                    <div class="photo-scrim absolute inset-x-0 bottom-0 px-2 py-1.5"
                                         style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent)">
                                         <span class="text-sm font-bold text-white" x-text="d.name"></span>
                                     </div>
@@ -473,7 +473,7 @@
                                     :style="collageSpan(i, t.data.trips.length, 2)">
                                     <img x-show="tr.image" :src="tr.image" alt=""
                                         class="absolute inset-0 w-full h-full object-cover opacity-70">
-                                    <div class="absolute inset-0 flex flex-col justify-end p-2"
+                                    <div class="photo-scrim absolute inset-0 flex flex-col justify-end p-2"
                                         style="background: linear-gradient(to top, rgba(0,0,0,.85), transparent 70%)">
                                         <span class="text-sm font-black text-white truncate"
                                             x-text="tr.title"></span>

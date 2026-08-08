@@ -320,32 +320,57 @@ def scenario_a_page_never_hides_its_own_name_on_a_panel():
 
 
 def scenario_ink_on_a_photograph_is_not_page_ink():
-    """Reported from the wall in light mode: the text on the trip cards is hard
-    to read, and the cart chips get lost in the background.
+    """Reported from the wall in light mode, twice.
 
-    Two shapes of the same mistake. The skin maps Tailwind greys to the panel's
-    ink, which is right for text on a SURFACE and wrong for text on a
-    photograph: a trip card is a picture with a dark scrim ramped over it, so
-    light mode turned the caption dark grey on a dark scrim. A caption over a
-    scrim is white in both themes, because what is under it is dark in both.
+    First: the trip captions were hard to read. The skin maps Tailwind greys to
+    the panel's ink, which is right for text on a SURFACE and wrong for text on
+    a PICTURE — the scrim stayed dark while the ink followed the theme and went
+    dark with it.
 
-    And a control with no background at all has nothing for the skin to map —
-    the cart chips were an outline and a word floating on a bright sky. The fix
-    is to give them a surface in the app's own grey vocabulary, not a
-    panel-only override.
+    Then, having fixed that by forcing the caption white: the blocks felt like
+    they had not been themed at all. A dark scrim is a dark surface however
+    light the room is, so the meals and trips blocks read as holes in a light
+    page. Light mode LIGHTENS the picture now — white band, dark ink — and the
+    block becomes paper laid on the photograph like every other card.
+
+    One token pair drives all three places that put text on a picture (the
+    trips grid, the meals week strip, the board's mosaics). They arrived with
+    three separate gradients and three separate whites, which is why the first
+    fix only reached one of them.
     """
-    check('html[data-panel] .trip-card h2' in SKIN,
-          "trip card captions are mapped as page ink again, so they go dark on "
-          "a dark scrim in light mode")
-    ink = SKIN[SKIN.index('html[data-panel] .trip-card h2'):]
-    ink = ink[:ink.index('/* Edges. */')]
-    check('#fff' in ink, "the caption is no longer forced white over the photo")
-    check('.trip-card::before' in ink,
-          "the scrim is not deepened on a panel, so white text still has to "
-          "survive whatever the photograph happens to be")
+    for token in ('--photo-scrim', '--photo-ink', '--photo-shadow'):
+        check(SKIN.count(token) >= 3,
+              f"{token} is not defined for dark, light AND auto — a theme "
+              f"without it falls back to the other one's scrim")
+    light = SKIN[SKIN.index('html[data-panel-theme="light"] {'):]
+    light = light[:light.index('}')]
+    check('rgb(255 255 255 / .96)' in light,
+          "the light scrim is not near-opaque at the text, so dark ink lands "
+          "on whatever the photograph happens to be doing")
+    check('--photo-ink: #0f172a' in light,
+          "light mode still writes white on its own white band")
+
+    check('html[data-panel] .photo-scrim { background: var(--photo-scrim)' in SKIN,
+          "the shared scrim class is gone, so each page is back to its own")
+    check('.trip-card::before { background: var(--photo-scrim)' in SKIN,
+          "the trip cards no longer follow the shared scrim")
+    for cls in ('.board-ink', '.board-ink-dim', '.board-shadow'):
+        check(f'html[data-panel] {cls}' in SKIN,
+              f"{cls} (the meals week strip) is not themed, so it keeps its "
+              f"hardcoded white on a white band")
+
+    # Every place that paints a caption over a picture has to carry the class,
+    # or it is themed in one place and not the others — which is exactly the
+    # state this replaced.
+    import glob
+    for name in ('home.html', 'shopping.html'):
+        body = open(os.path.join(TPL, name), encoding='utf-8').read()
+        check('photo-scrim' in body,
+              f"{name} paints a caption over a photograph without the shared "
+              f"scrim class")
 
     shopping = open(os.path.join(TPL, 'shopping.html'), encoding='utf-8').read()
-    chip = shopping[shopping.index("@click=\"outOf(s.name)\""):]
+    chip = shopping[shopping.index('@click="outOf(s.name)"'):]
     chip = chip[:chip.index('</button>')]
     check('bg-gray-800' in chip,
           "the cart chips have no surface, so on a panel they are an outline "

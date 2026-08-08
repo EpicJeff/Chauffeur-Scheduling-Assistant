@@ -37,6 +37,19 @@
         --panel-shadow: 0 8px 32px rgb(0 0 0 / 0.22);
         --panel-glow: 0 2px 24px rgb(0 0 0 / 0.35);
         --panel-scrim: linear-gradient(180deg, rgb(6 8 16 / .72) 0%, rgb(6 8 16 / .58) 45%, rgb(6 8 16 / .78) 100%);
+
+        /* A CAPTION ON A PHOTOGRAPH is its own little theme, and it is the one
+           place the panel's ink cannot simply follow the page. The picture
+           underneath is any brightness at all, so the text needs a band of
+           known value behind it — dark with white ink, or light with dark ink.
+           Both work; what does not work is mixing them, which is what shipped:
+           the scrim stayed dark in light mode while the ink followed the theme
+           and went dark with it. */
+        --photo-scrim: linear-gradient(to top, rgb(2 6 23 / .92) 0%, rgb(2 6 23 / .62) 45%, rgb(2 6 23 / .12) 100%);
+        --photo-ink: #ffffff;
+        --photo-ink-dim: rgb(255 255 255 / .86);
+        --photo-ink-faint: rgb(255 255 255 / .66);
+        --photo-shadow: 0 1px 3px rgb(0 0 0 / .95), 0 0 12px rgb(0 0 0 / .7);
     }
 
     /* Light is NOT dark with the colours flipped. A translucent dark card is
@@ -60,6 +73,21 @@
         --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
         --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
         --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+        /* Light mode LIGHTENS the picture instead of darkening it. A dark card
+           in a light theme reads as a hole in the page — the meals and trips
+           blocks felt like they had not been themed at all, because a dark
+           scrim is a dark surface however light the room is. So the band goes
+           white and the ink goes to the page's own dark ink, and the block
+           becomes paper laid on the photograph like every other card here.
+           .96 at the bottom is deliberate: it has to neutralise whatever the
+           photograph is doing, or dark ink lands on a dark picture and this is
+           worse than what it replaced. The top stays clear, so the picture is
+           still a picture. */
+        --photo-scrim: linear-gradient(to top, rgb(255 255 255 / .96) 0%, rgb(255 255 255 / .80) 42%, rgb(255 255 255 / .16) 100%);
+        --photo-ink: #0f172a;
+        --photo-ink-dim: rgb(15 23 42 / .72);
+        --photo-ink-faint: rgb(15 23 42 / .56);
+        --photo-shadow: 0 1px 2px rgb(255 255 255 / .95), 0 0 10px rgb(255 255 255 / .75);
     }
 
     @media (prefers-color-scheme: light) {
@@ -78,6 +106,21 @@
             --panel-shadow: 0 10px 30px rgb(15 23 42 / 0.16);
             --panel-glow: 0 1px 2px rgb(255 255 255 / 0.9);
             --panel-scrim: linear-gradient(180deg, rgb(255 255 255 / .34) 0%, rgb(255 255 255 / .22) 45%, rgb(255 255 255 / .40) 100%);
+        /* Light mode LIGHTENS the picture instead of darkening it. A dark card
+           in a light theme reads as a hole in the page — the meals and trips
+           blocks felt like they had not been themed at all, because a dark
+           scrim is a dark surface however light the room is. So the band goes
+           white and the ink goes to the page's own dark ink, and the block
+           becomes paper laid on the photograph like every other card here.
+           .96 at the bottom is deliberate: it has to neutralise whatever the
+           photograph is doing, or dark ink lands on a dark picture and this is
+           worse than what it replaced. The top stays clear, so the picture is
+           still a picture. */
+        --photo-scrim: linear-gradient(to top, rgb(255 255 255 / .96) 0%, rgb(255 255 255 / .80) 42%, rgb(255 255 255 / .16) 100%);
+        --photo-ink: #0f172a;
+        --photo-ink-dim: rgb(15 23 42 / .72);
+        --photo-ink-faint: rgb(15 23 42 / .56);
+        --photo-shadow: 0 1px 2px rgb(255 255 255 / .95), 0 0 10px rgb(255 255 255 / .75);
         }
     }
 
@@ -368,37 +411,33 @@
         color: var(--panel-dim) !important;
     }
 
-    /* Ink ON A PHOTOGRAPH is not page ink.
-       The mapping above is right for text on a surface: it follows the panel
-       theme, so light mode gets dark ink. A trip card is not a surface — it is
-       a photograph with a dark scrim ramped over its lower half, and the text
-       is a caption on that scrim. Mapped like page ink it turned dark grey on
-       a dark scrim in light mode, which is the "text on trip blocks is hard to
-       read" reported from the wall.
-       A caption over a scrim is white in BOTH themes, because the thing under
-       it is dark in both themes. */
+    /* ONE definition of "text on a picture", for all three places that do it:
+       the trips grid, the meals week strip, and the board's mosaics. They each
+       arrived with their own gradient and their own white, so light mode had
+       to be fixed in three vocabularies — it is one token pair now, and the
+       theme flips it. `.photo-scrim` rides ALONGSIDE each page's own gradient
+       rather than replacing it: an `!important` stylesheet rule outranks an
+       inline style, so the browser keeps exactly what it had and only the
+       panel is re-themed. */
+    html[data-panel] .photo-scrim { background: var(--photo-scrim) !important; }
+    html[data-panel] .trip-card::before { background: var(--photo-scrim) !important; }
+
+    html[data-panel] .board-ink,
     html[data-panel] .trip-card h2,
     html[data-panel] .trip-card .text-white,
-    html[data-panel] .trip-card .text-gray-200,
-    html[data-panel] .trip-card .text-gray-300,
-    html[data-panel] .trip-card .text-gray-400 {
-        color: #fff !important;
-    }
-    html[data-panel] .trip-card .text-gray-300,
-    html[data-panel] .trip-card .text-gray-400 {
-        color: rgba(255, 255, 255, 0.88) !important;
-    }
+    html[data-panel] .trip-card .text-gray-200 { color: var(--photo-ink) !important; }
 
-    /* And the scrim has to earn that white. The card's own gradient fades to
-       20% opacity by 60% of the height, which is enough over the dark page it
-       was designed for and not enough over a bright photograph — the titles in
-       the screenshot sit exactly there. Deeper and taller on a panel only. */
-    html[data-panel] .trip-card::before {
-        background: linear-gradient(to top,
-            rgba(2, 6, 23, 0.92) 0%,
-            rgba(2, 6, 23, 0.62) 45%,
-            rgba(2, 6, 23, 0.15) 100%) !important;
-    }
+    html[data-panel] .board-ink-dim,
+    html[data-panel] .trip-card .text-gray-300,
+    html[data-panel] .trip-card .text-gray-400 { color: var(--photo-ink-dim) !important; }
+
+    html[data-panel] .board-ink-faint { color: var(--photo-ink-faint) !important; }
+    html[data-panel] .board-shadow { text-shadow: var(--photo-shadow) !important; }
+
+    /* A mosaic name sits directly on the picture with no card behind it, so it
+       needs the same shadow the week strip's captions carry — on light that is
+       a white halo, which is what keeps dark ink legible over a busy photo. */
+    html[data-panel] .photo-scrim > * { text-shadow: var(--photo-shadow); }
 
     /* Edges. */
     html[data-panel] .border-gray-950,
