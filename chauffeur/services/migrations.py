@@ -191,6 +191,52 @@ async def migrate_media_layout_v2660():
                 f"-> {storage.MEDIA_DIR}")
 
 
+async def migrate_tile_columns_v21212():
+    """The board went from a 4-column grid to a 12-column one, so every stored
+    tile width has to be multiplied through or the whole layout silently
+    shrinks to a third of itself.
+
+    Four columns meant the NARROWEST thing anybody could ask for was a quarter
+    of the board. Twelve is Home Assistant's number, for the same reason: it
+    divides by 2, 3, 4 and 6, so halves, thirds and quarters all exist. A tile
+    that said `cols: 2` meant half the board and must now say 6.
+
+    Rows are untouched — they were already a count of a fixed unit.
+    """
+    if storage.get_app_state('tile_columns_scaled_v12'):
+        return
+    storage.set_app_state('tile_columns_scaled_v12', time.time())
+    settings = storage.get_settings() or {}
+    spans = settings.get('panel_tile_spans') or {}
+    if not spans:
+        return
+    # The board used to be four wide; the factor is how many new columns one
+    # old column became. Read from the setting rather than hardcoded, so a
+    # household that had already chosen a different number is scaled to THAT.
+    try:
+        columns = int(settings.get('panel_grid_columns', 12) or 12)
+    except (TypeError, ValueError):
+        columns = 12
+    factor = max(1, columns // 4)
+    scaled, touched = {}, 0
+    for key, span in spans.items():
+        if not isinstance(span, dict):
+            continue
+        out = dict(span)
+        try:
+            cols = int(span.get('cols') or 1)
+        except (TypeError, ValueError):
+            cols = 1
+        if cols > 0:
+            out['cols'] = min(24, cols * factor)
+            touched += 1
+        scaled[key] = out
+    if touched:
+        settings['panel_tile_spans'] = scaled
+        storage.update_settings(settings)
+        logger.info(f"Scaled {touched} tile width(s) to the 12-column board")
+
+
 async def run_all_migrations():
     """Runs all data migrations in the background after startup"""
     await asyncio.sleep(5) # Let the app start up completely
@@ -215,3 +261,7 @@ async def run_all_migrations():
         await migrate_media_layout_v2660()
     except Exception as e:
         logger.error(f"Error running media layout migration: {e}")
+    try:
+        await migrate_tile_columns_v21212()
+    except Exception as e:
+        logger.error(f"Error running tile column migration: {e}")

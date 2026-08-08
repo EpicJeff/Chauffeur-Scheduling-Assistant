@@ -93,6 +93,11 @@ ENTRIES: List[dict] = [
        'left to right. Six or seven fit at a size a thumb can hit; the rest '
        'move into a More button, so the order decides what stays one tap away.',
        page='home', anchor='panel-setup'),
+    _e('panel_grid_columns', 'panel', 'Board columns',
+       'How many columns the home board is divided into. Tile widths are spans '
+       'of these, so 12 gives you halves, thirds, quarters and sixths — at 4, '
+       'a quarter of the board was the narrowest thing you could ask for.',
+       page='home', anchor='panel-setup'),
     _e('panel_grid_row_height', 'panel', 'Board row height',
        'What one row of the home board grid is worth, in pixels. Tile sizes '
        'are measured in these, so a 2-row tile is twice this tall — including '

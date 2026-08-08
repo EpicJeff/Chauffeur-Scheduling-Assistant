@@ -538,10 +538,21 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
         got = home_board.grid_row_height(bad)
         check(got == want, f"{bad} -> {got}, wanted {want}")
 
+    check(home_board.grid_columns({}) == 12,
+          "twelve columns by default — it divides by 2, 3, 4 and 6, so halves, "
+          "thirds and quarters all exist. At four, a quarter of the board was "
+          "the NARROWEST thing anybody could ask for")
+    check(home_board.grid_columns({'panel_grid_columns': 16}) == 16, "and it is settable")
+    for bad, want in (({'panel_grid_columns': 0}, 1),
+                      ({'panel_grid_columns': 99}, 24),
+                      ({'panel_grid_columns': None}, 12)):
+        got = home_board.grid_columns(bad)
+        check(got == want, f"{bad} -> {got}, wanted {want}")
+
     board = home_board.build()
-    check(board.get('row_height'), "the board must carry the unit to the panel — "
-          "a grid whose row height is guessed on the page is the same number "
-          "decided twice")
+    for key in ('row_height', 'columns'):
+        check(board.get(key), f"the board must carry `{key}` to the panel — a grid "
+              "whose units are guessed on the page is the same number decided twice")
 
     # The grid has to declare the unit, or every span is back to being a
     # consequence of its neighbours. `grid-auto-rows` covers IMPLICIT rows,
@@ -562,6 +573,14 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     check('overflow-y-auto' in grid,
           "a fixed row must be paired with scrolling, or the board silently cuts "
           "off what a tile has to say — and a clipped tile reads as a broken one")
+    # Columns are the household's number too, so the tracks cannot be Tailwind's
+    # fixed `grid-cols-N` classes — those exist only for the handful of numbers
+    # Tailwind ships, and the CDN build only generates what it can see anyway.
+    check('grid-cols-' not in grid,
+          "the tile grid is back on fixed Tailwind columns, so the column count "
+          "setting does nothing")
+    check('--c-lg' in grid,
+          "the grid no longer takes its column count from the board payload")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

@@ -709,6 +709,13 @@ class Settings(BaseModel):
     # was no second row to occupy. A fixed unit makes `rows` mean something:
     # 2 rows is 2 units plus the gap, in the last row as anywhere else.
     panel_grid_row_height: int = 240
+    # How many columns the board's grid is divided into. 12 (Home Assistant's
+    # number) rather than 4, because 4 meant the SMALLEST thing anybody could
+    # ask for was a quarter of the board — there was no half-column, no
+    # third, nothing narrower than a quarter. Widths are spans of these, so a
+    # quarter is 3 and an eighth is 1.5 rounded to 2. Existing sizes were
+    # multiplied through on upgrade (migrations.migrate_tile_columns_v21212).
+    panel_grid_columns: int = 12
     # light | dark | auto. `auto` follows the device, which under Home
     # Assistant means following the HA theme the panel is embedded in.
     panel_theme: str = 'dark'

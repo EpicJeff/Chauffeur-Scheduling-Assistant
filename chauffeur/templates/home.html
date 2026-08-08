@@ -49,6 +49,22 @@
            row. Touch and wheel still work. */
         .tile-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .tile-scroll::-webkit-scrollbar { display: none; }
+
+        /* The column count is the household's, so the tracks cannot be
+           Tailwind's fixed `grid-cols-N` classes — those only exist for the
+           handful of numbers Tailwind ships, and the CDN build only generates
+           classes it can see in the markup anyway.
+           Narrower screens get half and then a quarter of the columns. A span
+           wider than the grid is CLAMPED by the auto-placement algorithm
+           rather than overflowing, so a quarter-width tile (3 of 12) becomes a
+           half at 6 columns and full width at 3 — proportional, for free. */
+        #tile-grid { grid-template-columns: repeat(var(--c-sm, 1), minmax(0, 1fr)); }
+        @media (min-width: 768px) {
+            #tile-grid { grid-template-columns: repeat(var(--c-md, 2), minmax(0, 1fr)); }
+        }
+        @media (min-width: 1280px) {
+            #tile-grid { grid-template-columns: repeat(var(--c-lg, 4), minmax(0, 1fr)); }
+        }
     </style>
 </head>
 
@@ -224,8 +240,10 @@
              the board must never silently hide what it has to say (you cannot
              tell a clipped tile from a broken one), and a tile that needs
              more room is a tile the household can make taller. -->
-        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-stretch"
-            :style="`grid-auto-rows: ${rowHeight()}px`">
+        <div id="tile-grid" class="grid gap-4 items-stretch"
+            :style="`--c-lg:${cols()}; --c-md:${Math.ceil(cols() / 2)};
+                     --c-sm:${Math.ceil(cols() / 4)};
+                     grid-auto-rows: ${rowHeight()}px`">
             <template x-for="t in tiles()" :key="t.key">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
@@ -516,9 +534,16 @@
                          "2 rows" only means something once a row is a fixed
                          measurement rather than however tall the neighbouring
                          tiles turned out. -->
+                    <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-2">
+                        The board is
+                        <input type="number" min="1" max="24" step="1"
+                            x-model.number="draft.panel_grid_columns"
+                            class="w-14 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
+                        <span class="font-normal text-gray-600">columns wide — tile widths are spans of these</span>
+                    </label>
                     <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-3">
                         One row is
-                        <select x-model.number="draft.panel_grid_row_height" @change="save()"
+                        <select x-model.number="draft.panel_grid_row_height"
                             class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
                             <template x-for="n in [120,160,200,240,280,320,400]" :key="'rh-' + n">
                                 <option :value="n" x-text="n + ' px'"></option>
@@ -539,22 +564,27 @@
                                 <!-- Size, per tile. A wall board is a layout,
                                      not a list — the map earns two columns and
                                      the intake counter does not. -->
-                                <select :value="spanOf(key, 'cols')"
-                                    @change="setSpan(key, 'cols', $event.target.value)"
-                                    class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
-                                    <option value="1">1 col</option>
-                                    <option value="2">2 col</option>
-                                    <option value="3">3 col</option>
-                                    <option value="4">4 col</option>
-                                </select>
-                                <select :value="spanOf(key, 'rows')"
-                                    @change="setSpan(key, 'rows', $event.target.value)"
-                                    class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
-                                    <option value="1">1 row</option>
-                                    <option value="2">2 row</option>
-                                    <option value="3">3 row</option>
-                                    <option value="4">4 row</option>
-                                </select>
+                                <!-- Number fields, not a list of sizes. A grid
+                                     of 12 columns has 12 widths, and picking
+                                     them off a dropdown is a menu that grows
+                                     with the setting. The suffix names the
+                                     fraction, because "5" is the number you
+                                     type and "a bit under half" is the thing
+                                     you meant. -->
+                                <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
+                                    <input type="number" min="1" :max="cols()" step="1"
+                                        :value="spanOf(key, 'cols')"
+                                        @change="setSpan(key, 'cols', $event.target.value)"
+                                        class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                    <span x-text="fractionLabel(key)"></span>
+                                </label>
+                                <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
+                                    <input type="number" min="1" max="12" step="1"
+                                        :value="spanOf(key, 'rows')"
+                                        @change="setSpan(key, 'rows', $event.target.value)"
+                                        class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
+                                    rows
+                                </label>
                                 <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
                                 <button @click="move(draft.panel_widgets, i, 1)"
@@ -705,7 +735,7 @@
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
-                    panel_tile_spans: {}, panel_grid_row_height: 240,
+                    panel_tile_spans: {}, panel_grid_row_height: 240, panel_grid_columns: 12,
                     panel_theme: 'dark', panel_background: '',
                     panel_page_backgrounds: {}
                 },
@@ -868,17 +898,30 @@
                     return Math.min(600, Math.max(80, n || 240));
                 },
 
+                // How many columns the board is divided into. Twelve by
+                // default — Home Assistant's number, and for the same reason:
+                // it divides by 2, 3, 4 and 6, so halves, thirds and quarters
+                // all exist. At four, a quarter was the narrowest thing
+                // anybody could ask for.
+                cols() {
+                    const n = parseInt(this.board.columns, 10);
+                    return Math.min(24, Math.max(1, n || 12));
+                },
+
+                // A tile nobody has sized takes a QUARTER of the board, which
+                // is what one column used to be. Without this every unsized
+                // tile would become one-twelfth on upgrade.
+                defaultCols() {
+                    return Math.max(1, Math.round(this.cols() / 4));
+                },
+
                 spanStyle(key) {
                     const s = (this.board.spans || {})[key] || {};
-                    // Four, because the grid is now four wide and a tile that
-                    // cannot fill the row is a layout the household can see but
-                    // not ask for. Clamped, not trusted: this is stored config.
-                    const c = Math.min(4, Math.max(1, parseInt(s.cols, 10) || 1));
-                    // Up to 4 now that a row is a fixed unit rather than
-                    // "however tall the other tiles in that row turned out".
-                    const r = Math.min(4, Math.max(1, parseInt(s.rows, 10) || 1));
-                    return (c > 1 ? `grid-column: span ${c};` : '')
-                        + (r > 1 ? `grid-row: span ${r};` : '');
+                    const max = this.cols();
+                    const c = Math.min(max, Math.max(1, parseInt(s.cols, 10)
+                                                       || this.defaultCols()));
+                    const r = Math.max(1, parseInt(s.rows, 10) || 1);
+                    return `grid-column: span ${c}; grid-row: span ${r};`;
                 },
 
                 // The forecast rides in the clock strip now, so the tile's data
@@ -934,6 +977,7 @@
                                     ? 180 : s.panel_idle_return_seconds,
                             panel_tile_spans: { ...(s.panel_tile_spans || {}) },
                             panel_grid_row_height: s.panel_grid_row_height || 240,
+                            panel_grid_columns: s.panel_grid_columns || 12,
                             panel_theme: s.panel_theme || 'dark',
                             panel_background: s.panel_background || '',
                             panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
@@ -970,18 +1014,36 @@
                 },
 
                 spanOf(key, axis) {
-                    return String((this.draft.panel_tile_spans[key] || {})[axis] || 1);
+                    const span = this.draft.panel_tile_spans[key] || {};
+                    if (span[axis]) return String(span[axis]);
+                    // An unsized tile shows the width it is actually DRAWN at,
+                    // not 1 — a field reading "1" beside a quarter-width tile
+                    // is the editor disagreeing with the board.
+                    return String(axis === 'cols' ? this.defaultCols() : 1);
+                },
+
+                // "3" is what you type; "a quarter" is what you meant.
+                fractionLabel(key) {
+                    const c = parseInt(this.spanOf(key, 'cols'), 10) || 1;
+                    const total = this.cols();
+                    const named = { 1: 'full', 2: 'half', 3: 'a third',
+                                    4: 'a quarter', 6: 'a sixth', 8: 'an eighth',
+                                    12: 'a twelfth' };
+                    if (c >= total) return 'full width';
+                    const ratio = total / c;
+                    return named[ratio] ? 'of ' + total + ' \u00b7 ' + named[ratio]
+                                        : 'of ' + total;
                 },
 
                 setSpan(key, axis, value) {
-                    const max = 4;
+                    const max = axis === 'cols' ? this.cols() : 12;
                     const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
                     const cur = { ...(this.draft.panel_tile_spans[key] || {}) };
                     cur[axis] = n;
-                    // 1x1 is the default, so a tile back at its normal size
-                    // stops being stored at all rather than persisting a row
-                    // of ones nobody chose.
-                    if ((cur.cols || 1) === 1 && (cur.rows || 1) === 1) {
+                    // A tile back at exactly the default stops being stored,
+                    // rather than persisting numbers nobody chose. The default
+                    // WIDTH is a quarter of the grid now, not 1.
+                    if ((cur.cols || 0) === this.defaultCols() && (cur.rows || 1) === 1) {
                         delete this.draft.panel_tile_spans[key];
                     } else {
                         this.draft.panel_tile_spans[key] = cur;
@@ -1012,6 +1074,9 @@
                                 panel_grid_row_height:
                                     Math.min(600, Math.max(80,
                                         parseInt(this.draft.panel_grid_row_height, 10) || 240)),
+                                panel_grid_columns:
+                                    Math.min(24, Math.max(1,
+                                        parseInt(this.draft.panel_grid_columns, 10) || 12)),
                                 panel_theme: this.draft.panel_theme,
                                 panel_background: this.draft.panel_background,
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds

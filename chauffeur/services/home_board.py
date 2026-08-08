@@ -827,6 +827,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
             'widgets': resolve_widgets(widgets, settings),
             'spans': settings.get('panel_tile_spans') or {},
             'row_height': grid_row_height(settings),
+            'columns': grid_columns(settings),
             'theme': theme if theme in ('light', 'dark', 'auto') else 'dark',
             'backgrounds': backgrounds(settings),
             'idle_seconds': max(0, idle)}
@@ -924,6 +925,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         'widgets': keys,
         'spans': (settings.get('panel_tile_spans') or {}),
         'row_height': grid_row_height(settings),
+        'columns': grid_columns(settings),
     }
     _CACHE.update(key=cache_key, at=time.time(), data=data)
     return data
@@ -951,6 +953,21 @@ def grid_row_height(settings: dict = None) -> int:
         return max(80, min(600, int(settings.get('panel_grid_row_height', 240))))
     except (TypeError, ValueError):
         return 240
+
+
+def grid_columns(settings: dict = None) -> int:
+    """How many columns the board is divided into.
+
+    Twelve by default, which is Home Assistant's number and is chosen for the
+    same reason: it divides by 2, 3, 4 and 6, so halves, thirds and quarters
+    are all expressible. The board used to be four columns wide, which made a
+    quarter the NARROWEST thing a household could ask for.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        return max(1, min(24, int(settings.get('panel_grid_columns', 12))))
+    except (TypeError, ValueError):
+        return 12
 
 
 def catalog() -> dict:
