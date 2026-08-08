@@ -192,7 +192,14 @@
              four-item list, and the board ran off the bottom of the screen
              instead of filling it. The ladder still steps down — a 10" tablet
              in portrait gets one column, not four columns of nothing. -->
-        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-start">
+        <!-- Tiles STRETCH to their row. `items-start` let every card shrink to
+             its own content, so a row of four ended on four different lines and
+             a tile given two rows drew itself one row tall with a hole under
+             it — the size the household asked for was invisible. Stretching
+             costs some empty space inside the shortest card; a ragged edge
+             costs the board its shape, which is the thing you read from across
+             a room. Content stays top-aligned inside. -->
+        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-stretch">
             <template x-for="t in tiles()" :key="t.key">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
