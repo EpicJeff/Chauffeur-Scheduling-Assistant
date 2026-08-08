@@ -263,6 +263,25 @@ def _hero(now: datetime.datetime, runs: List[dict]) -> dict:
 # Each returns the tile's payload, or None when it has nothing to say.
 
 def _tile_drives(now, runs, **_):
+    """The rest of the day as the Drives page draws it: a lane per driver, time
+    running down the tile, and every drive a block whose HEIGHT is how long it
+    takes.
+
+    A list of times told you what is left; it did not tell you that two of them
+    overlap, or that one driver has the whole evening while another has a
+    single run. That is the question a family standing in the kitchen is
+    actually asking, and it is the question a timeline answers by its shape
+    rather than by being read.
+
+    What the tile deliberately does NOT copy from the Drives page is the
+    condensed dead time. That machinery exists because the page draws a whole
+    day, gaps and all; the tile draws from now to the last drive, which is
+    rarely more than a few hours, and a compressed gap in a 240px box costs
+    more in confusion than it buys in space.
+
+    The window is sent as timestamps, not percentages, so the panel can put the
+    "now" line where it belongs every second instead of once a minute.
+    """
     # `over`, not `done` — the heading says "the rest of the day", so a drive
     # whose end time has passed does not belong here whether or not anybody
     # remembered to tap it complete. Reading `done` here while the hero read
@@ -273,15 +292,32 @@ def _tile_drives(now, runs, **_):
             return None                      # no drivers: the feature is unused
         return {'empty': "Nothing left to drive today." if runs
                 else "No drives on the schedule today."}
-    by_driver = {}
+
+    lanes = {}
     for r in rest:
-        by_driver.setdefault(r['driver_id'], {'driver': r['driver'], 'color': r['color'],
-                                              'avatar': r.get('avatar'),
-                                              'image': r.get('image'), 'runs': []})
-        by_driver[r['driver_id']]['runs'].append(
-            {'at': r['at'], 'title': r['title'], 'live': r['live']})
-    return {'drivers': sorted(by_driver.values(), key=lambda d: -len(d['runs'])),
-            'count': len(rest)}
+        lane = lanes.setdefault(r['driver_id'], {
+            'driver_id': r['driver_id'], 'driver': r['driver'], 'color': r['color'],
+            'avatar': r.get('avatar'), 'image': r.get('image'), 'runs': []})
+        lane['runs'].append({'id': r['id'], 'title': r['title'], 'at': r['at'],
+                             'location': r.get('location'), 'kind': r['kind'],
+                             'start': r['start'], 'end': r['end'], 'live': r['live']})
+
+    starts = [_parse(r['start']) or now for r in rest]
+    ends = [_parse(r['end']) or now for r in rest]
+    # `now` is in the window because a drive under way starts behind us, and a
+    # timeline that begins after the "now" line has nowhere to draw it.
+    lo = min(starts + [now]).replace(minute=0, second=0, microsecond=0)
+    hi = max(ends + [now])
+    if hi.minute or hi.second:
+        hi = (hi + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    # A single half-hour drive would otherwise be one block filling the tile,
+    # which is a rectangle rather than a timeline.
+    hi = max(hi, lo + datetime.timedelta(hours=3))
+
+    # Earliest first: the lane you read first should be the one leaving first.
+    ordered = sorted(lanes.values(), key=lambda l: min(r['start'] for r in l['runs']))
+    return {'lanes': ordered, 'count': len(rest),
+            'window': {'start': lo.isoformat(), 'end': hi.isoformat()}}
 
 
 def _tile_kids(now, kid_digest_fn=None, **_):
@@ -479,29 +515,117 @@ def _tile_moments(now, **_):
         return None
 
 
+# How far the calendar tile looks ahead. Five days is a working week seen from
+# a Monday and still fits as day cards across a wide tile; the calendar page's
+# agenda offers 3–14 and this is the middle of that.
+AGENDA_DAYS = 5
+# Per day, before the card says "+3 more". A day card taller than the tile is
+# the tile scrolling for one busy Saturday.
+AGENDA_PER_DAY = 5
+
+
 def _tile_calendar(now, **_):
-    """What is coming that is not a drive. The drives tile answers "who is
-    taking whom"; this answers "what is this family doing", which on most days
-    is a different list — a dentist appointment nobody drives to still belongs
-    on the wall."""
+    """What this family is doing, laid out the way the calendar page's AGENDA
+    view lays it out: a card per day, the day's events under it by start time.
+
+    The drives tile answers "who is taking whom"; this answers "what is on",
+    which on most days is a different list — a dentist appointment nobody
+    drives to still belongs on the wall.
+
+    A flat list of the next six things was the wrong shape for that question.
+    It could not say that Thursday is empty, and "empty Thursday" is a thing a
+    family reads a calendar to find out. Day cards say it by existing, which is
+    the same reason the agenda view is built that way.
+
+    TODAY is the one day that is filtered: a card headed Today listing this
+    morning's finished appointment is a card about the past. Events whose end
+    time has passed drop off it, matching `over` on the drives side so the two
+    halves of the board cannot disagree about what is behind us.
+    """
     try:
         sched = storage.get_cached_schedule() or {}
-        horizon = now.date() + datetime.timedelta(days=3)
-        rows = []
+        assignments = sched.get('assignments') or {}
+        unassigned = set(sched.get('unassigned') or [])
+        drivers = _driver_index()
+        today = now.date()
+
+        days = {}
+        order = []
+        for i in range(AGENDA_DAYS):
+            d = today + datetime.timedelta(days=i)
+            days[d] = []
+            order.append(d)
+
+        def place(d, row):
+            if d in days:
+                days[d].append(row)
+
         for ev in (sched.get('events') or []):
-            start = _parse(ev.get('start'))
-            if not start or not (now <= start) or start.date() > horizon:
+            # The trip's own span event covers every day of the trip and would
+            # print on all five cards. The trips tile is where a trip belongs.
+            if ev.get('event_type') == 'background_trip':
                 continue
-            rows.append({'day': day_word(start.date(), now.date()),
-                         'at': '' if ev.get('all_day') else _clock(start),
-                         'title': ev.get('title') or 'Event',
-                         'start': start.isoformat()})
+            start = _parse(ev.get('start'))
+            if not start:
+                continue
+            end = _parse(ev.get('end')) or start
+            if start.date() == today and not ev.get('all_day') and end < now:
+                continue
+            d_id = assignments.get(ev.get('id'))
+            d = drivers.get(d_id) if d_id and not str(d_id).startswith('ghost_') else None
+            place(start.date(), {
+                'title': ev.get('title') or 'Event',
+                'at': '' if ev.get('all_day') else _clock(start),
+                'end_at': '' if ev.get('all_day') else _clock(end),
+                'all_day': bool(ev.get('all_day')),
+                'start': start.isoformat(),
+                'driver': (d or {}).get('name'),
+                # An unassigned event is the one thing on this tile somebody has
+                # to DO something about, so it is coloured for it rather than
+                # left in the same grey as everything else.
+                'needs_driver': ev.get('id') in unassigned,
+                'color': ('#ef4444' if ev.get('id') in unassigned
+                          else (d or {}).get('color') or '#64748b'),
+                'kind': 'event',
+            })
+
+        for er in (sched.get('scheduled_errands') or []):
+            start = _parse(er.get('start_time'))
+            if not start:
+                continue
+            end = _parse(er.get('end_time')) or start
+            if start.date() == today and end < now:
+                continue
+            d_id = (er.get('driver') or {}).get('id')
+            d = drivers.get(d_id) if d_id else None
+            place(start.date(), {
+                'title': er.get('title') or 'Errand',
+                'at': _clock(start), 'end_at': _clock(end), 'all_day': False,
+                'start': start.isoformat(),
+                'driver': (d or {}).get('name'),
+                'needs_driver': False,
+                'color': (d or {}).get('color') or '#f59e0b',
+                'kind': 'errand',
+            })
+
+        total = sum(len(v) for v in days.values())
         # Never hidden. A family calendar with a quiet stretch is information;
         # a calendar tile that vanishes just looks broken.
-        if not rows:
+        if not total:
             return {'empty': "Nothing on the calendar for the next few days."}
-        rows.sort(key=lambda r: r['start'])
-        return {'events': rows[:6]}
+
+        cards = []
+        for d in order:
+            rows = sorted(days[d], key=lambda r: (not r['all_day'], r['start']))
+            cards.append({
+                'date': d.isoformat(),
+                'dom': d.day,
+                'day': day_word(d, today),
+                'today': d == today,
+                'events': rows[:AGENDA_PER_DAY],
+                'more': max(0, len(rows) - AGENDA_PER_DAY),
+            })
+        return {'days': cards, 'total': total}
     except Exception as e:
         print(f"[home_board] calendar failed: {e}")
         return None
@@ -628,10 +752,26 @@ def _tile_trips(now, **_):
 
 
 def _tile_map(now, runs=None, **_):
-    """Who is home, out, or driving right now. Needs Home Assistant for the
-    zone; the driving half comes from in-progress legs and works without it,
-    which is why a member with no person entity still appears when they are
-    behind the wheel."""
+    """Where everyone is — as a MAP, with the list as the fallback.
+
+    Six names beside six zone words was a table of contents for a map. "Kit:
+    not_home" is true and tells you nothing; a pin two streets away tells you
+    they are walking back. So the rows carry `latitude`/`longitude` and the
+    panel draws the same markers /map draws, from the same component.
+
+    The coordinates are FREE: this builder was already reading each member's
+    Home Assistant state and throwing everything but the zone word away. Cars
+    cost one state read each and are here for the same reason they are on /map
+    — "where is the car" is half of "can we leave yet".
+
+    The payload deliberately speaks `/api/family/locations`'s vocabulary
+    (`member_id`, `latitude`, `driving: {leg_title}`) so the shared renderer
+    takes either one without a translation layer in the middle.
+
+    Needs Home Assistant for the zone and the pin; the driving half comes from
+    in-progress legs and works without it, which is why a member with no person
+    entity still appears when they are behind the wheel.
+    """
     try:
         from services import ha_api
         driving = {r['driver_id']: r['title'] for r in (runs or []) if r.get('live')}
@@ -639,28 +779,58 @@ def _tile_map(now, runs=None, **_):
         for m in storage.get_all_members():
             if m.get('role') == 'helper' or m.get('system'):
                 continue
-            state = None
+            state = lat = lon = None
             ent = m.get('ha_person_entity')
             if ent:
                 try:
-                    s = ha_api.get_state(ent)
-                    state = (s or {}).get('state')
+                    s = ha_api.get_state(ent) or {}
+                    attrs = s.get('attributes') or {}
+                    state = s.get('state')
+                    lat, lon = attrs.get('latitude'), attrs.get('longitude')
                 except Exception:
-                    state = None
+                    state = lat = lon = None
             leg = driving.get(m.get('driver_id'))
             # Everyone appears, tracked or not. "Where is everyone" has no
             # empty day, and a person silently missing from the list is worse
             # than a person shown as unknown — you cannot tell the difference
             # between "not tracked" and "not home".
-            rows.append({'name': m.get('name'), 'color_code': m.get('color_code'),
+            rows.append({'member_id': m.get('id'), 'name': m.get('name'),
+                         'color_code': m.get('color_code'),
                          'avatar': m.get('avatar'), 'image': m.get('image'),
-                         'state': state or None, 'driving': leg})
+                         'state': state or None,
+                         'latitude': lat, 'longitude': lon, 'is_car': False,
+                         'driving': {'leg_title': leg} if leg else None})
         if not rows:
             return None                       # no family members at all
         # Anyone out ranks anyone home: "everybody is home" is the boring case.
         rows.sort(key=lambda r: (not r['driving'], (r['state'] or '') == 'home',
                                  r['name'] or ''))
-        return {'people': rows[:6]}
+        # Cars ride along the bottom of the list and on the map as squares. A
+        # car with no tracker is not a person with no phone — it simply is not
+        # on the map — so unlike the family it is left out rather than shown
+        # as unknown.
+        try:
+            from services import cars as cars_svc
+            for c in storage.get_all_cars():
+                if c.get('is_disabled') or not c.get('ha_device_tracker'):
+                    continue
+                loc = cars_svc.car_location(c) or {}
+                levels = cars_svc.car_levels(c) or {}
+                rows.append({'member_id': f"car:{c.get('id')}", 'name': c.get('name'),
+                             'color_code': c.get('color_code'),
+                             'avatar': c.get('icon') or '🚗', 'image': c.get('image'),
+                             'state': loc.get('state'), 'is_car': True,
+                             'latitude': loc.get('latitude'),
+                             'longitude': loc.get('longitude'),
+                             'battery_pct': levels.get('battery_pct'),
+                             'fuel_pct': levels.get('fuel_pct'),
+                             'range': levels.get('range'),
+                             'driving': None})
+        except Exception as e:
+            print(f"[home_board] map cars failed: {e}")
+        return {'people': rows,
+                'mapped': sum(1 for r in rows if r.get('latitude') is not None
+                              and r.get('longitude') is not None)}
     except Exception as e:
         print(f"[home_board] map failed: {e}")
         return None

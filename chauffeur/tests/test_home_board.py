@@ -310,6 +310,156 @@ def scenario_the_map_is_never_hidden_for_being_quiet():
         storage.get_all_members = orig
 
 
+def scenario_the_map_tile_carries_pins_not_just_zone_words():
+    """Six names beside six zone words is a table of contents for a map:
+    "not_home" is true and tells you nothing, while a pin two streets away
+    tells you they are walking back.
+
+    The coordinates cost nothing — this builder was already reading each
+    member's HA state and keeping only the zone word. What it must NOT do is
+    invent a second vocabulary for them: the payload speaks
+    /api/family/locations' field names (`latitude`, `driving.leg_title`) so the
+    one shared renderer takes either source without a translation layer.
+    """
+    from services import ha_api
+    orig_m, orig_s, orig_c = (storage.get_all_members, ha_api.get_state,
+                              storage.get_all_cars)
+    try:
+        storage.get_all_members = lambda *a, **kw: [
+            {'id': 'm1', 'name': 'Sam', 'role': 'parent', 'driver_id': 'drv1',
+             'ha_person_entity': 'person.sam'},
+            {'id': 'm2', 'name': 'Kit', 'role': 'child'},       # untracked
+        ]
+        storage.get_all_cars = lambda *a, **kw: []
+        ha_api.get_state = lambda ent: {
+            'state': 'not_home',
+            'attributes': {'latitude': 41.5, 'longitude': -81.6}}
+
+        runs = [{'driver_id': 'drv1', 'title': 'Practice', 'live': True}]
+        tile = home_board._tile_map(datetime.datetime.now(), runs=runs)
+        sam = next(p for p in tile['people'] if p['name'] == 'Sam')
+        kit = next(p for p in tile['people'] if p['name'] == 'Kit')
+        check(sam['latitude'] == 41.5 and sam['longitude'] == -81.6,
+              f"a tracked member carries coordinates, got {sam}")
+        check(sam.get('driving', {}).get('leg_title') == 'Practice',
+              "driving is the shape the map component reads, not a bare string")
+        check(kit['latitude'] is None and kit['member_id'] == 'm2',
+              "an untracked member is still on the list, without a pin")
+        check(tile['mapped'] == 1,
+              f"the panel is told how many pins there are, got {tile.get('mapped')}")
+    finally:
+        (storage.get_all_members, ha_api.get_state,
+         storage.get_all_cars) = orig_m, orig_s, orig_c
+
+
+def scenario_the_drives_tile_is_a_timeline_not_a_list():
+    """A list of times said what was left. It could not say that two drives
+    overlap, or that one parent has the whole evening — which is the question
+    somebody in the kitchen is actually asking. So the tile sends lanes and a
+    window, and the panel draws blocks as tall as the drives are long.
+
+    The window must contain NOW, because a drive under way started behind us
+    and a timeline that begins after the "now" line has nowhere to draw it."""
+    orig = (storage.get_cached_schedule, storage.get_all_drivers,
+            storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        storage.get_cached_schedule = lambda: _sched(
+            ({'id': 'a', 'title': 'Practice', 'start': _at(16).isoformat(),
+              'end': _at(17, 30).isoformat()}, 'drv1'),
+            ({'id': 'b', 'title': 'Pickup', 'start': _at(18).isoformat(),
+              'end': _at(19).isoformat()}, 'drv2'))
+        storage.get_all_drivers = lambda: [
+            {'id': 'drv1', 'name': 'Sam', 'color_code': '#f00'},
+            {'id': 'drv2', 'name': 'Vovo', 'color_code': '#00f'}]
+        storage.get_completed_drives = lambda: []
+        storage.get_in_progress_drives = lambda: ['init_a']
+
+        now = _at(16, 40)
+        tile = home_board._tile_drives(now, runs=home_board.todays_runs(now=now))
+        check([l['driver'] for l in tile['lanes']] == ['Sam', 'Vovo'],
+              f"a lane per driver, earliest first, got {tile['lanes']}")
+        w_start = datetime.datetime.fromisoformat(tile['window']['start'])
+        w_end = datetime.datetime.fromisoformat(tile['window']['end'])
+        check(w_start <= now <= w_end,
+              f"now must be inside the window, got {w_start}..{w_end}")
+        check(w_start <= _at(16) and w_end >= _at(19),
+              "the window covers every drive still to come")
+        run = tile['lanes'][0]['runs'][0]
+        check(run['start'] and run['end'] and run['live'],
+              f"a block needs both its edges and its live flag, got {run}")
+
+        # A single short drive must still be drawn against a readable stretch
+        # of clock rather than as one rectangle filling the tile.
+        storage.get_cached_schedule = lambda: _sched(
+            ({'id': 'solo', 'title': 'Dentist', 'start': _at(15).isoformat(),
+              'end': _at(15, 30).isoformat()}, 'drv1'))
+        storage.get_in_progress_drives = lambda: []
+        now = _at(14, 50)
+        tile = home_board._tile_drives(now, runs=home_board.todays_runs(now=now))
+        span = (datetime.datetime.fromisoformat(tile['window']['end'])
+                - datetime.datetime.fromisoformat(tile['window']['start']))
+        check(span >= datetime.timedelta(hours=3),
+              f"one short drive is still a timeline, got a {span} window")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = orig
+
+
+def scenario_the_calendar_tile_is_an_agenda_of_days():
+    """A flat list of the next six things cannot say that Thursday is empty,
+    and "Thursday is empty" is a thing families read a calendar to find out.
+    The agenda's day cards say it by existing.
+
+    Today is the one day that is filtered: a card headed Today listing this
+    morning's finished appointment is a card about the past, and it would put
+    the calendar tile at odds with the drives tile about what is behind us."""
+    orig = (storage.get_cached_schedule, storage.get_all_drivers,
+            storage.get_all_members)
+    try:
+        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+        storage.get_cached_schedule = lambda: {
+            'events': [
+                {'id': 'past', 'title': 'Dentist', 'start': _at(8).isoformat(),
+                 'end': _at(9).isoformat()},
+                {'id': 'later', 'title': 'Practice', 'start': _at(17).isoformat(),
+                 'end': _at(18).isoformat()},
+                {'id': 'trip', 'title': 'Disney', 'event_type': 'background_trip',
+                 'start': _at(0).isoformat(), 'end': _at(23).isoformat()},
+                {'id': 'orphan', 'title': 'Recital',
+                 'start': datetime.datetime.combine(tomorrow, datetime.time(19)).isoformat(),
+                 'end': datetime.datetime.combine(tomorrow, datetime.time(20)).isoformat()},
+            ],
+            'assignments': {'later': 'drv1'},
+            'unassigned': ['orphan'],
+            'scheduled_errands': []}
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Sam',
+                                            'color_code': '#ff0000'}]
+        storage.get_all_members = lambda *a, **kw: []
+
+        tile = home_board._tile_calendar(_at(12))
+        days = {d['day']: d for d in tile['days']}
+        check(len(tile['days']) == home_board.AGENDA_DAYS,
+              f"a card per day whether or not it has anything on it, got {len(tile['days'])}")
+        check(days['Today']['today'] and days['Today']['dom'] == datetime.date.today().day,
+              "today knows it is today")
+        titles = [e['title'] for e in days['Today']['events']]
+        check(titles == ['Practice'],
+              f"this morning's finished appointment is behind us, got {titles}")
+        check('Disney' not in str(tile),
+              "a trip's own span event would print on all five cards; trips have "
+              "their own tile")
+        check(days['Today']['events'][0]['driver'] == 'Sam',
+              "an assigned event names its driver")
+        recital = days['Tomorrow']['events'][0]
+        check(recital['needs_driver'] and recital['color'] == '#ef4444',
+              f"the one thing somebody must act on is coloured for it, got {recital}")
+        check(not any(d['events'] for d in tile['days'][2:]),
+              "the quiet days are present and empty, which is the whole point")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_all_members) = orig
+
+
 def scenario_the_meals_tile_reads_and_never_composes():
     """Composing a plate here would make the wall panel a writer of meal plans,
     on a timer, forever. The tile shows a PINNED plate or nothing."""
@@ -591,9 +741,14 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "a mosaic is back to fixed-height rows, so it no longer fills its tile")
     check('flex-1 min-h-0' in body,
           "the mosaic does not claim the space its tile has left over")
-    check('isMosaic(t.key)' in tpl,
-          "picture tiles are no longer distinguished, so either they scroll a "
-          "photograph or every text tile is stretched to fill")
+    check('fillsTile(t.key)' in tpl and 'isMosaic(key)' in tpl,
+          "tiles drawn INTO their slot (the mosaics, the map, the timeline) are "
+          "no longer distinguished from tiles read down a list, so either they "
+          "scroll a photograph or every text tile is stretched to fill")
+    for key in ("'map'", "'drives'"):
+        check(key in tpl[tpl.index('DRAWN_TILES'):tpl.index('DRAWN_TILES') + 200],
+              f"{key} is drawn to fit its tile and must be listed as such — "
+              "a map given its content height is a map an inch tall")
 
 
 def scenario_a_page_is_configured_in_one_place():

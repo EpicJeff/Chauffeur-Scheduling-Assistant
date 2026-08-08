@@ -1,0 +1,243 @@
+<!-- The family map, as a FACTORY rather than a page.
+
+     `components/family_map.html` was one map bolted to one pair of element ids
+     (`#family-map`, `#family-map-chips`) held in file-level globals, which is
+     exactly right for a page that shows a map and no use at all to the wall
+     board, where the map is a tile among tiles and its data arrives inside the
+     board payload rather than from a fetch of its own.
+
+     So the drawing lives here — `FamilyMap.create(el, opts)` returns an
+     instance bound to whatever element it is given — and the page-level
+     wrapper keeps the old global functions on top of it. Two callers, one
+     renderer: the marker a member gets on the board tile is the same marker,
+     from the same code, as the one on /map.
+
+     Two things the tile needs that a page does not:
+
+     1. **Injected locations.** `refresh()` takes an array, and only fetches
+        `/api/family/locations` when handed nothing. The board already reads
+        every member's HA state to build its map tile; making the tile fetch
+        the same states again would double the panel's cost to Home Assistant
+        to draw one picture.
+     2. **A map that is not a control.** On the board every tile is a door —
+        the whole card is an <a> to the page it summarises — and a Leaflet map
+        swallows the drag and the tap that door depends on. `interactive:
+        false` turns the handlers off, and the tile puts `pointer-events: none`
+        over the top, so the map is a picture of where everyone is and touching
+        it opens the real one.
+-->
+<style>
+    /* Leaflet popups default to white chrome; follow the HA theme when active. */
+    .ha-theme .leaflet-popup-content-wrapper,
+    .ha-theme .leaflet-popup-tip {
+        background: var(--ha-card-bg, #ffffff);
+        color: var(--ha-primary-text, #333333);
+    }
+
+    /* OpenStreetMap's terms want the credit visible, so it is never removed —
+       but on a 240px board tile the default chip is a third of the width, so
+       there it shrinks to a mark rather than a sentence. */
+    .fm-quiet .leaflet-control-attribution {
+        font-size: 8px;
+        padding: 0 3px;
+        background: rgb(255 255 255 / 0.6);
+    }
+</style>
+<script>
+    window.FamilyMap = window.FamilyMap || (function () {
+        // Computed independently of the including page's script order.
+        const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+
+        function esc(s) {
+            return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function ensureLeaflet() {
+            if (window.L) return Promise.resolve();
+            if (window._fmLeafletLoading) return window._fmLeafletLoading;
+            window._fmLeafletLoading = new Promise((resolve, reject) => {
+                const css = document.createElement('link');
+                css.rel = 'stylesheet';
+                css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+                document.head.appendChild(css);
+                const js = document.createElement('script');
+                js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+                js.onload = resolve;
+                js.onerror = reject;
+                document.head.appendChild(js);
+            });
+            return window._fmLeafletLoading;
+        }
+
+        function iconFor(loc, size) {
+            const label = loc.avatar || (loc.name || '?').charAt(0).toUpperCase();
+            // Cars get a rounded-square marker so a glance separates the
+            // fleet from the family.
+            const radius = loc.is_car ? '30%' : '50%';
+            const inner = loc.image
+                ? `<img src="${esc(loc.image)}" style="width:100%;height:100%;object-fit:cover;border-radius:${radius}">`
+                : esc(label);
+            return L.divIcon({
+                className: '',
+                html: `<div style="width:${size}px;height:${size}px;border-radius:${radius};background:#171717;border:3px solid ${loc.color_code || '#3b82f6'};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:${Math.round(size * 0.42)}px;box-shadow:0 2px 8px rgba(0,0,0,.5);overflow:hidden">${inner}</div>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+                popupAnchor: [0, -(size / 2 + 1)]
+            });
+        }
+
+        function popupFor(loc) {
+            const drivingLine = loc.driving ? `🚗 Driving: ${esc(loc.driving.leg_title)}` : '';
+            const canMessage = typeof messageMember === 'function'
+                && typeof selectedMemberId !== 'undefined' && selectedMemberId
+                && selectedMemberId !== loc.member_id
+                && !loc.is_car;
+            let carStats = '';
+            if (loc.is_car) {
+                const bits = [];
+                if (loc.battery_pct != null) bits.push(`🔌 ${Math.round(loc.battery_pct)}%`);
+                if (loc.fuel_pct != null) bits.push(`⛽ ${Math.round(loc.fuel_pct)}%`);
+                if (loc.range != null) bits.push(`${Math.round(loc.range)} mi range`);
+                if (bits.length) carStats = `<div style="margin-top:4px;font-weight:700">${bits.join(' · ')}</div>`;
+            }
+            return `<div style="min-width:140px">
+                <div style="font-weight:800">${esc(loc.name)}</div>
+                <div style="color:var(--ha-secondary-text, #666);text-transform:capitalize">${esc((loc.state || '').replace(/_/g, ' '))}</div>
+                ${carStats}
+                ${drivingLine ? `<div style="margin-top:4px">${drivingLine}</div>` : ''}
+                ${canMessage ? `<button onclick="messageMember('${loc.member_id}')" style="margin-top:6px;background:var(--ha-primary-color, #2563eb);color:#fff;font-weight:700;border:none;border-radius:8px;padding:6px 10px;width:100%;cursor:pointer">Message</button>` : ''}
+            </div>`;
+        }
+
+        function chipFor(loc) {
+            const driving = loc.driving ? ' · 🚗' : '';
+            return `<span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-xs font-bold text-gray-300">
+                <span class="w-2.5 h-2.5 rounded-full" style="background-color:${loc.color_code || '#6b7280'}"></span>
+                ${esc(loc.name)}: ${esc(loc.state)}${driving}</span>`;
+        }
+
+        async function fetchLocations() {
+            const res = await fetch(`${apiBase}api/family/locations`);
+            return await res.json();
+        }
+
+        function create(el, opts) {
+            opts = Object.assign({
+                interactive: true,   // false = a picture of the map, not a control
+                chipsEl: null,       // where "tracked by zone only" chips go, if anywhere
+                popups: true,
+                fit: true,           // frame everyone once, then leave the view alone
+                markerSize: 38,
+                maxZoom: 15
+            }, opts || {});
+
+            const inst = {
+                el: el, opts: opts, map: null, markers: {}, didFit: false, timer: null,
+
+                async ensure() {
+                    await ensureLeaflet();
+                    // A map whose container was thrown away (Alpine re-rendering
+                    // a tile, a PWA tab rebuilt) is dead weight holding a
+                    // detached node — rebuild rather than draw into nothing.
+                    if (inst.map && !inst.map.getContainer().isConnected) inst.destroy();
+                    if (!inst.map) {
+                        if (!opts.interactive) el.classList.add('fm-quiet');
+                        inst.map = L.map(el, {
+                            zoomControl: opts.interactive,
+                            dragging: opts.interactive,
+                            scrollWheelZoom: opts.interactive,
+                            doubleClickZoom: opts.interactive,
+                            boxZoom: opts.interactive,
+                            keyboard: opts.interactive,
+                            touchZoom: opts.interactive,
+                            tap: opts.interactive
+                        }).setView([39.5, -98.35], 4);
+                        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            maxZoom: 19,
+                            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                        }).addTo(inst.map);
+                    }
+                    // The container may have just become visible (a PWA tab
+                    // switch, a tile that was off screen).
+                    setTimeout(() => { if (inst.map) inst.map.invalidateSize(); }, 50);
+                    return inst.map;
+                },
+
+                // `locations` is optional: hand it an array (the board already
+                // has one) or let it go and fetch the family's own.
+                async refresh(locations, focusMemberId) {
+                    if (!inst.map) return;
+                    if (!locations) {
+                        try { locations = await fetchLocations(); }
+                        catch (e) { return; }
+                    }
+                    const chipHtml = [];
+                    const seen = new Set();
+
+                    (locations || []).forEach(loc => {
+                        const hasCoords = typeof loc.latitude === 'number'
+                            && typeof loc.longitude === 'number';
+                        if (!hasCoords) {
+                            if (loc.state) chipHtml.push(chipFor(loc));
+                            return;
+                        }
+                        seen.add(loc.member_id);
+                        const icon = iconFor(loc, opts.markerSize);
+                        const popup = popupFor(loc);
+                        if (inst.markers[loc.member_id]) {
+                            inst.markers[loc.member_id].setLatLng([loc.latitude, loc.longitude]);
+                            inst.markers[loc.member_id].setIcon(icon);
+                            if (opts.popups) inst.markers[loc.member_id].setPopupContent(popup);
+                        } else {
+                            const m = L.marker([loc.latitude, loc.longitude], { icon: icon })
+                                .addTo(inst.map);
+                            if (opts.popups) m.bindPopup(popup);
+                            inst.markers[loc.member_id] = m;
+                        }
+                    });
+
+                    // Drop markers for members that lost coords
+                    Object.keys(inst.markers).forEach(id => {
+                        if (!seen.has(id)) {
+                            inst.map.removeLayer(inst.markers[id]);
+                            delete inst.markers[id];
+                        }
+                    });
+
+                    if (opts.chipsEl) opts.chipsEl.innerHTML = chipHtml.join('');
+
+                    if (focusMemberId && inst.markers[focusMemberId]) {
+                        inst.map.setView(inst.markers[focusMemberId].getLatLng(), 15);
+                        if (opts.popups) inst.markers[focusMemberId].openPopup();
+                    } else if (opts.fit && !inst.didFit && seen.size > 0) {
+                        inst.didFit = true;
+                        const group = L.featureGroup(Object.values(inst.markers));
+                        inst.map.fitBounds(group.getBounds().pad(0.3), { maxZoom: opts.maxZoom });
+                    }
+                },
+
+                startPolling(ms) {
+                    inst.stopPolling();
+                    inst.timer = setInterval(() => {
+                        if (document.visibilityState === 'visible') inst.refresh();
+                    }, ms || 20000);
+                },
+
+                stopPolling() {
+                    if (inst.timer) { clearInterval(inst.timer); inst.timer = null; }
+                },
+
+                destroy() {
+                    inst.stopPolling();
+                    if (inst.map) { inst.map.remove(); inst.map = null; }
+                    inst.markers = {};
+                    inst.didFit = false;
+                }
+            };
+            return inst;
+        }
+
+        return { create: create, fetchLocations: fetchLocations, ensureLeaflet: ensureLeaflet };
+    })();
+</script>

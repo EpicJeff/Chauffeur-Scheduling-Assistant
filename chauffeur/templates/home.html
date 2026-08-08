@@ -50,6 +50,33 @@
         .tile-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .tile-scroll::-webkit-scrollbar { display: none; }
 
+        /* The agenda's day cards flow into as many columns as the tile is
+           wide — one on a quarter-width tile, a working week across a full one
+           — which is why the calendar tile is the one that most rewards being
+           made bigger. `auto-fill` rather than `auto-fit`: a lone Today card on
+           a wide tile should be a card, not a stretched banner. */
+        .agenda-cards {
+            grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+            align-content: start;
+        }
+
+        /* OpenStreetMap's raster tiles are daylight-bright, and a white
+           rectangle in the middle of a dark board at ten at night is the
+           brightest thing in the kitchen. The /map page is allowed to be
+           bright — you went there. A tile nobody asked for gets dimmed to sit
+           in the board rather than shout over it. */
+        #board-map .leaflet-tile-pane { filter: brightness(0.78) saturate(0.85); }
+        html[data-panel-theme="light"] #board-map .leaflet-tile-pane { filter: none; }
+        @media (prefers-color-scheme: light) {
+            html[data-panel-theme="auto"] #board-map .leaflet-tile-pane { filter: none; }
+        }
+
+        /* A timeline block is positioned by percentage, so a 20-minute errand
+           on a five-hour evening comes out a few pixels tall. The floor keeps
+           its time and title readable; overlapping blocks are left overlapping
+           on purpose, because two drives at once IS the information. */
+        .timeline-block { min-height: 1.6rem; }
+
         /* The column count is the household's, so the tracks cannot be
            Tailwind's fixed `grid-cols-N` classes — those only exist for the
            handful of numbers Tailwind ships, and the CDN build only generates
@@ -258,9 +285,9 @@
                      nothing below the fold by construction. -->
                 <a :href="link(t.key)" :style="spanStyle(t.key)"
                     class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden transition-transform active:scale-[0.985]"
-                    :class="isMosaic(t.key) ? 'flex flex-col overflow-hidden'
-                                            : 'block tile-scroll overflow-y-auto'">
-                    <div class="flex items-center gap-2 mb-3">
+                    :class="fillsTile(t.key) ? 'flex flex-col overflow-hidden'
+                                             : 'block tile-scroll overflow-y-auto'">
+                    <div class="flex items-center gap-2 mb-3 shrink-0">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label"></span>
                     </div>
@@ -273,23 +300,62 @@
                         <div class="text-base panel-dim" x-text="t.data.empty"></div>
                     </template>
 
-                    <!-- the rest of the day -->
+                    <!-- the rest of the day, as the Drives page draws it: a
+                         lane per driver, time running down, every drive a
+                         block as tall as it is long. A list of times said what
+                         was left; it could not say that two of them overlap,
+                         or that one parent has the whole evening. That is what
+                         a family in the kitchen is actually asking, and a
+                         timeline answers it by its shape. -->
                     <template x-if="t.key === 'drives' && !t.data.empty">
-                        <div class="space-y-3">
-                            <template x-for="d in t.data.drivers" :key="d.driver">
-                                <div>
-                                    <div class="text-sm font-black mb-1" :style="'color:' + tone(d.color)"
-                                        x-text="d.driver"></div>
-                                    <template x-for="(r, i) in d.runs" :key="i">
-                                        <div class="flex gap-2 text-base panel-text">
-                                            <span class="tabular-nums font-bold panel-dim shrink-0"
-                                                x-text="r.at"></span>
-                                            <span class="truncate" x-text="r.title"></span>
-                                            <span x-show="r.live" class="text-emerald-400 shrink-0">●</span>
+                        <div class="flex-1 min-h-0 flex flex-col">
+                            <div class="flex gap-1.5 mb-1 pl-9">
+                                <template x-for="lane in t.data.lanes" :key="lane.driver_id">
+                                    <div class="flex-1 min-w-0 text-[0.7rem] font-black truncate"
+                                        :style="'color:' + tone(lane.color)" x-text="lane.driver"></div>
+                                </template>
+                            </div>
+                            <div class="relative flex-1 min-h-0">
+                                <!-- the hour rail, and a line across the lanes
+                                     at each hour so a block's height reads as
+                                     a duration rather than as a size -->
+                                <template x-for="h in hourTicks(t.data.window)" :key="h.at">
+                                    <div class="absolute left-0 right-0" :style="'top:' + h.pct + '%'">
+                                        <div class="absolute left-9 right-0 border-t"
+                                            style="border-color: var(--panel-line)"></div>
+                                        <div class="absolute left-0 w-8 -translate-y-1/2 text-right text-[0.6rem] font-bold panel-dim tabular-nums"
+                                            x-text="h.label"></div>
+                                    </div>
+                                </template>
+
+                                <div class="absolute inset-y-0 left-9 right-0 flex gap-1.5">
+                                    <template x-for="lane in t.data.lanes" :key="lane.driver_id">
+                                        <div class="relative flex-1 min-w-0">
+                                            <template x-for="r in lane.runs" :key="r.id">
+                                                <div class="timeline-block absolute inset-x-0 rounded-md px-1.5 py-0.5 overflow-hidden"
+                                                    :style="blockStyle(r, t.data.window, lane.color)">
+                                                    <div class="text-[0.6rem] font-bold tabular-nums leading-tight truncate"
+                                                        :style="'color:' + tone(lane.color)">
+                                                        <span x-text="r.at"></span>
+                                                        <span x-show="r.live" class="text-emerald-400">●</span>
+                                                    </div>
+                                                    <div class="text-[0.7rem] font-semibold panel-text leading-tight truncate"
+                                                        x-text="r.title"></div>
+                                                </div>
+                                            </template>
                                         </div>
                                     </template>
                                 </div>
-                            </template>
+
+                                <!-- Now. Recomputed on the clock's own tick, so
+                                     it slides down the tile instead of jumping
+                                     once a minute when the board reloads. -->
+                                <div class="absolute left-9 right-0 border-t-2 border-red-500/80 pointer-events-none"
+                                    x-show="nowPct(t.data.window) !== null"
+                                    :style="'top:' + nowPct(t.data.window) + '%'">
+                                    <div class="absolute -left-1.5 -top-1 w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                                </div>
+                            </div>
                         </div>
                     </template>
 
@@ -430,16 +496,46 @@
                         </div>
                     </template>
 
-                    <!-- what's coming -->
+                    <!-- what's coming, as the calendar's AGENDA view: a card
+                         per day rather than a flat list of the next six
+                         things. A list cannot say that Thursday is empty, and
+                         "Thursday is empty" is a thing families read a
+                         calendar to find out. The cards flow into however many
+                         columns the tile is wide, so the same markup is one
+                         day stacked on a narrow tile and a working week across
+                         a wide one. -->
                     <template x-if="t.key === 'calendar' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="(e, i) in t.data.events" :key="i">
-                                <div class="flex gap-2 text-base panel-text">
-                                    <span class="text-xs font-bold uppercase panel-dim w-16 shrink-0 pt-1"
-                                        x-text="e.day"></span>
-                                    <span class="tabular-nums font-bold panel-dim shrink-0"
-                                        x-text="e.at"></span>
-                                    <span class="truncate" x-text="e.title"></span>
+                        <div class="grid gap-2 agenda-cards">
+                            <template x-for="d in t.data.days" :key="d.date">
+                                <div class="rounded-xl p-2"
+                                    :style="'border: 1px solid ' + (d.today ? 'var(--panel-accent)' : 'var(--panel-line)')
+                                            + '; background: var(--panel-card-lo)'">
+                                    <div class="flex items-baseline justify-between gap-1 mb-1.5 px-0.5">
+                                        <span class="text-xl font-black panel-text tabular-nums leading-none"
+                                            x-text="d.dom"></span>
+                                        <span class="text-[0.62rem] font-black uppercase tracking-widest truncate"
+                                            :class="d.today ? '' : 'panel-dim'"
+                                            :style="d.today ? 'color: var(--panel-accent)' : ''"
+                                            x-text="d.day"></span>
+                                    </div>
+                                    <div x-show="!d.events.length"
+                                        class="text-xs panel-dim italic px-0.5 py-1">Nothing scheduled</div>
+                                    <template x-for="(e, i) in d.events" :key="i">
+                                        <div class="rounded-md px-1.5 py-1 mb-1"
+                                            :style="'border-left: 3px solid ' + tone(e.color)
+                                                    + '; background: var(--panel-card-lo)'">
+                                            <div class="text-[0.62rem] font-bold panel-dim tabular-nums leading-tight"
+                                                x-text="e.all_day ? 'Entire day' : e.at"></div>
+                                            <div class="text-[0.8rem] font-bold panel-text truncate leading-tight"
+                                                x-text="e.title"></div>
+                                            <div class="text-[0.62rem] truncate leading-tight"
+                                                x-show="e.needs_driver || e.driver"
+                                                :class="e.needs_driver ? 'text-red-400' : 'panel-dim'"
+                                                x-text="e.needs_driver ? '⚠️ needs a driver' : e.driver"></div>
+                                        </div>
+                                    </template>
+                                    <div class="text-[0.62rem] panel-dim px-0.5" x-show="d.more"
+                                        x-text="'+' + d.more + ' more'"></div>
                                 </div>
                             </template>
                         </div>
@@ -488,18 +584,38 @@
                         </div>
                     </template>
 
-                    <!-- where everyone is -->
+                    <!-- where everyone is — the actual map, drawn by the same
+                         component /map uses, from markers the board payload
+                         already carries. Six names beside six zone words was a
+                         table of contents for a map: "not_home" is true and
+                         tells you nothing, a pin two streets away tells you
+                         they are walking back.
+                         The map takes no pointer events: on this board every
+                         tile is a door, and a Leaflet map would swallow the
+                         tap that opens the real one. -->
                     <template x-if="t.key === 'map' && !t.data.empty">
-                        <div class="space-y-1.5">
-                            <template x-for="(p, i) in t.data.people" :key="i">
-                                <div class="flex items-baseline justify-between gap-3">
-                                    <span class="text-base truncate"
-                                        :style="'color:' + tone(p.color_code)" x-text="p.name"></span>
-                                    <span class="text-sm shrink-0 truncate max-w-[55%]"
-                                        :class="p.driving ? 'text-emerald-300' : 'panel-dim'"
-                                        x-text="p.driving ? ('🚗 ' + p.driving) : (p.state || 'not tracked')"></span>
-                                </div>
-                            </template>
+                        <div class="flex-1 min-h-0 flex flex-col gap-2">
+                            <div class="relative flex-1 min-h-0 rounded-xl overflow-hidden"
+                                x-show="t.data.mapped"
+                                style="border: 1px solid var(--panel-line)">
+                                <div id="board-map" class="absolute inset-0 bg-gray-800"
+                                    style="pointer-events: none"></div>
+                            </div>
+                            <!-- Whoever Home Assistant knows only by zone, and
+                                 whoever is behind the wheel — neither has a pin
+                                 to stand on, and both are the answer to "where
+                                 is everyone". -->
+                            <div class="flex flex-wrap gap-1.5 shrink-0"
+                                :class="t.data.mapped ? 'max-h-16 overflow-hidden' : ''">
+                                <template x-for="(p, i) in unmapped(t.data.people)" :key="i">
+                                    <span class="panel-chip text-xs rounded-full px-2 py-0.5 truncate max-w-full">
+                                        <span :style="'color:' + tone(p.color_code)" x-text="p.name"></span>
+                                        <span class="panel-dim"
+                                            x-text="p.driving ? ('· 🚗 ' + p.driving.leg_title)
+                                                    : ('· ' + (p.state || 'not tracked'))"></span>
+                                    </span>
+                                </template>
+                            </div>
                         </div>
                     </template>
 
@@ -736,8 +852,16 @@
 
     {% include 'components/control_center.html' %}
     {% include 'components/moments_hearth.html' %}
+    <!-- The map tile's markers, drawn by the same component /map draws with.
+         Script only: the board mounts it into a tile, not into a page. -->
+    {% include 'components/family_map_core.html' %}
 
     <script>
+        // The Leaflet instance lives OUTSIDE Alpine. A map is a large graph of
+        // DOM nodes, layers and event handlers, and handing it to a reactive
+        // proxy means every one of those gets wrapped on the way past.
+        let boardMap = null;
+
         function homeBoard() {
             const params = new URLSearchParams(window.location.search);
             return {
@@ -746,6 +870,10 @@
                 isPanelMode: params.get('panel') === 'true',
                 board: {}, hero: {}, catalog: {},
                 clock: '', seconds: '', meridiem: '', countdown: '', countdownClass: '',
+                // The timeline's "now" line reads this, so it slides down the
+                // tile on the clock's own tick rather than jumping a minute at
+                // a time when the board reloads.
+                nowTs: Date.now(),
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
@@ -802,6 +930,7 @@
                     h = h % 12 || 12;
                     this.clock = h + ':' + String(d.getMinutes()).padStart(2, '0');
                     this.seconds = String(d.getSeconds()).padStart(2, '0');
+                    this.nowTs = d.getTime();
                     this.recount();
                 },
 
@@ -815,6 +944,10 @@
                         this.hero = this.board.hero || {};
                         if (!this.isPanelMode) this.applyBackground();
                         this.recount();
+                        // After Alpine has drawn the tile, never before: the
+                        // map mounts into an element that does not exist until
+                        // the board it came from has rendered.
+                        this.$nextTick(() => this.syncMap());
                     } catch (e) { /* a wall panel keeps showing the last good board */ }
                 },
 
@@ -955,6 +1088,17 @@
                     return this.MOSAIC_TILES.includes(key);
                 },
 
+                // Drawn to fit rather than read down a list. A map and a
+                // timeline are the same case as a mosaic — their content is
+                // laid out INTO the tile, so they must be given its full height
+                // and must never scroll (scrolling a timeline hides the hour
+                // you are standing in). Named separately from the mosaics
+                // because they are not pictures.
+                DRAWN_TILES: ['map', 'drives'],
+                fillsTile(key) {
+                    return this.isMosaic(key) || this.DRAWN_TILES.includes(key);
+                },
+
                 // Mosaic sizing, as inline grid spans rather than Tailwind
                 // classes: these are computed in JS and the CDN build only
                 // reliably generates classes it can see in the markup.
@@ -980,6 +1124,110 @@
                         return `grid-column: span ${cols - remainder + 1};`;
                     }
                     return '';
+                },
+
+                // --- the drives timeline ---------------------------------
+                // The window arrives as two timestamps rather than as
+                // percentages so that "now" can be placed by the browser's own
+                // clock. Everything below turns a time into a position in it.
+
+                _span(w) {
+                    const s = new Date(w.start).getTime(), e = new Date(w.end).getTime();
+                    return (e > s) ? { s, e, ms: e - s } : null;
+                },
+
+                pctFor(when, w) {
+                    const sp = this._span(w);
+                    if (!sp) return null;
+                    const t = new Date(when).getTime();
+                    return Math.min(100, Math.max(0, ((t - sp.s) / sp.ms) * 100));
+                },
+
+                nowPct(w) {
+                    const sp = this._span(w);
+                    if (!sp) return null;
+                    // `nowTs` rather than Date.now(): Alpine re-evaluates a
+                    // binding when something REACTIVE in it changes, and
+                    // Date.now() is not that. Read straight, the line would
+                    // paint once and then stay where it was put.
+                    const t = this.nowTs;
+                    if (t < sp.s || t > sp.e) return null;
+                    return ((t - sp.s) / sp.ms) * 100;
+                },
+
+                // An hour line every hour, unless that would be more than
+                // eight of them across a tile a few hundred pixels tall.
+                hourTicks(w) {
+                    const sp = this._span(w);
+                    if (!sp) return [];
+                    const hours = sp.ms / 3600000;
+                    const step = hours <= 8 ? 1 : Math.ceil(hours / 8);
+                    const out = [];
+                    const d = new Date(sp.s);
+                    d.setMinutes(0, 0, 0);
+                    while (d.getTime() <= sp.e) {
+                        if (d.getTime() >= sp.s) {
+                            let h = d.getHours();
+                            const mer = h >= 12 ? 'p' : 'a';
+                            h = h % 12 || 12;
+                            out.push({
+                                at: d.toISOString(), label: h + mer,
+                                pct: ((d.getTime() - sp.s) / sp.ms) * 100
+                            });
+                        }
+                        d.setHours(d.getHours() + step);
+                    }
+                    return out;
+                },
+
+                blockStyle(run, w, color) {
+                    const top = this.pctFor(run.start, w);
+                    const bottom = this.pctFor(run.end, w);
+                    const c = this.tone(color);
+                    // The block is tinted with the driver's own colour rather
+                    // than filled with it: a solid block of Vovo-red with white
+                    // text on it is a badge, and four of them is a flag.
+                    return `top: ${top}%; height: ${Math.max(0, bottom - top)}%;`
+                        + ` border-left: 3px solid ${c};`
+                        + ` background: color-mix(in srgb, ${c} 16%, transparent);`
+                        + (run.live ? ' outline: 2px solid rgb(52 211 153 / .8);' : '');
+                },
+
+                // --- the map tile ----------------------------------------
+
+                // Whoever has no pin to stand on, plus whoever is driving.
+                // A pin says where somebody IS; it cannot say they are on the
+                // way to basketball, and that is the more useful half.
+                unmapped(people) {
+                    return (people || []).filter(
+                        p => p.driving || typeof p.latitude !== 'number'
+                            || typeof p.longitude !== 'number');
+                },
+
+                // Mount once, then feed it the board's own people on every
+                // load. The tile deliberately does NOT fetch
+                // /api/family/locations: the board already read every member's
+                // Home Assistant state to build this payload, and asking twice
+                // would double what the panel costs HA to draw one picture.
+                async syncMap() {
+                    const tile = (this.board.tiles || []).find(x => x.key === 'map');
+                    const el = document.getElementById('board-map');
+                    if (!tile || !el || !tile.data || !tile.data.mapped) return;
+                    // A map bound to an element Alpine has since replaced is
+                    // drawing into a node nobody can see.
+                    if (boardMap && boardMap.el !== el) { boardMap.destroy(); boardMap = null; }
+                    if (!boardMap) {
+                        boardMap = FamilyMap.create(el, {
+                            interactive: false,   // the tile is a door; see the markup
+                            popups: false,        // nothing to tap means nothing to open
+                            markerSize: 30,
+                            maxZoom: 14
+                        });
+                    }
+                    try {
+                        await boardMap.ensure();
+                        await boardMap.refresh(tile.data.people);
+                    } catch (e) { /* no Leaflet, no map: the chips still say who is where */ }
                 },
 
                 // The picture the board floats on. Set once per load and left
