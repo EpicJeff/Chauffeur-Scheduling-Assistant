@@ -241,6 +241,15 @@
         const isKiosk = urlParams.get('kiosk') === 'true';
         const isPanel = urlParams.get('panel') === 'true';
         const apiBase = window.location.pathname.endsWith('/') ? '../' : '';
+        // Declared HERE, not next to panelProfile() below, and that placement is
+        // load-bearing. `function` declarations hoist; `let` does not — it sits
+        // in the temporal dead zone until its own line runs. With this
+        // declaration below the first `panelProfile()` call, that call threw
+        // ReferenceError and took the whole DOMContentLoaded handler with it:
+        // no shelf, no tab filtering, no background, no idle return, and the
+        // desktop nav left sitting on a wall panel. `node --check` cannot see
+        // it, because it is a runtime error in perfectly valid syntax.
+        let _profile = null;
 
         // Append ALL query parameters to nav links (e.g., kiosk=true, theme=ha,
         // panel=true) — this is what keeps a panel in panel mode as somebody
@@ -340,7 +349,6 @@
         // One request, shared by the shelf and the idle timer — they both want
         // the same answer and asking twice on every page load is a request per
         // navigation for nothing.
-        let _profile = null;
         function panelProfile() {
             if (!_profile) {
                 _profile = fetch(apiBase + 'api/panel/profile')
