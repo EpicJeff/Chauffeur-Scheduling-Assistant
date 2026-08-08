@@ -6386,10 +6386,9 @@ def _build_kid_digests(target_date=None):
             if r.get('event_type') != 'background_trip':
                 continue
             lines.append(_kid_trip_line(r, target))
-            # Suppression takes the span whether or not its EDGES are
-            # trustworthy: a clipped span still covers the days it does cover,
-            # and every one of those is a day the kid is genuinely away. Only
-            # the announcements need certainty.
+            # Suppression takes the span exact or not: a clipped one covers
+            # fewer days than the trip, but every day it does cover is a day
+            # the kid is genuinely away. Only the LINE needs exact dates.
             span = _kid_trip_span(r)
             if span['first'] is not None:
                 away.append((span['first'], span['last']))
@@ -6478,16 +6477,24 @@ def _kid_trip_span(ride):
     one. Every morning of a camp already under way, the kids were told it was
     beginning.
 
-    Returns {'first', 'last', 'start_known', 'end_known'}.
+    Returns {'first', 'last', 'exact'}.
 
-    The two edges are known SEPARATELY, and that matters more than it sounds.
-    The window clips the past hard — the days before it opened were never
-    sliced — while the far end is only clipped by a trip running past it. So
-    the usual state of a camp already under way is that nobody can prove when
-    it started and everybody can see when it ends. Collapsing both into one
-    "trusted" flag threw the good half away and left a kid on the last morning
-    of camp being told only that they were "away", when the fact they wanted
-    was that they are coming home today.
+    `span_start`/`span_end` are the original event's own dates, copied onto
+    every slice at slice time — the slicer is holding the whole trip right
+    there, and the only reason this was ever hard is that it used to throw
+    them away and leave the daily fragments to be reassembled afterwards.
+    They cannot be: the days before the solve window opened are never sliced,
+    so the earliest surviving fragment always looks like day one.
+
+    `exact` is False only for slices cached before those fields existed. That
+    resolves itself: `poll_schedule` re-runs the refresh every five minutes and
+    rewrites the whole event payload, so the answer becomes exact on its own.
+    An earlier cut of this tried to INFER the real span from where the
+    fragments sat relative to the edges of the cache — which was a page of
+    careful reasoning to bridge a five-minute gap, and reasoning is exactly
+    what the dates on the slice make unnecessary. A span that is not exact is
+    good enough to know the kid is away, and not good enough to say anything
+    about which day it is.
     """
     import datetime as _dt
 
@@ -6499,28 +6506,20 @@ def _kid_trip_span(ride):
 
     first, last = _naive(ride.get('span_start')), _naive(ride.get('span_end'))
     if first and last:
-        return {'first': first, 'last': last,
-                'start_known': True, 'end_known': True}
+        return {'first': first, 'last': last, 'exact': True}
 
     base_id = str(ride.get('id') or '').split('_slice_')[0]
-    starts, ends, all_days = [], [], []
+    starts, ends = [], []
     for ev in (storage.get_cached_schedule() or {}).get('events', []):
-        s, e = _naive(ev.get('start')), _naive(ev.get('end'))
-        if not (s and e):
+        if str(ev.get('id', '')).split('_slice_')[0] != base_id:
             continue
-        all_days.append(s.date())
-        if str(ev.get('id', '')).split('_slice_')[0] == base_id:
+        s, e = _naive(ev.get('start')), _naive(ev.get('end'))
+        if s and e:
             starts.append(s)
             ends.append(e)
     if not starts:
-        return {'first': None, 'last': None,
-                'start_known': False, 'end_known': False}
-    first, last = min(starts), max(ends)
-    # An edge is known when there is daylight beyond it: something else in the
-    # cache sits further out, so the window was not what put the edge there.
-    return {'first': first, 'last': last,
-            'start_known': bool(all_days) and first.date() > min(all_days),
-            'end_known': bool(all_days) and last.date() <= max(all_days)}
+        return {'first': None, 'last': None, 'exact': False}
+    return {'first': min(starts), 'last': max(ends), 'exact': False}
 
 
 def _kid_trip_line(ride, target):
@@ -6530,7 +6529,10 @@ def _kid_trip_line(ride, target):
     title = (ride.get('title') or 'Trip').replace('✈️', '').strip()
     span = _kid_trip_span(ride)
     first, last = span['first'], span['last']
-    if first is None:
+    # No dates, or dates the slicing may have clipped: name the trip and claim
+    # nothing about it. Both cases are transient — a refresh is five minutes
+    # away — and "day 3 of 5" read off a fragment is worse than no day at all.
+    if first is None or not span['exact']:
         return f"🧳 {title}"
     # An all-day calendar event ends at midnight of the day AFTER the last day
     # it covers. Taken literally that is a trip one day too long, coming home
@@ -6541,15 +6543,9 @@ def _kid_trip_line(ride, target):
         last_date -= _dt.timedelta(days=1)
     n_days = max(1, (last_date - first.date()).days + 1)
 
-    # Each line needs only the edge it is ABOUT. The homecoming needs the end
-    # and does not care when the trip started, which is the usual state of a
-    # camp already under way: the window clipped the beginning, and the end is
-    # sitting right there in the cache. A day count is the one line that needs
-    # both, and it is the least of them — a kid on the last morning wants to
-    # know they are coming home, not that it is day four.
-    if span['start_known'] and target == first.date():
-        line = f"🧳 {title} — {n_days}-day adventure begins! 🎉" \
-            if (span['end_known'] and n_days > 1) else f"🧳 {title} begins! 🎉"
+    if target == first.date():
+        line = f"🧳 {title} — {n_days}-day adventure begins! 🎉" if n_days > 1 \
+            else f"🧳 {title} begins! 🎉"
         # Trip times are DESTINATION times (family convention: travel is
         # excluded — start = arrival there, end = departure from there).
         if first.hour or first.minute:
@@ -6558,18 +6554,9 @@ def _kid_trip_line(ride, target):
         if prep:
             line += f" — pack: {', '.join(prep[:4])}"
         return line
-    if span['end_known'] and target == last_date:
+    if target == last_date:
         return f"🏠 Coming home from {title}!"
-    if span['start_known'] and span['end_known']:
-        return f"🏕️ {title} — day {(target - first.date()).days + 1} of {n_days}"
-    if span['end_known']:
-        # Not which day of how many, but the thing a kid is actually counting.
-        home = last_date - target
-        when = 'tomorrow' if home.days == 1 else last_date.strftime('%A')
-        return f"🏕️ {title} — home {when}"
-    if span['start_known']:
-        return f"🏕️ {title} — day {(target - first.date()).days + 1}"
-    return f"🏕️ {title} — away"
+    return f"🏕️ {title} — day {(target - first.date()).days + 1} of {n_days}"
 
 
 def _send_kid_digests():
