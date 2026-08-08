@@ -580,16 +580,19 @@
                                 <!-- Number fields, not a list of sizes. A grid
                                      of 12 columns has 12 widths, and picking
                                      them off a dropdown is a menu that grows
-                                     with the setting. The suffix names the
-                                     fraction, because "5" is the number you
-                                     type and "a bit under half" is the thing
-                                     you meant. -->
+                                     with the setting.
+                                     The width carried a "· a quarter" suffix
+                                     for a while. It was a different LENGTH for
+                                     every value, so the row's controls shuffled
+                                     sideways under the hand that was changing
+                                     them — a caption that moves the thing you
+                                     are aiming at costs more than it explains. -->
                                 <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
                                     <input type="number" min="1" :max="cols()" step="1"
                                         :value="spanOf(key, 'cols')"
                                         @change="setSpan(key, 'cols', $event.target.value)"
                                         class="w-12 bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-1 py-0.5">
-                                    <span x-text="fractionLabel(key)"></span>
+                                    cols
                                 </label>
                                 <label class="flex items-center gap-1 text-[0.7rem] text-gray-500">
                                     <input type="number" min="1" max="12" step="1"
@@ -1058,19 +1061,6 @@
                     // not 1 — a field reading "1" beside a quarter-width tile
                     // is the editor disagreeing with the board.
                     return String(axis === 'cols' ? this.defaultCols() : 1);
-                },
-
-                // "3" is what you type; "a quarter" is what you meant.
-                fractionLabel(key) {
-                    const c = parseInt(this.spanOf(key, 'cols'), 10) || 1;
-                    const total = this.cols();
-                    const named = { 1: 'full', 2: 'half', 3: 'a third',
-                                    4: 'a quarter', 6: 'a sixth', 8: 'an eighth',
-                                    12: 'a twelfth' };
-                    if (c >= total) return 'full width';
-                    const ratio = total / c;
-                    return named[ratio] ? 'of ' + total + ' \u00b7 ' + named[ratio]
-                                        : 'of ' + total;
                 },
 
                 setSpan(key, axis, value) {

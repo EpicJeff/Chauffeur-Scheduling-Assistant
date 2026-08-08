@@ -1009,3 +1009,8 @@ Reported from using it: *"It only generates meals up until the next grocery run.
 - **Picture tiles are a column, and they do not scroll.** `isMosaic()` names them (`meals`, `moments`, `trips`) rather than detecting an image, because a tile that happens to contain a picture is not the same as one whose whole job is showing pictures. Scrolling a photograph is not reading it, and a mosaic that fills its slot has nothing below the fold by construction.
 - **The layout tiles now.** The old rule promoted the first item to a 2×2 leader, which looked right against fixed rows and left holes the moment the mosaic had to fill a whole tile — a 3-up in three columns put the leader across two rows and left two empty cells beside it. The rule is now: one item takes everything; the LAST item widens to close whatever the final row has left over. Verified to leave zero empty cells for 1–9 items at both 2 and 3 columns.
 - Worth remembering: **a fixed-size child inside a resizable parent is a bug waiting for the parent to resize.** Three of these landed in one arc — rows, columns, and now the mosaics — and every one was a number chosen when the container only had one size.
+
+## The caption moved the thing you were aiming at (v2.121.4)
+
+- The tile width field carried a live fraction beside it (`of 12 · a quarter`). It was a **different length for every value**, so the rest of the row's controls shuffled sideways under the hand that was changing them. A caption that moves the target costs more than it explains. It reads `cols` now, like `rows` beside it.
+- Worth remembering for any live-updating label sitting in a row of controls: if its width tracks its value, it is a layout shift on every keystroke. Either give it a fixed width or do not put it inline.
