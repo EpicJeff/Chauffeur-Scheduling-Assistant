@@ -251,6 +251,31 @@ def scenario_a_cache_with_no_span_never_announces_what_it_cannot_prove():
     check('begins' not in line, f"an unprovable span still announced a start: {line}")
     check('away' in line.lower(), f"expected an honest away line, got {line}")
 
+    # The END is a separate question from the START, and usually the answerable
+    # one: the window clips the past hard, while the far end is only clipped by
+    # a trip running past it. On the last morning of camp the fact a kid wants
+    # is that they are coming home — not that nobody can prove when they left.
+    ending = [slice_ev(TODAY),
+              {'id': 'e9', 'title': 'Practice', 'event_type': 'standard',
+               'start': datetime.datetime.combine(TOMORROW, datetime.time(17, 0)).isoformat(),
+               'end': datetime.datetime.combine(TOMORROW, datetime.time(18, 0)).isoformat()}]
+    storage.set_cached_schedule({'events': ending})
+    home = main._kid_trip_line(ending[0], TODAY)
+    check('Coming home' in home,
+          f"the last day of a trip has to say so, got {home}")
+
+    # One day earlier, with the end still provable: count down to the thing
+    # they are actually counting, rather than to a day number nobody knows.
+    running = [slice_ev(TODAY), slice_ev(day(1)),
+               {'id': 'e9', 'title': 'Practice', 'event_type': 'standard',
+                'start': datetime.datetime.combine(day(2), datetime.time(17, 0)).isoformat(),
+                'end': datetime.datetime.combine(day(2), datetime.time(18, 0)).isoformat()}]
+    storage.set_cached_schedule({'events': running})
+    mid = main._kid_trip_line(running[0], TODAY)
+    check('home tomorrow' in mid, f"expected a countdown to going home, got {mid}")
+    check('day' not in mid.lower(),
+          f"a day count needs BOTH edges and this span has one: {mid}")
+
     # The same cache with a day of ordinary schedule on either side: nothing
     # was clipped, so the edges are real and the fanfare is earned.
     bounded = [{'id': 'e1', 'title': 'Practice', 'event_type': 'standard',
