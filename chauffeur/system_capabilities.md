@@ -779,3 +779,16 @@ Feedback from the panel on the wall, in priority order.
 - **`panel_theme` is light / dark / auto**, with `auto` following the device — which under Home Assistant means following the dashboard the panel is embedded in. The board defines real CSS variables rather than inheriting the incomplete Tailwind-override mapping in `ha_theme.html`; **fixing light mode on the other eleven pages is a separate, larger pass and is NOT done.**
 
 Still outstanding from the same review, and deliberately not attempted here: the map tile rendering an actual map, the drives tile rendering the Drives timeline, and a one-day agenda mode for the calendar tile (which does not exist as a calendar option yet). Each needs a real component extraction rather than a summary, and the visual language of the board is expected to keep iterating.
+
+## The board becomes a display (v2.113.0)
+
+The standing instruction is a polished, graphical, beautifully visual experience — DakBoard as the reference. Reading the three reference boards, the shared language is specific, and the board was missing most of it:
+
+- **The substrate is a photograph with a scrim, not a flat slab.** All three references. This is most of the difference between a display and a web page on a wall. `panel_background` accepts a URL **or a plain phrase** — "mountains at dusk" is handed to the `/api/unsplash/background` endpoint that already backs trip artwork (it redirects, caches a day, and falls back on its own). Nobody wants to go and find an image URL to hang a picture on their kitchen wall. Two fixed layers sit under everything: the picture, then a scrim that keeps text legible over a photo nobody vetted. Empty = a built-in gradient, still not a slab.
+- **Cards are glass floating on it** — `backdrop-filter: blur(16px) saturate(140%)`, a hairline border at 10% white, a soft drop shadow — rather than opaque boxes with grey outlines.
+- **Violent type hierarchy**: a tiny uppercase accent-coloured label over a very large value. The references label sections "EVENTS" / "ANNOUNCEMENTS" in a colour, not grey, and that is what makes a wall board scannable from across a room. `.panel-label` is that mark.
+- **The clock is edge-anchored and enormous** (`clamp(3rem, 11vw, 7.5rem)`), with **superscript seconds** taken straight from the first reference — which also quietly answers "is this thing alive?" without a spinner.
+- **The temperature RIGHT NOW is the second-largest thing on screen**, read from the weather entity's state rather than the forecast: today's high shown that big is wrong for most of the day.
+- **Every colour on the board is a token.** Zero hard-coded greys remain outside the browser-only setup panel, which is what makes `panel_theme: light` actually work here instead of producing the half-broken light rendering the other pages still have.
+
+What this is NOT: the three heavy embeds (a real map in the map tile, the Drives timeline, a one-day calendar agenda) are still summaries, and the other eleven pages still have the incomplete light-theme mapping. The visual language is expected to keep iterating; this establishes the vocabulary it iterates on.

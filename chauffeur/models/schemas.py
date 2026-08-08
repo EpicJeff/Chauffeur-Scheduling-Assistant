@@ -689,6 +689,12 @@ class Settings(BaseModel):
     # light | dark | auto. `auto` follows the device, which under Home
     # Assistant means following the HA theme the panel is embedded in.
     panel_theme: str = 'dark'
+    # The photograph the board floats on. A flat slab reads as a dashboard; a
+    # full-bleed image with a scrim over it reads as a display, which is the
+    # whole difference between this and a web page on a wall. Accepts a URL, or
+    # a plain phrase ("mountains at dusk") which is handed to the Unsplash
+    # endpoint that already backs trip artwork. Empty = the built-in gradient.
+    panel_background: str = ''
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)

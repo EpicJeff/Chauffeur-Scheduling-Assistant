@@ -96,6 +96,10 @@ ENTRIES: List[dict] = [
        'How much room each tile gets on the home board — one column or two, '
        'one row or two. The map and the calendar usually earn more than a count.',
        page='home', anchor='panel-setup'),
+    _e('panel_background', 'panel', 'Panel background',
+       'The photograph the wall panel floats on. A web address, or just a '
+       'phrase like "mountains at dusk" to have one found for you.',
+       page='home', anchor='panel-setup'),
     _e('panel_theme', 'panel', 'Panel theme',
        'Light, dark, or follow the device. Auto matches Home Assistant when '
        'the panel is embedded in it.',

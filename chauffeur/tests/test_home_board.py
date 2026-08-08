@@ -480,6 +480,20 @@ def scenario_the_kids_ride_in_the_hero_not_a_tile():
         _clear_cache()
 
 
+def scenario_the_background_takes_a_phrase_not_just_a_url():
+    """Nobody wants to go and find an image URL to hang a picture on their
+    kitchen wall. A phrase is handed to the Unsplash endpoint that already
+    backs trip artwork; a real URL is passed through untouched."""
+    check(home_board._background_url({'panel_background': 'https://x/y.jpg'})
+          == 'https://x/y.jpg', "a URL is used as-is")
+    check(home_board._background_url({'panel_background': 'mountains at dusk'})
+          == 'api/unsplash/background?query=mountains%20at%20dusk',
+          "a phrase becomes a lookup")
+    check(home_board._background_url({}) is None, "unset -> the built-in gradient")
+    check(home_board._background_url({'panel_background': '   '}) is None,
+          "whitespace is not a search")
+
+
 def scenario_every_page_in_the_nav_can_be_a_tile():
     """The panel is the whole app on a wall, so every destination on the shelf
     has to have a glance on the board — otherwise the board quietly says some

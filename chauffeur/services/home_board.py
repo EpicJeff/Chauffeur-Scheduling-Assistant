@@ -697,6 +697,21 @@ _BUILDERS: dict = {
 
 # --- assembly -------------------------------------------------------------
 
+def _background_url(settings: dict) -> Optional[str]:
+    """A URL is used as-is; anything else is treated as a search phrase and
+    handed to the Unsplash endpoint that already backs trip artwork (which
+    redirects, caches for a day, and falls back on its own). So "mountains at
+    dusk" is a valid value for this setting, which is the point — nobody wants
+    to go and find an image URL to hang a picture on their kitchen wall."""
+    raw = str((settings or {}).get('panel_background') or '').strip()
+    if not raw:
+        return None
+    if raw.startswith(('http://', 'https://', '/', 'data:')):
+        return raw
+    import urllib.parse
+    return f"api/unsplash/background?query={urllib.parse.quote(raw)}"
+
+
 def resolve_widgets(requested: Optional[str] = None, settings: dict = None) -> List[str]:
     """URL wins, then the stored panel profile, then the default set.
 
@@ -842,6 +857,25 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
     except Exception:
         weather = None
 
+    # The temperature RIGHT NOW, not today's high. On these displays the
+    # temperature is the second-largest thing on the screen after the clock,
+    # and a forecast high shown that big is wrong for most of the day.
+    temp_now, condition = None, None
+    try:
+        from services import ha_api
+        ent = (settings.get('weather_entity') or '').strip()
+        if not ent:
+            ents = ha_api.get_entities('weather') or []
+            ent = (ents[0] or {}).get('entity_id') if ents else None
+        if ent:
+            st = ha_api.get_state(ent) or {}
+            attrs = st.get('attributes') or {}
+            if attrs.get('temperature') is not None:
+                temp_now = round(float(attrs['temperature']))
+            condition = st.get('state')
+    except Exception as e:
+        print(f"[home_board] current temp failed: {e}")
+
     try:
         from services import status_protocols
         statuses = status_protocols.active_statuses(now.date().isoformat()) or []
@@ -854,6 +888,11 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         # raises on Windows, where this is developed.
         'date_label': f"{now.strftime('%A, %B')} {now.day}",
         'weather': weather,
+        'temp_now': temp_now,
+        'condition': condition,
+        'condition_emoji': (family_digest._WEATHER_EMOJI.get(condition or '', '🌤️')
+                            if condition else None),
+        'background': _background_url(settings),
         'statuses': [{'label': s.get('label') or s.get('name'),
                       'emoji': s.get('emoji'), 'note': s.get('note')}
                      for s in statuses][:2],
