@@ -264,7 +264,7 @@
                      family's planning session becomes one "how does this
                      look?". Days are chips like Tonight's, editable in place;
                      approving pins them all and buys for the whole span. -->
-                <div x-show="week.length" class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
+                <div x-show="weekSpans.length" class="mt-4 bg-gray-800 rounded-2xl border border-gray-700 p-5">
                     <div class="flex items-baseline justify-between mb-1 gap-3">
                         <h4 class="text-xs font-black uppercase tracking-widest text-pink-200">
                             🗓️ <span x-text="weekHeading()"></span>
@@ -274,8 +274,29 @@
                     </div>
                     <div class="text-[11px] text-gray-500 mb-4" x-text="weekBlurb()"></div>
 
-                    <div class="space-y-2">
-                        <template x-for="day in week" :key="'wd-' + day.date">
+                    <!-- TWO spans, always. The plan for the next shop used to
+                         exist only inside the lead window, so an idea landing on
+                         a Monday had nowhere to go and the list could not be
+                         built against the coming run at all; and in planning
+                         mode the window STARTED on the shop date, so the last
+                         nights before the trip belonged to neither span and
+                         disappeared off the page. `current` is what the last
+                         shop bought for, running out at the trip. `next` is what
+                         the coming trip buys for. Both are editable — plans
+                         change at the drop of a hat, and a night punted across
+                         the boundary arrives already paid for. -->
+                    <div class="space-y-5">
+                      <template x-for="span in weekSpans" :key="'sp-' + span.key">
+                       <div>
+                        <div class="flex items-baseline gap-2 mb-2">
+                            <span class="text-[11px] font-black uppercase tracking-widest shrink-0"
+                                :class="span.settled ? 'text-gray-500' : 'text-pink-200'"
+                                x-text="span.settled ? 'Already bought for' : 'Shopping for'"></span>
+                            <span class="text-[11px] text-gray-600 flex-1 truncate"
+                                x-text="spanBlurb(span)"></span>
+                        </div>
+                        <div class="space-y-2">
+                        <template x-for="day in span.week" :key="'wd-' + day.date">
                             <!-- Dragging reorders the NIGHTS, not the plan: the
                                  dishes move to the new date and the date stays
                                  put, because Thursday is Thursday. A locked
@@ -340,6 +361,9 @@
                                 </div>
                             </div>
                         </template>
+                        </div>
+                       </div>
+                      </template>
                     </div>
 
                     <!-- A date beyond the plan window. Mom's birthday can be
@@ -681,6 +705,19 @@
                                             <option :value="1">1 day before</option>
                                             <option :value="2">2 days before</option>
                                             <option :value="3">3 days before</option>
+                                        </select>
+                                    </label>
+                                    <!-- Seven for most families, which is why it
+                                         was hardcoded — but a household that
+                                         shops every ten days had three nights a
+                                         cycle that nothing ever bought for. -->
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 font-semibold">
+                                        One shop covers
+                                        <select x-model.number="mealCfg.grocery_cadence_days" @change="saveMealCfg()"
+                                            class="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-pink-400/60">
+                                            <template x-for="n in [3,4,5,6,7,8,9,10,11,12,14]" :key="'gc-' + n">
+                                                <option :value="n" x-text="n + ' nights'"></option>
+                                            </template>
                                         </select>
                                     </label>
                                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
@@ -1272,8 +1309,25 @@
                 Nothing on this list. Say "we're out of milk" to Argyle and it lands here.
             </div>
 
+            <!-- Split by which shop RUN each item is for, so a mid-week dash
+                 for the one thing tonight's re-planned dinner needs does not
+                 arrive carrying all of Saturday. The rest is NOT hidden — you
+                 are standing in a store, which is the best possible moment to
+                 be asked whether you want any of it, and buying some just
+                 checks those rows and leaves the remainder for the big run.
+                 With one group (the ordinary week) there is no header at all;
+                 a heading over the whole list is not a split, it is noise. -->
             <div class="space-y-2 mb-8">
-                <template x-for="it in open" :key="it.id">
+              <template x-for="g in (runs.groups || [])" :key="'rg-' + g.key + (g.date || '')">
+               <div class="space-y-2">
+                <div x-show="(runs.groups || []).length > 1"
+                    class="flex items-baseline gap-2 pt-2 first:pt-0">
+                    <span class="text-xs font-black uppercase tracking-widest"
+                        :class="g.key === 'now' ? 'text-amber-300' : 'text-gray-500'"
+                        x-text="g.label"></span>
+                    <span class="text-[11px] text-gray-600" x-text="(g.items || []).length"></span>
+                </div>
+                <template x-for="it in (g.items || [])" :key="it.id">
                     <div class="bg-gray-800 rounded-xl border border-gray-700 flex items-center gap-3 px-4 py-3 group">
                         <button @click="setChecked(it, true)"
                             class="w-6 h-6 rounded-md border-2 border-gray-600 hover:border-pink-400 shrink-0"
@@ -1294,6 +1348,8 @@
                             title="Remove (not bought — just not wanted)">✕</button>
                     </div>
                 </template>
+               </div>
+              </template>
             </div>
 
             <div x-show="checked.length" class="mb-10">
@@ -1558,7 +1614,9 @@
                 draft: '', candidates: [], photoBusy: false, photoKind: 'other',
                 plate: { dishes: [], lines: [], edited: false, leftover_dish_ids: [] },
                 drain: null,
-                week: [], weekWindow: null, weekBusy: false,
+                week: [], weekSpans: [], weekWindow: null, weekBusy: false,
+                // The open list, already split by shop run (see loadItems).
+                runs: { groups: [] },
                 trip: null, tripBusy: false,
                 cart: null, cartBusy: false, walmart: null,
                 staples: [], stapleBusy: null, picsBusy: false, dishPicBusy: null,
@@ -1592,7 +1650,7 @@
                 mealCfg: {
                     household_headcount: 0,
                     car_dining: 'full', venue_dining: 'full',
-                    grocery_weekday: '', grocery_plan_lead_days: 2,
+                    grocery_weekday: '', grocery_plan_lead_days: 2, grocery_cadence_days: 7,
                     meal_week_enabled: true, propose_shopping_errands: true,
                     prep_reminders_enabled: true, prep_reminder_time: '20:30',
                     prep_morning_time: '08:00', walmart_store_id: '',
@@ -1603,6 +1661,15 @@
                 apiBase: window.location.pathname.endsWith('/') ? '../' : '',
 
                 get open() { return this.items.filter(i => !i.is_checked); },
+                // Every night on the page, both spans, in order. Moving a
+                // dinner has to be able to cross the shop boundary: that is
+                // what actually happens when a meeting lands — the night gets
+                // punted, everything shifts, and a meal that was before the
+                // trip ends up after it, already paid for. `week` stays the
+                // span being BOUGHT for (the approve button, the kiosk strip).
+                get allDays() {
+                    return (this.weekSpans || []).flatMap(s => s.week || []);
+                },
                 get checked() { return this.items.filter(i => i.is_checked); },
 
                 async init() {
@@ -2231,13 +2298,14 @@
                         // night from there shuffles one day later. The last
                         // night of the window falls off the end — it was the
                         // furthest-out proposal and is the cheapest to lose.
-                        const from = this.week.findIndex(d => d.date === target);
+                        const all = this.allDays;
+                        const from = all.findIndex(d => d.date === target);
                         if (from < 0) return;
                         days = [{ date: target, dish_ids: ids }];
-                        for (let i = from; i < this.week.length - 1; i++) {
+                        for (let i = from; i < all.length - 1; i++) {
                             days.push({
-                                date: this.week[i + 1].date,
-                                dish_ids: (this.week[i].dishes || []).map(d => d.id)
+                                date: all[i + 1].date,
+                                dish_ids: (all[i].dishes || []).map(d => d.id)
                             });
                         }
                     }
@@ -2255,7 +2323,7 @@
                     this.dragOverDate = null;
                     this.dragDate = null;
                     if (!from || from === day.date || day.locked) return;
-                    const movable = (this.week || []).filter(d => !d.locked);
+                    const movable = this.allDays.filter(d => !d.locked);
                     const fromIdx = movable.findIndex(d => d.date === from);
                     const toIdx = movable.findIndex(d => d.date === day.date);
                     if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
@@ -2393,14 +2461,18 @@
                         const r = await fetch(url, repropose ? { method: 'POST' } : {});
                         if (!r.ok) return;
                         const data = await r.json();
+                        // Repropose answers with the span it reproposed, not the
+                        // whole page: ask again rather than dropping the settled
+                        // span on the floor every time somebody presses it.
+                        if (repropose) return this.loadWeek(false);
                         this.week = data.week || [];
+                        this.weekSpans = (data.spans || []).filter(s => (s.week || []).length);
                         this.weekWindow = data.window || null;
                     } catch (e) { }
                 },
 
                 weekHeading() {
-                    const w = this.weekWindow || {};
-                    return w.mode === 'planning' ? 'Next week’s dinners' : 'The rest of this week';
+                    return 'The nights ahead';
                 },
 
                 weekBlurb() {
@@ -2408,13 +2480,21 @@
                     if (!w.grocery_date) return '';
                     const shop = new Date(w.grocery_date + 'T12:00:00')
                         .toLocaleDateString(undefined, { weekday: 'long' });
-                    const n = this.week.length;
-                    if (w.mode === 'planning') {
-                        const when = w.days_until_shop === 0 ? 'today'
-                            : w.days_until_shop === 1 ? 'tomorrow' : `in ${w.days_until_shop} days`;
-                        return `${n} nights, covering until the next shop. Shopping ${shop} (${when}).`;
-                    }
-                    return `${n} night${n === 1 ? '' : 's'} left before ${shop}’s shop.`;
+                    const when = w.days_until_shop === 0 ? 'today'
+                        : w.days_until_shop === 1 ? 'tomorrow' : `in ${w.days_until_shop} days`;
+                    return `Shopping ${shop} (${when}) — one run covers ${w.cadence_days || 7} nights.`;
+                },
+
+                // Per span. The settled one is not frozen: a meeting lands,
+                // tonight's dinner gets punted, everything shifts. A night that
+                // slides past the shop arrives already paid for, which is why
+                // nothing here has to stop you.
+                spanBlurb(span) {
+                    const n = (span.week || []).length;
+                    const nights = `${n} night${n === 1 ? '' : 's'}`;
+                    return span.settled
+                        ? `${nights} left on the last shop — change anything, it sorts itself out`
+                        : `${nights}, and the list below is built from them`;
                 },
 
                 approveLabel() {
@@ -2559,7 +2639,7 @@
                             ? f.dishName + ' is only ever served with…'
                             : 'What always comes with ' + f.dishName + '?';
                     }
-                    const day = (this.week || []).find(w => w.date === f.date);
+                    const day = this.allDays.find(w => w.date === f.date);
                     if (f.date === this.plate.date) return 'Add dishes to tonight';
                     return 'Add dishes to ' + (day ? day.weekday : f.date);
                 },
@@ -2597,7 +2677,7 @@
                     if (f.kind === 'night') {
                         const already = f.date === this.plate.date
                             ? (this.plate.dishes || [])
-                            : (((this.week || []).find(w => w.date === f.date)
+                            : ((this.allDays.find(w => w.date === f.date)
                                 || {}).dishes || []);
                         already.forEach(d => on.add(d.id));
                     }
@@ -2756,6 +2836,7 @@
                         c.venue_dining = d.venue_dining || 'full';
                         c.grocery_weekday = d.grocery_weekday != null ? String(d.grocery_weekday) : '';
                         c.grocery_plan_lead_days = d.grocery_plan_lead_days != null ? d.grocery_plan_lead_days : 2;
+                        c.grocery_cadence_days = d.grocery_cadence_days || 7;
                         c.meal_week_enabled = d.meal_week_enabled !== false;
                         c.propose_shopping_errands = d.propose_shopping_errands !== false;
                         c.prep_reminders_enabled = d.prep_reminders_enabled !== false;
@@ -2795,6 +2876,7 @@
                             grocery_weekday: c.grocery_weekday === ''
                                 ? null : parseInt(c.grocery_weekday, 10),
                             grocery_plan_lead_days: parseInt(c.grocery_plan_lead_days, 10) || 0,
+                            grocery_cadence_days: Math.max(1, parseInt(c.grocery_cadence_days, 10) || 7),
                             meal_week_enabled: !!c.meal_week_enabled,
                             propose_shopping_errands: !!c.propose_shopping_errands,
                             prep_reminders_enabled: !!c.prep_reminders_enabled,
@@ -3166,6 +3248,20 @@
                     if (!this.activeId) return;
                     const r = await fetch(this.apiBase + 'api/shopping/items?list_id=' + encodeURIComponent(this.activeId));
                     if (r.ok) this.items = await r.json();
+                    // The run split comes from the SERVER, not from a second
+                    // copy of the rule out here — which run an item belongs to
+                    // is the same question the agent and the errand ask, and
+                    // the page is the worst place for it to be answered
+                    // differently. Falls back to one undivided group, which is
+                    // exactly what the list looked like before runs existed.
+                    try {
+                        const rr = await fetch(this.apiBase + 'api/shopping/runs?list_id='
+                            + encodeURIComponent(this.activeId));
+                        this.runs = rr.ok ? await rr.json()
+                            : { groups: [{ key: 'next', label: '', items: this.open }] };
+                    } catch (e) {
+                        this.runs = { groups: [{ key: 'next', label: '', items: this.open }] };
+                    }
                     if (!quiet) return;
                     // keep the store chips' counts honest on remote updates
                     const r2 = await fetch(this.apiBase + 'api/shopping/lists');

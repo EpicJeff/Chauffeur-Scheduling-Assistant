@@ -1935,8 +1935,17 @@ def scenario_a_week_does_not_repeat_the_same_dinner():
 
 
 def scenario_the_window_is_the_shop_it_has_to_cover():
-    """Families plan up to the next grocery run, a day or two before it — the
-    horizon is that shop's coverage period, not "7 days from whenever"."""
+    """The horizon is a shop's coverage period, not "7 days from whenever".
+
+    This used to assert the OTHER half too — that outside the lead window the
+    page showed only what was left of the span already bought for, and nothing
+    of the next one. That is the behaviour the family reported: for five days
+    of every cycle there was no next-week plan to look at, so an idea landing
+    on a Monday had nowhere to go and the list could not be built against the
+    coming run. Both spans exist at all times now (see tests/test_meal_runs.py);
+    what stays true here is which one is being BOUGHT for, because that is what
+    every caller of start/days means by them.
+    """
     reset_db(); _seed_people()
     _settings(grocery_weekday=5, grocery_plan_lead_days=2)   # Saturday, 2 days
 
@@ -1948,14 +1957,18 @@ def scenario_the_window_is_the_shop_it_has_to_cover():
 
     monday = datetime.date(2026, 8, 10)
     win2 = meals.plan_window(storage.get_settings(), monday)
-    check(win2['mode'] == 'current' and win2['start'] == '2026-08-10',
-          f"outside it, show what's LEFT of the span already bought for, got {win2}")
-    check(win2['days'] == 5, f"Monday through Friday before Saturday, got {win2['days']}")
+    check(win2['start'] == '2026-08-15' and win2['days'] == 7,
+          f"the bought-for span is always the coming shop's, got {win2}")
+    current = next(s for s in win2['spans'] if s['key'] == 'current')
+    check(current['start'] == '2026-08-10' and current['days'] == 5,
+          f"and what's LEFT of the bought-for span is still shown, got {current}")
 
     saturday = datetime.date(2026, 8, 8)
     win3 = meals.plan_window(storage.get_settings(), saturday)
     check(win3['mode'] == 'planning' and win3['days_until_shop'] == 0,
           f"shop day itself still plans, got {win3}")
+    check(next(s for s in win3['spans'] if s['key'] == 'current')['days'] == 0,
+          "on the shop day there is nothing left of the old span")
 
 
 def scenario_approving_the_week_pins_it_and_buys_for_it():

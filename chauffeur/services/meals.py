@@ -1214,7 +1214,7 @@ def get_or_compose_plate(date_str: str, plan: dict = None,
             'dishes': compose_plate(date_str, plan, settings), 'edited': False}
 
 
-def _persist_plate(date_str: str, dishes: list) -> dict:
+def _persist_plate(date_str: str, dishes: list, reconcile: bool = True) -> dict:
     from models.schemas import Plate, PlateItem
     # Prune relative to TODAY, never to the plate being written. Pruning by the
     # saved date was harmless while only tonight existed; with a week of plans
@@ -1237,6 +1237,18 @@ def _persist_plate(date_str: str, dishes: list) -> dict:
                 cooks=prior.get('cooks'),
                 items=[PlateItem(dish_id=d['id']) for d in dishes]).model_dump()
     storage.save_plate(rec)
+    # Every change of mind about a night runs through here, so this is the one
+    # place the list has to be told. A dish dropped from a plate whose
+    # ingredients were already bought leaves them stranded otherwise — the
+    # family's own complaint, and the reason claims exist at all.
+    #
+    # `reconcile=False` is for the callers that write SEVERAL nights as one
+    # act. Moving a dinner from Thursday to Friday is two writes, and between
+    # them the dish is planned nowhere — reconciling in that gap took the
+    # ingredients off the list for a dinner the family had merely dragged. A
+    # batch writes every night first and reconciles once at the end.
+    if reconcile:
+        reconcile_claims()
     return rec
 
 
@@ -1487,28 +1499,91 @@ def shop_date(settings: dict = None, today: datetime.date = None,
     return next_grocery_date(today, gw), 'weekday', nxt
 
 
-def plan_window(settings: dict = None, today: datetime.date = None) -> dict:
-    """What span the week plan should cover, and whether we are planning it.
+def grocery_cadence(settings: dict = None) -> int:
+    """How many nights one shop has to cover. Seven for most families, which is
+    why it was hardcoded — but a household that shops every ten days had three
+    nights a cycle that nothing ever bought for, and the number changes nothing
+    about how any of this works."""
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        return max(1, min(21, int(settings.get('grocery_cadence_days', 7))))
+    except (TypeError, ValueError):
+        return 7
 
-    A family plans up to the NEXT grocery run, a day or two before it, and buys
-    for that span — so the horizon is the shop's coverage period, not "the next
-    7 days from whenever you happened to open the page". Inside the lead window
-    the plan is the upcoming shop's; outside it, the honest thing to show is
-    what is left of the span already bought for.
+
+def plan_window(settings: dict = None, today: datetime.date = None) -> dict:
+    """The two spans a family is holding at once, and which one is being bought.
+
+    This used to be one span with a mode: inside the lead window you saw the
+    coming shop's week, outside it you saw the dwindling tail of the span
+    already bought for. Two things were wrong with that, and both were reported
+    from the kitchen. The plan for the NEXT shop only existed for the two days
+    before the trip, so an idea that landed on a Monday ("lasagna next week")
+    had nowhere to go and the list could not accumulate against the next run
+    the way a real list does. And in planning mode the window STARTED on the
+    shop date, so the last nights before the trip belonged to neither span and
+    vanished off the page entirely.
+
+    So: both, always. `current` is what the last shop bought for, running out
+    at the trip. `next` is what the coming trip has to buy for. The current
+    span is settled rather than frozen — a meeting lands, tonight's dinner gets
+    punted, everything shifts, and a night that slides across the boundary
+    arrives already paid for. That resolves itself in the claims (see
+    `reconcile_claims`) instead of needing a rule.
+
+    `start`/`days`/`mode` are kept pointing at the span being BOUGHT FOR, which
+    is what every existing caller meant by them.
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     _, lead = grocery_settings(settings)
+    cadence = grocery_cadence(settings)
     today = today or datetime.date.today()
     nxt, source, detail = shop_date(settings, today)
     until = (nxt - today).days
     base = {'grocery_date': nxt.isoformat(), 'days_until_shop': until,
-            'shop_source': source,
+            'shop_source': source, 'cadence_days': cadence,
             'shop_time_label': (detail or {}).get('time_label') if source == 'scheduled' else None,
             'has_errand': bool((detail or {}).get('errand'))}
-    if until <= lead:
-        return {**base, 'start': nxt.isoformat(), 'days': 7, 'mode': 'planning'}
-    return {**base, 'start': today.isoformat(), 'days': max(1, until),
-            'mode': 'current'}
+    # The run after the coming one — what a night beyond the next span is
+    # bought on, and the horizon past which nothing is proposed at all.
+    after = (nxt + datetime.timedelta(days=cadence)).isoformat()
+    spans = [
+        # `days: until` and not until+1: the shop day itself opens the next
+        # span. A trip in the morning feeds that night.
+        {'key': 'current', 'start': today.isoformat(), 'days': max(0, until),
+         'label': 'Already bought for', 'buy_on': None, 'settled': True},
+        {'key': 'next', 'start': nxt.isoformat(), 'days': cadence,
+         'label': 'Shopping for', 'buy_on': nxt.isoformat(), 'settled': False},
+    ]
+    return {**base, 'spans': spans, 'next_shop_after': after,
+            'start': nxt.isoformat(), 'days': cadence,
+            'mode': 'planning' if until <= lead else 'current'}
+
+
+def buy_on_for(date_str: str, settings: dict = None,
+               today: datetime.date = None) -> str:
+    """Which shop run has to buy for a given night.
+
+    The run BEFORE the night, not the next one on the calendar — that is what
+    "buying for a span" means. A night that falls before the next run is a
+    TOP-UP: the plan changed after the shopping was done, and whatever it needs
+    has to come from the next time somebody is in a store rather than from
+    Saturday. That is the one case where an item is not for the standing run,
+    and it is exactly the case that must not drag the rest of the list along
+    with it to the corner shop.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    today = today or datetime.date.today()
+    nxt, _, _ = shop_date(settings, today)
+    cadence = grocery_cadence(settings)
+    try:
+        night = datetime.date.fromisoformat(str(date_str))
+    except (TypeError, ValueError):
+        return nxt.isoformat()
+    if night < nxt:
+        return today.isoformat()
+    return (nxt + datetime.timedelta(
+        days=((night - nxt).days // cadence) * cadence)).isoformat()
 
 
 def week_dates(start_date: str = None, days: int = 7) -> list:
@@ -1615,6 +1690,10 @@ def repropose_week(start_date: str = None, days: int = 7) -> list:
     for day in week:
         if not day.get('locked'):
             _refuse(day['date'], [d['id'] for d in day['dishes']])
+    # "Not this" is a change of mind about the whole span, so anything bought
+    # for a night that has just been refused comes back off — unless it is
+    # already in the cart, which reconcile leaves alone.
+    reconcile_claims()
     return compose_week(start_date, days)
 
 
@@ -1685,8 +1764,13 @@ def arrange_week(days: list) -> dict:
         ids = [i for i in (day.get('dish_ids') or []) if i]
         dishes = storage.get_dishes_by_ids(ids)
         by_id = {d['id']: d for d in dishes}
-        _persist_plate(date_str, [by_id[i] for i in ids if i in by_id])
+        # One act, several nights — see _persist_plate. Reconciling between the
+        # night a dinner left and the night it arrived on unbought it.
+        _persist_plate(date_str, [by_id[i] for i in ids if i in by_id],
+                       reconcile=False)
         written.append(date_str)
+    if written:
+        reconcile_claims()
     return {'status': 'success', 'written': written, 'refused': refused}
 
 
@@ -1729,11 +1813,19 @@ def approve_week(start_date: str = None, days: int = 7, list_id: str = None,
     week = compose_week(start_date, days)
     lst_id = list_id or storage.ensure_default_shopping_list()['id']
     added, skipped, pinned = [], [], []
+    # Pin the WHOLE span before buying a thing. Persisting and provisioning day
+    # by day meant each night's write reconciled the list against a plan that
+    # was still half-written — Thursday's chicken looked unwanted while
+    # Thursday was still two iterations away from being pinned.
     for day in week:
-        _persist_plate(day['date'], day['dishes'])
+        _persist_plate(day['date'], day['dishes'], reconcile=False)
         pinned.append(day['date'])
+    reconcile_claims()
+    for day in week:
         res = dishes_to_shopping(day['dishes'], lst_id, added_by=added_by,
-                                 skip_dish_ids=day.get('leftover_dish_ids'))
+                                 skip_dish_ids=day.get('leftover_dish_ids'),
+                                 date_str=day['date'],
+                                 buy_on=buy_on_for(day['date']))
         added.extend(res['added'])
         # The day rides along on every skip: "already on the list" is the
         # normal case across a week (chicken on Monday and Thursday buys once)
@@ -1885,6 +1977,9 @@ def reset_plate(date_str: str, force: bool = False) -> dict:
         out['refused'] = True
         return out
     storage.delete_plate(date_str)
+    # Deleting the plate is a dish change like any other: whatever was bought
+    # for that night is now unclaimed unless another night wants the same dish.
+    reconcile_claims()
     return get_or_compose_plate(date_str)
 
 
@@ -3013,10 +3108,102 @@ def consolidate_skips(records: list) -> list:
     return out
 
 
+def claim_shopping_item(item: dict, claim: dict, buy_on: str = None) -> dict:
+    """Record one more night's stake in a row that is already on the list.
+
+    `buy_on` moves EARLIER only. Two nights wanting the same chicken are
+    bought once, on the run that has to cover the first of them — buying it
+    later would be buying it too late, and there is no version of this where
+    the second night is the one that decides.
+    """
+    claims = list(item.get('claims') or [])
+    if not claims and item.get('source_meal_id'):
+        # A row from before claims existed: promote what it does remember, so
+        # it is not mistaken for a row nobody can account for.
+        claims.append({'dish_id': item['source_meal_id'], 'date': None,
+                       'dish_name': None})
+    key = (claim.get('dish_id'), claim.get('date'))
+    if key not in {(c.get('dish_id'), c.get('date')) for c in claims}:
+        claims.append(claim)
+    patch = {'claims': claims}
+    have = item.get('buy_on')
+    if buy_on and (not have or buy_on < have):
+        patch['buy_on'] = buy_on
+    storage.update_shopping_item(item['id'], patch)
+    return {**item, **patch}
+
+
+def reconcile_claims(today: datetime.date = None, horizon_days: int = 60) -> dict:
+    """Take back off the list what no planned night wants any more.
+
+    The rule, in one sentence: **an ingredient stays while any planned night
+    still wants the dish that brought it.** Matching is by DISH rather than by
+    (dish, night) on purpose — plans change at the drop of a hat, and what
+    actually happens is that a meal gets punted to a different day and
+    everything shifts. Matching per-night would strip the noodles off the list
+    the moment lasagna moved from Thursday to Friday, which is the one case
+    that must cost nothing.
+
+    Three things are never removed, and each is a real household:
+
+    - a row a PERSON put there. Somebody typing "milk" is not a consequence of
+      the meal plan and does not evaporate when the meal plan changes, even if
+      a dish later claimed the same name.
+    - a row already CHECKED OFF. You own it now. This is the mid-week top-up
+      case: bought on Wednesday, Thursday's dinner changes, and rewriting the
+      list to pretend it was never bought helps nobody.
+    - a row nobody can account for — a meal item from before claims existed,
+      carrying no claims at all. Unexplained is not the same as unwanted, and
+      guessing wrong here throws away somebody's shopping.
+    """
+    today = today or datetime.date.today()
+    end = (today + datetime.timedelta(days=max(1, horizon_days))).isoformat()
+    wanted = set()
+    for plate in storage.get_plates_between(today.isoformat(), end):
+        for it in plate.get('items') or []:
+            if it.get('dish_id'):
+                wanted.add(it['dish_id'])
+
+    removed, kept = [], []
+    for item in storage.get_shopping_items(include_checked=False):
+        if str(item.get('added_via')) != 'meal':
+            continue                      # a person's own need; not ours to prune
+        claims = list(item.get('claims') or [])
+        if not claims:
+            continue                      # unexplained, therefore untouched
+        live = [c for c in claims if c.get('dish_id') in wanted]
+        if live:
+            if len(live) != len(claims):
+                storage.update_shopping_item(item['id'], {'claims': live})
+            continue
+        storage.delete_shopping_item(item['id'])
+        removed.append({'id': item['id'], 'name': item.get('name'),
+                        'list_id': item.get('list_id'),
+                        'was_for': [c.get('dish_name') for c in claims if c.get('dish_name')]})
+    return {'removed': removed, 'removed_names': [r['name'] for r in removed],
+            'kept': kept}
+
+
+def _claim(dish: dict, date_str: str = None) -> dict:
+    """One night's stake in a shopping row. The dish NAME rides along so the
+    list can say why something stayed ("Thursday still wants it") without a
+    second lookup per row on a page that renders forty of them."""
+    return {'dish_id': dish.get('id'), 'date': date_str,
+            'dish_name': dish.get('short_name') or dish.get('name')}
+
+
 def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
-                       skip_dish_ids: list = None) -> dict:
+                       skip_dish_ids: list = None, date_str: str = None,
+                       buy_on: str = None) -> dict:
     """Shop for the dishes actually chosen — one plate's worth, not every
-    alternative in every pool. Already-made dishes buy nothing."""
+    alternative in every pool. Already-made dishes buy nothing.
+
+    An ingredient already on the list is still not bought twice, but the
+    asking dish now leaves a CLAIM on the existing row instead of being waved
+    away. That difference is the whole of un-adding: without it the list
+    remembers only whoever asked first, and taking Monday's dinner off would
+    take Thursday's chicken with it.
+    """
     from models.schemas import ShoppingItem
     skip = set(skip_dish_ids or [])
     lst_id = list_id or storage.ensure_default_shopping_list()['id']
@@ -3051,12 +3238,17 @@ def dishes_to_shopping(dishes: list, list_id: str = None, added_by: str = None,
             if (ing.get('kind') or 'fresh') == 'staple':
                 note(name, 'staple', d)
                 continue
-            if storage.find_open_shopping_item(lst_id, name):
+            existing = storage.find_open_shopping_item(lst_id, name)
+            if existing:
+                # Not a second purchase — but it IS a second night depending on
+                # this row, and that is the fact removal turns on.
+                claim_shopping_item(existing, _claim(d, date_str), buy_on)
                 note(name, 'already on the list', d)
                 continue
             storage.add_shopping_item(ShoppingItem(
                 list_id=lst_id, name=name, added_via='meal',
-                source_meal_id=d.get('id'), added_by=added_by).model_dump())
+                source_meal_id=d.get('id'), added_by=added_by,
+                claims=[_claim(d, date_str)], buy_on=buy_on).model_dump())
             added.append(name)
     skipped = consolidate_skips(skipped)
     return {'added': added, 'skipped': skipped,
@@ -3081,7 +3273,8 @@ def ingredients_to_shopping(meal: dict, list_id: str = None,
         composed = compose_meal(meal, prefer=get_choices(today, meal.get('id')),
                                 leftovers=leftovers)
         return dishes_to_shopping(composed.get('dishes') or [], list_id, added_by,
-                                  skip_dish_ids=composed.get('leftover_dish_ids'))
+                                  skip_dish_ids=composed.get('leftover_dish_ids'),
+                                  date_str=today, buy_on=buy_on_for(today))
     if str(meal.get('source') or 'prep') == 'ordered':
         return {'added': [], 'skipped': [], 'reason': 'ordered — nothing to buy'}
     # Already-made food is not shopping. A whole-meal leftover buys nothing;

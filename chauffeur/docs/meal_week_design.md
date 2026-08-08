@@ -135,3 +135,129 @@ The natural successors, in order: an errand created from the list bound to the
 grocery day; out-of-stock as a third item state (the only shopping fact that
 changes someone else's plans, and now able to name the *night* it breaks); and an
 exception-based trip report.
+
+---
+
+# M10 — Two spans, and a list that can be taken back off
+
+*Meals & provisioning arc, slice 10. Amends M6's window and M1's item model.*
+
+## Why
+
+From the family, using it:
+
+> It only generates meals up until the next grocery run, so you can only add
+> stuff from meals prior to the grocery run to the shopping list. But generally
+> what people do is decide what they are going to eat for the next week and then
+> make a list of things they need and buy those groceries. We don't start
+> building the next wave of meals until after we have been to the grocery store,
+> so we miss the chance to buy the stuff to make those meals.
+
+The diagnosis is half right, and the half that is wrong matters. M6's
+`plan_window` DOES plan past the shop — but only inside the lead window, two
+days before the trip. The real defect is that the horizon was **binary and
+opened late**:
+
+- For the other five days of a seven-day cycle there was no next-shop plan at
+  all, so an idea landing on a Monday ("lasagna next week") had nowhere to go
+  and the list could not accumulate against the coming run the way a real list
+  does.
+- In planning mode the window *started on the shop date*, so the last nights
+  before the trip belonged to neither span and disappeared off the page.
+
+## The hazard, and why claims come first
+
+Untouched days recompose as the schedule moves under them — deliberately (M6).
+That is safe only because compose → approve → buy happened in one press, and
+approving pins every night as it buys: *"once the ingredients are bought, a day
+that quietly recomposed itself would have spent their money on a dinner they are
+no longer having."*
+
+Open the next span all week and let items trickle onto the list, and that
+guarantee breaks. So the un-add came first, and everything else rests on it.
+
+`ShoppingItem.claims` is the fix, and the shape of the old bug explains why it
+had to exist: `dishes_to_shopping` **skipped** an ingredient already on the list,
+so chicken wanted by Monday and Thursday was one row remembering only Monday.
+Removal was impossible, not merely unbuilt. A duplicate now leaves a claim
+instead of being waved away.
+
+**The rule:** an ingredient stays while any planned night still wants the dish
+that brought it.
+
+Matching is by **dish**, not by (dish, night), and that is load-bearing. From the
+family:
+
+> Plans change at the drop of a hat... generally that meal would just get punted
+> to a different day and everything else shifts, so a meal that was in the
+> current span might get bumped to the next span and just not need anything
+> bought for it. It kind of works itself out in the end.
+
+It does, exactly — but only under dish matching. Per-night matching would strip
+the noodles off the list the moment lasagna moved from Thursday to Friday.
+
+Three things are never removed, each a different way to throw away real
+shopping:
+
+| Never removed | Because |
+|---|---|
+| A row a **person** added | "We're out of milk" is not a consequence of the meal plan and does not evaporate when the plan changes, even if a dish later claimed the same name. |
+| A row already **checked off** | You own it now. This is the top-up case: bought Wednesday, Thursday's dinner changes, and rewriting the list to pretend it was never bought helps nobody. |
+| A row carrying **no claims** | A meal item from before claims existed. Unexplained is not the same as unwanted. |
+
+Batch writers (`arrange_week`, `approve_week`, `repropose_week`) pass
+`reconcile=False` and reconcile once at the end. Moving a dinner is two writes,
+and between them the dish is planned nowhere — reconciling in that gap unbought
+a dinner the family had merely dragged.
+
+## The window
+
+`plan_window` returns **both spans, always**:
+
+- `current` — today → the trip. What the last shop bought for. Settled, not
+  frozen: a meeting lands, tonight's dinner gets punted, everything shifts. A
+  night that slides past the shop arrives already paid for, which falls out of
+  the claims rather than needing a rule.
+- `next` — the trip → cadence. What the coming trip has to buy for, and the only
+  span the list is built from.
+
+`start`/`days`/`mode` keep pointing at the span being **bought for**, which is
+what every existing caller meant by them.
+
+`grocery_cadence_days` (default 7) replaces the hardcoded 7. Seven is right for
+most families, which is why it was hardcoded — but a household shopping every
+ten days had three nights a cycle that nothing ever bought for.
+
+## Runs
+
+> I definitely think the lists need to be linked to a specific grocery errand...
+> a mid-week top-up should not inherit the shopping list for the next grocery
+> run automatically... With that said, there isn't any reason Argyle can't also
+> ask if they also want the list for the next grocery run too.
+
+Scoped per **item** (`ShoppingItem.buy_on`), not per list. A list per run
+contradicts M1's standing-list decision for a reason that is still true: the
+errand regenerates every cycle while the list persists across all of them, and a
+list per run is how a second list rots while everyone keeps adding milk to the
+main one. One standing list; the *view* is split.
+
+`buy_on` is the run that has to buy for a night — the run **before** it, not the
+next one on the calendar. A night falling before the next run means the plan
+changed after the shopping was done: that is a top-up, and it is the one case
+where an item is not for the standing run.
+
+`shopping.item_runs` splits the open list into `now` (top-up), `next` (the coming
+run, including everything added by hand — `buy_on` unset means "the next run",
+which is what somebody typing "milk" means) and `later` (a group per run beyond).
+The rest is **offered, not hidden**: standing in a store is the best moment to be
+asked, and buying some of it just checks those rows and leaves the remainder.
+With one group there is no header at all — a heading over an undivided list is
+not a split, it is noise.
+
+## Deliberately not built
+
+- **Quantity arithmetic on un-add.** Two nights wanting chicken buy chicken
+  once; dropping one night does not halve it. `qty` is free text and has never
+  been parsed (M1), and guessing here would be a new class of wrong.
+- **A run entity.** A date is enough to answer "which trip is this for", and the
+  errand that happens on that date is already discoverable by tag.

@@ -131,6 +131,60 @@ DEFAULT_SHOP_MINS = 90          # a real grocery run, not a dash for milk
 SHOP_WINDOW = ('08:00', '20:00')
 
 
+def item_runs(list_id: str = None, today: datetime.date = None) -> dict:
+    """The list, split by which shop RUN each item is for.
+
+    A mid-week dash for the one thing tonight's re-planned dinner needs must
+    not arrive carrying all of Saturday. That is the whole reason items know
+    their run — and it is per item rather than per list because the grocery
+    list is standing: the errand regenerates every cycle while the list
+    persists across all of them, and a list per run is how a second list ends
+    up rotting while everyone keeps adding milk to the main one.
+
+    Three groups, in the order a shopper wants them:
+
+    - `now`  — needed BEFORE the next run. The plan changed after the shopping
+               was done. This is the top-up, and it is what a quick trip
+               should open to.
+    - `next` — the coming run's list, including everything added by hand
+               (`buy_on` unset means "the next run", which is what somebody
+               typing "milk" means). Offered alongside a top-up rather than
+               hidden: standing in a store is the best moment to be asked
+               whether you want the rest, and buying some of it just checks
+               those rows off and leaves the remainder for Saturday.
+    - `later` — runs beyond the next one, a group per run. Nothing to do with
+               this trip; visible so a plan two shops out is not invisible.
+    """
+    from services import meals as _meals
+    today = today or datetime.date.today()
+    settings = storage.get_settings() or {}
+    nxt, _, _ = _meals.shop_date(settings, today)
+    shop = nxt.isoformat()
+    now, nxt_items, later = [], [], {}
+    for it in storage.get_shopping_items(list_id, include_checked=False):
+        when = it.get('buy_on')
+        if not when or when == shop:
+            nxt_items.append(it)
+        elif when < shop:
+            now.append(it)
+        else:
+            later.setdefault(when, []).append(it)
+    groups = []
+    if now:
+        groups.append({'key': 'now', 'date': None, 'items': now,
+                       'label': 'Needed before ' + nxt.strftime('%A')})
+    groups.append({'key': 'next', 'date': shop, 'items': nxt_items,
+                   'label': nxt.strftime('%A') + "'s shop"})
+    for when in sorted(later):
+        d = datetime.date.fromisoformat(when)
+        # Not %-d / %#d: those are platform-specific and this runs on both a
+        # Windows dev box and an Alpine add-on container.
+        groups.append({'key': 'later', 'date': when, 'items': later[when],
+                       'label': f"{d.strftime('%b')} {d.day}"})
+    return {'shop_date': shop, 'groups': groups,
+            'top_up': bool(now), 'counts': {g['key']: len(g['items']) for g in groups}}
+
+
 def errand_for_list(list_id: str) -> dict:
     """The errand this list is bound to, if one exists."""
     if not list_id:

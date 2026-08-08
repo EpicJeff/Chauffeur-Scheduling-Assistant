@@ -133,6 +133,11 @@ ENTRIES: List[dict] = [
     _e('grocery_plan_lead_days', 'meals', 'Plan ahead by',
        'How many days before the shop to ask "how does this look?".',
        page='shopping', anchor='planning'),
+    _e('grocery_cadence_days', 'meals', 'Days between shops',
+       'How many nights one grocery run has to cover. Seven for most families; '
+       'set it longer and the plan covers the extra nights instead of leaving '
+       'them unbought.',
+       page='shopping', anchor='planning'),
     _e('meal_week_enabled', 'meals', 'Plan the week',
        'Propose the whole span the next grocery run has to buy for.',
        page='shopping', anchor='planning'),

@@ -4988,6 +4988,15 @@ def list_shopping_items(list_id: Optional[str] = None, include_checked: bool = T
         list_id = storage.ensure_default_shopping_list()['id']
     return storage.get_shopping_items(list_id, include_checked)
 
+@app.get("/api/shopping/runs")
+def shopping_item_runs(list_id: Optional[str] = None):
+    """The open list, split by which shop run each item is for — so a mid-week
+    dash for tonight's re-planned dinner does not arrive carrying all of
+    Saturday, and so the rest is still one tap away while you are standing in
+    a store."""
+    from services import shopping as _shop
+    return _shop.item_runs(list_id or storage.ensure_default_shopping_list()['id'])
+
 @app.post("/api/shopping/items")
 def create_shopping_item(req: ShoppingItemRequest):
     from models.schemas import ShoppingItem
@@ -5391,14 +5400,29 @@ def plate_to_list(list_id: Optional[str] = None, date: Optional[str] = None):
 
 @app.get("/api/meals/week")
 def meal_week(start: Optional[str] = None, days: Optional[int] = None):
-    """The dinners ahead, composed in order. Defaults to the span the next
-    grocery run has to buy for — that is the unit families actually plan in."""
+    """The dinners ahead, composed in order.
+
+    Both spans by default: what the last shop bought for, running out at the
+    trip, and what the coming trip has to buy for. A family holds both at once
+    — the second one is where an idea that lands on a Monday goes, and it is
+    the only span the list can be built against. An explicit start/days still
+    wins, so a card or a test can ask for one stretch of days.
+    """
     from services import meals as _meals
     win = _meals.plan_window()
-    start_str = start or win['start']
-    n = int(days) if days else win['days']
-    return {'window': win, 'start': start_str, 'days': n,
-            'week': _meals.compose_week(start_str, n)}
+    if start or days:
+        start_str = start or win['start']
+        n = int(days) if days else win['days']
+        return {'window': win, 'start': start_str, 'days': n,
+                'week': _meals.compose_week(start_str, n)}
+    spans = [{**s, 'week': _meals.compose_week(s['start'], s['days'])}
+             for s in win['spans'] if s['days']]
+    # `week` stays the span being bought for: every existing caller means that
+    # by it, and the current span is a second section rather than a new default.
+    buying = next((s for s in spans if s['key'] == 'next'), None)
+    return {'window': win, 'spans': spans,
+            'start': win['start'], 'days': win['days'],
+            'week': (buying or {}).get('week', [])}
 
 class WalmartMap(BaseModel):
     name: str

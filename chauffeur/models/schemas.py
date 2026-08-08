@@ -523,6 +523,10 @@ class Settings(BaseModel):
     # on any single night via the plate's `serving_for`.
     household_headcount: int = 0
     grocery_plan_lead_days: int = 2   # ask "how does this look?" this early
+    # How many nights one shop has to cover. Seven for most families, which is
+    # why the span was hardcoded at 7 — but a household that shops every ten
+    # days had three nights a cycle nothing ever bought for.
+    grocery_cadence_days: int = 7
     meal_week_enabled: bool = True
     propose_shopping_errands: bool = True   # offer a trip for a list that has none
     # Prep reminders (M8). "The night before" is a human moment, not an
@@ -810,6 +814,23 @@ class ShoppingItem(BaseModel):
     added_by: Optional[str] = None     # member id (attribution, not a gate)
     added_via: str = 'manual'          # manual|voice|photo|meal|barcode
     source_meal_id: Optional[str] = None   # M3 entries that drained here
+    # EVERY night that wants this row, not just the first one to ask.
+    # `source_meal_id` above records one dish, which is all a single drain
+    # needs; it is not enough to ever take an item back OFF. Chicken wanted by
+    # Monday and Thursday was one row remembering Monday, because a second
+    # dish asking for an ingredient already on the list was skipped outright —
+    # so changing Monday's dinner looked like it freed the chicken, when
+    # Thursday still needed it. Claims are what make removal safe: an
+    # ingredient stays while any planned night still wants the dish that
+    # brought it. [{'dish_id', 'date', 'dish_name'}]
+    claims: List[Dict[str, Any]] = Field(default_factory=list)
+    # WHICH SHOP RUN this item is for (ISO date), so a mid-week top-up does
+    # not inherit the whole of next Saturday's list. Deliberately per ITEM and
+    # not per list: the grocery list is STANDING (see ShoppingList above — the
+    # errand regenerates every cycle while the list persists across all of
+    # them), and a list per run is how a second list starts rotting while
+    # everyone keeps adding milk to the main one. None means the next run.
+    buy_on: Optional[str] = None
     # THE documented exception to list-level membership. The standing grocery
     # list is a container the occasion owns only PART of: the turkey wants to
     # be on the normal list, bought on the normal run, at the normal store,

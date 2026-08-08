@@ -1129,12 +1129,28 @@ def get_shopping_list_items(list_name: str = "",
     if not items:
         return {"status": "success",
                 "message": f"{lst.get('name')} is empty — nothing needed."}
-    lines = []
-    for i in items:
-        qty = f" ({i['qty']})" if i.get('qty') else ""
-        lines.append(f"• {i.get('name')}{qty}")
+    # Split by shop RUN when there is more than one, because "what's on the
+    # list" has two different answers when somebody is heading out mid-week for
+    # the one thing tonight's re-planned dinner needs: what THIS trip is for,
+    # and the big run's list, which they may or may not want to start on while
+    # they are standing there. Asking is the point; assuming either way is not.
+    from services import shopping as _shop
+    try:
+        groups = [g for g in _shop.item_runs(lst['id'])['groups'] if g['items']]
+    except Exception:
+        groups = []
+
+    def _lines(rows):
+        return "\n".join(f"• {i.get('name')}" + (f" ({i['qty']})" if i.get('qty') else "")
+                         for i in rows)
+
+    if len(groups) > 1:
+        out = [f"{lst.get('name')} ({len(items)}), split by trip:"]
+        for g in groups:
+            out.append(f"\n{g['label']} ({len(g['items'])}):\n" + _lines(g['items']))
+        return {"status": "success", "message": "\n".join(out)}
     return {"status": "success",
-            "message": f"{lst.get('name')} ({len(items)}):\n" + "\n".join(lines)}
+            "message": f"{lst.get('name')} ({len(items)}):\n" + _lines(items)}
 
 
 def check_off_shopping_item(item_name: str, list_name: str = "",
