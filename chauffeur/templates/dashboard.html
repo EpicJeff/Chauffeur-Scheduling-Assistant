@@ -492,12 +492,15 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            if (isReadOnly) {
-                const headerBtns = document.getElementById('header-buttons');
-                if (headerBtns) headerBtns.classList.add('hidden');
-                const pageHeader = document.getElementById('page-header');
-                if (pageHeader) pageHeader.classList.add('hidden');
-            }
+            // The controls are hidden by CSS in the head now (ha_theme's
+            // `html[data-display] #header-buttons`), so they never paint at
+            // all — hiding them from here showed them for a frame first.
+            //
+            // And `#page-header` is NOT hidden any more. It carries the page
+            // TITLE, which on a panel is the only thing on screen saying which
+            // room you are in: the shelf is icons and the wordmark is gone.
+            // This predates the one-title-per-page convention (v2.117.0) and
+            // had been quietly deleting the schedule's name ever since.
             if (isKiosk) {
                 const inboxContainer = document.getElementById('inbox-container');
                 if (inboxContainer) inboxContainer.classList.add('hidden');

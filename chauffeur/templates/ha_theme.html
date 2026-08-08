@@ -14,6 +14,17 @@
     // propagation, so the whole panel stays in panel mode by walking around.
     (function () {
         const p = new URLSearchParams(window.location.search);
+        // A DISPLAY SURFACE — a wall panel, a kiosk, or an explicitly
+        // read-only embed. Pages hide their editing controls on these, and
+        // they were each doing it from a DOMContentLoaded handler: the server
+        // sends the controls, the browser paints them, and a frame later they
+        // vanish. That flash is what "the title and controls disappear on
+        // load" looks like from the kitchen. Decided here, before anything
+        // paints, for the same reason the theme is.
+        if (p.get('panel') === 'true' || p.get('kiosk') === 'true'
+            || p.get('readonly') === 'true') {
+            document.documentElement.setAttribute('data-display', '');
+        }
         if (p.get('panel') !== 'true') return;
         document.documentElement.setAttribute('data-panel', '');
         // The theme has to be on the element BEFORE the first paint or the
@@ -569,6 +580,20 @@
        default and then stays hard-dark on a light theme — which is exactly
        how the Moments back bar shipped as a black band. Stick to the mapped
        set (/30 /40 /50 /60 /70 /80 /90) or add the variant here. */
+
+    /* A display surface hides the controls that EDIT, and nothing else.
+       Here rather than in each page's DOMContentLoaded handler, because a
+       control hidden after the first paint is a control the family watches
+       disappear. `#header-buttons` is the established id for a page's row of
+       actions; a page that grows another row adds it here.
+
+       The page TITLE deliberately stays. The panel drops the wordmark and the
+       shelf is icons, so the heading is the only thing on screen saying which
+       room you are in — that is the whole point of the one-title-per-page
+       convention (v2.117.0), and the schedule page was hiding its own
+       `#page-header` wholesale, title and all, from before that convention
+       existed. */
+    html[data-display] #header-buttons { display: none !important; }
 </style>
 
 {# The panel design system — tokens, the photographic background, and the

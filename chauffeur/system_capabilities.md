@@ -1014,3 +1014,11 @@ Reported from using it: *"It only generates meals up until the next grocery run.
 
 - The tile width field carried a live fraction beside it (`of 12 · a quarter`). It was a **different length for every value**, so the rest of the row's controls shuffled sideways under the hand that was changing them. A caption that moves the target costs more than it explains. It reads `cols` now, like `rows` beside it.
 - Worth remembering for any live-updating label sitting in a row of controls: if its width tracks its value, it is a layout shift on every keystroke. Either give it a fixed width or do not put it inline.
+
+## The schedule page was deleting its own name on a panel (v2.122.0)
+
+- **Reported from the wall: the title and controls flash up and vanish.** Two faults in one `if`. `dashboard.html` hid `#page-header` whenever the surface was read-only — and panel mode sets `kiosk=true`, so every panel got it. `#page-header` carries the **title**, so the schedule page had been quietly deleting its own name on every panel since before the one-title-per-page convention (v2.117.0) existed. On a panel that heading is the only thing on screen saying which room you are in: the wordmark is gone and the shelf is icons.
+- **And it hid them from `DOMContentLoaded`**, so the server sent the controls, the browser painted them, and a frame later they disappeared. That flash is what the family actually saw.
+- **A display surface is now known in the HEAD.** `ha_theme` sets `html[data-display]` for `?panel`, `?kiosk` OR `?readonly` — before anything paints, for the same reason the theme is decided there — and one CSS rule hides `#header-buttons`. The page's JS no longer touches either element. An HA card and a read-only embed get the same no-flash treatment the panel does, which they did not before.
+- Guarded by `test_panel_chrome.scenario_a_page_never_hides_its_own_name_on_a_panel`, which scans every template for a page hiding its own header and fails if the head stops marking display surfaces.
+- Worth remembering: **hiding chrome after the first paint is always a flash.** Three separate things now decide before paint (theme, shelf tabs, controls); anything else that reads the URL to decide what NOT to show belongs there too.

@@ -26,6 +26,9 @@ CC = open(os.path.join(TPL, 'components', 'control_center.html'), encoding='utf-
 NAV = open(os.path.join(TPL, 'nav.html'), encoding='utf-8').read()
 
 
+HIDDEN = "classList.add(" + chr(39) + "hidden" + chr(39) + ")"
+
+
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
@@ -257,6 +260,49 @@ def scenario_every_page_says_its_name_in_the_same_place():
         check('panel-page' in body.replace('panel-page-title', ''),
               f"{name}'s title is not in a .panel-page frame, so it will not "
               f"line up with the others")
+
+
+def scenario_a_page_never_hides_its_own_name_on_a_panel():
+    """Reported from the wall: the schedule's title and controls appeared for a
+    split second and then vanished.
+
+    Two faults in one line. The page hid `#page-header` — which carries the
+    TITLE — whenever it was read-only, and panel mode sets kiosk=true. That
+    predates the one-title-per-page convention (v2.117.0) and had been quietly
+    deleting the page's name on every panel since. On a panel the heading is
+    the only thing on screen saying which room you are in: the wordmark is gone
+    and the shelf is icons.
+
+    And it did it from a DOMContentLoaded handler, so the controls painted
+    first and disappeared a frame later. A display surface is known in the
+    HEAD — `html[data-display]` — for exactly the reason the theme is.
+    """
+    import glob
+    for path in glob.glob(os.path.join(TPL, '*.html')):
+        body = open(path, encoding='utf-8').read()
+        name = os.path.basename(path)
+        for needle in ("getElementById('page-header')",
+                       'getElementById("page-header")'):
+            at = body.find(needle)
+            if at == -1:
+                continue
+            check(HIDDEN not in body[at:at + 140],
+                  f"{name} hides its own page header, and the page title lives "
+                  f"inside it — a panel page with no name is a room with no "
+                  f"door sign")
+
+    check('data-display' in THEME,
+          "the head no longer marks a display surface, so pages are back to "
+          "hiding their controls after the first paint")
+    check('html[data-display] #header-buttons' in THEME,
+          "the controls are not hidden before paint, which is the flash that "
+          "was reported")
+    # All three, or an HA card (?kiosk=true) and a read-only embed keep the
+    # flash the panel just lost.
+    head = THEME[THEME.index('data-display') - 400:THEME.index('data-display') + 200]
+    for param in ('panel', 'kiosk', 'readonly'):
+        check(param in head,
+              f"?{param} does not mark a display surface, so it still flashes")
 
 
 def scenario_no_page_title_carries_an_emoji():
