@@ -737,6 +737,35 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+
+def _shelf_order(request: Request) -> list:
+    """Which buttons the panel shelf shows, in order, resolved SERVER-SIDE.
+
+    The shelf used to be rendered in the template's own declaration order and
+    then reordered by JavaScript once the panel profile arrived — so the family
+    watched the buttons shuffle on every page load. The server already knows
+    the answer (it is the same `resolve_tabs` the profile endpoint returns), so
+    it can simply render them in the right order and there is nothing to
+    correct afterwards.
+
+    Falls back to every destination if anything here fails: a shelf is how you
+    get around a wall panel, and no shelf is worse than a mis-ordered one.
+    """
+    try:
+        from services import home_board as _hb
+        return _hb.resolve_tabs(request.query_params.get('tabs'),
+                                storage.get_settings() or {})
+    except Exception as e:
+        print(f"shelf order resolve failed: {e}")
+        try:
+            from services import home_board as _hb
+            return list(_hb.DEFAULT_TABS)
+        except Exception:
+            return []
+
+
+templates.env.globals['shelf_order'] = _shelf_order
+
 # --- UI Routes ---
 @app.get("/")
 def root_redirect(request: Request):

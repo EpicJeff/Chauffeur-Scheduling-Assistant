@@ -76,8 +76,13 @@ def scenario_no_item_is_listed_twice():
 
 
 def scenario_all_three_renderers_loop_the_list():
-    """The point of the refactor. If a renderer stops looping NAV_ITEMS, it has
-    grown its own copy again and the divergence is back."""
+    """The point of the refactor. If a renderer stops deriving its links from
+    NAV_ITEMS, it has grown its own copy again and the divergence is back.
+
+    The shelf loops SHELF_ITEMS rather than NAV_ITEMS directly — it is the same
+    list, ordered and filtered by the server so the buttons do not shuffle
+    after the page paints — so what matters is that it is BUILT from NAV_ITEMS
+    in the same breath."""
     for anchor, what in (('id="top-nav-bar"', 'desktop bar'),
                          ('id="mobile-menu"', 'mobile menu'),
                          ('id="panel-shelf"', 'panel shelf')):
@@ -87,8 +92,35 @@ def scenario_all_three_renderers_loop_the_list():
         ends = [section.index(a) for a in ('id="mobile-menu"', 'id="panel-shelf"', '<script>')
                 if a in section and section.index(a) > 0]
         section = section[:min(ends)] if ends else section
-        check('{% for item in NAV_ITEMS %}' in section,
-              f"the {what} does not loop NAV_ITEMS — hardcoded copy?")
+        if what == 'panel shelf':
+            check('SHELF_ITEMS.append(item)' in section
+                  and 'for item in NAV_ITEMS' in section,
+                  "the shelf no longer builds its list from NAV_ITEMS — "
+                  "hardcoded copy?")
+            check('{% for item in SHELF_ITEMS %}' in section,
+                  "the shelf does not render the ordered list it just built")
+        else:
+            check('{% for item in NAV_ITEMS %}' in section,
+                  f"the {what} does not loop NAV_ITEMS — hardcoded copy?")
+
+
+def scenario_the_shelf_arrives_in_its_final_order():
+    """Reported from the wall: the shelf buttons reorder after the page loads,
+    so you watch them jump.
+
+    v2.119.0 made the order real but applied it in JavaScript, once the panel
+    profile arrived — which is a rearrangement the family sees. The server
+    already knows the answer (`shelf_order` is the same `resolve_tabs` the
+    profile endpoint returns), so the first byte is already correct."""
+    import main
+    check('shelf_order' in main.templates.env.globals,
+          "the template can no longer ask the server for the shelf order, so "
+          "the order is back to being applied after the paint")
+    check('{% set _order = shelf_order(request) %}' in BODY,
+          "nav.html does not resolve the shelf order at render time")
+    ordered = BODY.index('SHELF_ITEMS.append(item)')
+    rendered = BODY.index('{% for item in SHELF_ITEMS %}')
+    check(ordered < rendered, "the shelf is rendered before it is ordered")
 
 
 def scenario_every_nav_page_has_a_route():

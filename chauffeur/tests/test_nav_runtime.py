@@ -40,10 +40,14 @@ def check(cond, msg):
 
 
 def _nav_html(path='/home'):
-    from jinja2 import Environment, FileSystemLoader
-    env = Environment(loader=FileSystemLoader(TPL))
-    req = types.SimpleNamespace(url=types.SimpleNamespace(path=path))
-    return env.get_template('nav.html').render(request=req)
+    # The REAL Jinja environment, not a bare one: nav.html asks the server for
+    # the shelf order now (`shelf_order`, registered as a global in main), and
+    # a stand-in environment would either fail or quietly render a different
+    # shelf than the app serves.
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path=path),
+                                query_params={})
+    return main.templates.env.get_template('nav.html').render(request=req)
 
 
 def _nav_script(path='/home'):

@@ -96,16 +96,30 @@ def scenario_the_panel_never_flashes_the_browser_chrome():
 
 
 def scenario_the_shelf_does_not_flash_the_wrong_buttons():
-    """One level down: a shelf visible from the first paint would show all
-    twelve destinations and snap to six when the profile lands. The URL wins
-    when it says anything; otherwise the last known list decides before
-    anything renders, and the guess is retired once the real answer arrives."""
-    check("id = 'panel-early-tabs'" in THEME or "st.id = 'panel-early-tabs'" in THEME,
-          "there is no head-time tab filter")
-    check('chauffeurPanelTabs' in THEME, "the head never reads the cached tabs")
-    check('chauffeurPanelTabs' in NAV, "the resolved tabs are never cached")
-    check("getElementById('panel-early-tabs')" in NAV and 'early.remove()' in NAV,
-          "the head-time guess is never retired, so it outranks the real answer")
+    """One level down: a shelf visible from the first paint must not show all
+    twelve destinations and snap to six when the profile lands — nor render in
+    one order and shuffle into another, which is what shipped in v2.119.0 and
+    was reported from the kitchen as the buttons jumping around.
+
+    This was a head-time CSS guess off a cached list. It is the SERVER's answer
+    now: nav.html asks `shelf_order()` (the same `resolve_tabs` the profile
+    endpoint returns) and renders the buttons filtered and ordered. That is
+    both earlier than any script and correct on the first load, where a cache
+    has nothing to say — and a stale cache can no longer hide a button the
+    server rightly drew.
+
+    `?tabs=none` stays in the head: it hides the whole nav, which is this
+    file's chrome rather than the shelf's contents."""
+    check("st.id = 'panel-early-tabs'" in THEME,
+          "?tabs=none no longer hides the nav before paint")
+    check('chauffeurPanelTabs' not in THEME and 'chauffeurPanelTabs' not in NAV,
+          "the cached-tabs guess is back — the server renders the shelf now, "
+          "and a cache can only contradict it")
+    check('{% set _order = shelf_order(request) %}' in NAV,
+          "the shelf no longer takes its order from the server, so it is back "
+          "to being rearranged after the paint")
+    check('{% for item in SHELF_ITEMS %}' in NAV,
+          "the shelf does not render the server's ordered list")
 
 
 def scenario_the_skin_maps_the_greys_the_pages_are_written_in():

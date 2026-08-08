@@ -202,8 +202,29 @@
 
 <div id="panel-shelf" style="min-height: var(--panel-shelf-h)"
     class="hidden fixed bottom-0 left-0 right-0 z-[70] px-2 py-1.5">
+    {#
+      Ordered and filtered HERE, by the server, not by JavaScript afterwards.
+
+      The shelf shipped rendering in this file's own declaration order and
+      being reordered once the panel profile arrived, so the family watched
+      the buttons shuffle on every page load. The server already knows the
+      answer — `shelf_order()` is the same `resolve_tabs` the profile endpoint
+      returns — so the first byte is already right and there is nothing left
+      to correct. Same lesson as the theme, the background and the page
+      controls: anything decided after the first paint is a flash.
+
+      SHELF_ITEMS is built from NAV_ITEMS, so a new destination is still one
+      entry in one list.
+    #}
+    {% set _order = shelf_order(request) %}
+    {% set SHELF_ITEMS = [] %}
+    {% for slug in _order %}
+      {% for item in NAV_ITEMS if item.slug == slug %}
+        {% set _ = SHELF_ITEMS.append(item) %}
+      {% endfor %}
+    {% endfor %}
     <div class="flex items-stretch gap-1" id="panel-shelf-items">
-        {% for item in NAV_ITEMS %}
+        {% for item in SHELF_ITEMS %}
         <a href="{{ item.href }}" data-slug="{{ item.slug }}"
             class="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2 rounded-xl transition-colors {% if item.match in _path %}bg-blue-600/25 text-blue-200{% else %}text-gray-400{% endif %}">
             <svg class="w-7 h-7 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -314,6 +335,13 @@
             orderShelf(order);
         }
 
+        // The shelf arrives from the server already in this order (nav.html
+        // builds SHELF_ITEMS from `shelf_order`), so this is normally a no-op.
+        // It stays because `?tabs=` can be changed without a reload — an HA
+        // card editing its own URL — and because a no-op that costs one pass
+        // over a dozen elements is cheaper than a shelf that silently stops
+        // honouring the order if that ever stops being true.
+        //
         // Only the shelf reorders. The desktop row and the mobile menu are
         // ordinary web chrome, read left to right by someone already looking at
         // a screen; the shelf is reached for by position by someone standing in
@@ -397,10 +425,6 @@
                             catch (e) { /* private mode: cache is a nicety */ }
                         }
                         if (p) applyBackground(p.backgrounds);
-                        if (p && p.tabs) {
-                            try { localStorage.setItem('chauffeurPanelTabs', JSON.stringify(p.tabs)); }
-                            catch (e) { /* private mode: the cache is a nicety */ }
-                        }
                         return p;
                     })
                     .catch(() => null);

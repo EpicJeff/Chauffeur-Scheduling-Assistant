@@ -39,33 +39,18 @@
             document.documentElement.setAttribute('data-panel-theme', 'dark');
         }
 
-        // Same problem one level down: with the shelf now visible from the
-        // first paint, it would show all twelve destinations and then snap to
-        // the six this panel wants the moment the profile lands. The answer is
-        // the same — decide before anything renders. The URL is authoritative
-        // when it says anything; otherwise the last known list is used, which
-        // is right on every load after the first. nav.js re-applies and
-        // refreshes the cache when the real answer arrives.
-        function shelfCss(slugs) {
-            if (!slugs || !slugs.length) return '';
-            const keep = slugs.map(s => '[data-slug="' + s + '"]').join(',');
-            return '[data-slug]:not(' + keep + '){display:none !important}';
-        }
-        let css = '';
+        // (The shelf used to be filtered here too, from a cached list, so
+        // it would not paint twelve buttons and snap to six. It is rendered
+        // server-side now — nav.html asks `shelf_order()` — which is both
+        // earlier and correct, whereas a cached guess could hide a button the
+        // server had rightly drawn until the profile arrived to contradict it.
+        // `?tabs=none` still has to be handled here: it hides the whole nav,
+        // which is chrome this file owns.)
         const tabsParam = p.get('tabs');
         if (tabsParam !== null && ['', 'none'].includes(tabsParam.trim().toLowerCase())) {
-            css = 'nav{display:none !important}';
-        } else if (tabsParam !== null) {
-            css = shelfCss(tabsParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
-        } else {
-            try {
-                css = shelfCss(JSON.parse(localStorage.getItem('chauffeurPanelTabs') || 'null'));
-            } catch (e) { css = ''; }
-        }
-        if (css) {
             const st = document.createElement('style');
             st.id = 'panel-early-tabs';
-            st.textContent = css;
+            st.textContent = 'nav{display:none !important}';
             document.head.appendChild(st);
         }
 
