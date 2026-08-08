@@ -5751,6 +5751,14 @@ class DishFieldsReq(BaseModel):
     category_ids: Optional[List[str]] = None
     type: Optional[str] = None            # meal | dish
     serves: Optional[int] = None
+    # v2.109.2 taught the handler below to read `whole_units` and added the
+    # field to MealPatch — but not here, so every call to this endpoint hit an
+    # AttributeError on a field the request could not carry and 500'd. Not just
+    # the by-the-tray toggle: serves, whole-meal and the category chips all go
+    # through this one handler, and the read is unconditional, so the hand path
+    # for what a dish IS has been dead since. The agent's path writes the same
+    # fields through a different door, which is why it kept working.
+    whole_units: Optional[bool] = None
     tags: Optional[List[str]] = None
 
 @app.patch("/api/meals/dishes/{dish_id}/fields")
