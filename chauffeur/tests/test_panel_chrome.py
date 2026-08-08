@@ -141,6 +141,30 @@ def scenario_the_grey_mapping_never_applies_a_filter():
               f"<body> would trap the panel's fixed chrome")
 
 
+def scenario_panel_mode_turns_the_ha_theme_off():
+    """Two complete themes cannot both be on, and this one was winning silently.
+
+    Panel mode writes `kiosk=true` into the address so the app's existing kiosk
+    gating lights up — which also switched on HA theming, whose mapping paints
+    every `bg-gray-900` a flat `#111111 !important`. A standalone panel has no
+    parent frame to sync colours from, so `--ha-bg` never resolves and that
+    fallback IS the theme: opaque slabs over the photograph. It beat the panel
+    skin because both are `!important` at equal specificity and ha_theme's
+    styles came later in the file.
+
+    Fixed by suppressing HA theming in panel mode outright, rather than by
+    out-specifying it — and by making the skin the later stylesheet, so a
+    future HA rule cannot outrank the panel just by being added below."""
+    check("const isPanelTheme = urlParamsTheme.get('panel') === 'true'" in THEME,
+          "panel mode is no longer detected in the theme switch")
+    check('!isPanelTheme' in THEME,
+          "HA theming is no longer suppressed on a panel — its #111111 "
+          "fallback will paint over the photograph again")
+    check(THEME.index("{% include 'panel_skin.html' %}") > THEME.index('<style>'),
+          "the panel skin is included before the HA styles, so on an "
+          "equal-specificity !important tie the HA rule wins")
+
+
 def scenario_the_panel_canvas_is_never_browser_white():
     """The body is transparent in panel mode so the photograph shows through —
     which means the ROOT has to carry the base colour. Without it the canvas is

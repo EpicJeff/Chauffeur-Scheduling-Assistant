@@ -85,7 +85,23 @@
     const urlParamsTheme = new URLSearchParams(window.location.search);
     const themeParam = urlParamsTheme.get('theme');
     const isKioskTheme = urlParamsTheme.get('kiosk') === 'true';
-    const isHaTheme = (themeParam && themeParam.startsWith('ha')) || isKioskTheme;
+    // A wall panel is NOT an HA-themed embed, and the two themes cannot both
+    // be on. Panel mode writes `kiosk=true` into the address (so the app's
+    // existing kiosk gating lights up), which used to switch this on as a side
+    // effect — and the HA mapping below then painted every `bg-gray-900` a
+    // flat `#111111 !important`. On a standalone panel there is no parent
+    // frame to sync colours from, so `--ha-bg` never resolves and that
+    // fallback IS the theme: opaque slabs over the photograph, immune to the
+    // panel skin because both rules are `!important` at equal specificity and
+    // this file comes later.
+    //
+    // So panel mode suppresses HA theming outright rather than out-specifying
+    // it. Panel mode carries a complete theme of its own (panel_skin.html),
+    // including its own light/dark; layering a second one on top was never
+    // going to end anywhere good.
+    const isPanelTheme = urlParamsTheme.get('panel') === 'true';
+    const isHaTheme = !isPanelTheme
+        && ((themeParam && themeParam.startsWith('ha')) || isKioskTheme);
 
     function syncHaTheme() {
         try {
@@ -122,12 +138,6 @@
         });
     }
 </script>
-{# The panel design system — tokens, the photographic background, and the
-   mapping that carries both onto every page written in Tailwind greys. Kept
-   in its own file because it is a design system rather than theme plumbing,
-   and included from here because ha_theme is already in every page's head. #}
-{% include 'panel_skin.html' %}
-
 <style>
     /* --- Panel mode: the whole app, sized for a finger.
        The lever is the ROOT FONT SIZE, not a pile of per-control overrides.
@@ -560,3 +570,16 @@
        how the Moments back bar shipped as a black band. Stick to the mapped
        set (/30 /40 /50 /60 /70 /80 /90) or add the variant here. */
 </style>
+
+{# The panel design system — tokens, the photographic background, and the
+   mapping that carries both onto every page written in Tailwind greys. Kept
+   in its own file because it is a design system rather than theme plumbing,
+   and included from here because ha_theme is already in every page's head.
+
+   Included LAST on purpose. The HA mapping above and this skin both use
+   `!important` at the same specificity (one attribute/class plus an element),
+   so on a tie the later rule wins — and the panel has to be the later rule.
+   Panel mode already suppresses HA theming outright, but source order is the
+   belt to that braces: it means a future HA rule cannot silently outrank the
+   panel just by being added further down the file. #}
+{% include 'panel_skin.html' %}
