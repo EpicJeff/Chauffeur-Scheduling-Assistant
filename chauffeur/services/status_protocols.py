@@ -339,8 +339,15 @@ def auto_set_from_calendar(now: datetime.datetime = None, horizon_days: int = 7)
             continue
         base = str(ev.get('id', '')).split('_slice_')[0]
         try:
-            s_dt = datetime.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None)
-            e_dt = datetime.datetime.fromisoformat(str(ev['end'])).replace(tzinfo=None)
+            # The slice's own span when it has one. Collapsing slices back into
+            # a span can only recover the part of the trip inside the solve
+            # window — the days before it opened were never sliced — so a camp
+            # already under way read as starting the day the window did, and
+            # the protocol days were set against the wrong dates.
+            s_dt = datetime.datetime.fromisoformat(
+                str(ev.get('span_start') or ev['start'])).replace(tzinfo=None)
+            e_dt = datetime.datetime.fromisoformat(
+                str(ev.get('span_end') or ev['end'])).replace(tzinfo=None)
         except (ValueError, TypeError, KeyError):
             continue
         # exclusive-midnight ends (all-day convention) belong to the prior day

@@ -6464,32 +6464,59 @@ def _build_kid_digests(target_date=None):
             'weather': family_digest.weather_line(target), 'kids': kids}
 
 def _kid_trip_span(ride):
-    """(first_start, last_end) naive datetimes across a background trip's
-    cached slices (base id with `_slice_N` stripped), or (None, None). If the
-    solve window clips a long trip the span is honest-but-short — better
-    than guessing."""
+    """(first_start, last_end) naive datetimes for the WHOLE background trip.
+
+    The slice carries the trip's own span (`span_start`/`span_end`), and that
+    is the only source that survives the solve window. Reassembling the span
+    from the cached slices — which is what this used to do — can only ever see
+    the part of the trip that is in view: the days before the window opened
+    were never sliced at all, so the earliest surviving slice looked like day
+    one. Every morning of a camp already under way, the kids were told it was
+    beginning.
+
+    The old scan stays as the fallback for slices cached before this shipped,
+    and it is still honest-but-short rather than a guess.
+    """
     import datetime as _dt
+
+    def _naive(v):
+        try:
+            return _dt.datetime.fromisoformat(str(v)).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            return None
+
+    span = (_naive(ride.get('span_start')), _naive(ride.get('span_end')))
+    if span[0] and span[1]:
+        return span
+
     base_id = str(ride.get('id') or '').split('_slice_')[0]
     starts, ends = [], []
     for ev in (storage.get_cached_schedule() or {}).get('events', []):
         if str(ev.get('id', '')).split('_slice_')[0] != base_id:
             continue
-        try:
-            starts.append(_dt.datetime.fromisoformat(str(ev['start'])).replace(tzinfo=None))
-            ends.append(_dt.datetime.fromisoformat(str(ev['end'])).replace(tzinfo=None))
-        except (ValueError, TypeError, KeyError):
-            continue
+        s, e = _naive(ev.get('start')), _naive(ev.get('end'))
+        if s and e:
+            starts.append(s)
+            ends.append(e)
     return (min(starts), max(ends)) if starts else (None, None)
 
 
 def _kid_trip_line(ride, target):
     """A trip deserves excitement, not a one-hour-looking time entry: turn a
     background_trip slice into a span-aware line."""
+    import datetime as _dt
     title = (ride.get('title') or 'Trip').replace('✈️', '').strip()
     first, last = _kid_trip_span(ride)
     if first is None:
         return f"🧳 {title}"
-    n_days = max(1, (last.date() - first.date()).days + 1)
+    # An all-day calendar event ends at midnight of the day AFTER the last day
+    # it covers. Taken literally that is a trip one day too long, coming home
+    # on a day nobody is travelling. (The old slice scan never had to know
+    # this: each slice was already clipped to its own day.)
+    last_date = last.date()
+    if last_date > first.date() and last.time() == _dt.time(0, 0):
+        last_date -= _dt.timedelta(days=1)
+    n_days = max(1, (last_date - first.date()).days + 1)
     if target == first.date():
         line = f"🧳 {title} — {n_days}-day adventure begins! 🎉" if n_days > 1 \
             else f"🧳 {title} begins! 🎉"
@@ -6501,7 +6528,7 @@ def _kid_trip_line(ride, target):
         if prep:
             line += f" — pack: {', '.join(prep[:4])}"
         return line
-    if target == last.date():
+    if target == last_date:
         return f"🏠 Coming home from {title}!"
     return f"🏕️ {title} — day {(target - first.date()).days + 1} of {n_days}"
 
@@ -9758,6 +9785,15 @@ def _refresh_schedule_logic_impl(start_date_str=None, end_date_str=None, force_r
                     # Create a daily slice of the trip
                     daily_e = e.model_copy() if hasattr(e, 'model_copy') else e.copy()
                     daily_e.id = f"{e.id}_slice_{date_str}"
+                    # What the WHOLE trip is, before this loop throws it away.
+                    # Only the days inside the solve window get a slice, so the
+                    # slices cannot be reassembled into the trip afterwards —
+                    # the first days of a camp already under way simply do not
+                    # exist as events, and reading "day one" off the earliest
+                    # surviving slice is how it kept telling the kids their
+                    # trip was beginning.
+                    daily_e.span_start = e.start.astimezone()
+                    daily_e.span_end = e.end.astimezone()
                     # Start is either the original start or midnight of this day
                     day_start = datetime.datetime.combine(curr.date(), datetime.time.min).astimezone(curr.tzinfo)
                     daily_e.start = max(e.start.astimezone(), day_start)

@@ -42,6 +42,18 @@ class Event(BaseModel):
     # Set by the refresh when every passenger on the event is away on a
     # background trip: excluded from solving but still shown on the calendar.
     trip_suppressed: bool = False
+    # THE WHOLE TRIP, carried on every daily slice of it.
+    #
+    # A background trip is cut into one event per day for the UI and the
+    # solver, and each slice's own start/end are that DAY's — so anything
+    # reading the slices could only see as much of the trip as the solve
+    # window happened to contain. Slices before the window are never created
+    # at all, which meant a five-day camp that started on Monday reported
+    # itself as beginning on whatever day the window opened, every day, and
+    # kept announcing "begins!" to the kids until it ended. These two say what
+    # the trip actually is, independently of how much of it is in view.
+    span_start: Optional[datetime] = None
+    span_end: Optional[datetime] = None
 
 class Driver(BaseModel):
     id: str

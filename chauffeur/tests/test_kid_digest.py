@@ -171,7 +171,59 @@ def scenario_kiosk_cutover_today_vs_tomorrow():
           "bad setting falls back to 19:00")
 
 
+def scenario_a_trip_already_under_way_does_not_keep_beginning():
+    """Reported from the wall: a camp ending tomorrow announced "Camp Kesem
+    begins! 🎉" to both kids.
+
+    A background trip is cut into one event per day, and ONLY for the days
+    inside the solve window — the days before it opened were never sliced at
+    all. The line read the trip's shape back off those slices, so the earliest
+    surviving one looked like day one, every single morning. The slice carries
+    the whole trip's span now.
+    """
+    import main
+    start = datetime.datetime.combine(TODAY - datetime.timedelta(days=3),
+                                      datetime.time(10, 0))
+    end = datetime.datetime.combine(TOMORROW, datetime.time(16, 0))
+    ride = {'id': f'camp_slice_{TODAY.isoformat()}', 'title': 'Camp Kesem',
+            'start': datetime.datetime.combine(TODAY, datetime.time(0, 0)).isoformat(),
+            'end': datetime.datetime.combine(TOMORROW, datetime.time(0, 0)).isoformat(),
+            'span_start': start.isoformat(), 'span_end': end.isoformat()}
+
+    today_line = main._kid_trip_line(ride, TODAY)
+    check('begins' not in today_line,
+          f"a trip three days old announced itself as beginning: {today_line}")
+    check('day 4 of 5' in today_line, f"wrong day count: {today_line}")
+    check('Coming home' in main._kid_trip_line(ride, TOMORROW),
+          "the last day is the day they come home")
+    check('begins' in main._kid_trip_line(ride, start.date()),
+          "the real first day still gets the fanfare")
+
+
+def scenario_an_all_day_trip_does_not_come_home_a_day_late():
+    """An all-day calendar event ends at midnight of the day AFTER its last
+    day. Taken literally that is a trip one day too long, with a homecoming on
+    a day nobody is travelling — the slices used to hide this because each was
+    already clipped to its own day."""
+    import main
+    start = datetime.datetime.combine(TODAY, datetime.time(0, 0))
+    end = datetime.datetime.combine(TODAY + datetime.timedelta(days=3),
+                                    datetime.time(0, 0))
+    ride = {'id': 'camp_slice_x', 'title': 'Camp Kesem',
+            'start': start.isoformat(), 'end': end.isoformat(),
+            'span_start': start.isoformat(), 'span_end': end.isoformat()}
+    last_real_day = TODAY + datetime.timedelta(days=2)
+    check('3-day' in main._kid_trip_line(ride, TODAY),
+          f"got {main._kid_trip_line(ride, TODAY)}")
+    check('Coming home' in main._kid_trip_line(ride, last_real_day),
+          "the homecoming belongs to the last day actually away")
+    check('Coming home' not in main._kid_trip_line(ride, end.date()),
+          "an exclusive midnight end invented an extra day of trip")
+
+
 SCENARIOS = [
+    scenario_a_trip_already_under_way_does_not_keep_beginning,
+    scenario_an_all_day_trip_does_not_come_home_a_day_late,
     scenario_builder_rides_and_reassurance,
     scenario_routine_only_kid_included,
     scenario_kid_quiet_hours,
