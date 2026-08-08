@@ -117,6 +117,48 @@ Built-in intents only see entities exposed to Assist: check **Settings → Voice
 assistants → Expose** and expose the garage cover, giving it the alias
 "main garage" if its entity name differs.
 
+## Troubleshooting
+
+### Every voice command fails with `ValueError: RuleReference(rule_name='...')`
+
+```
+File ".../hassil/expression.py", line 250, in _compile_expression
+    raise ValueError(rule_ref)
+ValueError: RuleReference(rule_name='area')
+```
+
+**Not Chauffeur, and Chauffeur never even runs.** This is HA's BUILT-IN agent
+failing to compile its sentence set. `prefer_local_intents` (step 3) makes the
+pipeline offer every utterance to that agent first, and the call is not
+individually guarded — `assist_pipeline` catches the exception and aborts with
+`IntentRecognitionError`, so the pipeline dies before it can fall through to the
+conversation agent. One malformed sentence anywhere in HA therefore takes out
+**all** voice commands, Chauffeur's included, and the traceback never mentions
+Chauffeur.
+
+Something is referencing an expansion rule (`<angle brackets>`) that isn't
+defined. Lists are `{braces}` — `{area}` is a list, `<area>` is a rule — and
+copying a built-in sentence out of the intents repo without its `_common.yaml`
+is the usual way to end up with a dangling one. Two places to look:
+
+```bash
+grep -rn "<area>" /config --include=*.yaml     # name from the ValueError
+```
+
+1. `/config/custom_sentences/<lang>/*.yaml`.
+2. **Automations with a `conversation` trigger** — the `command:` strings are
+   compiled by the same code, and sentence triggers do NOT support expansion
+   rules, so a `<...>` in one fails exactly like this. Easy to miss because it
+   does not look like a sentence file.
+
+Fix the reference (usually `<area>` → `{area}`), then **Developer tools →
+Actions → `conversation.reload`**.
+
+To confirm the diagnosis before hunting, switch **Prefer handling commands
+locally** OFF: Chauffeur voice commands start working immediately, because that
+skips the broken built-in path entirely. Built-in commands (garage, lights) stop
+resolving while it is off, so this is a bisect, not a fix.
+
 ## Behavior notes
 
 - Voice conversations get multi-turn memory: HA keeps a `conversation_id` for
