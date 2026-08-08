@@ -46,61 +46,214 @@
 
 <!-- Chat Help Modal -->
 <div id="chat-help-modal" class="hidden fixed inset-0 bg-black bg-opacity-70 z-[110] items-center justify-center p-4" onclick="if(event.target === this) closeChatHelpModal()">
-    <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700 flex flex-col max-h-[85vh]">
+    <div class="bg-gray-900 rounded-2xl shadow-2xl max-w-7xl w-full border border-gray-700 flex flex-col max-h-[92vh]">
         <div class="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-2xl shrink-0">
-            <h3 class="text-lg font-bold text-white flex items-center gap-2">
-                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                </svg>
-                What can Argyle do?
-            </h3>
-            <button onclick="closeChatHelpModal()" class="text-gray-400 hover:text-white transition-colors">
+            <div class="flex items-baseline gap-3 min-w-0">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2 shrink-0">
+                    <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    What can Argyle do?
+                </h3>
+                <p class="text-xs text-gray-400 hidden md:block truncate">Ask in plain language — Argyle runs the household, not just the calendar.</p>
+            </div>
+            <button onclick="closeChatHelpModal()" class="text-gray-400 hover:text-white transition-colors shrink-0">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
-        <div class="p-6 overflow-y-auto flex-1 space-y-6" style="scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;">
-            <p class="text-sm text-gray-300">Argyle is your AI scheduling assistant! You can use natural language to control almost any aspect of Chauffeur. Try asking:</p>
-            
-            <div class="space-y-4">
+        <div class="p-5 overflow-y-auto flex-1" style="scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+
+                <!-- Driving -->
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-indigo-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> Trip Planning</h4>
-                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg> The Day's Driving</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"What does tomorrow look like?"</li>
+                        <li>"Show me Dad's drives on Friday."</li>
+                        <li>"Who's picking Ben up from practice?"</li>
+                        <li>"Anything unassigned this week?"</li>
+                    </ul>
+                </div>
+
+                <!-- Assignments -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-violet-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg> Assignments & Overrides</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Assign Mom to the 4pm soccer run."</li>
+                        <li>"Clear the override on Ben's dentist."</li>
+                        <li>"Re-run the solver for Thursday."</li>
+                    </ul>
+                </div>
+
+                <!-- Rules -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-purple-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg> Rules & Constraints</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Dad is unavailable Tuesdays before 3pm."</li>
+                        <li>"Mom should stay at Lily's recitals."</li>
+                        <li>"Make doctor appointments near-mandatory."</li>
+                        <li>"Give me 15 minutes of buffer after games."</li>
+                    </ul>
+                </div>
+
+                <!-- Errands -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-amber-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg> Errands</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Add a 30-minute pharmacy run this week."</li>
+                        <li>"What errands are still outstanding?"</li>
+                        <li>"Only do the bank errand on weekdays."</li>
+                    </ul>
+                </div>
+
+                <!-- Cars -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-sky-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 118 0m-8 0h8m4 0h2"></path></svg> Cars</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Add a third car called the Civic."</li>
+                        <li>"The van is in the shop the 12th–14th."</li>
+                        <li>"Change the Highlander's home location."</li>
+                    </ul>
+                </div>
+
+                <!-- Trips -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-rose-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg> Trips & Itineraries</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
                         <li>"Plan a 5-day trip to Tokyo with lots of food."</li>
-                        <li>"Smart schedule all my unscheduled attractions."</li>
-                        <li>"Move my dinner reservation to 8:30 PM."</li>
-                    </ul>
-                </div>
-                
-                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-green-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg> Passenger Management</h4>
-                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
-                        <li>"Change Jeff's hashtag from #jeff to #j."</li>
-                        <li>"Link Sarah's calendar to her passenger profile."</li>
-                        <li>"Who is currently riding with me today?"</li>
+                        <li>"Add the Louvre to the Paris trip."</li>
+                        <li>"Schedule all my unscheduled attractions."</li>
+                        <li>"Nothing before 10am on this trip."</li>
                     </ul>
                 </div>
 
+                <!-- Flights & stays -->
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-blue-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg> Daily Driving & Vehicles</h4>
-                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
-                        <li>"Change the Highlander's home location to my house."</li>
-                        <li>"Set a custom schedule for Friday from 9 AM to 5 PM."</li>
-                        <li>"What is my driving schedule looking like for tomorrow?"</li>
+                    <h4 class="text-pink-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg> Flights & Stays</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Find flights for the Paris trip."</li>
+                        <li>"Add our flight from ATL to CDG on the 3rd."</li>
+                        <li>"We're at the Hôtel du Nord, 3rd–7th."</li>
                     </ul>
                 </div>
 
+                <!-- Places & memory -->
                 <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                    <h4 class="text-purple-400 font-bold text-sm mb-1 flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg> Smart Rules & Constraints</h4>
-                    <ul class="text-xs text-gray-400 italic space-y-1 ml-5 list-disc">
-                        <li>"Set a rule to merge duplicate events if they are close."</li>
-                        <li>"Limit my maximum driving distance today to 100 miles."</li>
-                        <li>"Add a mutually exclusive rule between work and personal tasks."</li>
+                    <h4 class="text-slate-300 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg> Places & Memory</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Find a pediatric dentist near home."</li>
+                        <li>"Remember practice moved to Field 4."</li>
+                        <li>"What's the address for the rec center?"</li>
+                    </ul>
+                </div>
+
+                <!-- Dinner tonight -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-orange-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"></path></svg> Dinner Tonight</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"What's for dinner?"</li>
+                        <li>"Do we even have time to cook tonight?"</li>
+                        <li>"No salad tonight, add rice."</li>
+                        <li>"We're having leftovers."</li>
+                    </ul>
+                </div>
+
+                <!-- The week's meals -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-lime-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg> The Week's Meals</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"What are we eating this week?"</li>
+                        <li>"That looks good — plan the week."</li>
+                        <li>"Steak Monday for Mom's birthday."</li>
+                        <li>"Never mind Tuesday, unlock it."</li>
+                    </ul>
+                </div>
+
+                <!-- How we eat -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-teal-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg> What & How We Cook</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"We make roast chicken, rice and beans."</li>
+                        <li>"Meat about once a week."</li>
+                        <li>"Brisket always comes with beans and fries."</li>
+                        <li>"We soak the rice the night before."</li>
+                    </ul>
+                </div>
+
+                <!-- Shopping -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-emerald-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg> Shopping & Provisioning</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"We're out of milk."</li>
+                        <li>"Add what we need for tacos."</li>
+                        <li>"When's the grocery run?"</li>
+                        <li>"Got the eggs — check them off."</li>
+                    </ul>
+                </div>
+
+                <!-- Occasions -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-fuchsia-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg> Occasions & Hosting</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Thanksgiving is the 26th; my parents stay the 25th–29th."</li>
+                        <li>"How's Thanksgiving looking — forgetting anything?"</li>
+                        <li>"Twelve people Saturday — when do I start cooking?"</li>
+                        <li>"I need favours for a shark party."</li>
+                    </ul>
+                </div>
+
+                <!-- Chores & points -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-yellow-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.196-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path></svg> Chores, Points & Goals</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"What chores are open?"</li>
+                        <li>"Ben takes the dishes."</li>
+                        <li>"Give Bob 20 points."</li>
+                        <li>"How close are we to movie night?"</li>
+                    </ul>
+                </div>
+
+                <!-- Kids -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-cyan-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"></path></svg> Kids' School & Routines</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"I have a math worksheet due Friday."</li>
+                        <li>"What's on Ben's list?"</li>
+                        <li>"Mark the spelling test done."</li>
+                        <li>"Did Lily finish her routine?"</li>
+                    </ul>
+                </div>
+
+                <!-- Messaging & status -->
+                <div class="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                    <h4 class="text-blue-400 font-bold text-sm mb-1.5 flex items-center gap-1.5"><svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> Messages, Status & Digests</h4>
+                    <ul class="text-xs text-gray-400 italic space-y-1 ml-4 list-disc marker:text-gray-600">
+                        <li>"Tell everyone dinner is at 6."</li>
+                        <li>"Tell Mom I'll be late."</li>
+                        <li>"Lily's home sick today."</li>
+                        <li>"Post the week in review."</li>
                     </ul>
                 </div>
             </div>
+
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="flex items-start gap-2 bg-gray-800/30 border border-gray-700/40 rounded-lg p-3">
+                    <svg class="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    <p class="text-xs text-gray-400">Argyle sees the page you're on — on a trip page, <span class="italic">"add the Louvre"</span> just works.</p>
+                </div>
+                <div class="flex items-start gap-2 bg-gray-800/30 border border-gray-700/40 rounded-lg p-3">
+                    <svg class="w-4 h-4 text-green-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <p class="text-xs text-gray-400">Anything that moves the schedule re-solves on its own, and Argyle asks before it deletes.</p>
+                </div>
+                <div class="flex items-start gap-2 bg-gray-800/30 border border-gray-700/40 rounded-lg p-3">
+                    <svg class="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7l4-4m0 0l4 4m-4-4v18"></path></svg>
+                    <p class="text-xs text-gray-400">Press ↑ / ↓ in the box to bring back what you asked before.</p>
+                </div>
+            </div>
         </div>
-        <div class="p-4 border-t border-gray-800 flex justify-end shrink-0 bg-gray-800/50 rounded-b-2xl">
-            <button onclick="closeChatHelpModal()" class="px-5 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg text-sm transition-colors">Got it</button>
+        <div class="p-4 border-t border-gray-800 flex justify-between items-center gap-4 shrink-0 bg-gray-800/50 rounded-b-2xl">
+            <p class="text-xs text-gray-500 hidden sm:block">Every one of these has a by-hand path in the app too — Argyle is the shortcut, not the only way.</p>
+            <button onclick="closeChatHelpModal()" class="px-5 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg text-sm transition-colors shrink-0">Got it</button>
         </div>
     </div>
 </div>
