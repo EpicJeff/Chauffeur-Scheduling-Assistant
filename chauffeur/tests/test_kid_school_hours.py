@@ -146,12 +146,23 @@ def scenario_trip_digest_lines():
     import main
     d0, d1, d2 = TODAY, TODAY + datetime.timedelta(days=1), TODAY + datetime.timedelta(days=2)
 
+    # Every slice carries the WHOLE trip's dates, which is what the refresh
+    # writes. Without them a slice is a fragment of unknown extent — the days
+    # before the solve window opened are never sliced at all — and the digest
+    # says the trip's name and nothing else rather than guessing which day it
+    # is. These three slices happen to be the whole trip, but nothing reading
+    # them could know that.
+    span_start = datetime.datetime.combine(d0, datetime.time(14))
+    span_end = datetime.datetime.combine(d2, datetime.time(11, 59))
+
     def _slice(n, day, hh_start, hh_end):
         start = datetime.datetime.combine(day, datetime.time(hh_start))
         end = datetime.datetime.combine(day, datetime.time(hh_end, 59))
         return {"id": f"camp_slice_{n}", "title": "Camp Kesem",
                 "event_type": "background_trip", "start": start.isoformat(),
-                "end": end.isoformat(), "calendar_ids": ["cal1"]}
+                "end": end.isoformat(), "calendar_ids": ["cal1"],
+                "span_start": span_start.isoformat(),
+                "span_end": span_end.isoformat()}
 
     events = [
         _slice(0, d0, 14, 23), _slice(1, d1, 0, 23), _slice(2, d2, 0, 11),

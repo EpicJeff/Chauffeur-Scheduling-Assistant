@@ -4698,6 +4698,15 @@ def member_day(member_id: str, date: Optional[str] = None):
             'event_type': ev.get('event_type', 'standard'),
             'start': ev.get('start'),
             'end': ev.get('end'),
+            # A background trip's slice `start`/`end` are THIS DAY's, so
+            # without these a ride knows it is part of a trip and nothing
+            # about which part. The whole point of stamping the original's
+            # dates onto the slice was to get them here; this dict is a
+            # whitelist, so they were being dropped one step before the only
+            # code that wanted them, and every reader downstream saw a trip
+            # with no span no matter how often the schedule refreshed.
+            'span_start': ev.get('span_start'),
+            'span_end': ev.get('span_end'),
             'location': ev.get('location'),
             'driver': _driver_member(assignments.get(ev_id)),
             'car': _ride_car(ev_id),

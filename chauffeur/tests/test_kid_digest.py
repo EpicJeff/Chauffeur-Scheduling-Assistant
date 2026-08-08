@@ -221,6 +221,44 @@ def scenario_an_all_day_trip_does_not_come_home_a_day_late():
           "an exclusive midnight end invented an extra day of trip")
 
 
+def scenario_the_trip_span_survives_the_whole_way_to_the_kids_line():
+    """END TO END, through `member_day`, because that is where three fixes in
+    a row died without anyone noticing.
+
+    `_kid_trip_line` reads its dates off the ride dict it is handed — and
+    `member_day._ride()` builds that dict from a WHITELIST of keys. The trip
+    span was stamped onto every slice, carried through the refresh, written to
+    the cache, and then dropped one step before the only code that wanted it.
+    Every unit test passed the whole time, because every one of them handed
+    `_kid_trip_line` a hand-made dict shaped like a cached event rather than
+    like a ride. A test that never crosses the seam cannot see a seam.
+    """
+    _reset()
+    import main
+    day = TOMORROW.isoformat()
+    started = datetime.datetime.combine(TOMORROW - datetime.timedelta(days=4),
+                                        datetime.time(9, 0))
+    storage.set_cached_schedule({
+        "events": [
+            {"id": f"camp_slice_{day}", "title": "Camp Kesem",
+             "event_type": "background_trip", "calendar_ids": ["cal1"],
+             "start": f"{day}T00:00:00",
+             "end": f"{(TOMORROW + datetime.timedelta(days=1)).isoformat()}T00:00:00",
+             "span_start": started.isoformat(),
+             "span_end": f"{(TOMORROW + datetime.timedelta(days=1)).isoformat()}T00:00:00"},
+        ],
+        "assignments": {}, "ghost_assignments": {}, "matched_rules": {},
+        "scheduled_errands": [],
+    })
+    with mock.patch.object(family_digest, 'weather_line', return_value=None):
+        digest = main._build_kid_digests()
+    lines = (digest.get('kids', {}).get('kid1') or {}).get('lines') or []
+    check(lines, f"the trip did not reach the kid's digest at all: {digest}")
+    check('Coming home' in lines[0],
+          f"five days at camp and the last day says nothing: {lines[0]!r}")
+    storage.set_cached_schedule({'events': []})
+
+
 def scenario_a_slice_with_no_span_claims_nothing_about_which_day_it_is():
     """The state a running install is in for the few minutes after this ships:
     every cached slice predates `span_start`. The daily fragments cannot be
@@ -250,6 +288,7 @@ def scenario_a_slice_with_no_span_claims_nothing_about_which_day_it_is():
 
 
 SCENARIOS = [
+    scenario_the_trip_span_survives_the_whole_way_to_the_kids_line,
     scenario_a_slice_with_no_span_claims_nothing_about_which_day_it_is,
     scenario_a_trip_already_under_way_does_not_keep_beginning,
     scenario_an_all_day_trip_does_not_come_home_a_day_late,
