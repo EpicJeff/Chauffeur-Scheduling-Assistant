@@ -634,20 +634,34 @@
                         <em>More</em> button — so the order is also the choice of which
                         destinations stay one tap away.
                     </p>
+                    <!-- ONE list of pages, not two. The shelf buttons and the
+                         per-page pictures were separate sections listing the
+                         same twelve destinations — you picked Meals in one
+                         place and scrolled to a second to say what Meals looks
+                         like. They are the same thing: a page the panel shows.
+                         So the picture rides on the page's own row, the way a
+                         tile's size rides on the tile's row. -->
                     <div class="space-y-1.5 mb-3">
                         <template x-for="(slug, i) in draft.panel_tabs" :key="slug">
-                            <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-1.5">
-                                <span class="text-[0.7rem] font-mono text-gray-600 w-4 shrink-0"
-                                    x-text="i + 1"></span>
-                                <span class="flex-1 min-w-0 text-sm font-semibold text-gray-200 truncate"
-                                    x-text="tabMeta(slug).label"></span>
-                                <button @click="move(draft.panel_tabs, i, -1)" :disabled="i === 0"
-                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
-                                <button @click="move(draft.panel_tabs, i, 1)"
-                                    :disabled="i === draft.panel_tabs.length - 1"
-                                    class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
-                                <button @click="draft.panel_tabs.splice(i, 1)"
-                                    class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                            <div class="bg-gray-800/70 rounded-lg px-3 py-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[0.7rem] font-mono text-gray-600 w-4 shrink-0"
+                                        x-text="i + 1"></span>
+                                    <span class="flex-1 min-w-0 text-sm font-semibold text-gray-200 truncate"
+                                        x-text="tabMeta(slug).label"></span>
+                                    <button @click="move(draft.panel_tabs, i, -1)" :disabled="i === 0"
+                                        class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
+                                    <button @click="move(draft.panel_tabs, i, 1)"
+                                        :disabled="i === draft.panel_tabs.length - 1"
+                                        class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▼</button>
+                                    <button @click="draft.panel_tabs.splice(i, 1)"
+                                        class="text-gray-500 hover:text-red-400 px-1">✕</button>
+                                </div>
+                                <input type="text"
+                                    :value="draft.panel_page_backgrounds[slug] || ''"
+                                    @input="setPageBg(slug, $event.target.value)"
+                                    placeholder="its own picture — blank uses the board's"
+                                    class="mt-1.5 w-full bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white placeholder-gray-600">
                             </div>
                         </template>
                     </div>
@@ -667,34 +681,18 @@
                         Background
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
-                        The picture the board floats on. Paste a web address, or just type
-                        what you want — <em>mountains at dusk</em>, <em>our town</em> — and one
-                        gets found for you. Leave it empty for the plain gradient.
+                        The picture behind every page that has not been given its own
+                        above. Paste a web address, or just type what you want —
+                        <em>mountains at dusk</em>, <em>our town</em> — and one gets found
+                        for you. Leave it empty for the plain gradient.
                     </p>
                     <input type="text" x-model="draft.panel_background"
                         placeholder="mountains at dusk"
                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-600 mb-4">
 
-                    <!-- Per page. A highway behind the driving schedule, the
-                         kitchen behind the meals page — the panel stops being
-                         one screen with tabs and starts being rooms. -->
-                    <details class="mb-6">
-                        <summary class="text-xs font-bold text-sky-300 cursor-pointer mb-2">
-                            A different picture per page…
-                        </summary>
-                        <div class="space-y-1.5 mt-2">
-                            <template x-for="t in (catalog.tabs || [])" :key="t.slug">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-xs text-gray-400 w-20 shrink-0" x-text="t.label"></span>
-                                    <input type="text"
-                                        :value="draft.panel_page_backgrounds[t.slug] || ''"
-                                        @input="setPageBg(t.slug, $event.target.value)"
-                                        placeholder="uses the one above"
-                                        class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white placeholder-gray-600">
-                                </div>
-                            </template>
-                        </div>
-                    </details>
+                    <!-- The per-page pictures used to live here, in a
+                         second list of the same destinations. They are on each
+                         page's own row above now. -->
 
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
                         Theme
@@ -1048,6 +1046,12 @@
 
                 // An emptied field stops being stored rather than persisting
                 // a blank that means the same as absent.
+                // Deliberately NOT cleared when a page leaves the shelf.
+                // Dropping Meals to make room for Chores should not silently
+                // throw away the photograph somebody chose for the meals page —
+                // put it back and the picture is still there. The cost is that
+                // an unpicked page's picture has nowhere to be edited, which is
+                // the honest trade for one list instead of two.
                 setPageBg(slug, value) {
                     const v = (value || '').trim();
                     if (v) this.draft.panel_page_backgrounds[slug] = v;

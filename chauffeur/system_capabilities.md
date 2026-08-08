@@ -1030,3 +1030,10 @@ Reported from using it: *"It only generates meals up until the next grocery run.
 - **The head-time tab guess is gone with it.** It filtered the shelf from a cached list to avoid painting twelve buttons and snapping to six; server rendering is both earlier and correct, and the cache could only contradict it — a stale entry would hide a button the server had rightly drawn until the profile arrived. `?tabs=none` stays in the head, because that hides the whole nav rather than choosing its contents.
 - **A new destination is still one entry in one list.** `SHELF_ITEMS` is derived from `NAV_ITEMS`, and the nav parity test now checks the derivation rather than the literal loop.
 - That is four things now decided before the first paint: the theme, the background, the page controls, and the shelf. The pattern is worth naming — **if the server can answer it, the server should render it; JavaScript that corrects the DOM after load is a correction the family watches happen.**
+
+## A page is configured in one place (v2.123.0)
+
+- **The panel setup listed the same twelve destinations twice**: once to pick and order the shelf buttons, and again, in a collapsed `<details>`, to give each page its own picture. You chose Meals in one section and scrolled to another to say what the meals page looks like. They are the same thing — a page the panel shows.
+- **The picture rides on the page's own row now**, the way a tile's size rides on the tile's row. One list: order it, remove from it, add to it from the chips, and set each page's photograph where the page already is.
+- **A page dropped from the shelf keeps its picture.** Making room for Chores must not silently discard the photograph somebody chose for the meals page — put it back and it is still there. The honest cost of one list instead of two: a page that is not on the shelf has nowhere to edit its picture. Tiles can still open such a page, so this is a real (small) loss, taken deliberately.
+- The board-wide background keeps its own field and is now described as what it is: the picture behind every page that has not been given its own.

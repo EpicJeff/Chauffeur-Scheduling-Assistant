@@ -596,6 +596,27 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
           "photograph or every text tile is stretched to fill")
 
 
+def scenario_a_page_is_configured_in_one_place():
+    """The shelf buttons and the per-page pictures were two lists of the same
+    twelve destinations: you picked Meals in one section and scrolled to
+    another to say what the meals page looks like. They are the same thing —
+    a page the panel shows — so the picture rides on the page's own row, the
+    way a tile's size rides on the tile's row."""
+    import os
+    tpl = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'home.html'), encoding='utf-8').read()
+    setup = tpl[tpl.index('id="panel-setup"'):]
+    check('A different picture per page' not in setup,
+          "the per-page pictures are a separate list again, so the same "
+          "destinations are configured in two places")
+    row = setup[setup.index('x-for="(slug, i) in draft.panel_tabs"'):]
+    row = row[:row.index('</template>')]
+    check('panel_page_backgrounds[slug]' in row,
+          "a page's picture is not on the page's own row")
+    for control in ('move(draft.panel_tabs', 'panel_tabs.splice'):
+        check(control in row, f"the row lost its {control} control in the merge")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
