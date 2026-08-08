@@ -20,8 +20,14 @@
         <h2 class="panel-page-title">Map</h2>
     </header>
 
-    <div class="flex-1 min-h-0 flex flex-col">
-        {% include 'components/family_map.html' %}
+    <!-- Inset and rounded, like the trip page's map. Edge-to-edge made the map
+         look like the window rather than something ON the page, and it ran
+         under the shelf's fade at the bottom. -->
+    <div class="flex-1 min-h-0 flex flex-col px-6 pb-6 lg:px-10 lg:pb-8">
+        <div class="flex-1 min-h-0 flex flex-col rounded-3xl overflow-hidden border shadow-2xl"
+             style="border-color: var(--panel-line)">
+            {% include 'components/family_map.html' %}
+        </div>
     </div>
 
     <!-- Music widget dropped (v2.25.2): the dashboard /map lives inside Home

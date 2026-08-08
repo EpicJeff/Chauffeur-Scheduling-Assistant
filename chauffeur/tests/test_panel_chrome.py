@@ -184,6 +184,29 @@ def scenario_a_field_that_is_its_own_container_stays_transparent():
           "mapping will give it a box of its own")
 
 
+def scenario_the_trip_page_kept_everything_its_hero_carried():
+    """The trip page's hero banner became a normal page header, so it matches
+    every other page. A banner is also a place things accumulate — the way back
+    to the Trips grid especially, which `?tabs=none` can hide from the nav — so
+    each control it carried is named here rather than trusted to a reread."""
+    trip = open(os.path.join(TPL, 'trip.html'), encoding='utf-8').read()
+    for needle, what in (
+            ('href="trips"', 'the way back to the trips grid'),
+            ('openSettingsModal()', 'the trip settings button'),
+            ('id="trip-title"', 'the trip name'),
+            ('id="trip-location"', 'the location'),
+            ('id="trip-dates"', 'the dates'),
+            ('id="trip-countdown"', 'the countdown'),
+            ('id="trip-notes-display"', 'the notes')):
+        check(needle in trip, f"{what} was lost when the hero banner went")
+    check('panel-page-title' in trip, "the trip name is not the page title")
+    check("getElementById('panel-bg-image')" in trip,
+          "the trip's photograph is no longer promoted to the page background")
+    check('html[data-panel] #bg-img' in SKIN,
+          "the trip page's own background layer is not stood down on a panel, "
+          "so it stacks with the shared one and washes the picture out")
+
+
 def scenario_the_panel_canvas_is_never_browser_white():
     """The body is transparent in panel mode so the photograph shows through —
     which means the ROOT has to carry the base colour. Without it the canvas is

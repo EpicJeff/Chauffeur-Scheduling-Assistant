@@ -82,15 +82,15 @@
 
     <!-- Main Content Grid -->
     <div class="panel-page flex-1 flex flex-col p-6 md:p-12 gap-8 z-10 w-full max-w-[1800px] mx-auto overflow-y-auto">
-        
-        <div class="flex flex-col xl:flex-row gap-8 shrink-0">
-        
-        <!-- Left Column: Header & Weather/Stats -->
-        <div class="w-full xl:w-1/4 flex flex-col gap-6 shrink-0">
-            <div class="glass-panel p-8 rounded-3xl shadow-2xl relative">
-                <button onclick="openSettingsModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white bg-black/40 p-2 rounded-full backdrop-blur transition-all border border-white/10" title="Trip Settings">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                </button>
+
+        <!-- The page header. This used to be a hero banner carrying the trip's
+             photograph, which made the trip page the one surface that did not
+             look like the rest of the app. The photograph is now the PAGE
+             background (see applyTripBackground below), so the header can be
+             the same title-top-left shape every other page uses — and every
+             control the banner carried is still here. -->
+        <header class="flex flex-wrap items-start justify-between gap-4 shrink-0">
+            <div class="min-w-0">
                 <!-- The way OUT. A trip is opened from the Trips grid, and the
                      only route back was the Trips tab in the nav — which
                      ?tabs=none hides entirely and ?tabs=... can exclude, so an
@@ -99,24 +99,37 @@
                      carry the current query string, so kiosk/theme/tabs follow
                      us back without this template knowing about any of them. -->
                 <a href="trips"
-                    class="inline-flex items-center gap-1.5 text-sm font-bold text-gray-400 hover:text-white transition-colors mb-3">
+                    class="inline-flex items-center gap-1.5 text-sm font-bold panel-dim hover:text-white transition-colors mb-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
                     All trips
                 </a>
                 <h1 id="trip-title" class="panel-page-title">Loading Trip...</h1>
-                <p id="trip-location" class="text-xl text-blue-200 font-medium mb-6 flex items-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                    Location
-                </p>
-                <div class="flex items-center space-x-4 mb-8">
-                    <div class="bg-blue-600/30 text-blue-100 px-4 py-2 rounded-xl text-sm font-bold border border-blue-500/30">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <p id="trip-location" class="text-base font-medium flex items-center" style="color: var(--panel-accent)">
+                        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Location
+                    </p>
+                    <div class="bg-blue-600/30 text-blue-100 px-3 py-1.5 rounded-xl text-sm font-bold border border-blue-500/30">
                         <span id="trip-dates">Dates</span>
                     </div>
-                    <div id="trip-countdown" class="text-gray-300 font-bold text-sm tracking-wide">
+                    <div id="trip-countdown" class="panel-dim font-bold text-sm tracking-wide">
                         ...
                     </div>
                 </div>
-                <div class="text-gray-300 text-sm italic" id="trip-notes-display">
+            </div>
+            <button onclick="openSettingsModal()" class="shrink-0 panel-dim hover:text-white bg-black/30 p-2.5 rounded-full backdrop-blur transition-all border border-white/10" title="Trip Settings">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            </button>
+        </header>
+
+        
+        <div class="flex flex-col xl:flex-row gap-8 shrink-0">
+        
+        <!-- Left Column: Header & Weather/Stats -->
+        <div class="w-full xl:w-1/4 flex flex-col gap-6 shrink-0">
+            <div class="glass-panel p-6 rounded-3xl shadow-2xl relative">
+                <h3 class="panel-label mb-2">Notes</h3>
+                <div class="text-sm italic panel-dim" id="trip-notes-display">
                     No notes. Add some in settings!
                 </div>
             </div>
@@ -1592,11 +1605,16 @@
 
             const coreTitle = tripData.event.title ? tripData.event.title.split(/[:\-]/)[0].trim() : '';
             const searchQuery = tripData.metadata.background_url || coreTitle || loc.split(',')[0] || 'nature';
-            if (searchQuery.startsWith('http')) {
-                document.getElementById('bg-img').src = searchQuery;
-            } else {
-                document.getElementById('bg-img').src = `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
-            }
+            const bgUrl = searchQuery.startsWith('http')
+                ? searchQuery
+                : `api/unsplash/background?query=${encodeURIComponent(searchQuery)}`;
+            document.getElementById('bg-img').src = bgUrl;
+            // On a panel the trip's picture IS the page background, drawn by
+            // the same fixed layer every other page uses so it gets the scrim,
+            // the crossfade and the theme for free. The old #bg-img stays for
+            // the browser, where there is no panel layer to hand it to.
+            const panelBg = document.getElementById('panel-bg-image');
+            if (panelBg) panelBg.style.backgroundImage = `url("${bgUrl}")`;
             
             renderPois();
             renderAccommodations();

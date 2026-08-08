@@ -875,3 +875,10 @@ From two photographs of the running panel — "dark mode is pretty good, light m
 
 - The Argyle bar is **one textarea inside a rounded shell**, and the panel's input mapping gave every field its own surface — so it drew a second, differently-coloured box inside the first: a pale slab in light mode, a darker one in dark.
 - **`.bg-transparent` is the app saying "this field IS its container."** Those fields now keep only the ink and the caret; everything else still gets a surface, because an input on a photograph does need to look like an input. General rather than a special case for the chat bar — any field the app deliberately made transparent is left alone.
+
+## The trip page joins the rest of the app (v2.118.0)
+
+- **The hero banner is gone.** It carried the trip's photograph, which made the trip page the one surface that did not look like anything else. The trip name is now the page title in the same place as every other page, and **the trip's photograph is the page background** — handed to the shared fixed layer, so it gets the scrim, the crossfade and the theme for free.
+- **Everything the banner carried moved, and is named in a test**: the way back to the Trips grid (critical — `?tabs=none` can hide the nav's Trips button entirely, so an HA card could open a trip the family then could not leave), the settings gear, the location, the dates, the countdown and the notes. A banner is where things accumulate; a test that names each one is cheaper than rereading the diff later.
+- **The trip page's own background layers stand down on a panel.** `#bg-img` and `.gradient-overlay` predate the shared layer and sit at the same `z-index: -2`, so they stacked with it at 40% opacity and turned the trip's own photograph into a wash. They still do their job in a browser.
+- **The map page's map is inset with rounded corners**, like the trip page's. Edge-to-edge made it look like the window rather than something *on* the page, and it ran under the shelf's fade at the bottom.
