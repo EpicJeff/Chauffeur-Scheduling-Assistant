@@ -136,6 +136,84 @@ async def migrate_moment_clips_v2590():
         logger.info(f"v2.59.0 moment clips: retranscoded {migrated} pre-pipeline clip(s)")
 
 
+async def migrate_clip_playback_v21311():
+    """One-time re-pass over stored clips that are too heavy for the wall panel.
+
+    The transcode profile before v2.131.1 capped the WIDTH, so every clip shot
+    upright — which is most of them — kept its full height, and a portrait
+    1080x1920 came through untouched at more than double the pixels of the
+    720p landscape clip the cap was written for. Frame rate was never capped at
+    all. Those clips are already stored and already juddering on the Pi; the
+    new profile only helps the ones uploaded after it.
+
+    So: re-encode in place, and ONLY the ones that need it. The media id and
+    its URL do not change (same stem, same .mp4), so nothing referencing the
+    moment has to be rewritten and no cache is invalidated beyond the day the
+    serving headers already allow. A clip that is already inside the budget is
+    left alone — re-encoding it would cost a generation of quality to change
+    nothing."""
+    if storage.get_app_state('clip_playback_repass'):
+        return
+    storage.set_app_state('clip_playback_repass', time.time())
+    if not (storage._ffmpeg_path() and storage._ffprobe_path()):
+        return
+
+    def _needs_repass(path: str) -> bool:
+        """Cheap ffprobe: over the pixel budget, over the frame budget, or a
+        pixel format no hardware decoder will take. Unreadable = leave alone."""
+        import subprocess
+        try:
+            out = subprocess.run(
+                [storage._ffprobe_path(), '-v', 'error', '-select_streams', 'v:0',
+                 '-show_entries', 'stream=width,height,pix_fmt',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', path],
+                check=True, capture_output=True, timeout=30).stdout.decode().split()
+        except Exception:
+            return False
+        if len(out) < 3:
+            return False
+        try:
+            # Coded dimensions, so a rotated clip reads sideways — irrelevant
+            # here, because the test is on the LONG side either way.
+            long_side = max(int(out[0]), int(out[1]))
+        except ValueError:
+            return False
+        return (long_side > storage._CLIP_LONG_SIDE
+                or storage._probe_fps(path) > storage._CLIP_MAX_FPS + 2
+                or out[2] != 'yuv420p')
+
+    def _work():
+        from tinydb import Query
+        seen, redone = set(), 0
+        with storage.db_lock:
+            msgs = [dict(m) for m in storage.chat_messages_table.all()]
+        for m in msgs:
+            att = m.get('attachment') or {}
+            url = str(att.get('url') or '')
+            if att.get('kind') != 'video' or not url.startswith('/api/media/'):
+                continue
+            media_id = url.rsplit('/', 1)[-1]
+            if media_id in seen:
+                continue          # the same clip can be posted in two channels
+            seen.add(media_id)
+            path = storage.media_file_path(media_id)
+            # A `.orig` still in place means the first transcode never finished
+            # — that one heals itself and must not be raced.
+            if not path or path.endswith('.orig') or not _needs_repass(path):
+                continue
+            stem = media_id.split('.')[0]
+            storage.media_move_into_place(
+                path, storage.media_write_path(stem + '.orig'))
+            storage._transcode_media(stem)   # restores the original on failure
+            redone += 1
+        return redone
+
+    redone = await asyncio.to_thread(_work)
+    if redone:
+        logger.info(f"v2.131.1 clip playback: re-encoded {redone} clip(s) "
+                    f"to the wall-panel budget")
+
+
 async def migrate_inline_photos_v2620():
     """One-time move of inline photo moments into the media store (v2.62.0).
     Photos used to be stored base64-inline on the message, which bloated the
@@ -256,6 +334,10 @@ async def run_all_migrations():
         await migrate_inline_photos_v2620()
     except Exception as e:
         logger.error(f"Error running inline photo migration: {e}")
+    try:
+        await migrate_clip_playback_v21311()
+    except Exception as e:
+        logger.error(f"Error running clip playback migration: {e}")
     # LAST: the two above write media, so let them settle before relocating.
     try:
         await migrate_media_layout_v2660()

@@ -36,6 +36,32 @@
                 </span>
             </span>`;
 
+        // The kind lives at the top level on the feed payload and inside the
+        // attachment on a raw message. Reading only one of them is how the
+        // overlay's clip timeout ended up applying to nothing.
+        function isClip(m) {
+            return (m.kind || (m.attachment || {}).kind) === 'video';
+        }
+
+        // A CLIP PLAYING ON A RASPBERRY PI is the hardest thing this app asks
+        // of a wall panel, and the page it plays on makes it harder. Every
+        // `backdrop-filter` on screen — the shelf's fade strip, the mapped
+        // panel surfaces, the FAB — has to re-blur what is behind it on every
+        // frame the video paints, and the Pi is already decoding in software.
+        // None of that blur is visible under a full-screen overlay anyway, so
+        // it stands down for the twenty seconds the clip is up. The style
+        // element lives inside the overlay: it exists exactly as long as the
+        // clip does, and there is nothing to clean up.
+        const CLIP_COMPOSITING_CSS = `
+            <style>
+                html.clip-playing *,
+                html.clip-playing *::before,
+                html.clip-playing *::after {
+                    -webkit-backdrop-filter: none !important;
+                    backdrop-filter: none !important;
+                }
+            </style>`;
+
         function mediaUrl(m, which) {
             const att = m.attachment || {};
             const u = (which === 'poster' ? m.poster_url : m.media_url)
@@ -51,8 +77,11 @@
         function mediaHtml(m, cls, opts) {
             const kind = m.kind || (m.attachment || {}).kind;
             if (opts && opts.full) {
+                // preload=auto: buffer ahead rather than decode against the
+                // network. The clip is already on the family's own box and the
+                // panel has nothing else to do while it is on screen.
                 return kind === 'video'
-                    ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline class="${cls}"></video>`
+                    ? `<video src="${mediaUrl(m)}" poster="${mediaUrl(m, 'poster')}" autoplay muted loop playsinline preload="auto" class="${cls}"></video>`
                     : `<img src="${mediaUrl(m)}" class="${cls}">`;
             }
             return `<img src="${mediaUrl(m, 'poster')}" loading="lazy"
@@ -81,11 +110,14 @@
         }
 
         window.showMomentOverlayKiosk = function (m) {
+            const clip = isClip(m);
             const overlay = document.createElement('div');
             overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center p-8';
+            overlay.dataset.momentOverlay = '1';
             overlay.style.background = 'rgba(0,0,0,0.82)';
             overlay.innerHTML = `
                 <style>@keyframes kioskMomentPop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.06); } 100% { transform: scale(1); opacity: 1; } }</style>
+                ${clip ? CLIP_COMPOSITING_CSS : ''}
                 <div style="animation:kioskMomentPop .5s ease-out forwards"
                     class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-3xl">
                     <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
@@ -93,10 +125,19 @@
                     ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
                     <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)}</div>
                 </div>`;
-            overlay.addEventListener('click', () => overlay.remove());
+            function close() {
+                overlay.remove();
+                // A poll can pop a second moment over the first, so the flag
+                // comes off only when the last overlay has gone.
+                if (!document.querySelector('[data-moment-overlay]')) {
+                    document.documentElement.classList.remove('clip-playing');
+                }
+            }
+            overlay.addEventListener('click', close);
             document.body.appendChild(overlay);
+            if (clip) document.documentElement.classList.add('clip-playing');
             // Clips get a little longer on the wall than stills.
-            setTimeout(() => overlay.remove(), (m.attachment || {}).kind === 'video' ? 30000 : 20000);
+            setTimeout(close, clip ? 30000 : 20000);
         };
 
         // Rail state — index-addressed so tile handlers never inline JSON.

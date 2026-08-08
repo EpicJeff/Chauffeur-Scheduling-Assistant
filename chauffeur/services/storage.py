@@ -2832,6 +2832,45 @@ def _ffmpeg_path() -> Optional[str]:
     return shutil.which('ffmpeg')
 
 
+def _ffprobe_path() -> Optional[str]:
+    import shutil
+    return shutil.which('ffprobe')
+
+
+# A wall panel is the weakest player in the house — a Raspberry Pi decoding in
+# software, because Chromium there has no reliable hardware H.264 path. What it
+# can sustain is bounded by PIXELS PER SECOND, so both halves of that get a cap
+# and neither is negotiable at playback time.
+_CLIP_LONG_SIDE = 1280      # cap the LONG side, whichever way the phone was held
+_CLIP_MAX_FPS = 30          # phones shoot 60; slow-mo shoots 240
+
+
+def _probe_fps(path: str) -> float:
+    """Frames per second of a clip's video stream, or 0 if it can't be read.
+
+    Deliberately the ONLY thing read back from ffprobe. Dimensions are not:
+    ffprobe reports the CODED size, and a phone records portrait as landscape
+    plus a 90° display matrix, so a clip that plays 1080x1920 probes as
+    1920x1080. ffmpeg's filter chain sees the frame after auto-rotation, which
+    is why the scaler below works in `iw`/`ih` expressions rather than in
+    numbers computed here — those would be sideways for exactly the clips this
+    is most needed for."""
+    probe = _ffprobe_path()
+    if not probe:
+        return 0.0
+    import subprocess
+    try:
+        out = subprocess.run(
+            [probe, '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=avg_frame_rate',
+             '-of', 'default=noprint_wrappers=1:nokey=1', path],
+            check=True, capture_output=True, timeout=30).stdout.decode().strip()
+        num, _, den = out.partition('/')
+        return float(num) / float(den or 1) if float(den or 1) else 0.0
+    except Exception:
+        return 0.0
+
+
 # finalize_media_upload starts a thread per clip, so three moments landing
 # together launched three ffmpeg processes, each happy to take every core on a
 # box that is also serving the uploads still in flight. Queueing costs latency
@@ -2894,12 +2933,32 @@ def generate_poster(stem: str) -> bool:
 
 
 def _transcode_media(stem: str):
-    """Background: normalize {stem}.orig to H.264 720p mp4 at {stem}.mp4 —
-    phones record HEVC .mov that Chrome-based wall panels cannot decode, and
-    a raw 4K clip is ~10x the size it needs to be. Atomic swap onto the SAME
-    media id the attachment already references; until it lands, the serving
-    endpoint falls back to the original bytes. On any failure the original
-    is renamed into place (store-as-is — never lose the moment)."""
+    """Background: normalize {stem}.orig to a wall-panel-playable H.264 mp4 at
+    {stem}.mp4 — phones record HEVC .mov that Chrome-based wall panels cannot
+    decode, and a raw 4K clip is ~10x the size it needs to be. Atomic swap onto
+    the SAME media id the attachment already references; until it lands, the
+    serving endpoint falls back to the original bytes. On any failure the
+    original is renamed into place (store-as-is — never lose the moment).
+
+    What "playable" means is set by the weakest screen in the house, and the
+    first version of this only got it right for clips shot sideways:
+
+      - It capped the WIDTH at 1280. Phones are held upright, so a portrait
+        1080x1920 clip matched `min(1280,iw)` at its own width and came out
+        untouched at 2.1 megapixels a frame — more than double a 720p
+        landscape one, on the one player least able to afford it. A 4K
+        portrait clip came out 1280x2276, nearly 3 MP. The cap is on the LONG
+        side now, so the budget is the same however the phone was held.
+      - It kept the source frame rate. 60 fps is the phone default for 1080p
+        and slow-mo runs at 120 or 240; halving that halves the decode work
+        for motion nobody can see on a kitchen wall.
+      - It let the pixel format follow the input. An iPhone HDR clip is
+        10-bit, and x264 will happily answer with High 10 — a profile no
+        hardware decoder anywhere will touch, so it falls to software on
+        every device in the house, not just the panel.
+
+    Together those are up to a 4x cut in pixels per second, which is the
+    number that decides whether a clip plays smoothly or judders."""
     import subprocess
     orig = media_read_path(stem + '.orig') or media_write_path(stem + '.orig')
     final = media_write_path(stem + '.mp4')
@@ -2915,6 +2974,20 @@ def _transcode_media(stem: str):
     except OSError:
         mb = 0
     budget = int(min(3600, max(600, mb * 3)))
+    # Fit inside a LONG_SIDE box without ever scaling up, in ffmpeg's own
+    # expression language so it runs on the auto-rotated frame (see _probe_fps
+    # on why this cannot be arithmetic done here). `min(1, cap/max(iw,ih))` is
+    # the scale factor — 1 for anything already small enough — and the
+    # round(../2)*2 keeps both sides even, which yuv420p requires. Rounding
+    # rather than truncating because the factor is floating point: 3840 * (1280
+    # / 3840) lands a hair under 1280 and truncation would ship 1278x718, which
+    # looks like a bug even though it plays fine. The single quotes are load
+    # bearing — a comma inside min() would otherwise read as the end of this
+    # filter and the start of the next one.
+    _fit = f"min(1,{_CLIP_LONG_SIDE}/max(iw,ih))"
+    chain = [f"scale=w='round(iw*{_fit}/2)*2':h='round(ih*{_fit}/2)*2'"]
+    if _probe_fps(orig) > _CLIP_MAX_FPS + 2:   # 59.94 is 60; 30.1 is not 60
+        chain.append(f'fps={_CLIP_MAX_FPS}')
     try:
         # The gate is held only around ffmpeg, so queued clips do not burn
         # their own timeout budget waiting for a slot.
@@ -2932,8 +3005,12 @@ def _transcode_media(stem: str):
             # Costs wall-clock on a big clip; the timeout budget already scales.
             subprocess.run(
                 [_ffmpeg_path(), '-y', '-threads', '2', '-i', orig,
-                 '-vf', "scale='min(1280,iw)':-2",
+                 '-vf', ','.join(chain),
                  '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+                 # 8-bit 4:2:0 Main: the only combination every decoder in the
+                 # house takes in hardware. Without the pix_fmt an HDR source
+                 # yields High 10 and nothing can.
+                 '-pix_fmt', 'yuv420p', '-profile:v', 'main',
                  '-threads', '2',
                  '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmp],
                 check=True, capture_output=True, timeout=budget, preexec_fn=nice)

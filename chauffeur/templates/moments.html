@@ -163,21 +163,38 @@
             window.openMomentLightbox = function (id) {
                 const m = mItems.find(x => x.id === id);
                 if (!m) return;
-                const media = m.kind === 'video'
-                    ? `<video src="${url(m.media_url)}" poster="${url(m.poster_url)}" autoplay muted loop playsinline controls class="max-h-[68vh] rounded-2xl mx-auto"></video>`
+                const clip = m.kind === 'video';
+                const media = clip
+                    ? `<video src="${url(m.media_url)}" poster="${url(m.poster_url)}" autoplay muted loop playsinline controls preload="auto" class="max-h-[68vh] rounded-2xl mx-auto"></video>`
                     : `<img src="${url(m.media_url)}" class="max-h-[68vh] rounded-2xl mx-auto object-contain">`;
                 const overlay = document.createElement('div');
                 overlay.className = 'fixed inset-0 z-[210] flex items-center justify-center p-6';
                 overlay.style.background = 'rgba(0,0,0,0.88)';
+                // Same reasoning as the hearth overlay: nothing behind a
+                // full-screen lightbox is visible, so no backdrop-filter on the
+                // page should be re-blurred for every frame the clip paints.
+                // The panel reaches this page from the rail's "See all".
                 overlay.innerHTML = `
+                    ${clip ? `<style>
+                        html.clip-playing *,
+                        html.clip-playing *::before,
+                        html.clip-playing *::after {
+                            -webkit-backdrop-filter: none !important;
+                            backdrop-filter: none !important;
+                        }
+                    </style>` : ''}
                     <div class="relative text-center bg-gray-900 border border-pink-500/40 rounded-3xl shadow-2xl p-6 max-w-4xl">
                         <div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${esc(m.event_title)}</div>
                         ${media}
                         ${m.body ? `<div class="text-xl text-white font-bold mt-3">${esc(m.body)}</div>` : ''}
                         <div class="text-sm text-gray-400 mt-2">from ${esc(m.sender_name)} · ${dayLabel(m.ts)} ${timeLabel(m.ts)}</div>
                     </div>`;
-                overlay.addEventListener('click', () => overlay.remove());
+                overlay.addEventListener('click', () => {
+                    overlay.remove();
+                    document.documentElement.classList.remove('clip-playing');
+                });
                 document.body.appendChild(overlay);
+                if (clip) document.documentElement.classList.add('clip-playing');
             };
 
             const tileMin = isKiosk ? '300px' : '220px';
