@@ -93,6 +93,11 @@ ENTRIES: List[dict] = [
        'left to right. Six or seven fit at a size a thumb can hit; the rest '
        'move into a More button, so the order decides what stays one tap away.',
        page='home', anchor='panel-setup'),
+    _e('panel_grid_row_height', 'panel', 'Board row height',
+       'What one row of the home board grid is worth, in pixels. Tile sizes '
+       'are measured in these, so a 2-row tile is twice this tall — including '
+       'in the bottom row, which is where sizes used to do nothing at all.',
+       page='home', anchor='panel-setup'),
     _e('panel_tile_spans', 'panel', 'Tile sizes',
        'How much room each tile gets on the home board — up to four columns '
        'wide (the full board) and three rows tall. The map and the calendar '

@@ -702,6 +702,13 @@ class Settings(BaseModel):
     # 1x1. A wall board is a LAYOUT, not a list — the map and the calendar earn
     # more room than the intake counter, and only the household knows which.
     panel_tile_spans: Dict[str, Any] = Field(default_factory=dict)
+    # What ONE row of the board's grid is worth, in pixels. Without it a span
+    # of 2 meant "as tall as whatever two content-sized rows happened to be" —
+    # a height decided by the other tiles in those rows rather than by the
+    # household — and it did nothing whatsoever in the last row, where there
+    # was no second row to occupy. A fixed unit makes `rows` mean something:
+    # 2 rows is 2 units plus the gap, in the last row as anywhere else.
+    panel_grid_row_height: int = 120
     # light | dark | auto. `auto` follows the device, which under Home
     # Assistant means following the HA theme the panel is embedded in.
     panel_theme: str = 'dark'

@@ -518,6 +518,47 @@ def scenario_the_catalog_offers_only_things_that_exist():
           "every offered widget has a builder behind it")
 
 
+def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
+    """Reported from the wall: setting a tile to 2 rows guaranteed nothing.
+
+    The grid sized its rows to content, so "2 rows tall" meant "as tall as
+    whatever those two rows happened to be" — a height decided by the OTHER
+    tiles in them — and in the last row it did nothing at all, because there
+    was no second row there to occupy. A fixed unit is what makes `rows` a
+    measurement: Home Assistant's grid works the same way, and it is the only
+    version where the number the household picked is the number they get.
+    """
+    import os
+    import re
+    check(home_board.grid_row_height({}) == 120, "an unset row height has a default")
+    check(home_board.grid_row_height({'panel_grid_row_height': 200}) == 200,
+          "the household's number is used as given")
+    for bad, want in (({'panel_grid_row_height': 5}, 60),
+                      ({'panel_grid_row_height': 5000}, 400),
+                      ({'panel_grid_row_height': 'tall'}, 120)):
+        got = home_board.grid_row_height(bad)
+        check(got == want, f"{bad} -> {got}, wanted {want}")
+
+    board = home_board.build()
+    check(board.get('row_height'), "the board must carry the unit to the panel — "
+          "a grid whose row height is guessed on the page is the same number "
+          "decided twice")
+
+    # The grid has to declare the unit, or every span is back to being a
+    # consequence of its neighbours. `grid-auto-rows` covers IMPLICIT rows,
+    # which is precisely what the last row of the board is made of.
+    tpl = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'home.html'), encoding='utf-8').read()
+    grid = tpl[tpl.index('<!-- ── The glances.'):]
+    grid = grid[:grid.index('</template>')]
+    check('grid-auto-rows' in grid,
+          "the tile grid no longer fixes its row height, so a span means nothing again")
+    check(re.search(r'grid-auto-rows:\s*minmax\(', grid),
+          "a row is a FLOOR, not a ceiling: these tiles are content summaries and "
+          "a board that silently cuts off the third of four drives is the exact "
+          "failure the hide-nothing-that-is-merely-quiet rule exists to prevent")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

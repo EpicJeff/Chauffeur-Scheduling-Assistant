@@ -199,7 +199,24 @@
              costs some empty space inside the shortest card; a ragged edge
              costs the board its shape, which is the thing you read from across
              a room. Content stays top-aligned inside. -->
-        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-stretch">
+        <!-- A ROW IS A REAL UNIT. "2 rows tall" used to mean "as tall as
+             whatever two content-sized rows happened to be", which is not a
+             height the household chose — it was decided by the other tiles in
+             those rows. And it did nothing at all in the last row, where there
+             was no second row to occupy.
+             `grid-auto-rows` fixes both: every row is `row_height`, implicit
+             rows included, so a tile in the last row spanning two genuinely
+             becomes two tall. The floor is a MINIMUM rather than an exact
+             height, which is the one place this departs from Home Assistant's
+             grid — HA's cards are built to a fixed height and clip; these are
+             content summaries, and a wall board that silently cuts off the
+             third of four drives is the failure this whole page is designed
+             around (you cannot tell a hidden tile from a broken one). So a
+             tile that outgrows its allotment pushes its row instead of hiding
+             what it has to say. Change `minmax(Xpx, auto)` to `Xpx` for the
+             strict version. -->
+        <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-stretch"
+            :style="`grid-auto-rows: minmax(${rowHeight()}px, auto)`">
             <template x-for="t in tiles()" :key="t.key">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
@@ -486,6 +503,20 @@
                         In the order they appear. A tile with nothing to say hides itself
                         regardless — an empty box is worse than a shorter board.
                     </p>
+                    <!-- What a row is WORTH. Sizes are meaningless without it:
+                         "2 rows" only means something once a row is a fixed
+                         measurement rather than however tall the neighbouring
+                         tiles turned out. -->
+                    <label class="flex items-center gap-2 text-xs text-gray-400 font-semibold mb-3">
+                        One row is
+                        <select x-model.number="draft.panel_grid_row_height" @change="save()"
+                            class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
+                            <template x-for="n in [80,100,120,140,160,200,240]" :key="'rh-' + n">
+                                <option :value="n" x-text="n + ' px'"></option>
+                            </template>
+                        </select>
+                        <span class="font-normal text-gray-600">tall — a 2-row tile is twice this</span>
+                    </label>
                     <div class="space-y-1.5 mb-3">
                         <template x-for="(key, i) in draft.panel_widgets" :key="key">
                             <div class="flex items-center gap-2 bg-gray-800/70 rounded-lg px-3 py-2">
@@ -513,6 +544,7 @@
                                     <option value="1">1 row</option>
                                     <option value="2">2 row</option>
                                     <option value="3">3 row</option>
+                                    <option value="4">4 row</option>
                                 </select>
                                 <button @click="move(draft.panel_widgets, i, -1)" :disabled="i === 0"
                                     class="text-gray-500 hover:text-white disabled:opacity-25 px-1">▲</button>
@@ -664,7 +696,8 @@
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
-                    panel_tile_spans: {}, panel_theme: 'dark', panel_background: '',
+                    panel_tile_spans: {}, panel_grid_row_height: 120,
+                    panel_theme: 'dark', panel_background: '',
                     panel_page_backgrounds: {}
                 },
 
@@ -817,13 +850,24 @@
                 // Layout is the household's call, not mine: a map earns two
                 // columns, an intake counter does not. Inline grid spans so a
                 // value typed in setup needs no matching Tailwind class.
+                // One row, in pixels. The board carries it so a panel gets it
+                // in the same request as the tiles, and so the number the
+                // household set is the number the grid uses — not a guess made
+                // twice, once here and once on the server.
+                rowHeight() {
+                    const n = parseInt(this.board.row_height, 10);
+                    return Math.min(400, Math.max(60, n || 120));
+                },
+
                 spanStyle(key) {
                     const s = (this.board.spans || {})[key] || {};
                     // Four, because the grid is now four wide and a tile that
                     // cannot fill the row is a layout the household can see but
                     // not ask for. Clamped, not trusted: this is stored config.
                     const c = Math.min(4, Math.max(1, parseInt(s.cols, 10) || 1));
-                    const r = Math.min(3, Math.max(1, parseInt(s.rows, 10) || 1));
+                    // Up to 4 now that a row is a fixed unit rather than
+                    // "however tall the other tiles in that row turned out".
+                    const r = Math.min(4, Math.max(1, parseInt(s.rows, 10) || 1));
                     return (c > 1 ? `grid-column: span ${c};` : '')
                         + (r > 1 ? `grid-row: span ${r};` : '');
                 },
@@ -880,6 +924,7 @@
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
                             panel_tile_spans: { ...(s.panel_tile_spans || {}) },
+                            panel_grid_row_height: s.panel_grid_row_height || 120,
                             panel_theme: s.panel_theme || 'dark',
                             panel_background: s.panel_background || '',
                             panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
@@ -920,7 +965,7 @@
                 },
 
                 setSpan(key, axis, value) {
-                    const max = axis === 'cols' ? 4 : 3;
+                    const max = 4;
                     const n = Math.min(max, Math.max(1, parseInt(value, 10) || 1));
                     const cur = { ...(this.draft.panel_tile_spans[key] || {}) };
                     cur[axis] = n;
@@ -955,6 +1000,9 @@
                                 panel_idle_return_seconds:
                                     Number(this.draft.panel_idle_return_seconds) || 0,
                                 panel_tile_spans: this.draft.panel_tile_spans,
+                                panel_grid_row_height:
+                                    Math.min(400, Math.max(60,
+                                        parseInt(this.draft.panel_grid_row_height, 10) || 120)),
                                 panel_theme: this.draft.panel_theme,
                                 panel_background: this.draft.panel_background,
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds

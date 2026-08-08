@@ -826,6 +826,7 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
     return {'tabs': resolve_tabs(tabs, settings),
             'widgets': resolve_widgets(widgets, settings),
             'spans': settings.get('panel_tile_spans') or {},
+            'row_height': grid_row_height(settings),
             'theme': theme if theme in ('light', 'dark', 'auto') else 'dark',
             'backgrounds': backgrounds(settings),
             'idle_seconds': max(0, idle)}
@@ -922,6 +923,7 @@ def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,
         'tiles': tiles,
         'widgets': keys,
         'spans': (settings.get('panel_tile_spans') or {}),
+        'row_height': grid_row_height(settings),
     }
     _CACHE.update(key=cache_key, at=time.time(), data=data)
     return data
@@ -933,6 +935,22 @@ TAB_LABELS = {
     'chores': 'Chores', 'routines': 'Routines', 'intake': 'Intake',
     'trips': 'Trips', 'map': 'Map', 'moments': 'Moments',
 }
+
+
+def grid_row_height(settings: dict = None) -> int:
+    """What one row of the board's grid is worth, in pixels.
+
+    A span of 2 used to mean "as tall as whatever two content-sized rows
+    happened to be" — a height decided by the other tiles in those rows, not by
+    the household — and in the LAST row it did nothing at all, because there
+    was no second row there to occupy. With a fixed unit, `rows` is a real
+    measurement everywhere on the board.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    try:
+        return max(60, min(400, int(settings.get('panel_grid_row_height', 120))))
+    except (TypeError, ValueError):
+        return 120
 
 
 def catalog() -> dict:
