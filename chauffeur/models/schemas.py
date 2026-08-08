@@ -708,7 +708,7 @@ class Settings(BaseModel):
     # household — and it did nothing whatsoever in the last row, where there
     # was no second row to occupy. A fixed unit makes `rows` mean something:
     # 2 rows is 2 units plus the gap, in the last row as anywhere else.
-    panel_grid_row_height: int = 120
+    panel_grid_row_height: int = 240
     # light | dark | auto. `auto` follows the device, which under Home
     # Assistant means following the HA theme the panel is embedded in.
     panel_theme: str = 'dark'

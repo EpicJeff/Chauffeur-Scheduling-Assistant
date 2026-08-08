@@ -42,6 +42,13 @@
             color: var(--panel-fg);
         }
         html[data-panel-theme="light"] .panel-chip { background: rgb(3 105 161 / 0.10); }
+
+        /* A tile taller than its slot scrolls, but a scrollbar on a wall is
+           furniture — the panel is a display first and a control second, and
+           the honest fix for a tile that needs scrolling is to give it another
+           row. Touch and wheel still work. */
+        .tile-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .tile-scroll::-webkit-scrollbar { display: none; }
     </style>
 </head>
 
@@ -199,30 +206,32 @@
              costs some empty space inside the shortest card; a ragged edge
              costs the board its shape, which is the thing you read from across
              a room. Content stays top-aligned inside. -->
-        <!-- A ROW IS A REAL UNIT. "2 rows tall" used to mean "as tall as
-             whatever two content-sized rows happened to be", which is not a
-             height the household chose — it was decided by the other tiles in
-             those rows. And it did nothing at all in the last row, where there
-             was no second row to occupy.
-             `grid-auto-rows` fixes both: every row is `row_height`, implicit
-             rows included, so a tile in the last row spanning two genuinely
-             becomes two tall. The floor is a MINIMUM rather than an exact
-             height, which is the one place this departs from Home Assistant's
-             grid — HA's cards are built to a fixed height and clip; these are
-             content summaries, and a wall board that silently cuts off the
-             third of four drives is the failure this whole page is designed
-             around (you cannot tell a hidden tile from a broken one). So a
-             tile that outgrows its allotment pushes its row instead of hiding
-             what it has to say. Change `minmax(Xpx, auto)` to `Xpx` for the
-             strict version. -->
+        <!-- A ROW IS A REAL UNIT, and a fixed one. "2 rows tall" used to
+             mean "as tall as whatever two content-sized rows happened to be" —
+             a height decided by the other tiles in those rows rather than by
+             the household — and it did nothing whatsoever in the last row,
+             where there was no second row to occupy.
+
+             The first cut of this made the row a MINIMUM, to protect tiles
+             from clipping. That made the whole feature a no-op: a tile's
+             content is already taller than any sane minimum, so every row was
+             sized by content exactly as before and a 2-row span changed
+             nothing you could see. A span only multiplies if the row is a
+             ceiling as well as a floor. This is why Home Assistant's grid is
+             built the way it is.
+
+             Content that outgrows its tile SCROLLS rather than being cut off —
+             the board must never silently hide what it has to say (you cannot
+             tell a clipped tile from a broken one), and a tile that needs
+             more room is a tile the household can make taller. -->
         <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-stretch"
-            :style="`grid-auto-rows: minmax(${rowHeight()}px, auto)`">
+            :style="`grid-auto-rows: ${rowHeight()}px`">
             <template x-for="t in tiles()" :key="t.key">
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
                      and the shelf brings you back (as does the idle return). -->
                 <a :href="link(t.key)" :style="spanStyle(t.key)"
-                    class="panel-card block rounded-2xl p-4 md:p-5 min-w-0 overflow-hidden transition-transform active:scale-[0.985]">
+                    class="panel-card tile-scroll block rounded-2xl p-4 md:p-5 min-w-0 overflow-y-auto overflow-x-hidden transition-transform active:scale-[0.985]">
                     <div class="flex items-center gap-2 mb-3">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label"></span>
@@ -511,7 +520,7 @@
                         One row is
                         <select x-model.number="draft.panel_grid_row_height" @change="save()"
                             class="bg-gray-900 border border-gray-700 rounded text-xs text-gray-300 px-2 py-1">
-                            <template x-for="n in [80,100,120,140,160,200,240]" :key="'rh-' + n">
+                            <template x-for="n in [120,160,200,240,280,320,400]" :key="'rh-' + n">
                                 <option :value="n" x-text="n + ' px'"></option>
                             </template>
                         </select>
@@ -696,7 +705,7 @@
                 saving: false,
                 draft: {
                     panel_widgets: [], panel_tabs: [], panel_idle_return_seconds: 180,
-                    panel_tile_spans: {}, panel_grid_row_height: 120,
+                    panel_tile_spans: {}, panel_grid_row_height: 240,
                     panel_theme: 'dark', panel_background: '',
                     panel_page_backgrounds: {}
                 },
@@ -856,7 +865,7 @@
                 // twice, once here and once on the server.
                 rowHeight() {
                     const n = parseInt(this.board.row_height, 10);
-                    return Math.min(400, Math.max(60, n || 120));
+                    return Math.min(600, Math.max(80, n || 240));
                 },
 
                 spanStyle(key) {
@@ -924,7 +933,7 @@
                                 s.panel_idle_return_seconds === undefined
                                     ? 180 : s.panel_idle_return_seconds,
                             panel_tile_spans: { ...(s.panel_tile_spans || {}) },
-                            panel_grid_row_height: s.panel_grid_row_height || 120,
+                            panel_grid_row_height: s.panel_grid_row_height || 240,
                             panel_theme: s.panel_theme || 'dark',
                             panel_background: s.panel_background || '',
                             panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
@@ -1001,8 +1010,8 @@
                                     Number(this.draft.panel_idle_return_seconds) || 0,
                                 panel_tile_spans: this.draft.panel_tile_spans,
                                 panel_grid_row_height:
-                                    Math.min(400, Math.max(60,
-                                        parseInt(this.draft.panel_grid_row_height, 10) || 120)),
+                                    Math.min(600, Math.max(80,
+                                        parseInt(this.draft.panel_grid_row_height, 10) || 240)),
                                 panel_theme: this.draft.panel_theme,
                                 panel_background: this.draft.panel_background,
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds

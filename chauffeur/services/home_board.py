@@ -948,9 +948,9 @@ def grid_row_height(settings: dict = None) -> int:
     """
     settings = settings if settings is not None else (storage.get_settings() or {})
     try:
-        return max(60, min(400, int(settings.get('panel_grid_row_height', 120))))
+        return max(80, min(600, int(settings.get('panel_grid_row_height', 240))))
     except (TypeError, ValueError):
-        return 120
+        return 240
 
 
 def catalog() -> dict:

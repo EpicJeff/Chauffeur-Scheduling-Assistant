@@ -529,13 +529,12 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     version where the number the household picked is the number they get.
     """
     import os
-    import re
-    check(home_board.grid_row_height({}) == 120, "an unset row height has a default")
+    check(home_board.grid_row_height({}) == 240, "an unset row height has a default")
     check(home_board.grid_row_height({'panel_grid_row_height': 200}) == 200,
           "the household's number is used as given")
-    for bad, want in (({'panel_grid_row_height': 5}, 60),
-                      ({'panel_grid_row_height': 5000}, 400),
-                      ({'panel_grid_row_height': 'tall'}, 120)):
+    for bad, want in (({'panel_grid_row_height': 5}, 80),
+                      ({'panel_grid_row_height': 5000}, 600),
+                      ({'panel_grid_row_height': 'tall'}, 240)):
         got = home_board.grid_row_height(bad)
         check(got == want, f"{bad} -> {got}, wanted {want}")
 
@@ -553,10 +552,16 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     grid = grid[:grid.index('</template>')]
     check('grid-auto-rows' in grid,
           "the tile grid no longer fixes its row height, so a span means nothing again")
-    check(re.search(r'grid-auto-rows:\s*minmax\(', grid),
-          "a row is a FLOOR, not a ceiling: these tiles are content summaries and "
-          "a board that silently cuts off the third of four drives is the exact "
-          "failure the hide-nothing-that-is-merely-quiet rule exists to prevent")
+    # The first cut of this used minmax(Xpx, auto) to protect tiles from
+    # clipping, and that made the whole feature a NO-OP: tile content is
+    # already taller than any sane minimum, so every row went on being sized by
+    # content and a 2-row span changed nothing anybody could see. A span
+    # multiplies only if the row is a ceiling as well as a floor.
+    check('minmax(' not in grid,
+          "a row is a floor again, which means spans do nothing visible again")
+    check('overflow-y-auto' in grid,
+          "a fixed row must be paired with scrolling, or the board silently cuts "
+          "off what a tile has to say — and a clipped tile reads as a broken one")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
