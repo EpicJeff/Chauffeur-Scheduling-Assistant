@@ -248,8 +248,18 @@
                 <!-- Every tile is a door. A wall panel you cannot touch is a
                      poster; tapping a tile takes you to the page it summarises,
                      and the shelf brings you back (as does the idle return). -->
+                <!-- A picture tile is a COLUMN: header, then a mosaic that
+                     takes everything left over. The mosaics used to be a fixed
+                     stack of 4.75rem rows, so making a tile taller left a band
+                     of empty card under the photographs — the one kind of tile
+                     where size is the entire point.
+                     Picture tiles never scroll, either. Scrolling a photograph
+                     is not reading it, and a mosaic that fills its slot has
+                     nothing below the fold by construction. -->
                 <a :href="link(t.key)" :style="spanStyle(t.key)"
-                    class="panel-card tile-scroll block rounded-2xl p-4 md:p-5 min-w-0 overflow-y-auto overflow-x-hidden transition-transform active:scale-[0.985]">
+                    class="panel-card rounded-2xl p-4 md:p-5 min-w-0 overflow-x-hidden transition-transform active:scale-[0.985]"
+                    :class="isMosaic(t.key) ? 'flex flex-col overflow-hidden'
+                                            : 'block tile-scroll overflow-y-auto'">
                     <div class="flex items-center gap-2 mb-3">
                         <span class="text-lg" x-text="t.icon"></span>
                         <span class="panel-label" x-text="t.label"></span>
@@ -303,7 +313,8 @@
                          what is for dinner from it (arc K1), so the images lead
                          and the names ride on top of them. -->
                     <template x-if="t.key === 'meals' && !t.data.empty">
-                        <div class="grid grid-cols-2 gap-2" style="grid-auto-rows: 4.75rem">
+                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(d, i) in t.data.dishes" :key="i">
                                 <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
                                     :style="collageSpan(i, t.data.dishes.length, 2)">
@@ -407,7 +418,8 @@
 
                     <!-- latest moments -->
                     <template x-if="t.key === 'moments' && !t.data.empty">
-                        <div class="grid grid-cols-3 gap-2" style="grid-auto-rows: 4.25rem">
+                        <div class="grid grid-cols-3 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(m, i) in t.data.moments" :key="i">
                                 <div class="relative rounded-xl overflow-hidden bg-gray-800 border border-gray-700"
                                     :style="collageSpan(i, t.data.moments.length, 3)">
@@ -452,7 +464,8 @@
 
                     <!-- trips as a mosaic, the soonest one leading -->
                     <template x-if="t.key === 'trips' && !t.data.empty">
-                        <div class="grid grid-cols-2 gap-2" style="grid-auto-rows: 4.75rem">
+                        <div class="grid grid-cols-2 gap-2 flex-1 min-h-0"
+                            style="grid-auto-rows: minmax(0, 1fr)">
                             <template x-for="(tr, i) in t.data.trips" :key="i">
                                 <div class="relative rounded-xl overflow-hidden border"
                                     :class="tr.live ? 'border-emerald-500/60' : 'border-gray-700'"
@@ -931,15 +944,40 @@
                     return (t && !t.data.empty && t.data.days) ? t.data.days.slice(0, 4) : [];
                 },
 
+                // The tiles whose content IS a picture. Named rather than
+                // detected: a tile that happens to have an image in it (a
+                // trip's background behind text) is not the same as one whose
+                // whole job is showing pictures, and only the second should
+                // stretch a photograph to fill a taller slot.
+                MOSAIC_TILES: ['meals', 'moments', 'trips'],
+                isMosaic(key) {
+                    return this.MOSAIC_TILES.includes(key);
+                },
+
                 // Mosaic sizing, as inline grid spans rather than Tailwind
                 // classes: these are computed in JS and the CDN build only
                 // reliably generates classes it can see in the markup.
                 // One item fills the tile; a lone leader gets promoted so a
                 // 3-up never renders as a ragged row with a hole in it.
+                // The mosaic TILES: every cell filled, no ragged last row.
+                //
+                // The old rule promoted the first item to a 2x2 leader, which
+                // looked right when a mosaic was a fixed stack of 4.75rem rows
+                // and left holes the moment it had to fill a whole tile — a
+                // 3-up in three columns put the leader across two rows and
+                // left two empty cells beside it. Now that the rows divide the
+                // tile's real height, an empty cell is a hole in a photograph
+                // wall rather than a bit of slack at the bottom.
+                //
+                // So: one item takes everything, and the LAST item widens to
+                // close whatever the final row has left over. Rows are
+                // ceil(n / cols) and every one of them is full.
                 collageSpan(i, n, cols) {
-                    if (n === 1) return `grid-column: span ${cols}; grid-row: span 2;`;
-                    if (i === 0 && n === cols) return 'grid-row: span 2;';
-                    if (i === 0 && n > cols) return `grid-column: span ${cols - 1}; grid-row: span 2;`;
+                    if (n === 1) return `grid-column: span ${cols}; grid-row: span ${cols};`;
+                    const remainder = n % cols;
+                    if (remainder && i === n - 1) {
+                        return `grid-column: span ${cols - remainder + 1};`;
+                    }
                     return '';
                 },
 

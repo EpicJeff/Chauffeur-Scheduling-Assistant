@@ -582,6 +582,19 @@ def scenario_a_row_is_a_real_unit_not_whatever_the_neighbours_did():
     check('--c-lg' in grid,
           "the grid no longer takes its column count from the board payload")
 
+    # A picture tile's whole job is showing pictures, so its mosaic has to be
+    # as tall as the tile is — a fixed stack of rows left a band of empty card
+    # under the photographs on any tile somebody made taller, which is the one
+    # kind of tile where size is the entire point.
+    body = tpl[tpl.index("t.key === 'meals'"):tpl.index("t.key === 'calendar'")]
+    check(body.count('grid-auto-rows: minmax(0, 1fr)') >= 2,
+          "a mosaic is back to fixed-height rows, so it no longer fills its tile")
+    check('flex-1 min-h-0' in body,
+          "the mosaic does not claim the space its tile has left over")
+    check('isMosaic(t.key)' in tpl,
+          "picture tiles are no longer distinguished, so either they scroll a "
+          "photograph or every text tile is stretched to fill")
+
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
