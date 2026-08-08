@@ -92,13 +92,18 @@ def _board():
             {'key': 'calendar', 'icon': '📅', 'label': "What's coming", 'data': {
                 'total': 1,
                 'days': [
-                    {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True, 'more': 0,
-                     'events': [{'title': 'Dribble and Swish', 'at': '4:00 PM',
-                                 'end_at': '5:30 PM', 'all_day': False, 'start': at(16),
-                                 'driver': 'Sam', 'needs_driver': False,
-                                 'color': '#ef4444', 'kind': 'event'}]},
+                    {'date': TODAY, 'dom': 8, 'day': 'Today', 'today': True,
+                     'more': 0, 'earlier': 0, 'events': [
+                         {'title': 'Dentist', 'at': '9:00 AM', 'end_at': '10:00 AM',
+                          'all_day': False, 'start': at(9), 'driver': None,
+                          'needs_driver': False, 'color': '#64748b',
+                          'kind': 'event', 'past': True},
+                         {'title': 'Dribble and Swish', 'at': '4:00 PM',
+                          'end_at': '5:30 PM', 'all_day': False, 'start': at(16),
+                          'driver': 'Sam', 'needs_driver': False,
+                          'color': '#ef4444', 'kind': 'event', 'past': False}]},
                     {'date': TOMORROW, 'dom': 9, 'day': 'Tomorrow', 'today': False,
-                     'more': 0, 'events': []},
+                     'more': 0, 'earlier': 0, 'events': []},
                 ]}},
             {'key': 'map', 'icon': '🗺️', 'label': 'Where everyone is', 'data': {
                 'mapped': 1,
@@ -176,7 +181,10 @@ setTimeout(() => {
     agenda: {
       cards: ag ? [...ag.children].filter(c => c.tagName !== 'TEMPLATE').length : 0,
       style: ag ? ag.getAttribute('style') : '',
-      text: ag ? ag.textContent.replace(/\s+/g, ' ').trim() : ''
+      text: ag ? ag.textContent.replace(/\s+/g, ' ').trim() : '',
+      // Which rows are greyed, by the title they carry.
+      dimmed: ag ? [...ag.querySelectorAll('.opacity-45')]
+        .map(e => e.textContent.replace(/\s+/g, ' ').trim()) : []
     },
     hero: {
       label: (doc.querySelector('.panel-card .panel-label') || {}).textContent,
@@ -377,6 +385,13 @@ def scenario_a_day_card_is_three_columns_wide_on_the_real_page():
     check('Nothing scheduled' in ag['text'],
           "a quiet day has to say so — a card that renders empty is the reason "
           "the agenda is day cards rather than a list")
+    # Today's finished events stay, greyed. Dropping them made a busy morning
+    # invisible: two things left at four in the afternoon read as a quiet day
+    # rather than as a day nearly done.
+    check('Dentist' in ag['text'],
+          f"this morning's appointment vanished off the card: {ag['text'][:160]}")
+    check(len(ag['dimmed']) == 1 and 'Dentist' in ag['dimmed'][0],
+          f"exactly the past events are greyed, got {ag['dimmed']}")
 
 
 def scenario_a_thing_that_has_started_says_so():

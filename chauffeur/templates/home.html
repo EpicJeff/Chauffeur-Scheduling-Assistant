@@ -502,8 +502,16 @@
                                     </div>
                                     <div x-show="!d.events.length"
                                         class="text-xs panel-dim italic px-0.5 py-1">Nothing scheduled</div>
+                                    <div class="text-[0.62rem] panel-dim px-0.5 pb-1" x-show="d.earlier"
+                                        x-text="'+' + d.earlier + ' earlier'"></div>
+                                    <!-- What has already happened stays, greyed.
+                                         Dropping it made a busy morning
+                                         invisible: two things at four in the
+                                         afternoon read as a quiet day rather
+                                         than a day nearly done. -->
                                     <template x-for="(e, i) in d.events" :key="i">
                                         <div class="rounded-md px-1.5 py-1 mb-1"
+                                            :class="e.past ? 'opacity-45' : ''"
                                             :style="'border-left: 3px solid ' + tone(e.color)
                                                     + '; background: var(--panel-card-lo)'">
                                             <div class="text-[0.62rem] font-bold panel-dim tabular-nums leading-tight"

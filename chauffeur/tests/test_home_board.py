@@ -474,9 +474,10 @@ def scenario_the_calendar_tile_is_an_agenda_of_days():
     and "Thursday is empty" is a thing families read a calendar to find out.
     The agenda's day cards say it by existing.
 
-    Today is the one day that is filtered: a card headed Today listing this
-    morning's finished appointment is a card about the past, and it would put
-    the calendar tile at odds with the drives tile about what is behind us."""
+    Today's finished events STAY, greyed — the calendar page's own agenda shows
+    the whole day and always has. The first cut dropped them, which also made a
+    busy morning invisible: two things left at four in the afternoon read as a
+    quiet day rather than as a day nearly done."""
     orig = (storage.get_cached_schedule, storage.get_all_drivers,
             storage.get_all_members)
     try:
@@ -513,13 +514,30 @@ def scenario_the_calendar_tile_is_an_agenda_of_days():
         check(days['Today']['today'] and days['Today']['dom'] == datetime.date.today().day,
               "today knows it is today")
         titles = [e['title'] for e in days['Today']['events']]
-        check(titles == ['Practice'],
-              f"this morning's finished appointment is behind us, got {titles}")
+        check(titles == ['Dentist', 'Practice'],
+              f"the whole day is on the card, in order, got {titles}")
+        by_title = {e['title']: e for e in days['Today']['events']}
+        check(by_title['Dentist']['past'] and not by_title['Practice']['past'],
+              "what has already happened is flagged for greying, not dropped")
         check('Disney' not in str(tile),
               "a trip's own span event would print on all five cards; trips have "
               "their own tile")
-        check(days['Today']['events'][0]['driver'] == 'Sam',
+        check(by_title['Practice']['driver'] == 'Sam',
               "an assigned event names its driver")
+
+        # A day that does not fit loses what has already happened, from the
+        # top. Keeping this morning's school run by dropping this evening's
+        # pickup would be answering the wrong question.
+        busy = {'events': [
+            {'id': f'p{i}', 'title': f'Past {i}', 'start': _at(6 + i).isoformat(),
+             'end': _at(6 + i, 30).isoformat()} for i in range(5)
+        ] + [{'id': 'soon', 'title': 'Pickup', 'start': _at(17).isoformat(),
+              'end': _at(18).isoformat()}],
+            'assignments': {}, 'unassigned': [], 'scheduled_errands': []}
+        card = home_board._tile_calendar(_at(12), sched=busy)['days'][0]
+        shown = [e['title'] for e in card['events']]
+        check('Pickup' in shown and card['earlier'] == 1,
+              f"the day trims from the front: showed {shown}, earlier={card['earlier']}")
         recital = days['Tomorrow']['events'][0]
         check(recital['needs_driver'] and recital['color'] == '#ef4444',
               f"the one thing somebody must act on is coloured for it, got {recital}")

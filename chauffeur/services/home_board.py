@@ -628,10 +628,14 @@ def _tile_calendar(now, sched=None, settings=None, **_):
     family reads a calendar to find out. Day cards say it by existing, which is
     the same reason the agenda view is built that way.
 
-    TODAY is the one day that is filtered: a card headed Today listing this
-    morning's finished appointment is a card about the past. Events whose end
-    time has passed drop off it, matching `over` on the drives side so the two
-    halves of the board cannot disagree about what is behind us.
+    Today's finished events STAY, greyed. The first cut dropped them, on the
+    reasoning that a card headed Today listing this morning's dentist
+    appointment is a card about the past — and the family's answer was the
+    calendar page's own agenda, which shows the whole day and always has.
+    Dropping them also makes a busy morning invisible: a card showing two
+    things at four in the afternoon reads as a quiet day rather than as a day
+    nearly done. `past` is the flag; the panel greys them and the day still
+    reads as a day.
     """
     try:
         sched = sched if sched is not None else (storage.get_cached_schedule() or {})
@@ -661,8 +665,6 @@ def _tile_calendar(now, sched=None, settings=None, **_):
             if not start:
                 continue
             end = _parse(ev.get('end')) or start
-            if start.date() == today and not ev.get('all_day') and end < now:
-                continue
             d_id = assignments.get(ev.get('id'))
             d = drivers.get(d_id) if d_id and not str(d_id).startswith('ghost_') else None
             place(start.date(), {
@@ -679,6 +681,10 @@ def _tile_calendar(now, sched=None, settings=None, **_):
                 'color': ('#ef4444' if ev.get('id') in unassigned
                           else (d or {}).get('color') or '#64748b'),
                 'kind': 'event',
+                # Behind us, on the same reading of the clock the drives side
+                # uses for `over`. An all-day event is never past — it is the
+                # whole day, and half of it is still ahead.
+                'past': bool(not ev.get('all_day') and end < now),
             })
 
         for er in (sched.get('scheduled_errands') or []):
@@ -686,8 +692,6 @@ def _tile_calendar(now, sched=None, settings=None, **_):
             if not start:
                 continue
             end = _parse(er.get('end_time')) or start
-            if start.date() == today and end < now:
-                continue
             d_id = (er.get('driver') or {}).get('id')
             d = drivers.get(d_id) if d_id else None
             place(start.date(), {
@@ -698,6 +702,7 @@ def _tile_calendar(now, sched=None, settings=None, **_):
                 'needs_driver': False,
                 'color': (d or {}).get('color') or '#f59e0b',
                 'kind': 'errand',
+                'past': bool(end < now),
             })
 
         total = sum(len(v) for v in days.values())
@@ -709,12 +714,22 @@ def _tile_calendar(now, sched=None, settings=None, **_):
         cards = []
         for d in order:
             rows = sorted(days[d], key=lambda r: (not r['all_day'], r['start']))
+            # When a day does not fit, what goes is what has already happened —
+            # from the top, oldest first. A tile that dropped this evening's
+            # pickup to keep this morning's school run would be answering the
+            # wrong question, and one that simply cut the day off at five
+            # entries would silently hide the end of it.
+            earlier = 0
+            while len(rows) > AGENDA_PER_DAY and rows[0].get('past'):
+                rows.pop(0)
+                earlier += 1
             cards.append({
                 'date': d.isoformat(),
                 'dom': d.day,
                 'day': day_word(d, today),
                 'today': d == today,
                 'events': rows[:AGENDA_PER_DAY],
+                'earlier': earlier,
                 'more': max(0, len(rows) - AGENDA_PER_DAY),
             })
         return {'days': cards, 'total': total}
