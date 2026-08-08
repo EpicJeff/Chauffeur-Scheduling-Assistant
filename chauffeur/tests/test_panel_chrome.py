@@ -186,22 +186,29 @@ def scenario_a_field_that_is_its_own_container_stays_transparent():
 
 def scenario_the_trip_page_kept_everything_its_hero_carried():
     """The trip page's hero banner became a normal page header, so it matches
-    every other page. A banner is also a place things accumulate — the way back
+    every other page. A banner is also where things accumulate — the way back
     to the Trips grid especially, which `?tabs=none` can hide from the nav — so
-    each control it carried is named here rather than trusted to a reread."""
-    trip = open(os.path.join(TPL, 'trip.html'), encoding='utf-8').read()
-    for needle, what in (
-            ('href="trips"', 'the way back to the trips grid'),
-            ('openSettingsModal()', 'the trip settings button'),
-            ('id="trip-title"', 'the trip name'),
-            ('id="trip-location"', 'the location'),
-            ('id="trip-dates"', 'the dates'),
-            ('id="trip-countdown"', 'the countdown'),
-            ('id="trip-notes-display"', 'the notes')):
-        check(needle in trip, f"{what} was lost when the hero banner went")
-    check('panel-page-title' in trip, "the trip name is not the page title")
-    check("getElementById('panel-bg-image')" in trip,
-          "the trip's photograph is no longer promoted to the page background")
+    each control it carried is named here rather than trusted to a reread.
+
+    BOTH templates are checked. `/trip` serves `trip_kiosk.html` whenever
+    `kiosk=true`, and panel mode sets `kiosk=true` — so the panel renders the
+    kiosk one, and a whole release of edits to `trip.html` was invisible there.
+    Checking a single template is exactly how that went unnoticed."""
+    for tpl in ('trip.html', 'trip_kiosk.html'):
+        trip = open(os.path.join(TPL, tpl), encoding='utf-8').read()
+        for needle, what in (
+                ('href="trips"', 'the way back to the trips grid'),
+                ('id="trip-title"', 'the trip name'),
+                ('id="trip-location"', 'the location'),
+                ('id="trip-dates"', 'the dates'),
+                ('id="trip-countdown"', 'the countdown')):
+            check(needle in trip, f"{tpl}: {what} was lost with the hero banner")
+        check('panel-page-title' in trip,
+              f"{tpl}: the trip name is not the page title")
+        check('panel-page' in trip.replace('panel-page-title', ''),
+              f"{tpl}: the trip page is not in a full-width frame")
+        check("getElementById('panel-bg-image')" in trip,
+              f"{tpl}: the trip's photograph is not the page background")
     check('html[data-panel] #bg-img' in SKIN,
           "the trip page's own background layer is not stood down on a panel, "
           "so it stacks with the shared one and washes the picture out")
