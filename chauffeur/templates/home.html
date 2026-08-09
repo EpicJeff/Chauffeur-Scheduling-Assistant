@@ -176,58 +176,12 @@
              with it and the glances go underneath. -->
         <div class="panel-card rounded-3xl mb-5 overflow-hidden">
 
-            <template x-if="hero.next">
-                <div class="p-5 md:p-6 flex flex-wrap items-center gap-x-8 gap-y-4"
-                    :style="'border-left: 6px solid ' + tone(hero.next.color, '#3b82f6')">
-                    <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-3 mb-1">
-                            <!-- "NEXT UP · 53 min ago" was photographed off the
-                                 wall for a ballet class that had started at
-                                 one o'clock. A thing that has started is not
-                                 next; it is on. -->
-                            <span class="panel-label"
-                                :class="onNow() ? 'text-emerald-300' : ''"
-                                x-text="onNow() ? 'Happening now' : 'Next up'"></span>
-                            <span class="text-xs font-bold px-2 py-0.5 rounded-full"
-                                :class="countdownClass"
-                                x-text="countdown"></span>
-                        </div>
-                        <div class="text-2xl md:text-4xl font-black panel-text truncate"
-                            x-text="hero.next.title"></div>
-                        <div class="text-base md:text-lg panel-dim mt-1 truncate"
-                            x-show="hero.next.location" x-text="hero.next.location"></div>
-                    </div>
-                    <!-- LEAVE time leads, start time supports it. The start is
-                         when somebody else expects you; the departure is the
-                         one a family sets an alarm by, and the board was
-                         printing the wrong one of the two big. When the
-                         schedule has no travel time for the drive there is no
-                         honest departure to show, and the start time takes the
-                         big slot back. -->
-                    <div class="text-right shrink-0">
-                        <template x-if="hero.next.leave_label && !onNow()">
-                            <div>
-                                <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">
-                                    Leave</div>
-                                <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none"
-                                    x-text="hero.next.leave_label"></div>
-                                <div class="text-sm md:text-base panel-dim mt-1 tabular-nums">
-                                    <span x-text="'for ' + hero.next.at"></span>
-                                    <span x-show="hero.next.travel_mins"
-                                        x-text="'· ' + hero.next.travel_mins + ' min drive'"></span>
-                                </div>
-                            </div>
-                        </template>
-                        <template x-if="!hero.next.leave_label || onNow()">
-                            <div class="text-3xl md:text-5xl font-black tabular-nums panel-text"
-                                x-text="hero.next.at"></div>
-                        </template>
-                        <div class="text-lg md:text-xl font-bold mt-1"
-                            :style="'color: ' + tone(hero.next.color, '#3b82f6')"
-                            x-text="hero.next.driver"></div>
-                    </div>
-                </div>
-            </template>
+            <!-- One renderer, not a smaller copy: the card body comes from
+                 components/hero_card.html, the SAME function the screensaver's
+                 Next-up corner draws with. The Alpine pair countdown/
+                 countdownClass stays reactive state here so the x-html
+                 re-renders exactly when the pill changes. -->
+            <div x-show="hero.next" x-html="heroCardHtml()"></div>
 
             <!-- The two honest empty states. A blank hero reads as a broken
                  panel, so both of these say something true instead. -->
@@ -1069,73 +1023,23 @@
                 // the browser's between polls — a board that only learns the
                 // class has started when the next fetch lands spends up to a
                 // minute counting down to something already happening.
-                onNow() {
+                heroCardHtml() {
                     const n = this.hero && this.hero.next;
-                    if (!n) return false;
-                    if (n.live) return true;
-                    const t = this.nowTs;
-                    return new Date(n.start) <= t && t <= new Date(n.end);
+                    return n ? HeroCard.html(n, {
+                        isLight: this.isLight(),
+                        countdown: this.countdown,
+                        countdownClass: this.countdownClass,
+                    }) : '';
                 },
 
-                // Minutes, said the way a person says them.
-                spell(mins) {
-                    if (mins < 60) return mins + ' min';
-                    const h = Math.floor(mins / 60), m = mins % 60;
-                    return h + ' hr' + (m ? ' ' + m + ' min' : '');
-                },
-
-                // Recomputed every second from the event's own times, not from
-                // the server's minutes_until — between polls a countdown that
-                // does not move is just a label, and "in 25 min" going stale a
-                // minute at a time is exactly the number people trust least.
+                // The pill pair stays Alpine state (heroCardHtml re-renders
+                // on its tick) but the arithmetic lives in HeroCard, where
+                // the screensaver reads the same answer.
                 recount() {
                     const n = this.hero && this.hero.next;
-                    if (!n) { this.countdown = ''; return; }
-                    if (this.onNow()) {
-                        // What is LEFT of it. "53 min ago" beside "next up" was
-                        // the pair the family caught; either half alone is fine
-                        // and together they contradict.
-                        const left = Math.round((new Date(n.end) - new Date()) / 60000);
-                        this.countdown = left > 0 ? 'ends in ' + this.spell(left)
-                            : (n.live ? 'under way' : 'ending now');
-                        this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
-                        return;
-                    }
-                    // The DEPARTURE, when the schedule knows it. "In 2 hr 26
-                    // min" is a fact about somebody else's start time; "leave
-                    // in 1 hr 46 min" is the one this family plans around, and
-                    // the difference between them is the drive.
-                    if (n.leave_at) {
-                        const go = Math.round((new Date(n.leave_at) - new Date()) / 60000);
-                        if (go > 0) {
-                            this.countdown = 'leave in ' + this.spell(go);
-                            this.countdownClass = go <= 15
-                                ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300';
-                        } else if (go > -2) {
-                            this.countdown = 'leave now';
-                            this.countdownClass = 'bg-amber-500/20 text-amber-300';
-                        } else {
-                            // Past the departure and not yet started: the one
-                            // state on this board worth shouting about.
-                            this.countdown = 'should have left ' + this.spell(-go) + ' ago';
-                            this.countdownClass = 'bg-red-500/25 text-red-300';
-                        }
-                        return;
-                    }
-                    const mins = Math.round((new Date(n.start) - new Date()) / 60000);
-                    if (mins <= -1) {
-                        // A drive with no duration to be inside of — it should
-                        // have left and has not been marked done.
-                        this.countdown = Math.abs(mins) + ' min ago';
-                        this.countdownClass = 'bg-amber-500/20 text-amber-300';
-                    } else if (mins <= 0) {
-                        this.countdown = 'now';
-                        this.countdownClass = 'bg-emerald-500/20 text-emerald-300';
-                    } else {
-                        this.countdown = 'in ' + this.spell(mins);
-                        this.countdownClass = mins <= 15
-                            ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300';
-                    }
+                    const c = HeroCard.countdown(n, new Date());
+                    this.countdown = c.text;
+                    this.countdownClass = c.cls;
                 },
 
                 // A member's colour is chosen once, on a dark UI, and then used
@@ -1145,28 +1049,7 @@
                 // only the lightness is clamped into a band that reads against
                 // the current surface. Nobody has to re-pick a colour per theme.
                 tone(hex, fallback) {
-                    const raw = String(hex || fallback || '#94a3b8').trim();
-                    const m = /^#?([0-9a-f]{6})$/i.exec(raw);
-                    if (!m) return raw;
-                    const n = parseInt(m[1], 16);
-                    const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
-                    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-                    let h = 0;
-                    if (d) {
-                        if (mx === r) h = ((g - b) / d) % 6;
-                        else if (mx === g) h = (b - r) / d + 2;
-                        else h = (r - g) / d + 4;
-                    }
-                    h = (h * 60 + 360) % 360;
-                    const l = (mx + mn) / 2;
-                    const sat = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
-                    const light = this.isLight();
-                    // Dark surface wants bright ink; light surface wants dark.
-                    // 0.66 rather than 0.62 on dark: deep hues like Nathan's
-                    // purple sat right on the old floor and read as dim.
-                    const L = light ? Math.min(l, 0.38) : Math.max(l, 0.66);
-                    const S = Math.min(1, Math.max(sat, light ? 0.45 : 0.35));
-                    return `hsl(${Math.round(h)} ${Math.round(S * 100)}% ${Math.round(L * 100)}%)`;
+                    return HeroCard.tone(hex, fallback, this.isLight());
                 },
 
                 isLight() {

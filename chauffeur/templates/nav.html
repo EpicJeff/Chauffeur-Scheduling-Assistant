@@ -256,6 +256,7 @@
 </div>
 </nav>
 
+{% include 'components/hero_card.html' %}
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -565,22 +566,15 @@
             const ssRenderNext = () => {
                 const el = document.getElementById('panel-ss-next');
                 if (!el) return;
-                if (!ssNext) { el.style.display = 'none'; return; }
-                const start = ssNext.start ? new Date(ssNext.start) : null;
-                const mins = start ? Math.round((start - Date.now()) / 60000) : null;
-                // Once it is well underway it stops being "next" — drop it
-                // rather than counting up from the past until the refetch.
-                if (mins !== null && mins < -10) { el.style.display = 'none'; return; }
-                const when = mins === null ? (ssNext.at || '')
-                    : mins <= 0 ? 'now'
-                    : mins < 60 ? `in ${mins} min`
-                    : (ssNext.at || '');
-                const leave = ssNext.leave_label
-                    ? ` · leave ${ssNext.leave_label}${ssNext.driver ? ' — ' + ssNext.driver : ''}`
-                    : (ssNext.driver ? ` · ${ssNext.driver}` : '');
+                // Past its END it is nobody's "next" — the 3-min refetch
+                // will bring the real next; do not count up until it does.
+                const over = ssNext && ssNext.end
+                    && Date.now() > new Date(ssNext.end).getTime() + 2 * 60000;
+                if (!ssNext || over) { el.style.display = 'none'; return; }
                 el.style.display = '';
-                el.querySelector('.ss-next-title').textContent = ssNext.title || '';
-                el.querySelector('.ss-next-when').textContent = `${ssNext.at || ''}${when && when !== ssNext.at ? ' · ' + when : ''}${leave}`;
+                // The SAME renderer the home board's hero band uses —
+                // compact column, its own translucent backing for photos.
+                el.innerHTML = HeroCard.html(ssNext, { compact: true });
             };
 
             const ssClock = () => {
@@ -675,11 +669,7 @@
                     <div class="ss-layer"></div><div class="ss-layer"></div>
                     <div id="panel-ss-scrim"></div>
                     <div id="panel-ss-clock"><div class="ss-time"></div><div class="ss-date"></div></div>
-                    <div id="panel-ss-next" style="display:none">
-                        <div class="ss-next-label">Next up</div>
-                        <div class="ss-next-title"></div>
-                        <div class="ss-next-when"></div>
-                    </div>`;
+                    <div id="panel-ss-next" style="display:none"></div>`;
                 document.body.appendChild(ssRoot);
                 ssLayers = [...ssRoot.querySelectorAll('.ss-layer')];
                 ssFront = 0;

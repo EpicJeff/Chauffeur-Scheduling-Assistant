@@ -1,0 +1,157 @@
+<script>
+    // The hero card — "the next thing that actually happens" — as ONE
+    // renderer shared by the home board's hero band and the screensaver's
+    // Next-up corner. The standing lesson from the schedule timeline
+    // (v2.126.0) applies verbatim: a smaller hand-copy of the hero would
+    // drift from the board the day it ships, and the two are read minutes
+    // apart on the same wall.
+    //
+    // Classic script, no framework: home.html binds the output through
+    // Alpine's x-html, nav.html sets innerHTML directly. Included once, from
+    // nav.html, which every page already includes.
+    window.HeroCard = {
+        esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        },
+
+        // Minutes, said the way a person says them.
+        spell(mins) {
+            if (mins < 60) return mins + ' min';
+            const h = Math.floor(mins / 60), m = mins % 60;
+            return h + ' hr' + (m ? ' ' + m + ' min' : '');
+        },
+
+        // A member's colour is chosen once, on a dark UI, and then used
+        // everywhere. Keep the HUE (it is the person's identity), clamp the
+        // lightness into a band that reads against the current surface.
+        tone(hex, fallback, isLight) {
+            const raw = String(hex || fallback || '#94a3b8').trim();
+            const m = /^#?([0-9a-f]{6})$/i.exec(raw);
+            if (!m) return raw;
+            const n = parseInt(m[1], 16);
+            const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+            const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+            let h = 0;
+            if (d) {
+                if (mx === r) h = ((g - b) / d) % 6;
+                else if (mx === g) h = (b - r) / d + 2;
+                else h = (r - g) / d + 4;
+            }
+            h = (h * 60 + 360) % 360;
+            const l = (mx + mn) / 2;
+            const sat = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+            const L = isLight ? Math.min(l, 0.38) : Math.max(l, 0.66);
+            const S = Math.min(1, Math.max(sat, isLight ? 0.45 : 0.35));
+            return `hsl(${Math.round(h)} ${Math.round(S * 100)}% ${Math.round(L * 100)}%)`;
+        },
+
+        onNow(next, now) {
+            if (!next) return false;
+            if (next.live) return true;
+            const t = now || new Date();
+            return new Date(next.start) <= t && t <= new Date(next.end);
+        },
+
+        // The pill. Recomputed from the event's own times, never the server's
+        // minutes_until — a countdown that does not move between polls is just
+        // a label, and "in 25 min" going stale is the number people trust least.
+        countdown(next, now) {
+            if (!next) return { text: '', cls: '' };
+            now = now || new Date();
+            if (this.onNow(next, now)) {
+                const left = Math.round((new Date(next.end) - now) / 60000);
+                return {
+                    text: left > 0 ? 'ends in ' + this.spell(left)
+                        : (next.live ? 'under way' : 'ending now'),
+                    cls: 'bg-emerald-500/20 text-emerald-300'
+                };
+            }
+            if (next.leave_at) {
+                const go = Math.round((new Date(next.leave_at) - now) / 60000);
+                if (go > 0) return {
+                    text: 'leave in ' + this.spell(go),
+                    cls: go <= 15 ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300'
+                };
+                if (go > -2) return { text: 'leave now', cls: 'bg-amber-500/20 text-amber-300' };
+                return { text: 'should have left ' + this.spell(-go) + ' ago',
+                         cls: 'bg-red-500/25 text-red-300' };
+            }
+            const mins = Math.round((new Date(next.start) - now) / 60000);
+            if (mins <= -1) return { text: Math.abs(mins) + ' min ago',
+                                     cls: 'bg-amber-500/20 text-amber-300' };
+            if (mins <= 0) return { text: 'now', cls: 'bg-emerald-500/20 text-emerald-300' };
+            return {
+                text: 'in ' + this.spell(mins),
+                cls: mins <= 15 ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700/60 text-gray-300'
+            };
+        },
+
+        // opts: { compact, isLight, countdown, countdownClass }
+        //   compact  — the screensaver corner: same facts, one column, its own
+        //              translucent backing (it sits on a photograph, not a
+        //              board), fixed dark-surface ink.
+        //   countdown/countdownClass — precomputed pill (home.html passes its
+        //              reactive pair so Alpine re-renders on their tick);
+        //              absent, the pill is computed here from the clock.
+        html(next, opts) {
+            if (!next) return '';
+            opts = opts || {};
+            const esc = this.esc.bind(this);
+            const now = new Date();
+            const on = this.onNow(next, now);
+            const cd = opts.countdown !== undefined
+                ? { text: opts.countdown, cls: opts.countdownClass || '' }
+                : this.countdown(next, now);
+            const tone = this.tone(next.color, '#3b82f6', !!opts.isLight && !opts.compact);
+            const label = `<span class="panel-label ${on ? 'text-emerald-300' : ''}">${on ? 'Happening now' : 'Next up'}</span>
+                <span class="text-xs font-bold px-2 py-0.5 rounded-full ${cd.cls}">${esc(cd.text)}</span>`;
+            // LEAVE time leads, start time supports it: the departure is the
+            // one a family sets an alarm by. No travel time -> no honest
+            // departure, and the start takes the big slot back.
+            const showLeave = next.leave_label && !on;
+
+            if (opts.compact) {
+                return `
+                <div class="rounded-2xl overflow-hidden text-right"
+                    style="background:rgba(10,10,14,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-right:6px solid ${tone}">
+                    <div class="px-5 py-4">
+                        <div class="flex items-center justify-end gap-3 mb-1">${label}</div>
+                        <div class="text-3xl font-black text-white leading-tight">${esc(next.title)}</div>
+                        ${next.location ? `<div class="text-sm text-white/70 mt-0.5">${esc(next.location)}</div>` : ''}
+                        ${showLeave ? `
+                        <div class="mt-2">
+                            <span class="text-xs font-black uppercase tracking-[0.18em] text-white/60 align-middle mr-2">Leave</span>
+                            <span class="text-4xl font-black tabular-nums text-white whitespace-nowrap">${esc(next.leave_label)}</span>
+                            <div class="text-sm text-white/70 tabular-nums whitespace-nowrap mt-0.5">for ${esc(next.at)}${next.travel_mins ? ' · ' + esc(next.travel_mins) + ' min drive' : ''}</div>
+                        </div>` : `
+                        <div class="text-3xl font-black tabular-nums text-white whitespace-nowrap mt-1">${esc(next.at)}</div>`}
+                        ${next.driver ? `<div class="text-lg font-bold mt-1" style="color:${tone}">${esc(next.driver)}</div>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            return `
+                <div class="p-5 md:p-6 flex flex-wrap items-center gap-x-8 gap-y-4"
+                    style="border-left: 6px solid ${tone}">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-3 mb-1">${label}</div>
+                        <div class="text-2xl md:text-4xl font-black panel-text truncate">${esc(next.title)}</div>
+                        ${next.location ? `<div class="text-base md:text-lg panel-dim mt-1 truncate">${esc(next.location)}</div>` : ''}
+                    </div>
+                    <div class="text-right shrink-0">
+                        ${showLeave ? `
+                        <div>
+                            <div class="text-xs font-black uppercase tracking-[0.18em] panel-dim">Leave</div>
+                            <div class="text-3xl md:text-5xl font-black tabular-nums panel-text leading-none">${esc(next.leave_label)}</div>
+                            <div class="text-sm md:text-base panel-dim mt-1 tabular-nums">
+                                <span>for ${esc(next.at)}</span>${next.travel_mins ? ` <span>· ${esc(next.travel_mins)} min drive</span>` : ''}
+                            </div>
+                        </div>` : `
+                        <div class="text-3xl md:text-5xl font-black tabular-nums panel-text">${esc(next.at)}</div>`}
+                        ${next.driver ? `<div class="text-lg md:text-xl font-bold mt-1" style="color:${tone}">${esc(next.driver)}</div>` : ''}
+                    </div>
+                </div>`;
+        },
+    };
+</script>

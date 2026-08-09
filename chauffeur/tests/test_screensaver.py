@@ -234,7 +234,10 @@ const routes = {
   'api/home_board/catalog': { widgets: [], widget_defaults: [], tabs: [], tab_defaults: [] },
   'api/home_board': { hero: { remaining: 1, later: [], all_done: false, kids: [],
     next: { title: 'Soccer Practice', at: '4:00 PM', leave_label: '3:20 PM',
-            driver: 'Mom', start: new Date(Date.now() + 45 * 60000).toISOString() } },
+            driver: 'Mom', travel_mins: 26, color: '#ef4444',
+            start: new Date(Date.now() + 45 * 60000).toISOString(),
+            end: new Date(Date.now() + 105 * 60000).toISOString(),
+            leave_at: new Date(Date.now() + 30 * 60000).toISOString() } },
     tiles: [] },
   'api/settings': {},
 };
@@ -265,8 +268,8 @@ setTimeout(() => {
       .some(l => l.style.opacity === '1' && l.style.backgroundImage.includes('gradient'));
     const next = doc.getElementById('panel-ss-next');
     out.next = next && next.style.display !== 'none'
-      ? { title: (next.querySelector('.ss-next-title') || {}).textContent,
-          when: (next.querySelector('.ss-next-when') || {}).textContent }
+      ? { text: next.textContent.replace(/\s+/g, ' ').trim(),
+          leaveBig: (next.querySelector('.text-4xl') || {}).textContent || '' }
       : null;
     before.dispatchEvent(new w.Event('pointerdown', { bubbles: true, cancelable: true }));
     out.goneAfterTap = !doc.getElementById('panel-screensaver');
@@ -316,11 +319,34 @@ def scenario_jsdom_overlay_appears_and_a_tap_wakes_it():
     check(out.get('goneAfterTap'),
           "a tap did not dismiss the screensaver")
     nxt = out.get('next') or {}
-    check(nxt.get('title') == 'Soccer Practice',
+    txt = nxt.get('text') or ''
+    check('Soccer Practice' in txt,
           f"the Next up card is missing the upcoming event: {out.get('next')}")
-    check('4:00 PM' in (nxt.get('when') or '') and 'in 45 min' in (nxt.get('when') or '')
-          and 'leave 3:20 PM' in (nxt.get('when') or '') and 'Mom' in (nxt.get('when') or ''),
-          f"the Next up line lost its time/countdown/leave/driver: {nxt.get('when')!r}")
+    check(nxt.get('leaveBig') == '3:20 PM',
+          f"the DEPARTURE must be the big number, as on the board: {nxt}")
+    check('leave in 30 min' in txt and 'for 4:00 PM' in txt
+          and '26 min drive' in txt and 'Mom' in txt,
+          f"the card lost its pill/support-line/driver: {txt!r}")
+
+
+HERO_COMPONENT = open(os.path.join(TPL, 'components', 'hero_card.html'),
+                      encoding='utf-8').read()
+
+
+def scenario_one_hero_renderer_not_a_smaller_copy():
+    """v2.126.0's standing lesson, applied to the hero: the board and the
+    screensaver corner must call the SAME function, or the copy drifts."""
+    check('HeroCard.html' in HOME and 'heroCardHtml()' in HOME,
+          "the board no longer renders its hero through the shared card")
+    check("HeroCard.html(ssNext, { compact: true })" in NAV,
+          "the screensaver no longer renders through the shared card")
+    check('hero.next.title' not in HOME,
+          "home.html grew its own hero markup back — that is the drift "
+          "the shared renderer exists to prevent")
+    check("countdown(next, now)" in HERO_COMPONENT
+          and 'HeroCard.countdown' in HOME,
+          "the pill arithmetic must live in the component, with the board "
+          "delegating — two countdowns disagree within a week")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]

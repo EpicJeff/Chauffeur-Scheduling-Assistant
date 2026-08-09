@@ -221,17 +221,14 @@
         will-change: opacity, transform;
     }
 
-    /* Legibility floor for the clock (lower-left) and Next up (upper-right),
-       not a mood filter: photos stay bright, only the corners that carry
-       text get a foothold. */
+    /* Legibility floor for the clock, not a mood filter: photos stay
+       bright, only the lower-left corner gets a foothold. The Next-up card
+       brings its own translucent backing. */
     #panel-ss-scrim {
         position: absolute;
         inset: 0;
-        background:
-            linear-gradient(to top right,
-                rgba(0, 0, 0, .55) 0%, rgba(0, 0, 0, 0) 40%),
-            linear-gradient(to bottom left,
-                rgba(0, 0, 0, .45) 0%, rgba(0, 0, 0, 0) 35%);
+        background: linear-gradient(to top right,
+                rgba(0, 0, 0, .55) 0%, rgba(0, 0, 0, 0) 40%);
         pointer-events: none;
     }
 
@@ -260,39 +257,15 @@
     }
 
     /* "Next up" — opposite corner from the clock so neither crowds the
-       photo's subject, which tends to live in the middle. */
+       photo's subject, which tends to live in the middle. The card body is
+       components/hero_card.html in compact mode; this only places it. */
     #panel-ss-next {
         position: absolute;
         right: 4vmin;
         top: 3.5vmin;
-        max-width: 44vmin;
-        text-align: right;
-        color: #fff;
-        text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
+        width: min(52vmin, 480px);
         pointer-events: none;
         font-family: Inter, system-ui, sans-serif;
-    }
-
-    #panel-ss-next .ss-next-label {
-        font-size: 2.2vmin;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: .14em;
-        opacity: .75;
-    }
-
-    #panel-ss-next .ss-next-title {
-        font-size: 4.2vmin;
-        font-weight: 800;
-        line-height: 1.15;
-        margin-top: .6vmin;
-    }
-
-    #panel-ss-next .ss-next-when {
-        font-size: 2.6vmin;
-        font-weight: 600;
-        opacity: .85;
-        margin-top: .5vmin;
     }
 
     /* ── The shared vocabulary, used directly by the home board. */
