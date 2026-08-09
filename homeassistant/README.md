@@ -87,11 +87,50 @@ the substance is dropping `micro_wake_word:` and setting `use_wake_word: true`
 so the pipeline's wake stage runs in HA. Any openWakeWord model then works with
 no reflash — which is the real appeal if you expect to change the word.
 
-Two things bite people here, both reported repeatedly:
+Three things bite people here:
+
+- **Nothing happens at all — the word never registers.** `use_wake_word: true`
+  does not make a device stream; something has to *start* it. The stock Voice PE
+  never needed that, because `micro_wake_word`'s own detection trigger started
+  the pipeline. Take mww out and the microphone is simply never opened. Compare
+  against the canonical server-side config,
+  [`m5stack-atom-echo.yaml`](https://github.com/esphome/wake-word-voice-assistants/blob/main/m5stack-atom-echo/m5stack-atom-echo.yaml),
+  which arms the stream from the API connection and **re-arms it after every
+  pipeline run**:
+
+  ```yaml
+  api:
+    on_client_connected:
+      - delay: 2s                                  # let the API settle
+      - lambda: id(va).set_use_wake_word(true);
+      - voice_assistant.start_continuous:
+    on_client_disconnected:
+      - voice_assistant.stop:
+
+  voice_assistant:
+    id: va
+    microphone:
+      microphone: i2s_mics
+      channels: 1
+      gain_factor: 4        # NOT optional — see below
+    on_end:
+      - delay: 1s
+      - voice_assistant.start_continuous:          # or it works exactly once
+  ```
+
+- **Streaming, but never detecting: mic gain.** The stock Voice PE hangs
+  `gain_factor: 4` off the microphone inside its `micro_wake_word:` block, not
+  the `voice_assistant:` one. Delete mww without moving that gain and the server
+  receives audio far too quiet to cross openWakeWord's threshold — which looks
+  identical to "the wake word doesn't work".
 
 - **The command gets cut off after about a second** — logs show `STT by VAD end`
   right after detection. Fix: ESPHome integration → device settings → set
   **finished speaking detection** to **relaxed**.
+
+Telling the first two apart takes one glance at the **openWakeWord add-on log**:
+if it never logs a client, the device is not streaming (cause 1); if it logs one
+and stays quiet while you talk, it is hearing you too faintly (cause 2).
 - **It will not compile** (e.g. `no matching function for call to
   'AudioSinkTransferBuffer::transfer_data_to_sink()'`). The forks track a moving
   ESPHome audio API and lag its releases; you need a fork updated for your
