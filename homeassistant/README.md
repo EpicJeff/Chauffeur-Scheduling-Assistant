@@ -216,10 +216,29 @@ voice_assistant:
   # light is wrong, which is worse than it sounds on something whose entire job
   # is to tell a room what it is doing from across the kitchen.
   #
-  # on_tts_stream_end fires when the response audio has finished PLAYING, and
-  # is not gated on is_running. Upstream does not define it, so this adds the
-  # key rather than concatenating onto anything.
-  on_tts_stream_end:
+  # NOT on_tts_stream_end, however tempting: those triggers require a
+  # `speaker:` on the component and the Voice PE drives a `media_player:`, so
+  # they fail validation outright ("speaker is required when using
+  # on_tts_stream_start and/or on_tts_stream_end").
+  #
+  # on_tts_end fires when the speech is READY, not when it has been heard, so
+  # resetting there drops the ring to idle while the device is still talking.
+  # Watch the media player instead: wait for the announcement to start, then
+  # for it to finish. Both waits are bounded — an unbounded wait_until is the
+  # exact bug being worked around here, and a reply that never plays must not
+  # strand the ring a second time.
+  on_tts_end:
+    - wait_until:
+        condition:
+          media_player.is_announcing:
+            id: external_media_player
+        timeout: 3s
+    - wait_until:
+        condition:
+          not:
+            media_player.is_announcing:
+              id: external_media_player
+        timeout: 60s
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
   # Same for the failure path — upstream lights the error phase and relies on
