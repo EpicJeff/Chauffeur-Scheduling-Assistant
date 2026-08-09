@@ -512,16 +512,13 @@ def _tile_drives(now, runs, sched=None, **_):
     the two halves of the board cannot disagree about what is behind us — and
     the page decides how it looks.
     """
-    # `over`, not `done` — the heading says "the rest of the day", so a drive
-    # whose end time has passed does not belong here whether or not anybody
-    # remembered to tap it complete. Reading `done` here while the hero read
-    # the clock is what let the wall contradict itself.
+    # `over`, not `done` — a drive whose end time has passed is not upcoming
+    # whether or not anybody remembered to tap it complete. Reading `done` here
+    # while the hero read the clock is what let the wall contradict itself.
     rest = [r for r in runs if not r['over']]
-    if not rest:
+    if not runs:
         if not storage.get_all_drivers():
             return None                      # no drivers: the feature is unused
-        if runs:
-            return {'empty': "Nothing left to drive today."}
         # NOTHING IN THE CACHE AT ALL is not the same claim as a day with no
         # drives on it, and saying the confident version of a sentence you
         # cannot support is how this board loses the family's trust. An empty
@@ -538,8 +535,10 @@ def _tile_drives(now, runs, sched=None, **_):
         # Where to scroll the timeline so the tile opens on the part of the day
         # that has not happened. The whole day is drawn — a wall panel showing
         # a drive that finished an hour ago at the top of the tile is showing
-        # the past.
-        'next_event_id': rest[0]['id'],
+        # the past. After the LAST drive this is None and the tile rests at the
+        # bottom of the day: swapping the timeline for "nothing left to drive"
+        # prose repeated the hero's sentence across a quarter of the board.
+        'next_event_id': rest[0]['id'] if rest else None,
     }
 
 

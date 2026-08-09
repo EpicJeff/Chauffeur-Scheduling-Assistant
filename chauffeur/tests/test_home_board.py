@@ -341,7 +341,13 @@ def scenario_the_hero_and_the_drives_tile_cannot_contradict_each_other():
     The hero treated a drive as behind us once its end time passed; the tile
     only believed the manual completed flag, and nobody marks drives complete.
     Two definitions of "done" on one screen. `over` is now computed once, in
-    todays_runs, and both consumers read it."""
+    todays_runs, and both consumers read it.
+
+    The tile's side of the promise has changed shape once since: it used to
+    swap to "Nothing left to drive today." prose, which repeated the hero's
+    sentence across a quarter of the board. Now the timeline stays up all
+    evening and `next_event_id` goes None — the panel scrolls to the bottom
+    of the day instead of presenting anything as still to come."""
     orig_s, orig_d, orig_c, orig_p = (storage.get_cached_schedule, storage.get_all_drivers,
                                       storage.get_completed_drives, storage.get_in_progress_drives)
     try:
@@ -358,11 +364,13 @@ def scenario_the_hero_and_the_drives_tile_cannot_contradict_each_other():
         tile = home_board._tile_drives(evening, runs=runs)
 
         check(hero['all_done'], "the hero says the driving is done")
-        check(tile is not None and tile.get('empty'),
-              "so the drives tile must say it is done rather than list the 5pm "
-              f"drive under 'the rest of the day', got {tile}")
-        check('drivers' not in (tile or {}),
-              "and it must not still be rendering the finished drive")
+        check(tile is not None and 'schedule' in tile,
+              f"the timeline stays up after the last drive, got {tile}")
+        check(tile.get('next_event_id') is None,
+              "but nothing may be presented as still to come — None is what "
+              f"scrolls the panel to the bottom of the day, got {tile}")
+        check(not tile.get('empty'),
+              "and the hero's sentence is not repeated as tile prose")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)

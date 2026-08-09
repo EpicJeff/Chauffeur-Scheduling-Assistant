@@ -1222,11 +1222,15 @@
 
                 // A day drawn whole opens on breakfast. The tile opens on the
                 // next drive, which is the only part of it anybody walking
-                // past is asking about.
+                // past is asking about. No next drive means the day is behind
+                // us: the timeline stays up and rests at its bottom — the hero
+                // already says "nothing left to drive", once is enough.
                 scrollTimelineToNext(eventId) {
                     const box = document.getElementById('board-timeline-scroll');
-                    const next = eventId && document.getElementById('event-' + eventId);
-                    if (!box || !next) return;
+                    if (!box) return;
+                    if (!eventId) { box.scrollTop = box.scrollHeight; return; }
+                    const next = document.getElementById('event-' + eventId);
+                    if (!next) return;
                     const delta = next.getBoundingClientRect().top
                         - box.getBoundingClientRect().top;
                     box.scrollTop = Math.max(0, box.scrollTop + delta - 12);
