@@ -30,6 +30,15 @@ async def async_setup_entry(
 
 
 class ChauffeurConversationEntity(conversation.ConversationEntity):
+    # No `_attr_supported_features`, and specifically no
+    # ConversationEntityFeature.CONTROL — that is load bearing, not an
+    # oversight. assist_pipeline narrows "prefer handling commands locally" to
+    # a two-intent allowlist (get-state and media-search-and-play) as soon as
+    # the agent advertises CONTROL, because such an agent is assumed to control
+    # Home Assistant itself through its own LLM tools. Ours does not: it
+    # schedules drivers, and it cannot open the garage. Declaring CONTROL would
+    # route every light, lock and cover sentence here instead of to the
+    # built-in intents that can actually serve them.
     _attr_has_entity_name = True
     _attr_name = None
 

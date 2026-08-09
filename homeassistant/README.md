@@ -437,6 +437,41 @@ Built-in intents only see entities exposed to Assist: check **Settings → Voice
 assistants → Expose** and expose the garage cover, giving it the alias
 "main garage" if its entity name differs.
 
+**Test the built-in agent on its own, not through the pipeline.** Developer
+tools → Actions → `conversation.process`, with the BUILT-IN agent named
+explicitly:
+
+```yaml
+action: conversation.process
+data:
+  agent_id: conversation.home_assistant
+  text: "open the main garage"
+```
+
+If that does not work, "prefer handling commands locally" can never work
+either, and the fault is exposure or naming rather than anything to do with
+Chauffeur. This removes the whole pipeline from the question in one step.
+
+**A landmine to leave alone.** How much gets handled locally depends on a flag
+our entity does not set. `assist_pipeline` narrows the local path to a
+two-intent allowlist — `INTENT_GET_STATE` and `INTENT_MEDIA_SEARCH_AND_PLAY` —
+but only when the conversation agent advertises
+`ConversationEntityFeature.CONTROL`, on the assumption that such an agent
+controls the house itself through its own LLM tools:
+
+```python
+intent_filter = None
+if ... & conversation.ConversationEntityFeature.CONTROL:
+    intent_filter = _async_local_fallback_intent_filter
+```
+
+`ChauffeurConversationEntity` deliberately declares no `supported_features`, so
+`intent_filter` stays `None` and EVERY matched built-in intent is handled
+locally — which is what makes the garage work. Adding `CONTROL` to look tidy
+would silently restrict local handling to those two intents and route "open the
+main garage" to Argyle, which cannot open it. The flag means "this agent
+controls Home Assistant entities"; ours controls a schedule.
+
 ## Troubleshooting
 
 ### Every voice command fails with `ValueError: RuleReference(rule_name='...')`
