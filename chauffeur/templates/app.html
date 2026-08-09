@@ -646,6 +646,38 @@
             }
             updateTabBar();
             applyViewVisibility();
+            applyKidShell();
+        }
+
+        // --- Kid shell (Buddy-aesthetic arc) ---
+        // A child's app is light by default (their explicit theme pick still
+        // wins) and carries their member color as the accent that tints
+        // cards, rings, and checkboxes.
+        function applyKidShell() {
+            const kid = currentMemberRole() === 'child';
+            const root = document.documentElement;
+            const was = root.dataset.kid === '1';
+            if (kid) root.dataset.kid = '1'; else delete root.dataset.kid;
+            const m = membersData.find(x => x.id === selectedMemberId);
+            root.style.setProperty('--kid-accent', (kid && m && m.color_code) || '#3b82f6');
+            if (kid !== was) {
+                applyTheme(themePref());
+                updateThemeButton();
+            }
+        }
+
+        function kidAccent() {
+            const m = membersData.find(x => x.id === selectedMemberId);
+            return (m && m.color_code) || '#3b82f6';
+        }
+
+        // Translucent wash of the member color for card bands; the surface
+        // underneath supplies the theme, so one alpha works in both.
+        function kidTint(alpha) {
+            const h = kidAccent().replace('#', '');
+            const v = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+            const n = parseInt(v, 16);
+            return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
         }
 
         async function selectPassengerMember(memberId) {
@@ -832,6 +864,117 @@
             } catch (e) { showGlobalAlert('Could not update'); }
         }
 
+        // --- Kid My Day (Buddy layout) ---
+        // The editing move that makes big elements work: per time-of-day
+        // bucket, only the FIRST unfinished task renders as the big
+        // glyph-forward card; everything else is a compact row. Fewer,
+        // larger things -- not a longer scroll of prettier boxes.
+        const KID_BUCKETS = [
+            { key: 'morning', label: 'Morning', emoji: '\u{1F305}', test: t => t && t < '12:00' },
+            { key: 'afternoon', label: 'Afternoon', emoji: '\u2600\uFE0F', test: t => t && t >= '12:00' && t < '17:00' },
+            { key: 'evening', label: 'Evening', emoji: '\u{1F319}', test: t => t && t >= '17:00' },
+            { key: 'anytime', label: 'Anytime', emoji: '\u2B50', test: t => !t },
+        ];
+
+        function kidBucketItems(routineData) {
+            const items = (routineData && routineData.items) || [];
+            const map = {};
+            KID_BUCKETS.forEach(b => { map[b.key] = items.filter(i => b.test(i.time_of_day)); });
+            return map;
+        }
+
+        function kidRing(frac, emoji, label, onclick, dim) {
+            const R = 24, C = 2 * Math.PI * R;
+            const off = C * (1 - Math.min(1, Math.max(0, frac)));
+            const done = frac >= 1 && !dim;
+            return `
+            <button onclick="${onclick}" class="flex flex-col items-center gap-1 shrink-0 ${dim ? 'opacity-40' : ''}">
+                <span class="relative w-16 h-16 flex items-center justify-center">
+                    <svg class="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 56 56">
+                        <circle cx="28" cy="28" r="${R}" fill="none" stroke="rgb(var(--c-gray-800))" stroke-width="5"></circle>
+                        ${dim ? '' : `<circle cx="28" cy="28" r="${R}" fill="none" stroke="${kidAccent()}" stroke-width="5"
+                            stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"></circle>`}
+                    </svg>
+                    <span class="text-2xl">${done ? '\u2714\uFE0F' : emoji}</span>
+                </span>
+                <span class="text-xs font-bold text-gray-500">${label}</span>
+            </button>`;
+        }
+
+        function kidRingRow(buckets, choreStats, interactive) {
+            const rings = KID_BUCKETS
+                .filter(b => buckets[b.key].length)
+                .map(b => {
+                    const items = buckets[b.key];
+                    const frac = items.filter(i => i.checked).length / items.length;
+                    return kidRing(frac, b.emoji, b.label,
+                        `document.getElementById('kid-bucket-${b.key}')?.scrollIntoView({behavior:'smooth',block:'start'})`, false);
+                });
+            if (choreStats) {
+                const frac = choreStats.mine ? choreStats.done / choreStats.mine : 0;
+                rings.push(kidRing(frac, '\u{1F9F9}', 'Chores', "setView('chores')", !choreStats.mine));
+            }
+            if (!rings.length) return '';
+            return `<div class="flex justify-evenly gap-2 py-1 mb-1 ${interactive ? '' : 'opacity-70'}">${rings.join('')}</div>`;
+        }
+
+        function kidTaskRow(item, interactive) {
+            return `
+                <label class="flex items-center gap-3 py-3 px-4 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
+                    <span class="text-2xl w-9 text-center shrink-0">${kidGlyph(item)}</span>
+                    <span class="flex-1 text-[16px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
+                    ${item.time_of_day ? `<span class="text-xs font-bold text-gray-500">${item.time_of_day}</span>` : ''}
+                    <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
+                        onchange="toggleRoutine('${item.id}', this.checked)"
+                        class="w-8 h-8 rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                </label>`;
+        }
+
+        function kidBucketSection(bucket, items, interactive) {
+            if (!items.length) return '';
+            const firstOpen = interactive ? items.find(i => !i.checked) : null;
+            const hero = !firstOpen ? '' : `
+                <div class="rounded-2xl overflow-hidden border border-gray-800 bg-gray-900 mb-2">
+                    <div class="flex items-center justify-center py-6" style="background:${kidTint(0.16)}">
+                        <span style="font-size:64px;line-height:1">${kidGlyph(firstOpen)}</span>
+                    </div>
+                    <label class="flex items-center gap-3 p-4 cursor-pointer active:opacity-70">
+                        <span class="flex-1 text-lg font-black text-gray-100">${mfEscape(firstOpen.title)}</span>
+                        ${firstOpen.time_of_day ? `<span class="text-xs font-bold text-gray-500">${firstOpen.time_of_day}</span>` : ''}
+                        <input type="checkbox" onchange="toggleRoutine('${firstOpen.id}', this.checked)"
+                            class="w-9 h-9 rounded-full shrink-0" style="accent-color:${kidAccent()}">
+                    </label>
+                </div>`;
+            const rest = items.filter(i => i !== firstOpen);
+            const rows = !rest.length ? '' : `
+                <div class="rounded-2xl border border-gray-800 bg-gray-900 divide-y divide-gray-800 mb-2">
+                    ${rest.map(i => kidTaskRow(i, interactive)).join('')}
+                </div>`;
+            return `
+            <div id="kid-bucket-${bucket.key}" class="pt-2" style="scroll-margin-top:8px">
+                <div class="text-lg font-black text-gray-100 mb-2">${bucket.emoji} ${bucket.label}</div>
+                ${hero}${rows}
+            </div>`;
+        }
+
+        function kidHeader(routineData, balance) {
+            const st = (routineData && routineData.streak) || {};
+            const total = st.today_total || ((routineData && routineData.items) || []).length;
+            const done = st.today_done || 0;
+            const streak = st.current > 0 ? ` \u00B7 \u{1F525} ${st.current}` : '';
+            const m = membersData.find(x => x.id === selectedMemberId) || {};
+            const first = (m.name || '').split(' ')[0];
+            return `
+            <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4 flex items-center justify-between mb-1">
+                <div>
+                    <div class="text-xl font-black text-gray-100">Hi ${mfEscape(first)}! \u{1F44B}</div>
+                    <div class="text-sm font-bold text-gray-500">${done}/${total} done today${streak}</div>
+                </div>
+                <button onclick="setView('chores')" class="px-4 py-2 rounded-full font-black text-lg"
+                    style="background:${kidTint(0.15)};color:${kidAccent()}">${balance} \u2B50</button>
+            </div>`;
+        }
+
         async function renderMyDay() {
             const wrap = document.getElementById('myday-content');
             if (!wrap || !selectedMemberId) return;
@@ -849,7 +992,39 @@
                 const data = await res.json();
                 const routineData = routineRes.ok ? await routineRes.json() : null;
                 if (routineData && requestedOffset === 0) maybeCelebrateStatus('routine', routineData.status);
-                const routineHtml = renderRoutineSection(routineData, requestedOffset);
+                const isKid = currentMemberRole() === 'child';
+                let routineHtml, kidTopHtml = '';
+                if (isKid) {
+                    // Today only: points balance + my chore progress for the
+                    // header pill and the chores ring. Fire-and-tolerate --
+                    // a failed fetch degrades to no pill/dim ring, never a
+                    // broken day.
+                    let balance = 0, choreStats = null;
+                    if (requestedOffset === 0) {
+                        const [ptsRes, chRes] = await Promise.all([
+                            fetch(`${apiBase}api/points`).catch(() => null),
+                            fetch(`${apiBase}api/chores`).catch(() => null),
+                        ]);
+                        if (ptsRes && ptsRes.ok) {
+                            const balances = await ptsRes.json();
+                            balance = ((balances || []).find(b => b.member_id === selectedMemberId) || {}).balance || 0;
+                        }
+                        if (chRes && chRes.ok) {
+                            const chores = await chRes.json();
+                            const mine = chores.filter(c => c.claimed_by === selectedMemberId
+                                && (c.state === 'claimed' || c.state === 'done'));
+                            choreStats = { mine: mine.length, done: mine.filter(c => c.state === 'done').length };
+                        }
+                        if (requestedOffset !== mydayOffset) return;
+                    }
+                    const buckets = kidBucketItems(routineData);
+                    const interactive = requestedOffset === 0;
+                    kidTopHtml = (interactive ? kidHeader(routineData, balance) : '')
+                        + kidRingRow(buckets, interactive ? choreStats : null, interactive);
+                    routineHtml = KID_BUCKETS.map(b => kidBucketSection(b, buckets[b.key], interactive)).join('');
+                } else {
+                    routineHtml = renderRoutineSection(routineData, requestedOffset);
+                }
                 const dueSoonHtml = renderDueSoonSection(data.due_soon);
                 const launchHtml = !data.launch ? '' : `
                     <div class="bg-indigo-950/60 border border-indigo-800/60 rounded-xl p-3 mb-1 flex items-center gap-2">
@@ -858,7 +1033,7 @@
                         <span class="text-xs text-indigo-300/70 ml-auto truncate">${mfEscape(data.launch.title || '')}</span>
                     </div>`;
                 const statusHtml = renderStatusBanner(data.status_days, dateStr);
-                wrap.innerHTML = statusHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
+                wrap.innerHTML = statusHtml + kidTopHtml + launchHtml + routineHtml + dueSoonHtml + (data.rides.length
                     ? data.rides.map(renderMyDayCard).join('')
                     : '<div class="text-gray-500 text-sm bg-gray-900 border border-gray-800 rounded-xl p-4 mt-2">' +
                       ((routineHtml || dueSoonHtml) ? 'No rides today 🎉' : 'Nothing scheduled 🎉') + '</div>');
@@ -2787,14 +2962,27 @@
         const CHORE_RECUR_LABEL = { once: '', daily: '· daily', weekly: '· weekly', monthly: '· monthly' };
 
         function choreCard(c, buttonsHtml, subtitle) {
+            const kid = currentMemberRole() === 'child';
+            const meta = `<div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>`;
+            const extras = `${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
+                        ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}`;
+            if (kid) {
+                return `
+            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex items-center gap-3">
+                <span class="text-4xl w-12 text-center shrink-0">${kidGlyph(c)}</span>
+                <div class="min-w-0 flex-1">
+                    <div class="text-gray-100 font-bold text-[16px] leading-tight">${mfEscape(c.title)}</div>
+                    ${meta}${extras}
+                </div>
+                <div class="flex flex-col gap-2 shrink-0">${buttonsHtml}</div>
+            </div>`;
+            }
             return `
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2">
                     <div class="min-w-0">
                         <div class="text-gray-100 font-bold text-[16px] leading-tight truncate">${kidGlyph(c)} ${mfEscape(c.title)}</div>
-                        <div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>
-                        ${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
-                        ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}
+                        ${meta}${extras}
                     </div>
                     <div class="flex gap-2 shrink-0">${buttonsHtml}</div>
                 </div>
@@ -2811,7 +2999,7 @@
             if (role === 'child') {
                 const mine = (balances || []).find(b => b.member_id === selectedMemberId);
                 maybeCelebrateStatus('chore', mine && mine.status);
-                parts.push(`<div class="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-800/60 rounded-2xl p-4 flex items-center justify-between">
+                parts.push(`<div class="border border-gray-800 rounded-2xl p-4 flex items-center justify-between" style="background:${kidTint(0.14)}">
                     <div>
                         <span class="text-gray-300 font-bold">My points</span>
                         ${mine && mine.status ? '<div class="mt-1">' + statusBadge(mine.status) + '</div>' : ''}
