@@ -1,83 +1,91 @@
-# Home Assistant Voice PE — server-side (streaming) wake word.
+# Home Assistant Voice PE -- server-side (streaming) wake word. WORKING CONFIG.
 #
-# This is the WHOLE device config, as it appears in ESPHome Builder. It is not
-# a fork of home-assistant-voice.yaml: the upstream config comes in as a
-# package and everything below `voice_assistant:` is an overlay on it. Package
-# merging replaces scalars with the value here and concatenates lists, so the
-# ~1600-line upstream file stays upstream's problem and keeps working as its
-# components move around in ESPHome core.
+# A RECORD, NOT A SOURCE FILE. The real config lives only in ESPHome Builder
+# inside Home Assistant; nothing here is deployed, pulled or included. This copy
+# exists so the working setup survives a rebuilt device, and so the reasoning
+# behind each line is written down somewhere the Builder's editor is not.
+# Change ESPHome first, then update this to match.
+#
+# This is the whole device config as it appears in ESPHome Builder, and it is
+# deliberately NOT a fork of home-assistant-voice.yaml. Upstream comes in as a
+# package; everything under `voice_assistant:` is an overlay on it. Package
+# merging replaces scalars with the value here and CONCATENATES lists, which is
+# what lets ~1600 lines stay upstream's problem and keep working as its
+# components move around inside ESPHome core.
+#
+# Forking that file instead is the trap: its components were upstreamed, so an
+# old copy fails one at a time -- `aic3204` missing, then
+# `microphone.nabu_microphone` missing, then the media player id, then the sound
+# files -- and the finish line is a hand-built copy of upstream that drifts again.
 #
 # See homeassistant/README.md for why each piece is here and what to check when
 # one of them misbehaves.
 
+# The encryption key is a SECRET and this repo is public. Keep the real value in
+# ESPHome's secrets.yaml; never paste it into a tracked file.
+api:
+  encryption:
+    key: !secret api_encryption_key
+
 substitutions:
   name: kitchen-voice-assistant
   friendly_name: Kitchen Voice Assistant
-  # Bump on every edit. Logged at boot, so the device tells you which build it
-  # is running -- a flash that silently did not take is indistinguishable from
-  # a change that did not work, and you debug the wrong thing for an hour.
-  config_revision: '1'
 
 packages:
-  Nabu Casa.Home Assistant Voice PE: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
+  Nabu Casa.Home Assistant Voice PE: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml
 
 esphome:
   name: ${name}
   name_add_mac_suffix: false
   friendly_name: ${friendly_name}
-  # `then` is a list, so this is APPENDED to upstream's boot actions rather than
-  # replacing them. Confirm that in the merged output under Validate.
-  on_boot:
-    then:
-      - logger.log:
-          level: INFO
-          format: "=== overlay revision ${config_revision} ==="
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
+# ── server-side wake word ──
 voice_assistant:
-  # ── scalars: each REPLACES upstream's value ──────────────────────────────
-  # Run the wake stage in Home Assistant instead of on the device.
+  # Scalar: replaces upstream's `false`, so the pipeline runs a wake stage in
+  # Home Assistant instead of on the device.
   use_wake_word: true
 
-  # Upstream zeroes these three: the XMOS chip conditions the audio and the
-  # wake word was decided ON the device, where a quiet stream is fine. Once the
-  # server has to find the start of speech in it, that same stream is too cold
-  # for voice-activity detection and the command is cut off before it starts.
-  # These match the canonical server-side config (esphome m5stack-atom-echo).
-  #
-  # Try the device's "finished speaking detection: relaxed" setting FIRST — it
-  # needs no reflash. Only add these if it is still intermittent.
-  #
-  # AND TREAT THEM AS A DIAL, NOT A FIX. These numbers come from the ATOM Echo,
-  # whose microphone is raw and quiet — which is exactly what the XMOS chip in a
-  # Voice PE exists to avoid. Home Assistant really does apply them (they reach
-  # MicroVadSpeexEnhancer), so on an already-conditioned stream they stack a
-  # second AGC and a second noise suppressor on top of the first. Over-driven
-  # audio presents identically to quiet audio: unstable transcription, and
-  # having to enunciate. If these did not help, try 0 / 0 dbfs / 1.0 before
-  # assuming the fault is elsewhere.
-  noise_suppression_level: 2
-  auto_gain: 31dBFS
-  volume_multiplier: 2.0
+  # Left at upstream's defaults ON PURPOSE. The obvious move is to copy the
+  # canonical streaming config (m5stack-atom-echo), which runs
+  # noise_suppression_level: 2 / auto_gain: 31dBFS / volume_multiplier: 2.0 --
+  # but those numbers exist for the ATOM Echo's raw, quiet microphone, which is
+  # exactly what the Voice PE's XMOS chip already replaces. Home Assistant does
+  # apply them (they reach MicroVadSpeexEnhancer), so on an already-conditioned
+  # stream they stack a second AGC and noise suppressor on the first. Measured
+  # here: no improvement. Over-driven audio presents identically to quiet audio.
+  noise_suppression_level: 0
+  auto_gain: 0 dbfs
+  volume_multiplier: 1.0
 
-  # ── lists: each CONCATENATES onto upstream's ─────────────────────────────
-  # Upstream only starts micro_wake_word here and never opens a stream, so
-  # nothing was ever sent to the server. These run after upstream's actions.
+  # List: CONCATENATED onto upstream's, which only starts micro_wake_word and
+  # never opens a stream -- so nothing was ever sent to the server. These run
+  # after upstream's actions. The delay lets the API server settle; without it
+  # the request goes out while Home Assistant is still bringing the
+  # voice-assistant subscription up, fails, and nothing retries. The lambda
+  # re-asserts the wake stage because the YAML `use_wake_word` is only an
+  # INITIAL value and any stop clears it -- a continuous stream started with it
+  # false asks for speech-to-text with no wake stage, so openWakeWord is handed
+  # no audio at all.
   on_client_connected:
-    - delay: 2s                                   # let the API server settle
-    - lambda: id(va).set_use_wake_word(true);     # the flag does not survive a stop
+    - delay: 2s
+    - lambda: id(va).set_use_wake_word(true);
     - voice_assistant.start_continuous:
 
-  # Put the LED ring back to idle when the reply has finished PLAYING.
-  # Upstream does this at the end of on_end, behind
-  # `wait_until: not voice_assistant.is_running` — which never completes in
-  # continuous mode, because continuous mode is the assistant never stopping.
-  # on_tts_stream_end would be the obvious trigger and cannot be used: it
-  # requires a `speaker:`, and this device drives a `media_player:`.
-  # Both waits are bounded, because an unbounded one is the bug being fixed.
+  # Reply finished playing -> back to idle.
+  #
+  # Upstream does this at the end of `on_end`, behind
+  # `wait_until: not voice_assistant.is_running` -- which never completes in
+  # continuous mode, because continuous mode IS the assistant never stopping.
+  # The ring then spins forever while the device is in fact still listening.
+  # on_tts_stream_end would be the natural trigger and cannot be used: it
+  # requires a `speaker:` and this device drives a `media_player:`. on_tts_end
+  # fires when the speech is READY rather than heard, so bracket the actual
+  # playback instead. Both waits are bounded -- an unbounded one is the bug
+  # being worked around.
   on_tts_end:
     - wait_until:
         condition:
@@ -93,9 +101,22 @@ voice_assistant:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
 
-  # Same for the failure path, which upstream clears in that same unreachable
-  # code. The delay lets the error actually be seen first.
+  # Same for failures -- upstream lights the error phase and relies on that
+  # same unreachable code to clear it. The delay lets the error be seen first.
   on_error:
     - delay: 2s
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
+
+# OPTIONAL, not currently deployed: a build marker. Add `config_revision: '1'`
+# to substitutions and bump it on every edit, and the device announces at boot
+# which build it is running. Worth adding the first time a change appears to do
+# nothing -- a flash that silently did not take is indistinguishable from a
+# change that did not work.
+#
+# esphome:
+#   on_boot:
+#     then:
+#       - logger.log:
+#           level: INFO
+#           format: "=== overlay revision ${config_revision} ==="
