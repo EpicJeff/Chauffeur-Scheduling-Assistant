@@ -13,6 +13,10 @@
 substitutions:
   name: kitchen-voice-assistant
   friendly_name: Kitchen Voice Assistant
+  # Bump on every edit. Logged at boot, so the device tells you which build it
+  # is running -- a flash that silently did not take is indistinguishable from
+  # a change that did not work, and you debug the wrong thing for an hour.
+  config_revision: '1'
 
 packages:
   Nabu Casa.Home Assistant Voice PE: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
@@ -21,6 +25,13 @@ esphome:
   name: ${name}
   name_add_mac_suffix: false
   friendly_name: ${friendly_name}
+  # `then` is a list, so this is APPENDED to upstream's boot actions rather than
+  # replacing them. Confirm that in the merged output under Validate.
+  on_boot:
+    then:
+      - logger.log:
+          level: INFO
+          format: "=== overlay revision ${config_revision} ==="
 
 wifi:
   ssid: !secret wifi_ssid
@@ -39,6 +50,15 @@ voice_assistant:
   #
   # Try the device's "finished speaking detection: relaxed" setting FIRST — it
   # needs no reflash. Only add these if it is still intermittent.
+  #
+  # AND TREAT THEM AS A DIAL, NOT A FIX. These numbers come from the ATOM Echo,
+  # whose microphone is raw and quiet — which is exactly what the XMOS chip in a
+  # Voice PE exists to avoid. Home Assistant really does apply them (they reach
+  # MicroVadSpeexEnhancer), so on an already-conditioned stream they stack a
+  # second AGC and a second noise suppressor on top of the first. Over-driven
+  # audio presents identically to quiet audio: unstable transcription, and
+  # having to enunciate. If these did not help, try 0 / 0 dbfs / 1.0 before
+  # assuming the fault is elsewhere.
   noise_suppression_level: 2
   auto_gain: 31dBFS
   volume_multiplier: 2.0
