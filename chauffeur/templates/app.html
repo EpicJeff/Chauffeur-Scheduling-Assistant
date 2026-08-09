@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Driver App</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" href="static/icon-192.png">
@@ -71,7 +71,24 @@
                 SHADES.map(s => [s, `rgb(var(--c-${name}-${s}) / <alpha-value>)`]));
             const colors = { gray: ramp('gray') };
             HUES.forEach(h => { colors[h] = ramp(h); });
-            tailwind.config = { darkMode: 'class', theme: { extend: { colors } } };
+            tailwind.config = {
+                darkMode: 'class',
+                theme: {
+                    extend: {
+                        colors,
+                        // 13px is the app's type floor: every arbitrary
+                        // 9-13px size was collapsed into text-xs, so this one
+                        // token IS the floor. Don't reintroduce text-[NNpx]
+                        // below it.
+                        fontSize: { xs: ['13px', '18px'] },
+                        // Softer radii app-wide (Skylight/Hearth direction):
+                        // same markup, friendlier geometry.
+                        borderRadius: {
+                            lg: '12px', xl: '16px', '2xl': '20px', '3xl': '28px',
+                        },
+                    }
+                }
+            };
         })();
     </script>
     <style>
@@ -95,10 +112,24 @@
         body {
             -webkit-tap-highlight-color: transparent;
         }
+
+        /* Touch-target floor for the small action buttons that live inside
+           JS-rendered cards (Claim / Verify / Approve / Redeem...). Their
+           padding classes stay untouched -- min-height only adds hit area,
+           so nothing else in the row moves. rounded-full is excluded on
+           purpose: it includes genuinely tiny inline chips (pill ✕, msg
+           badges) whose rows are the real target. */
+        button.rounded-lg {
+            min-height: 40px;
+        }
+
+        button.rounded-xl {
+            min-height: 44px;
+        }
     </style>
 </head>
 
-<body class="bg-gray-950 text-gray-100 font-sans h-screen flex flex-col overflow-hidden">
+<body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">
 
     <!-- Header -->
     <header
@@ -114,7 +145,7 @@
         </div>
         <div class="flex items-center gap-2">
             <button id="btn-push" onclick="enableNotifications()"
-                class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
+                class="p-3 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
                 title="Enable Push Notifications">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -127,17 +158,17 @@
                     class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
             </button>
             <button id="btn-notif" onclick="toggleNotifications()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative hidden">
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
                     </path>
                 </svg>
                 <span id="notif-badge"
-                    class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
+                    class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
             <button id="btn-sync" onclick="fetchSchedule(true)"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors">
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
@@ -145,13 +176,13 @@
                 </svg>
             </button>
             <button id="btn-theme" onclick="cycleTheme()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors"
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors"
                 title="Theme">
                 <svg id="btn-theme-icon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2"
                     viewBox="0 0 24 24"></svg>
             </button>
             <button id="btn-switch-driver" onclick="clearDriver()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors hidden">
+                class="p-3 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1">
@@ -176,7 +207,7 @@
         <div id="day-nav"
             class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0 z-10 shadow-sm">
             <button onclick="prevDay()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
+                class="p-3 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
                 id="btn-prev-day">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path>
@@ -185,7 +216,7 @@
             <div id="current-day-label" class="font-bold text-center text-gray-100 tracking-wide text-lg drop-shadow-md">
                 Loading...</div>
             <button onclick="nextDay()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
+                class="p-3 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
                 id="btn-next-day">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
@@ -223,14 +254,14 @@
                 </button>
             </div>
             <div id="moments-strip" class="px-4 pb-1 shrink-0" style="display:none">
-                <div class="text-[11px] font-black uppercase tracking-widest text-pink-300 mb-1.5">📸 Moments</div>
+                <div class="text-xs font-black uppercase tracking-widest text-pink-300 mb-1.5">📸 Moments</div>
                 <div id="moments-strip-row" class="flex gap-2 overflow-x-auto pb-1"></div>
             </div>
             <div id="channel-list" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
             <div id="thread-view" class="absolute inset-0 bg-gray-950 flex-col z-20" style="display: none">
                 <div class="flex items-center gap-3 p-3 border-b border-gray-800 bg-gray-900 shrink-0">
                     <button onclick="closeThread()"
-                        class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
+                        class="p-3 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7">
                             </path>
@@ -286,14 +317,14 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">My Day</span>
+                <span class="text-xs font-bold tracking-wide">My Day</span>
             </button>
             <button id="tab-drives" onclick="setView('drives')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-blue-400 transition-colors">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5zM7.5 16c.83 0 1.5-.67 1.5-1.5S8.33 13 7.5 13 6 13.67 6 14.5 6.67 16 7.5 16zm9 0c.83 0 1.5-.67 1.5-1.5S17.33 13 16.5 13 15 13.67 15 14.5s.67 1.5 1.5 1.5z"/>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">My Drives</span>
+                <span class="text-xs font-bold tracking-wide">My Drives</span>
             </button>
             <button id="tab-family" onclick="setView('family')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
@@ -301,7 +332,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">Family</span>
+                <span class="text-xs font-bold tracking-wide">Family</span>
             </button>
             <button id="tab-messages" onclick="setView('messages')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors relative">
@@ -309,9 +340,9 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">Messages</span>
+                <span class="text-xs font-bold tracking-wide">Messages</span>
                 <span id="tab-messages-badge"
-                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold items-center justify-center"
+                    class="absolute top-1 right-1/2 translate-x-5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-500 text-white text-xs font-bold items-center justify-center"
                     style="display: none">0</span>
             </button>
             <button id="tab-chores" onclick="setView('chores')"
@@ -320,9 +351,9 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">Chores</span>
+                <span class="text-xs font-bold tracking-wide">Chores</span>
                 <span id="tab-chores-badge"
-                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-black text-[10px] font-bold items-center justify-center"
+                    class="absolute top-1 right-1/2 translate-x-5 min-w-[20px] h-[20px] px-1 rounded-full bg-amber-500 text-black text-xs font-bold items-center justify-center"
                     style="display: none">0</span>
             </button>
             <button id="tab-map" onclick="setView('map')"
@@ -331,7 +362,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">Map</span>
+                <span class="text-xs font-bold tracking-wide">Map</span>
             </button>
             <button id="tab-music" onclick="setView('music')"
                 class="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
@@ -339,7 +370,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round"
                         d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"></path>
                 </svg>
-                <span class="text-[11px] font-bold tracking-wide">Music</span>
+                <span class="text-xs font-bold tracking-wide">Music</span>
             </button>
         </div>
     </div>
@@ -721,14 +752,14 @@
             if (!routineData || !routineData.items || !routineData.items.length) return '';
             const s = routineData.streak || {};
             const streakChip = s.current > 0
-                ? `<span class="text-[11px] font-black text-orange-300 bg-orange-500/10 border border-orange-500/40 px-2 py-1 rounded-full">🔥 ${s.current} day${s.current === 1 ? '' : 's'}</span>`
+                ? `<span class="text-xs font-black text-orange-300 bg-orange-500/10 border border-orange-500/40 px-2 py-1 rounded-full">🔥 ${s.current} day${s.current === 1 ? '' : 's'}</span>`
                 : '';
             const interactive = offset === 0;
             const rows = routineData.items.map(item => `
                 <label class="flex items-center gap-3 py-2.5 px-1 ${interactive ? 'cursor-pointer active:opacity-70' : 'opacity-70'}">
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
-                        class="w-6 h-6 rounded-lg accent-green-500 shrink-0">
+                        class="w-7 h-7 rounded-lg accent-green-500 shrink-0">
                     <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
                     ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${item.time_of_day}</span>` : ''}
                 </label>`).join('');
@@ -751,7 +782,7 @@
             const rows = tasks.map(t => `
                 <label class="flex items-center gap-3 py-2.5 px-1 cursor-pointer active:opacity-70" id="task-row-${t.id}">
                     <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)"
-                        class="w-6 h-6 rounded-lg accent-indigo-500 shrink-0">
+                        class="w-7 h-7 rounded-lg accent-indigo-500 shrink-0">
                     <span class="shrink-0">${t.emoji}</span>
                     <span class="flex-1 text-[15px] font-bold text-gray-100 task-title">${mfEscape(t.title)}</span>
                     <span class="text-xs font-bold ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
@@ -889,18 +920,18 @@
                         <span class="text-lg">${homeDay ? '🏠' : (s.emoji || '💙')}</span>
                         <span class="text-sm font-bold text-sky-100">${mfEscape(s.name || '')}${s.member_name ? ' · ' + mfEscape(s.member_name) : ''}</span>
                         ${isAdult ? `<button onclick="armClearStatus(this, '${s.id}')"
-                            class="ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">✕</button>` : ''}
+                            class="ml-auto text-xs font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">✕</button>` : ''}
                     </div>
                     ${msg ? `<p class="text-sm text-sky-200/90 mt-1.5">${msg}</p>` : ''}
                     ${callLine}
                     ${s.note ? `<p class="text-xs text-sky-300/80 mt-1 italic">${mfEscape(s.note)}</p>` : ''}
-                    ${meta.length ? `<p class="text-[10px] text-sky-400/60 mt-1">${mfEscape(meta.join(' · '))}</p>` : ''}
+                    ${meta.length ? `<p class="text-xs text-sky-400/60 mt-1">${mfEscape(meta.join(' · '))}</p>` : ''}
                 </div>`;
             }).join('');
             const setRow = isAdult ? `
                 <div class="mb-2">
                     <button onclick="toggleStatusSetRow('${dateStr}')"
-                        class="text-[11px] font-bold text-gray-500 active:text-gray-300">＋ Family status</button>
+                        class="text-xs font-bold text-gray-500 active:text-gray-300">＋ Family status</button>
                     <div id="status-set-row"></div>
                 </div>` : '';
             return cards + setRow;
@@ -910,12 +941,12 @@
             if (btn.dataset.armed) { clearStatusDay(dayId); return; }
             btn.dataset.armed = '1';
             btn.textContent = 'Clear? (tells everyone)';
-            btn.className = 'ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-red-600 text-white';
+            btn.className = 'ml-auto text-xs font-bold px-2 py-1 rounded-lg bg-red-600 text-white';
             setTimeout(() => {
                 if (btn.isConnected && btn.dataset.armed) {
                     btn.dataset.armed = '';
                     btn.textContent = '✕';
-                    btn.className = 'ml-auto text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700';
+                    btn.className = 'ml-auto text-xs font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700';
                 }
             }, 4000);
         }
@@ -943,7 +974,7 @@
                 }
                 row.innerHTML = '<div class="flex flex-wrap gap-1.5 mt-1.5">' + statusProtocolsCache.map(p =>
                     `<button onclick="setStatusDay('${p.id}', '${dateStr}')"
-                        class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-sky-300 border border-gray-700 active:bg-gray-700">${p.emoji || '💙'} ${mfEscape(p.name || '')}</button>`
+                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-sky-300 border border-gray-700 active:bg-gray-700">${p.emoji || '💙'} ${mfEscape(p.name || '')}</button>`
                 ).join('') + '</div>';
             } catch (e) { row.innerHTML = '<p class="text-xs text-gray-500 mt-1">Could not load day types.</p>'; }
         }
@@ -960,14 +991,14 @@
 
         function renderMyDayCard(r) {
             const typeBadge = r.event_type === 'dropoff'
-                ? '<span class="text-[10px] tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-0.5 rounded border border-orange-500/50">Dropoff</span>'
+                ? '<span class="text-xs tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-0.5 rounded border border-orange-500/50">Dropoff</span>'
                 : (r.event_type === 'pickup'
-                    ? '<span class="text-[10px] tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded border border-green-500/50">Pickup</span>'
+                    ? '<span class="text-xs tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded border border-green-500/50">Pickup</span>'
                     : '');
             const statusChip = r.status === 'in_progress'
-                ? '<span class="text-[10px] font-black uppercase bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/50 animate-pulse">On the way</span>'
+                ? '<span class="text-xs font-black uppercase bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/50 animate-pulse">On the way</span>'
                 : (r.status === 'completed'
-                    ? '<span class="text-[10px] font-black uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded-full border border-green-500/50">Done</span>'
+                    ? '<span class="text-xs font-black uppercase bg-green-600/30 text-green-300 px-2 py-0.5 rounded-full border border-green-500/50">Done</span>'
                     : '');
             const timeStr = r.event_type === 'dropoff' || r.event_type === 'pickup'
                 ? formatTime(r.start)
@@ -978,10 +1009,10 @@
                 // Helpers have no HA person entity, so no live map dot; kid
                 // contact is relayed through the family channel.
                 const whereBtn = isHelper ? '' : `<button onclick="setView('map', '${d.member_id}')"
-                    class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>`;
+                    class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-gray-800 text-blue-300 border border-gray-700 active:bg-gray-700">Where?</button>`;
                 return `${whereBtn}
                     <button onclick="messageMember('${d.member_id}', 'driving ${mfEscape(rideTitle).replace(/'/g, '&#39;')}')"
-                        class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>`;
+                        class="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white active:bg-blue-700">Message</button>`;
             };
             if (r.legs && r.legs.length) {
                 const legRow = (l) => {
@@ -990,7 +1021,7 @@
                     if (!l.driver) {
                         return `<div class="flex items-center justify-between mt-2 gap-2">
                             <span class="text-sm text-gray-300 font-bold">${lbl} · ${t}</span>
-                            <span class="text-[11px] font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs driver</span>
+                            <span class="text-xs font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs driver</span>
                         </div>`;
                     }
                     return `<div class="flex items-center justify-between mt-2 gap-2">
@@ -1016,7 +1047,7 @@
             } else {
                 driverRow = `
                 <div class="mt-3 pt-3 border-t border-gray-800">
-                    <span class="text-[11px] font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs a driver</span>
+                    <span class="text-xs font-black uppercase text-red-400 bg-red-500/10 border border-red-500/40 px-2 py-1 rounded-full">⚠ Needs a driver</span>
                 </div>`;
             }
             return `
@@ -1028,8 +1059,8 @@
                 <div class="text-gray-100 font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
                 ${r.location ? `<div class="text-gray-400 text-sm mt-1 truncate">${mfEscape(r.location)}</div>` : ''}
                 ${(r.prep && r.prep.length) ? `<div class="flex flex-wrap items-center gap-1.5 mt-2">
-                    <span class="text-[10px] font-black uppercase text-amber-300">🎒 Bring</span>
-                    ${r.prep.map(p => `<span class="text-[11px] font-bold bg-amber-500/10 text-amber-200 border border-amber-500/30 px-2 py-0.5 rounded-full">${mfEscape(p)}</span>`).join('')}
+                    <span class="text-xs font-black uppercase text-amber-300">🎒 Bring</span>
+                    ${r.prep.map(p => `<span class="text-xs font-bold bg-amber-500/10 text-amber-200 border border-amber-500/30 px-2 py-0.5 rounded-full">${mfEscape(p)}</span>`).join('')}
                 </div>` : ''}
                 ${driverRow}
             </div>`;
@@ -1090,7 +1121,7 @@
                     <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
                     ${message ? `<div class="text-gray-400 text-sm mb-3 leading-snug">${mfEscape(message)}</div>` : ''}
                     <textarea data-field rows="3" placeholder="${mfEscape(placeholder)}"
-                        class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-gray-100 text-[15px] focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                        class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-gray-100 text-[16px] focus:outline-none focus:border-blue-500 resize-none"></textarea>
                     <div class="flex gap-2 justify-end mt-4">
                         <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
                         <button data-yes class="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold">${mfEscape(okText)}</button>
@@ -1226,7 +1257,7 @@
             header.className = 'flex items-center justify-between gap-2 px-1';
             header.innerHTML = `
                 <div class="text-xs font-black uppercase tracking-widest text-gray-500">${proposalsData.length ? `📥 Proposed events (${proposalsData.length})` : '📥 Intake'}</div>
-                <button data-role="photo-btn" class="text-[11px] font-bold bg-indigo-600 active:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shrink-0">📸 Snap a flyer</button>`;
+                <button data-role="photo-btn" class="text-xs font-bold bg-indigo-600 active:bg-indigo-700 text-white px-2.5 py-1 rounded-lg shrink-0">📸 Snap a flyer</button>`;
             const fileInput = document.createElement('input');
             fileInput.type = 'file';
             fileInput.accept = 'image/*';
@@ -1248,16 +1279,16 @@
                 targetList.push({ id: 'errand', label: '🚗 Drive errand' });
                 const opts = targetList.map(o =>
                     `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');
-                const inputCls = 'bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-xs';
+                const inputCls = 'bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-[16px]';
                 card.innerHTML = `
                     <div class="flex items-center gap-2 flex-wrap">
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
+                        <span class="px-1.5 py-0.5 rounded text-xs font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
                         <span class="font-bold text-gray-100 text-sm flex-1 min-w-0 truncate">${escProp(p.title)}</span>
-                        <button data-role="edit" class="text-[11px] font-bold text-gray-500 active:text-gray-100 shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
+                        <button data-role="edit" class="text-xs font-bold text-gray-500 active:text-gray-100 shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
-                    <div class="text-[10px] text-gray-500 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
-                    ${p.sender_ignores ? `<div class="text-[10px] text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
+                    <div class="text-xs text-gray-500 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
+                    ${p.sender_ignores ? `<div class="text-xs text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
                     <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
                         <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
                         <input data-role="f-date" type="date" value="${escProp(p._date || '')}" class="${inputCls}">
@@ -1265,14 +1296,14 @@
                             <input data-role="f-start" type="time" value="${escProp(p._startTime || '')}" class="${inputCls} w-full min-w-0">
                             <input data-role="f-end" type="time" value="${escProp(p._endTime || '')}" class="${inputCls} w-full min-w-0">
                         </div>
-                        <p class="col-span-2 text-[10px] text-gray-500">Clear the start time for all-day.</p>
+                        <p class="col-span-2 text-xs text-gray-500">Clear the start time for all-day.</p>
                     </div>
                     <div data-role="errand-panel" class="flex gap-1.5 mt-2 ${p._target === 'errand' ? '' : 'hidden'}">
                         <input data-role="f-eloc" type="text" placeholder="Errand location (required)" value="${escProp(p._errandLocation || '')}" class="flex-1 min-w-0 ${inputCls}">
                         <input data-role="f-emins" type="number" min="5" step="5" value="${escProp(p._errandMins || 30)}" class="w-16 ${inputCls}">
                     </div>
                     <div class="flex gap-2 mt-2">
-                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-xs" data-role="target">
+                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-[16px]" data-role="target">
                             <option value="">Whose calendar?</option>${extraOpt}${opts}
                         </select>
                         <button data-role="approve" class="bg-green-600 active:bg-green-700 disabled:opacity-40 text-white font-bold text-xs px-3 rounded-lg shrink-0">✓ Approve</button>
@@ -1710,7 +1741,7 @@
                     return `<button onclick="openMomentFromStrip('${m.channel_id}','${m.id}')"
                         class="relative w-20 h-20 rounded-xl overflow-hidden border border-pink-900/60 shrink-0">
                         ${media}
-                        <span class="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white truncate px-1">${mfEscape(m.event_title)}</span>
+                        <span class="absolute bottom-0 inset-x-0 bg-black/60 text-xs text-white truncate px-1">${mfEscape(m.event_title)}</span>
                     </button>`;
                 }).join('');
                 strip.style.display = 'block';
@@ -1748,11 +1779,11 @@
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
                             <span class="font-bold text-gray-100 truncate">${mfEscape(d.name)}</span>
-                            <span class="text-[11px] text-gray-500 shrink-0">${t}</span>
+                            <span class="text-xs text-gray-500 shrink-0">${t}</span>
                         </div>
                         <div class="text-sm text-gray-400 truncate">${mfEscape(preview)}</div>
                     </div>
-                    ${c.unread ? `<span class="min-w-[20px] h-[20px] px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
+                    ${c.unread ? `<span class="min-w-[20px] h-[20px] px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
                 </button>`;
             }).join('');
         }
@@ -1807,7 +1838,7 @@
             else label = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
             return `<div class="flex items-center gap-2 my-3 self-stretch">
                 <div class="flex-1 h-px bg-gray-700/60"></div>
-                <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">${label}</span>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">${label}</span>
                 <div class="flex-1 h-px bg-gray-700/60"></div>
             </div>`;
         }
@@ -1846,17 +1877,17 @@
                     ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
                     : '';
                 return `${divider}<div id="msg-${m.id}" class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
-                    ${!mine ? `<div class="text-[11px] font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
+                    ${!mine ? `<div class="text-xs font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}
                     ${att}${bubble}
                     ${m.card ? renderCard(m.card) : ''}
                     <div class="flex items-center gap-1.5 mt-0.5 ${mine ? 'justify-end' : ''}">
                         ${renderReactions(m)}
                         <button onclick="toggleQuickReact('${m.id}')" type="button"
-                            class="text-[13px] text-gray-500 active:text-gray-400 leading-none px-0.5">☺+</button>
+                            class="text-xs text-gray-500 active:text-gray-400 leading-none px-0.5">☺+</button>
                         ${(canEditMsg(m) || canDeleteMsg(m))
                             ? `<button onclick="toggleMsgActions('${m.id}')" type="button"
-                                   class="text-[13px] text-gray-500 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
-                        <span class="text-[10px] text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
+                                   class="text-xs text-gray-500 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
+                        <span class="text-xs text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
                     </div>
                     <div id="qr-${m.id}" class="mt-1 ${mine ? 'text-right' : ''}" style="display:none">
                         ${['👍', '❤️', '😂', '👏', '🎉', '💪'].map(e =>
@@ -1865,9 +1896,9 @@
                     </div>
                     <div id="ma-${m.id}" class="mt-1 flex gap-1.5 ${mine ? 'justify-end' : ''}" style="display:none">
                         ${canEditMsg(m) ? `<button onclick="editMessage('${m.id}')" type="button"
-                            class="text-[12px] font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
+                            class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
                         ${canDeleteMsg(m) ? `<button onclick="deleteMessage('${m.id}')" type="button"
-                            class="text-[12px] font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
+                            class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
                     </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
@@ -1883,7 +1914,7 @@
             return Object.keys(r).filter(e => (r[e] || []).length).map(e => {
                 const mine = (r[e] || []).includes(selectedMemberId);
                 return `<button onclick="reactTo('${m.id}','${e}')" type="button"
-                    class="text-[12px] leading-none px-1.5 py-0.5 rounded-full border ${mine ? 'bg-blue-900/60 border-blue-500' : 'bg-gray-800 border-gray-700'}">${e}${r[e].length > 1 ? `<span class="text-[10px] text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</button>`;
+                    class="text-xs leading-none px-1.5 py-0.5 rounded-full border ${mine ? 'bg-blue-900/60 border-blue-500' : 'bg-gray-800 border-gray-700'}">${e}${r[e].length > 1 ? `<span class="text-xs text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</button>`;
             }).join('');
         }
 
@@ -2008,7 +2039,7 @@
                 <button onclick="this.closest('.moment-overlay').remove()"
                     class="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white text-lg leading-none">✕</button>
                 <div class="max-w-full text-center">
-                    ${opts.title ? `<div class="text-[12px] font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${mfEscape(opts.title)}</div>` : ''}
+                    ${opts.title ? `<div class="text-xs font-black uppercase tracking-widest text-pink-300 mb-2">📸 ${mfEscape(opts.title)}</div>` : ''}
                     ${media}
                     ${opts.body ? `<div class="text-white font-bold mt-3 px-4">${mfEscape(opts.body)}</div>` : ''}
                     ${opts.senderName ? `<div class="text-gray-400 text-sm mt-1">from ${mfEscape(opts.senderName)}</div>` : ''}
@@ -2093,18 +2124,18 @@
             let footer;
             if (card.status === 'proposed' && (card.actions || []).length) {
                 footer = `<div class="flex gap-2 mt-2">` + card.actions.map(a =>
-                    `<button onclick="actOnProposal('${card.proposal_id}','${a.act}')" class="px-3 py-1 rounded-lg text-[13px] font-semibold ${a.style === 'primary' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}">${mfEscape(a.label)}</button>`
+                    `<button onclick="actOnProposal('${card.proposal_id}','${a.act}')" class="px-3 py-1 rounded-lg text-xs font-semibold ${a.style === 'primary' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}">${mfEscape(a.label)}</button>`
                 ).join('') + `</div>`;
             } else {
                 const label = card.status === 'approved' ? '✓ Approved' : (card.status === 'dismissed' ? 'Dismissed' : card.status);
-                footer = `<div class="text-[12px] mt-1 ${card.status === 'approved' ? 'text-green-400' : 'text-gray-500'}">${mfEscape(label)}</div>`;
+                footer = `<div class="text-xs mt-1 ${card.status === 'approved' ? 'text-green-400' : 'text-gray-500'}">${mfEscape(label)}</div>`;
             }
             const badge = card.action_label
-                ? `<div class="inline-block text-[10px] uppercase tracking-wide font-bold text-violet-300 bg-violet-900/40 px-2 py-0.5 rounded mb-1">${mfEscape(card.action_label)}</div>`
+                ? `<div class="inline-block text-xs uppercase tracking-wide font-bold text-violet-300 bg-violet-900/40 px-2 py-0.5 rounded mb-1">${mfEscape(card.action_label)}</div>`
                 : '';
             return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
                 ${badge}
-                <div class="text-[13px] text-gray-200 font-medium">${mfEscape(card.title || '')}</div>
+                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.title || '')}</div>
                 ${footer}
             </div>`;
         }
@@ -2224,7 +2255,7 @@
                 <div class="relative ${body ? 'mb-1' : ''}">${media}${uploadOverlay(kind === 'video')}</div>
                 ${body ? `<div class="px-3.5 py-2 rounded-2xl bg-blue-600 text-white rounded-br-sm text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(body)}</div>` : ''}
                 <div class="flex items-center gap-1.5 mt-0.5 justify-end">
-                    <span class="upload-status text-[10px] text-gray-500">Sending…</span>
+                    <span class="upload-status text-xs text-gray-500">Sending…</span>
                 </div>`;
             // Only revoke what we created; a data-URL poster is not a blob URL.
             el._objUrl = poster ? null : objUrl;
@@ -2289,7 +2320,7 @@
             const status = el.querySelector('.upload-status');
             if (status) {
                 status.textContent = msg || 'Upload failed';
-                status.className = 'upload-status text-[10px] text-red-400 font-bold';
+                status.className = 'upload-status text-xs text-red-400 font-bold';
             }
         }
 
@@ -2582,7 +2613,7 @@
                 const m = pickerMember(id);
                 return `<span class="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/50 text-blue-200 text-sm font-semibold">
                     ${mfEscape(m.name)}
-                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-blue-100 text-[10px] leading-none font-bold">✕</button>
+                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-blue-100 text-xs leading-none font-bold">✕</button>
                 </span>`;
             }).join('');
             document.getElementById('new-chat-start').disabled = !newChatSelected.length;
@@ -2600,7 +2631,7 @@
                     <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-gray-100 shrink-0 overflow-hidden"
                         style="border-color: ${m.color_code || '#6b7280'}">${avatarInner(m, m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>
                     <span class="font-semibold text-gray-100">${mfEscape(m.name)}</span>
-                    ${m.role === 'helper' ? '<span class="text-[10px] uppercase tracking-wide text-amber-400 font-bold ml-auto">Helper</span>' : ''}
+                    ${m.role === 'helper' ? '<span class="text-xs uppercase tracking-wide text-amber-400 font-bold ml-auto">Helper</span>' : ''}
                 </button>`).join('')
                 || '<p class="text-center text-gray-500 text-sm mt-3">No one else to add.</p>';
         }
@@ -2732,7 +2763,7 @@
                 <div style="animation:statusPop .5s ease-out forwards"
                     class="relative text-center px-8 py-8 bg-gray-900 border border-amber-500/40 rounded-3xl shadow-2xl mx-6">
                     <div class="text-6xl mb-3">${status.emoji || '🏅'}</div>
-                    <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1">New ${label}</div>
+                    <div class="text-xs font-black uppercase tracking-widest text-gray-500 mb-1">New ${label}</div>
                     <div class="text-2xl font-black text-amber-300">${mfEscape(status.name)}</div>
                     <div class="text-sm text-gray-400 mt-2">Amazing work — keep it up! 🎉</div>
                 </div>`;
@@ -2743,7 +2774,7 @@
 
         function statusBadge(status, extraCls) {
             if (!status) return '';
-            return `<span class="inline-flex items-center gap-1 text-[11px] font-black text-amber-200 bg-amber-500/10 border border-amber-500/40 px-2 py-0.5 rounded-full ${extraCls || ''}">${status.emoji || ''} ${mfEscape(status.name)}</span>`;
+            return `<span class="inline-flex items-center gap-1 text-xs font-black text-amber-200 bg-amber-500/10 border border-amber-500/40 px-2 py-0.5 rounded-full ${extraCls || ''}">${status.emoji || ''} ${mfEscape(status.name)}</span>`;
         }
 
         function choreEligibleForMe(c) {
@@ -2794,7 +2825,7 @@
             }
 
             const btn = (label, cls, onclick) =>
-                `<button onclick="${onclick}" class="text-[12px] font-bold px-3 py-2 rounded-lg ${cls}">${label}</button>`;
+                `<button onclick="${onclick}" class="text-xs font-bold px-3 py-2 rounded-lg ${cls}">${label}</button>`;
 
             if (role === 'parent') {
                 const toVerify = choresData.filter(c => c.state === 'done');
@@ -2839,9 +2870,9 @@
                     const pending = redemptionsData.some(r => r.member_id === selectedMemberId && r.reward_id === rw.id);
                     const afford = spendable >= rw.cost;
                     const btnHtml = pending
-                        ? '<span class="text-[10px] font-black uppercase text-amber-300">Asked ⏳</span>'
+                        ? '<span class="text-xs font-black uppercase text-amber-300">Asked ⏳</span>'
                         : `<button onclick="redeemReward('${rw.id}')" ${afford ? '' : 'disabled'}
-                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${afford ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-500'}">Redeem</button>`;
+                            class="text-xs font-bold px-2.5 py-1.5 rounded-lg ${afford ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-500'}">Redeem</button>`;
                     return `<div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex flex-col gap-1.5">
                         <div class="text-gray-100 font-bold text-sm leading-tight">${mfEscape(rw.title)}</div>
                         <div class="flex items-center justify-between mt-auto">
@@ -2858,7 +2889,7 @@
                     c.state === 'claimed'
                         ? btn('Done!', 'bg-blue-600 text-white active:bg-blue-700', `choreDone('${c.id}')`) +
                           btn('↩', 'bg-gray-800 text-gray-400 border border-gray-700', `unclaimChore('${c.id}')`)
-                        : '<span class="text-[11px] font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full self-center">Waiting for OK</span>',
+                        : '<span class="text-xs font-black uppercase text-amber-300 bg-amber-500/10 border border-amber-500/40 px-2 py-1 rounded-full self-center">Waiting for OK</span>',
                     '')));
             }
 
@@ -2922,7 +2953,7 @@
         function poolGoalCard(rw, role) {
             const pool = rw.pool;
             const chips = pool.contributions.filter(c => c.amount > 0).map(c =>
-                `<span class="inline-flex items-center gap-1 text-[11px] font-bold text-gray-300">
+                `<span class="inline-flex items-center gap-1 text-xs font-bold text-gray-300">
                     <span class="w-2 h-2 rounded-full" style="background-color:${c.color_code || '#3b82f6'}"></span>
                     ${mfEscape(c.member_name || '?')} ${c.amount}</span>`).join('');
             const caption = pool.funded
@@ -2932,22 +2963,22 @@
             if (role === 'child') {
                 const mine = (pool.contributions.find(c => c.member_id === selectedMemberId) || {amount: 0}).amount;
                 const mineHtml = mine
-                    ? `<span class="text-[11px] font-bold text-emerald-300">My pledge: ${mine} ⭐</span>
-                       <button onclick="withdrawPledge('${rw.id}')" class="text-[11px] font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>`
+                    ? `<span class="text-xs font-bold text-emerald-300">My pledge: ${mine} ⭐</span>
+                       <button onclick="withdrawPledge('${rw.id}')" class="text-xs font-bold px-2 py-1 rounded-lg bg-gray-800 text-gray-400 border border-gray-700">↩</button>`
                     : '';
                 const chipIn = pool.funded ? '' :
                     `<input id="pool-amt-${rw.id}" type="number" min="1" max="${pool.remaining}" placeholder="pts"
-                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100">
+                        class="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-[16px] text-gray-100">
                      <button onclick="contributeToPool('${rw.id}')"
-                        class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white active:bg-emerald-700">Chip in</button>`;
+                        class="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white active:bg-emerald-700">Chip in</button>`;
                 actions = `<div class="flex items-center gap-2 flex-wrap">${mineHtml}${chipIn}</div>`;
             } else if (role === 'parent') {
                 const grantLabel = poolForceIds.has(rw.id) ? 'Grant anyway ⚠️' : '✓ Grant';
                 const grant = pool.funded || poolForceIds.has(rw.id)
-                    ? `<button onclick="decidePool('${rw.id}', true)" class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white active:bg-green-700">${grantLabel}</button>`
+                    ? `<button onclick="decidePool('${rw.id}', true)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-green-600 text-white active:bg-green-700">${grantLabel}</button>`
                     : '';
                 const release = pool.pledged > 0
-                    ? `<button onclick="decidePool('${rw.id}', false)" class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-red-600/80 text-white active:bg-red-700">✗ Release</button>`
+                    ? `<button onclick="decidePool('${rw.id}', false)" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-600/80 text-white active:bg-red-700">✗ Release</button>`
                     : '';
                 actions = (grant || release) ? `<div class="flex items-center gap-2">${grant}${release}</div>` : '';
             }
@@ -2959,10 +2990,10 @@
                 ${rw.description ? `<div class="text-sm text-gray-400">${mfEscape(rw.description)}</div>` : ''}
                 ${poolBarHtml(pool)}
                 <div class="flex items-center justify-between gap-2 flex-wrap">
-                    <div class="flex items-center gap-2 flex-wrap">${chips || '<span class="text-[11px] text-gray-500">No pledges yet</span>'}</div>
+                    <div class="flex items-center gap-2 flex-wrap">${chips || '<span class="text-xs text-gray-500">No pledges yet</span>'}</div>
                     ${caption}
                 </div>
-                ${pool.min_share ? `<div class="text-[11px] text-gray-500">Everyone chips in at least ${pool.min_share} ⭐</div>` : ''}
+                ${pool.min_share ? `<div class="text-xs text-gray-500">Everyone chips in at least ${pool.min_share} ⭐</div>` : ''}
                 ${actions}
             </div>`;
         }
@@ -3242,10 +3273,10 @@
                             <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
                                 <div>
                                     <span class="font-bold text-gray-100">${dName}</span>
-                                    <span class="ml-2 font-bold uppercase tracking-wider text-[10px] px-2 py-1 bg-gray-900 rounded ${colorClass}">${ev.action}</span>
+                                    <span class="ml-2 font-bold uppercase tracking-wider text-xs px-2 py-1 bg-gray-900 rounded ${colorClass}">${ev.action}</span>
                                     <p class="text-xs text-gray-400 mt-1">${ev.details || 'Event ID: ' + ev.event_id}</p>
                                 </div>
-                                <div class="text-[10px] font-bold text-gray-500">${timeStr}</div>
+                                <div class="text-xs font-bold text-gray-500">${timeStr}</div>
                             </div>
                         `;
                     }).join('');
@@ -3699,7 +3730,7 @@
             if (prepItems.length) {
                 prepRow.style.display = 'block';
                 document.getElementById('em-prep').innerHTML = prepItems.map(i =>
-                    `<span class="px-2 py-0.5 text-[11px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('');
+                    `<span class="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('');
             } else {
                 prepRow.style.display = 'none';
             }
@@ -3974,7 +4005,7 @@
         function familyPaxBadges(calendarIds) {
             const meta = scheduleData.calendar_metadata || {};
             return (calendarIds || []).map(c => meta[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' })
-                .map(m => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border truncate max-w-[90px]" style="background-color: ${m.backgroundColor}20; color: ${m.backgroundColor}; border-color: ${m.backgroundColor}50;" title="${m.summary}">${m.summary}</span>`)
+                .map(m => `<span class="px-2 py-0.5 text-xs font-bold rounded-full border truncate max-w-[90px]" style="background-color: ${m.backgroundColor}20; color: ${m.backgroundColor}; border-color: ${m.backgroundColor}50;" title="${m.summary}">${m.summary}</span>`)
                 .join('');
         }
 
@@ -3983,10 +4014,10 @@
             const driverChip = (id, label) => {
                 const d = driversData.find(x => x.id === id);
                 if (!d) return '';
-                return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;">${carIcon}${label ? label + ': ' : ''}${d.name}</span>`;
+                return `<span class="px-2 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1" style="background-color: ${d.color_code}20; color: ${d.color_code}; border-color: ${d.color_code}50;">${carIcon}${label ? label + ': ' : ''}${d.name}</span>`;
             };
-            const needsChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ ${label}</span>`;
-            const grayChip = (label) => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-gray-700/40 text-gray-400 border border-gray-600">${label}</span>`;
+            const needsChip = (label) => `<span class="px-2 py-0.5 text-xs font-black rounded-full bg-red-500/20 text-red-400 border border-red-500/50">⚠ ${label}</span>`;
+            const grayChip = (label) => `<span class="px-2 py-0.5 text-xs font-bold rounded-full bg-gray-700/40 text-gray-400 border border-gray-600">${label}</span>`;
 
             // Car chips (absent for zero-car families). Amber ⇄ = not this
             // driver's usual car — a key handoff the humans must coordinate.
@@ -3996,7 +4027,7 @@
                     if (!c) return '';
                     const swap = !!(c.default_driver_id && card.driverIds.size === 1 && !card.driverIds.has(c.default_driver_id));
                     const cls = swap ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-gray-700/40 text-gray-300 border-gray-600';
-                    return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border ${cls}" title="${swap ? 'Not the usual driver for this car' : 'Assigned car'}">${c.icon || '🚗'} ${c.name}${swap ? ' ⇄' : ''}</span>`;
+                    return `<span class="px-2 py-0.5 text-xs font-bold rounded-full border ${cls}" title="${swap ? 'Not the usual driver for this car' : 'Assigned car'}">${c.icon || '🚗'} ${c.name}${swap ? ' ⇄' : ''}</span>`;
                 }).join('')
                 : '';
 
@@ -4020,7 +4051,7 @@
                         <span class="text-xl">✈️</span>
                         <div class="flex-1 min-w-0">
                             <div class="text-blue-200 font-bold leading-tight truncate">${card.title}</div>
-                            <div class="text-[11px] text-blue-400 font-bold uppercase tracking-wider">Trip · All Day</div>
+                            <div class="text-xs text-blue-400 font-bold uppercase tracking-wider">Trip · All Day</div>
                         </div>
                     </div>`;
             }
@@ -4071,7 +4102,7 @@
                     <div class="p-4 pl-5">
                         <div class="text-sm font-bold mb-1 uppercase tracking-wider" style="color: ${color}">${timeStr}</div>
                         <div class="text-gray-100 font-bold text-lg leading-tight mb-2">
-                            ${card.isErrand ? '<span class="text-[10px] tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
+                            ${card.isErrand ? '<span class="text-xs tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
                             ${card.title}
                         </div>
                         ${(paxBadges || driverChips) ? `<div class="flex flex-wrap items-center gap-1 mb-2">${paxBadges}${driverChips}</div>` : ''}
@@ -4129,7 +4160,7 @@
             if (!items || !items.length) return '';
             return `<div class="flex flex-wrap items-center gap-1 mb-2">
                 <span class="text-xs">🎒</span>
-                ${items.map(i => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('')}
+                ${items.map(i => `<span class="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">${mfEscape(i)}</span>`).join('')}
             </div>`;
         }
 
@@ -4277,7 +4308,7 @@
 
                 function getPassengerBadges(eventObj) {
                     const calMetas = (eventObj.calendar_ids || []).map(c => calendar_metadata[c] || { backgroundColor: '#3B82F6', summary: 'Passenger' });
-                    return calMetas.map(meta => `<span class="px-2 py-0.5 text-[10px] font-bold rounded-full border border-gray-600 truncate max-w-[80px]" style="background-color: ${meta.backgroundColor}20; color: ${meta.backgroundColor}; border-color: ${meta.backgroundColor}50;" title="${meta.summary}">${meta.summary}</span>`).join('');
+                    return calMetas.map(meta => `<span class="px-2 py-0.5 text-xs font-bold rounded-full border border-gray-600 truncate max-w-[80px]" style="background-color: ${meta.backgroundColor}20; color: ${meta.backgroundColor}; border-color: ${meta.backgroundColor}50;" title="${meta.summary}">${meta.summary}</span>`).join('');
                 }
 
                 function getHomeLabel(loc) {
@@ -4351,7 +4382,7 @@
                             const carVisual = evCar.image
                                 ? `<img src="${evCar.image}" class="w-5 h-5 rounded object-cover inline-block align-middle mr-1">`
                                 : `${evCar.icon || '🚗'} `;
-                            carChipHtml = `<div class="mb-2"><span class="px-2.5 py-1 text-[11px] font-bold rounded-full border inline-flex items-center ${carCls}" title="${carSwap ? 'Not your usual car — coordinate the keys' : 'Assigned car'}">${carVisual}Take the ${evCar.name}${carSwap ? ' ⇄' : ''}</span></div>`;
+                            carChipHtml = `<div class="mb-2"><span class="px-2.5 py-1 text-xs font-bold rounded-full border inline-flex items-center ${carCls}" title="${carSwap ? 'Not your usual car — coordinate the keys' : 'Assigned car'}">${carVisual}Take the ${evCar.name}${carSwap ? ' ⇄' : ''}</span></div>`;
                         }
                     }
 
@@ -4375,16 +4406,16 @@
                             <div class="ml-4 flex-1 ${bgColor} rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
                                 <div class="text-sm font-bold text-gray-400 mb-1">${(ev.event_type === 'dropoff' || ev.event_type === 'pickup') ? formatTime(ev.start) : formatTime(ev.start) + ' - ' + formatTime(ev.end)}</div>
                                 <div class="${titleClass} font-bold text-xl leading-tight mb-2">
-                                    ${ev.event_type === 'dropoff' ? '<span class="text-[10px] tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-1 rounded mr-2 align-middle border border-orange-500/50">Dropoff</span>' : ''}
-                                    ${ev.event_type === 'pickup' ? '<span class="text-[10px] tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-1 rounded mr-2 align-middle border border-green-500/50">Pickup</span>' : ''}
-                                    ${ev.event_type === 'errand' ? '<span class="text-[10px] tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
+                                    ${ev.event_type === 'dropoff' ? '<span class="text-xs tracking-widest uppercase bg-orange-600/30 text-orange-300 px-2 py-1 rounded mr-2 align-middle border border-orange-500/50">Dropoff</span>' : ''}
+                                    ${ev.event_type === 'pickup' ? '<span class="text-xs tracking-widest uppercase bg-green-600/30 text-green-300 px-2 py-1 rounded mr-2 align-middle border border-green-500/50">Pickup</span>' : ''}
+                                    ${ev.event_type === 'errand' ? '<span class="text-xs tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
                                     ${ev.title}
                                 </div>
                                 ${badges ? `<div class="flex flex-wrap gap-1 mb-2">${badges}</div>` : ''}
                                 ${carChipHtml}
                                 ${prepPillsHtml(prepItemsFor(ev.id))}
                                 ${prepItemsFor(ev.id).length ? `<button onclick="togglePrepConfirmed('${ev.id}', event)"
-                                    class="mb-2 px-3 py-1.5 rounded-lg text-[12px] font-bold border ${isPrepConfirmed(ev.id) ? 'bg-green-600/20 text-green-300 border-green-500/40' : 'bg-gray-900 text-gray-300 border-gray-600 active:bg-gray-700'}">${isPrepConfirmed(ev.id) ? '✓ Packed' : 'Confirm packed'}</button>` : ''}
+                                    class="mb-2 px-3 py-1.5 rounded-lg text-xs font-bold border ${isPrepConfirmed(ev.id) ? 'bg-green-600/20 text-green-300 border-green-500/40' : 'bg-gray-900 text-gray-300 border-gray-600 active:bg-gray-700'}">${isPrepConfirmed(ev.id) ? '✓ Packed' : 'Confirm packed'}</button>` : ''}
                                 ${lateMins > 0 ? `<div class="text-red-400 font-bold text-sm mb-2 flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Arriving ${lateMins}m Late</div>` : ''}
                                 ${ev.location ? `<div class="text-sm text-gray-500 flex items-start gap-1"><svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg><span class="break-words line-clamp-2">${ev.location}</span></div>` : ''}
                             </div>
@@ -4862,7 +4893,7 @@
                 </div>
                 <div class="p-3 bg-gray-800 border-t border-gray-700 shrink-0">
                     <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
-                        <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-[16px] text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                         <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">Send</button>
                     </form>
                 </div>

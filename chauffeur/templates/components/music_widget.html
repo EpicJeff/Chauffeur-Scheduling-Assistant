@@ -42,11 +42,11 @@
     <div id="mw-results" class="mt-2 rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800 max-h-[45vh] overflow-y-auto" style="display: none"></div>
 
     <div id="mw-favorites-section" style="display: none">
-        <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorites</div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorites</div>
         <div id="mw-favorites" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
     </div>
     <div id="mw-fav-tracks-section" style="display: none">
-        <div class="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorite Songs</div>
+        <div class="text-xs font-black uppercase tracking-widest text-gray-500 mt-3 mb-2">Favorite Songs</div>
         <div id="mw-fav-tracks" class="rounded-xl overflow-hidden border border-gray-700/60 divide-y divide-gray-800"></div>
     </div>
 </div>
@@ -441,7 +441,7 @@
                 <span class="block text-[15px] text-white font-bold truncate">${_mwEsc(item.name)}</span>
                 ${sub ? `<span class="block text-xs text-gray-400 truncate">${_mwEsc(sub)}</span>` : ''}
             </span>
-            <span class="text-[10px] font-black uppercase tracking-wider text-gray-500 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 shrink-0">${_mwEsc(type)}</span>
+            <span class="text-xs font-black uppercase tracking-wider text-gray-500 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 shrink-0">${_mwEsc(type)}</span>
         </button>`;
     }
 
@@ -502,7 +502,7 @@
                     : `<div class="w-20 h-20 rounded-xl bg-gray-800 flex items-center justify-center text-2xl shadow-md">${_MW_TYPE_ICON[type] || '📻'}</div>`;
                 return `<button onclick="mwPlay('${_mwEsc(item.uri)}', '${_mwEsc(type)}')" class="w-20 shrink-0 text-left active:opacity-70">
                     ${artHtml}
-                    <span class="block text-[11px] text-gray-300 font-bold truncate mt-1">${_mwEsc(item.name)}</span>
+                    <span class="block text-xs text-gray-300 font-bold truncate mt-1">${_mwEsc(item.name)}</span>
                 </button>`;
             }).join('');
         } else {
