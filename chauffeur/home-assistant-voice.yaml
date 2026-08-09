@@ -25,7 +25,11 @@ esphome:
   name: home-assistant-voice
   friendly_name: Home Assistant Voice
   name_add_mac_suffix: true
-  min_version: 2024.9.0
+  # Was 2024.9.0, from when this config carried its own copies of the audio
+  # components. They come from ESPHome core now, so the floor is the release
+  # that has them — upstream's own figure. Without this an older add-on fails
+  # with "component not found" instead of saying it is out of date.
+  min_version: 2026.6.0
   platformio_options:
     board_build.flash_mode: dio
   on_boot:
@@ -1497,20 +1501,20 @@ voice_kit:
     version: "1.3.1"
     md5: 964635c5bf125529dab14a2472a15401
 
+# All of these except voice_kit have been UPSTREAMED into ESPHome core since
+# this config was forked, and `esphome/voice-kit` now redirects to
+# `home-assistant-voice-pe` — which still has an `esphome/components/`
+# directory, but only `voice_kit` inside it. So the clone succeeded, the lookup
+# for `esphome/components/aic3204/__init__.py` failed, and the build stopped on
+# a component that had not gone missing at all: it had moved into ESPHome
+# itself and is found automatically. Only the one that is still external is
+# listed. Matches upstream home-assistant-voice.yaml.
 external_components:
   - source:
       type: git
-      url: https://github.com/esphome/voice-kit
+      url: https://github.com/esphome/home-assistant-voice-pe
       ref: dev
     components:
-      - aic3204
-      - audio_dac
-      - media_player
-      - micro_wake_word
-      - microphone
-      - nabu
-      - nabu_microphone
-      - voice_assistant
       - voice_kit
     refresh: 0s
 
