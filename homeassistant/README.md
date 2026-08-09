@@ -477,10 +477,14 @@ does the sweep — it reads the entity registry over the WebSocket API, works ou
 how each name would be SPOKEN (digits and ordinals to words, `&` to "and") and
 adds that as an alias:
 
-```bash
-export HA_TOKEN=...                                    # profile -> Security
-python add_voice_aliases.py --url http://homeassistant.local:8123 --exposed-only
-python add_voice_aliases.py --url ... --exposed-only --apply
+```powershell
+$env:HA_TOKEN = "..."          # HA -> your profile -> Security -> long-lived token
+# Use the repo's venv, which already has websockets. A bare `python` on PATH is
+# often a different interpreter that does not.
+.\venv\Scripts\python.exe homeassistant\add_voice_aliases.py `
+    --url http://homeassistant.local:8123 --exposed-only
+.\venv\Scripts\python.exe homeassistant\add_voice_aliases.py `
+    --url http://homeassistant.local:8123 --exposed-only --apply
 ```
 
 Dry run by default, prints every change first, and MERGES with existing aliases

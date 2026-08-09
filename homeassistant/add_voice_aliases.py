@@ -33,7 +33,16 @@ import sys
 try:
     import websockets
 except ImportError:
-    sys.exit("pip install websockets")
+    # Name the interpreter. "pip install websockets" is the obvious message and
+    # it sends people in circles, because a bare `pip` frequently belongs to a
+    # different Python than the one running this file -- so the install
+    # succeeds and the import still fails.
+    sys.exit(f"This needs the 'websockets' package and this Python does not have it:\n"
+             f"  {sys.executable}\n\n"
+             f'Install it into THAT interpreter specifically:\n'
+             f'  "{sys.executable}" -m pip install websockets\n\n'
+             f"Or run the script with a Python that already has it -- the repo's\n"
+             f"venv does, since websockets is in requirements.txt.")
 
 _ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
          "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
@@ -160,6 +169,20 @@ async def main() -> int:
 
     async with HAWebSocket(args.url, args.token) as ha:
         entities = await ha.command(type="config/entity_registry/list")
+        # The name voice matches against is the FRIENDLY NAME, and for most
+        # entities it is not in the entity registry at all: with
+        # `has_entity_name` the displayed name is composed from the DEVICE name
+        # plus the entity's own, so `light.front_porch_column_1` can sit in the
+        # registry with name=None and original_name=None and still be called
+        # "Front Porch Column 1" everywhere a human looks. Reading only the
+        # registry finds the handful of entities named directly and silently
+        # misses every device-named one -- which is most of them.
+        #
+        # The state machine already holds the composed result, so take it from
+        # there rather than reimplementing HA's naming rules and drifting.
+        states = await ha.command(type="get_states")
+        friendly = {s["entity_id"]: (s.get("attributes") or {}).get("friendly_name")
+                    for s in states}
         exposed = await exposed_entity_ids(ha) if args.exposed_only else None
         if args.exposed_only and exposed is None:
             print("! Could not read the Assist exposure list; considering every entity.\n")
@@ -173,7 +196,8 @@ async def main() -> int:
                 continue
             if ent.get("disabled_by") or ent.get("hidden_by"):
                 continue
-            name = ent.get("name") or ent.get("original_name") or ""
+            name = (friendly.get(entity_id) or ent.get("name")
+                    or ent.get("original_name") or "")
             alias = spoken_variant(name)
             if not alias:
                 continue
