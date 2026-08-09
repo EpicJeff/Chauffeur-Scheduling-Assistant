@@ -171,35 +171,53 @@ Either way, a bad flash is recoverable with the **Voice PE Imager**.
 ### Installing a modified YAML
 
 `chauffeur/home-assistant-voice.yaml` in this repo is a **copy for versioning**.
-Editing it changes nothing on the device until it reaches ESPHome.
+Editing it changes nothing until ESPHome can actually read that content.
 
-1. **Take control, once.** ESPHome Device Builder → the Voice PE → **TAKE
-   CONTROL**. This generates a config for it and, crucially, an **API
-   encryption key** and OTA credentials, and re-pairs Home Assistant to it.
-2. **Copy three things out of that generated config before you overwrite it**:
-   `esphome: name:`, `api: encryption: key:`, and the `ota:` password/key.
-3. **EDIT** → paste your YAML → **put those three back**. Then check `wifi:`.
-4. **SAVE → INSTALL → Wirelessly**, and let the build run to
-   `INFO Successfully uploaded program`.
-5. Open **LOGS** and watch the device boot.
+An adopted Voice PE is not a pasted config — it is a small wrapper that pulls
+the real one in as a **package**:
 
-Editing the files directly instead of using the Builder's editor works too —
-they live in the add-on's config folder (`/config/esphome/` in the standard
-layout) — but the editor sidesteps the question of which path your add-on
-version uses.
+```yaml
+substitutions:
+  name: kitchen-voice-assistant
+packages:
+  Nabu Casa.Home Assistant Voice PE: "github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml"
+esphome:
+  name: ${name}
+wifi:
+  ssid: !secret wifi_ssid
+```
 
-**Three traps, and the upstream `home-assistant-voice.yaml` has all three**,
-because it is the factory source rather than an adopted-device config:
+That wrapper is doing real work — the device NAME and the wifi credentials live
+there, and package merging is what lets them win over whatever the upstream
+file says (dictionaries merge key-by-key; the top level takes precedence). So
+customising means repointing the package, not replacing the wrapper.
 
-- **No `api: encryption:`.** Home Assistant already holds a key for this
-  device. Flash firmware without one and it will not pair — the device goes
-  unavailable and you end up deleting and re-adding the integration.
-- **No `ota:` password.** Coming FROM Nabu Casa's firmware the first OTA can be
-  refused, which means USB for that one flash.
-- **No `wifi:` credentials.** It relies on what is already stored in flash.
-  That survives an OTA, but any full erase brings the device back with no
-  network and no way in except USB. Adding `ssid: !secret wifi_ssid` /
-  `password: !secret wifi_password` is cheap insurance.
+**Point it at a LOCAL file.** A remote package is cached against a `refresh`
+interval and pinned to a git ref, so edits you push can take a day to show up —
+or never, if the ref or the repo visibility is wrong. When you are iterating on
+the file, that indirection is the enemy:
+
+1. Copy the YAML into the ESPHome add-on's config folder (`/config/esphome/` in
+   the standard layout), beside `<device>.yaml`. The Builder's editor only
+   edits device configs, so use the File Editor add-on or Samba to put it there.
+2. In the device config, swap the package for a local include:
+
+   ```yaml
+   packages:
+     voice_pe: !include home-assistant-voice.yaml
+   ```
+3. **Validate**, and search the merged output it prints for something only your
+   copy has (`config_revision` below). If it is not there, ESPHome is still
+   reading someone else's file and installing will change nothing.
+4. **Install → Wirelessly**, to `INFO Successfully uploaded program`.
+
+If you would rather keep the remote package, add `refresh: 0s` to it and use
+**Clean Build Files** — but expect to keep fighting the cache.
+
+Only if you abandon the wrapper and paste the factory file as the WHOLE config
+do its omissions start to matter: it carries no `api: encryption:`, no `ota:`
+password and no `wifi:` credentials, because those are the wrapper's job. Left
+out, the device flashes and then cannot be reached.
 
 **Prove the flash took.** A flash that silently did not apply looks exactly like
 a change that did not work, and you will debug the wrong thing. The config logs
