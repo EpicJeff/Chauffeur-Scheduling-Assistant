@@ -118,11 +118,25 @@ Three things bite people here:
       - voice_assistant.start_continuous:          # or it works exactly once
   ```
 
-- **Streaming, but never detecting: mic gain.** The stock Voice PE hangs
-  `gain_factor: 4` off the microphone inside its `micro_wake_word:` block, not
-  the `voice_assistant:` one. Delete mww without moving that gain and the server
-  receives audio far too quiet to cross openWakeWord's threshold — which looks
-  identical to "the wake word doesn't work".
+- **Streaming, but never detecting: you are sending the wrong microphone.** The
+  Voice PE's `nabu_microphone` exposes the XMOS chip as TWO channels, and they
+  are not equivalent:
+
+  ```yaml
+  channel_0:
+    id: asr_mic
+    amplify_shift: 0     # clean speech for STT, AFTER something already woke it
+  channel_1:
+    id: comm_mic
+    amplify_shift: 2     # 4x louder — the channel wake detection runs on
+  ```
+
+  Stock points `micro_wake_word:` at `comm_mic` and `voice_assistant:` at
+  `asr_mic`, which is right when the device wakes itself. Go server-side without
+  touching it and the wake word is now being detected on `asr_mic` — the
+  un-amplified channel — so openWakeWord is fed audio far too quiet to cross its
+  threshold. Raise `amplify_shift` on `channel_0` (2 matches the wake channel),
+  or point `voice_assistant:` at `comm_mic`.
 
 - **The command gets cut off after about a second** — logs show `STT by VAD end`
   right after detection. Fix: ESPHome integration → device settings → set
