@@ -139,6 +139,9 @@ ENTRIES: List[dict] = [
        'How long the wall panel sits untouched on some other page before it '
        'goes back to the home board. Zero leaves it wherever it was left.',
        page='home', anchor='panel-setup'),
+    _e('panel_screensaver_enabled', 'panel', 'Screensaver',
+       'Whether the panel ever shows the idle photo slideshow at all.',
+       page='home', anchor='panel-setup'),
     _e('panel_screensaver_idle_seconds', 'panel', 'Screensaver after idle',
        'How long the panel sits untouched before it dims into the photo '
        'slideshow. Zero turns the screensaver off.',

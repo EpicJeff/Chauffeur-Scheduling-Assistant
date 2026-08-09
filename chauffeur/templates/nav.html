@@ -546,7 +546,42 @@
         if (isPanel) {
             let ssRoot = null, ssLayers = [], ssFront = 0, ssUrls = [], ssIdx = 0;
             let ssSlideTimer = null, ssClockTimer = null, ssIdleTimer = null;
-            let ssCfg = null;
+            let ssCfg = null, ssNext = null, ssHeroTimer = null;
+
+            // "Next up": the board hero — the same "next thing that actually
+            // happens" the home board leads with, so idle never hides an
+            // imminent departure. Refetched every few minutes while active;
+            // the countdown between fetches is computed locally off `start`.
+            const ssFetchHero = async () => {
+                try {
+                    const r = await fetch(apiBase + 'api/home_board');
+                    if (!r.ok) return;
+                    const hero = ((await r.json()) || {}).hero || {};
+                    ssNext = (!hero.all_done && hero.next) ? hero.next : null;
+                } catch (e) { /* keep whatever we had */ }
+                ssRenderNext();
+            };
+
+            const ssRenderNext = () => {
+                const el = document.getElementById('panel-ss-next');
+                if (!el) return;
+                if (!ssNext) { el.style.display = 'none'; return; }
+                const start = ssNext.start ? new Date(ssNext.start) : null;
+                const mins = start ? Math.round((start - Date.now()) / 60000) : null;
+                // Once it is well underway it stops being "next" — drop it
+                // rather than counting up from the past until the refetch.
+                if (mins !== null && mins < -10) { el.style.display = 'none'; return; }
+                const when = mins === null ? (ssNext.at || '')
+                    : mins <= 0 ? 'now'
+                    : mins < 60 ? `in ${mins} min`
+                    : (ssNext.at || '');
+                const leave = ssNext.leave_label
+                    ? ` · leave ${ssNext.leave_label}${ssNext.driver ? ' — ' + ssNext.driver : ''}`
+                    : (ssNext.driver ? ` · ${ssNext.driver}` : '');
+                el.style.display = '';
+                el.querySelector('.ss-next-title').textContent = ssNext.title || '';
+                el.querySelector('.ss-next-when').textContent = `${ssNext.at || ''}${when && when !== ssNext.at ? ' · ' + when : ''}${leave}`;
+            };
 
             const ssClock = () => {
                 const el = document.getElementById('panel-ss-clock');
@@ -556,6 +591,7 @@
                     now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                 el.querySelector('.ss-date').textContent =
                     now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+                ssRenderNext();
             };
 
             // One slide: paint the back layer, Ken Burns it, crossfade.
@@ -605,6 +641,7 @@
                 window._chfSsActive = false;
                 clearInterval(ssSlideTimer);
                 clearInterval(ssClockTimer);
+                clearInterval(ssHeroTimer);
                 if (ssRoot) ssRoot.remove();
                 ssRoot = null; ssLayers = [];
                 if (window._chfSsPendingHome) {
@@ -637,13 +674,21 @@
                 ssRoot.innerHTML = `
                     <div class="ss-layer"></div><div class="ss-layer"></div>
                     <div id="panel-ss-scrim"></div>
-                    <div id="panel-ss-clock"><div class="ss-time"></div><div class="ss-date"></div></div>`;
+                    <div id="panel-ss-clock"><div class="ss-time"></div><div class="ss-date"></div></div>
+                    <div id="panel-ss-next" style="display:none">
+                        <div class="ss-next-label">Next up</div>
+                        <div class="ss-next-title"></div>
+                        <div class="ss-next-when"></div>
+                    </div>`;
                 document.body.appendChild(ssRoot);
                 ssLayers = [...ssRoot.querySelectorAll('.ss-layer')];
                 ssFront = 0;
                 ssIdx = -1;
                 ssClock();
                 ssClockTimer = setInterval(ssClock, 15000);
+                ssNext = null;
+                ssFetchHero();
+                ssHeroTimer = setInterval(ssFetchHero, 180000);
                 if (ssUrls.length) {
                     ssAdvance();
                     ssSlideTimer = setInterval(ssAdvance, (ssCfg.dwell_seconds || 20) * 1000);

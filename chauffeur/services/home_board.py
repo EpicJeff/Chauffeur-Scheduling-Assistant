@@ -1159,8 +1159,13 @@ def screensaver_config(settings: dict = None) -> dict:
     source = str(settings.get('panel_screensaver_source') or 'photos').lower()
     if source not in ('photos', 'media', 'background'):
         source = 'photos'
+    # The master switch folds into idle_seconds: 0 already means "never
+    # starts" everywhere downstream, so disabled needs no second flag on the
+    # wire. Absent means enabled — the settings dict predates the switch.
+    enabled = settings.get('panel_screensaver_enabled')
+    enabled = True if enabled is None else bool(enabled)
     return {
-        'idle_seconds': _int('panel_screensaver_idle_seconds', 600),
+        'idle_seconds': _int('panel_screensaver_idle_seconds', 600) if enabled else 0,
         'dwell_seconds': _int('panel_screensaver_dwell_seconds', 20, lo=5, hi=600),
         'source': source,
     }

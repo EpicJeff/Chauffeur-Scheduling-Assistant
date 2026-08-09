@@ -902,6 +902,13 @@
                         Home Assistant media folder, or the wallpaper above can slow-pan.
                         Zero seconds turns it off.
                     </p>
+                    <label class="flex items-center gap-2 mb-3 cursor-pointer">
+                        <input type="checkbox" x-model="draft.panel_screensaver_enabled"
+                            class="w-5 h-5 rounded accent-blue-500">
+                        <span class="text-sm font-bold text-white">Show the screensaver</span>
+                    </label>
+                    <template x-if="draft.panel_screensaver_enabled">
+                    <div>
                     <div class="flex items-center gap-2 mb-3">
                         <input type="number" min="0" step="60" x-model.number="draft.panel_screensaver_idle_seconds"
                             class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
@@ -925,6 +932,8 @@
                             class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
                         <span class="text-sm text-gray-500">seconds per photo</span>
                     </div>
+                    </div>
+                    </template>
                 </div>
             </div>
 
@@ -978,6 +987,7 @@
                     panel_theme_sunset_offset_minutes: 0,
                     panel_theme_sunrise_offset_minutes: 0,
                     panel_page_backgrounds: {},
+                    panel_screensaver_enabled: true,
                     panel_screensaver_idle_seconds: 600,
                     panel_screensaver_source: 'photos',
                     panel_screensaver_media_path: '',
@@ -1417,6 +1427,9 @@
                             // Same absent-vs-zero discipline as idle return:
                             // stored settings predate the screensaver, so
                             // absent means the default while 0 stays off.
+                            panel_screensaver_enabled:
+                                s.panel_screensaver_enabled === undefined
+                                    ? true : !!s.panel_screensaver_enabled,
                             panel_screensaver_idle_seconds:
                                 s.panel_screensaver_idle_seconds === undefined
                                     ? 600 : s.panel_screensaver_idle_seconds,
@@ -1527,6 +1540,7 @@
                                         parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds,
+                                panel_screensaver_enabled: !!this.draft.panel_screensaver_enabled,
                                 panel_screensaver_idle_seconds:
                                     Number(this.draft.panel_screensaver_idle_seconds) || 0,
                                 panel_screensaver_source: this.draft.panel_screensaver_source,

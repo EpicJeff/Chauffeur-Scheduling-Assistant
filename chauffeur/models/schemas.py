@@ -752,10 +752,14 @@ class Settings(BaseModel):
     # will set zero of them.
     panel_page_backgrounds: Dict[str, str] = Field(default_factory=dict)
     # --- Screensaver (idle photo slideshow) ---
+    # The master switch. Separate from the seconds so turning the screensaver
+    # off and on again does not forget how long the household tuned the idle
+    # wait to be.
+    panel_screensaver_enabled: bool = True
     # After this long untouched, any panel page dims into a Ken Burns photo
     # slideshow with a clock. Independent of panel_idle_return_seconds: the
     # return-home makes the wall a consistent APPLIANCE, the screensaver makes
-    # an untouched wall WORTH LOOKING AT. 0 disables it.
+    # an untouched wall WORTH LOOKING AT. 0 also disables it.
     panel_screensaver_idle_seconds: int = 600
     # Where the pictures come from:
     #   photos     — the family's own Moments (photo attachments in event

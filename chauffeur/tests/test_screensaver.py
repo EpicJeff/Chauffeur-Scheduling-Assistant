@@ -37,6 +37,16 @@ def scenario_explicit_zero_stays_off():
     check(cfg['idle_seconds'] == 0, "an explicit 0 is a real choice and stays off")
 
 
+def scenario_master_switch_beats_the_seconds():
+    cfg = home_board.screensaver_config({'panel_screensaver_enabled': False,
+                                         'panel_screensaver_idle_seconds': 600})
+    check(cfg['idle_seconds'] == 0,
+          "disabled must fold into idle_seconds=0 — clients only know one flag")
+    cfg = home_board.screensaver_config({'panel_screensaver_enabled': True})
+    check(cfg['idle_seconds'] == 600,
+          "re-enabling gets the tuned/default seconds back, not zero")
+
+
 def scenario_garbage_settings_resolve_not_crash():
     cfg = home_board.screensaver_config({
         'panel_screensaver_idle_seconds': 'soon',
@@ -222,7 +232,10 @@ const routes = {
     idle_seconds: 180,
     screensaver: { idle_seconds: 0.05, dwell_seconds: 5, source: 'photos' } },
   'api/home_board/catalog': { widgets: [], widget_defaults: [], tabs: [], tab_defaults: [] },
-  'api/home_board': { hero: { remaining: 0, later: [], all_done: true, kids: [] }, tiles: [] },
+  'api/home_board': { hero: { remaining: 1, later: [], all_done: false, kids: [],
+    next: { title: 'Soccer Practice', at: '4:00 PM', leave_label: '3:20 PM',
+            driver: 'Mom', start: new Date(Date.now() + 45 * 60000).toISOString() } },
+    tiles: [] },
   'api/settings': {},
 };
 
@@ -250,6 +263,11 @@ setTimeout(() => {
     out.clock = (doc.querySelector('#panel-ss-clock .ss-time') || {}).textContent || '';
     out.gradientPainted = [...before.querySelectorAll('.ss-layer')]
       .some(l => l.style.opacity === '1' && l.style.backgroundImage.includes('gradient'));
+    const next = doc.getElementById('panel-ss-next');
+    out.next = next && next.style.display !== 'none'
+      ? { title: (next.querySelector('.ss-next-title') || {}).textContent,
+          when: (next.querySelector('.ss-next-when') || {}).textContent }
+      : null;
     before.dispatchEvent(new w.Event('pointerdown', { bubbles: true, cancelable: true }));
     out.goneAfterTap = !doc.getElementById('panel-screensaver');
   }
@@ -297,6 +315,12 @@ def scenario_jsdom_overlay_appears_and_a_tap_wakes_it():
           "an empty playlist should paint the gradient, not a black slab")
     check(out.get('goneAfterTap'),
           "a tap did not dismiss the screensaver")
+    nxt = out.get('next') or {}
+    check(nxt.get('title') == 'Soccer Practice',
+          f"the Next up card is missing the upcoming event: {out.get('next')}")
+    check('4:00 PM' in (nxt.get('when') or '') and 'in 45 min' in (nxt.get('when') or '')
+          and 'leave 3:20 PM' in (nxt.get('when') or '') and 'Mom' in (nxt.get('when') or ''),
+          f"the Next up line lost its time/countdown/leave/driver: {nxt.get('when')!r}")
 
 
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
