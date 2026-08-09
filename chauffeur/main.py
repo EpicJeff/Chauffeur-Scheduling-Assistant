@@ -4195,6 +4195,44 @@ def remove_routine(routine_id: str):
     storage.delete_routine(routine_id)
     return {"status": "deleted"}
 
+class RoutineCopyRequest(BaseModel):
+    from_member_id: str
+    to_member_id: str
+
+@app.post("/api/routines/copy")
+def copy_routines(req: RoutineCopyRequest):
+    """Copy one member's routine onto another — the kids' routines are mostly
+    the same, so set one up, copy it, edit the differences. MERGE semantics:
+    an item whose title the target already has (case-insensitive) is skipped,
+    so copying onto a half-built routine tops it up rather than doubling it,
+    and copying twice is harmless. Checks/streaks never copy — they are the
+    target kid's own history."""
+    from models.schemas import RoutineItem
+    if req.from_member_id == req.to_member_id:
+        raise HTTPException(status_code=400, detail="Pick two different people")
+    for mid in (req.from_member_id, req.to_member_id):
+        if not storage.get_member(mid):
+            raise HTTPException(status_code=404, detail="Member not found")
+    src = storage.get_routines(req.from_member_id)
+    if not src:
+        raise HTTPException(status_code=400, detail="Nothing to copy — that routine is empty")
+    have = {(r.get('title') or '').strip().casefold()
+            for r in storage.get_routines(req.to_member_id)}
+    created = skipped = 0
+    for r in src:
+        key = (r.get('title') or '').strip().casefold()
+        if not key or key in have:
+            skipped += 1
+            continue
+        have.add(key)
+        storage.add_routine(RoutineItem(
+            member_id=req.to_member_id, title=r['title'],
+            emoji=r.get('emoji') or None,
+            time_of_day=r.get('time_of_day') or None,
+            days_of_week=sorted(set(r.get('days_of_week') or []))).model_dump())
+        created += 1
+    return {"created": created, "skipped": skipped}
+
 @app.get("/api/routines/day")
 def routines_day(member_id: str, date: Optional[str] = None):
     import datetime as _dt

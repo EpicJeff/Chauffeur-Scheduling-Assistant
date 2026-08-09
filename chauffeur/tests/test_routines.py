@@ -174,6 +174,57 @@ SCENARIOS = [
     scenario_rewards_flow,
 ]
 
+def scenario_copy_routine_between_kids():
+    """Set one kid up, copy to the next, edit the differences. Merge by
+    title: re-copying is harmless, a half-built routine tops up, and the
+    target's own check history is never touched."""
+    reset_db()
+    import main
+    from fastapi import HTTPException
+    _member("alex", "Alex", "child")
+    _member("emma", "Emma", "child")
+    _routine("a1", "alex", "Brush teeth", tod="07:30")
+    _routine("a2", "alex", "Make bed", days=[0, 1, 2, 3, 4])
+    storage.update_routine("a1", {"emoji": "X"})   # hand-picked glyph rides along
+
+    out = main.copy_routines(main.RoutineCopyRequest(
+        from_member_id="alex", to_member_id="emma"))
+    check(out == {"created": 2, "skipped": 0}, f"first copy creates both: {out}")
+    emma = {r["title"]: r for r in storage.get_routines("emma")}
+    check(set(emma) == {"Brush teeth", "Make bed"}, f"titles copied: {set(emma)}")
+    check(emma["Brush teeth"]["time_of_day"] == "07:30"
+          and emma["Brush teeth"]["emoji"] == "X",
+          f"time and glyph survive the copy: {emma['Brush teeth']}")
+    check(emma["Make bed"]["days_of_week"] == [0, 1, 2, 3, 4],
+          f"day masks survive the copy: {emma['Make bed']}")
+    check({r["id"] for r in storage.get_routines("emma")}.isdisjoint(
+          {r["id"] for r in storage.get_routines("alex")}),
+          "copies get their OWN ids — shared ids would share check history")
+
+    # Emma edits one, Alex gains one, re-copy: only the new item lands.
+    _routine("a3", "alex", "Feed the cat", tod="17:00")
+    out = main.copy_routines(main.RoutineCopyRequest(
+        from_member_id="alex", to_member_id="emma"))
+    check(out == {"created": 1, "skipped": 2},
+          f"re-copy tops up without doubling: {out}")
+
+    # Guard rails.
+    for bad, code in ((("alex", "alex"), 400), (("ghost", "emma"), 404)):
+        try:
+            main.copy_routines(main.RoutineCopyRequest(
+                from_member_id=bad[0], to_member_id=bad[1]))
+            check(False, f"{bad} should have been refused")
+        except HTTPException as e:
+            check(e.status_code == code, f"{bad} -> {e.status_code}, wanted {code}")
+    try:
+        main.copy_routines(main.RoutineCopyRequest(
+            from_member_id="emma", to_member_id="alex"))
+    except HTTPException:
+        check(False, "copying back is legal — Alex has nothing Emma lacks")
+
+
+SCENARIOS.append(scenario_copy_routine_between_kids)
+
 if __name__ == "__main__":
     import traceback
 
