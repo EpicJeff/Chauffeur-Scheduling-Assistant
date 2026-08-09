@@ -62,6 +62,7 @@ def _base_stubs(**extra):
         'ha_api.get_entities': lambda domain: (
             [{'entity_id': 'tts.piper', 'name': 'Piper', 'state': 'idle'}]
             if domain == 'tts' else []),
+        'ha_api.get_pipeline_tts': lambda ttl=300: None,
         'storage.get_settings': lambda: {},
     }
     stubs.update(extra)
@@ -168,6 +169,42 @@ def scenario_announce_speaks_on_the_right_channel():
         res = announce.announce('garage', 'hello')
         check(res['status'] == 'error' and 'text-to-speech' in res['message'],
               f"no TTS engine is named as the reason, got {res}")
+
+
+def scenario_the_fallback_speaks_in_argyles_own_voice():
+    """The satellite path uses its pipeline's voice for free; the tts.speak
+    path used to grab the first tts entity's DEFAULT voice, so the pool house
+    answered in a different voice than the kitchen. The Argyle pipeline's
+    engine + voice + language now ride along whenever the pipeline names a
+    real tts entity; a legacy engine name ('cloud') can't carry its voice
+    over tts.speak and degrades to the old behaviour rather than erroring."""
+    calls = []
+
+    def record(domain, service, data=None, **kw):
+        calls.append((domain, service, data, kw))
+        return {}
+
+    pipe = {'engine': 'tts.home_assistant_cloud', 'voice': 'JennyNeural',
+            'language': 'en-US'}
+    with _Stub(**_base_stubs(**{'ha_api.call_service': record,
+                                'ha_api.get_pipeline_tts': lambda ttl=300: pipe})):
+        res = announce.announce('garage', 'Dinner!')
+        _, _, data, _ = calls[-1]
+        check(res['status'] == 'success' and
+              data == {'entity_id': 'tts.home_assistant_cloud',
+                       'media_player_entity_id': 'media_player.garage_ma',
+                       'message': 'Dinner!', 'language': 'en-US',
+                       'options': {'voice': 'JennyNeural'}},
+              f"the pipeline's engine, voice and language all travel, got {data}")
+
+    legacy = {'engine': 'cloud', 'voice': 'JennyNeural', 'language': 'en-US'}
+    with _Stub(**_base_stubs(**{'ha_api.call_service': record,
+                                'ha_api.get_pipeline_tts': lambda ttl=300: legacy})):
+        announce.announce('garage', 'Dinner!')
+        _, _, data, _ = calls[-1]
+        check(data.get('entity_id') == 'tts.piper' and 'options' not in data,
+              "a legacy engine name degrades to the first tts entity and "
+              f"never smuggles another engine's voice id onto it, got {data}")
 
 
 def scenario_the_failure_sentences_are_honest():

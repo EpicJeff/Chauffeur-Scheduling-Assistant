@@ -226,6 +226,83 @@ def get_area_map(ttl: float = 60) -> list:
         return data
 
 
+def _ws_url_and_token():
+    token = os.environ.get('SUPERVISOR_TOKEN')
+    if token:
+        return 'ws://supervisor/core/websocket', token
+    base, token = _base_and_token()
+    if not base:
+        return None, None
+    ws = base.replace('https://', 'wss://', 1).replace('http://', 'ws://', 1)
+    return f"{ws}/websocket", token          # base already ends with /api
+
+
+def ws_command(command: str, timeout: float = 8):
+    """One-shot Core WebSocket command: connect → auth → one command → close.
+
+    Assist pipeline config (and the registries proper) live behind the
+    WebSocket API only. This deliberately stays a ONE-SHOT — the REST-only
+    rule was protecting against a persistent client to keep alive, not
+    against the transport itself. Returns the command's `result` or None."""
+    url, token = _ws_url_and_token()
+    if not url:
+        return None
+    try:
+        import json as _json
+        from websockets.sync.client import connect
+        with connect(url, open_timeout=timeout, close_timeout=timeout) as ws:
+            for _ in range(3):
+                msg = _json.loads(ws.recv(timeout))
+                if msg.get('type') == 'auth_required':
+                    ws.send(_json.dumps({'type': 'auth', 'access_token': token}))
+                elif msg.get('type') == 'auth_ok':
+                    break
+                elif msg.get('type') == 'auth_invalid':
+                    return None
+            else:
+                return None
+            ws.send(_json.dumps({'id': 1, 'type': command}))
+            while True:
+                msg = _json.loads(ws.recv(timeout))
+                if msg.get('id') == 1 and msg.get('type') == 'result':
+                    return msg.get('result') if msg.get('success') else None
+    except Exception as e:
+        print(f"[ha_api] ws {command} failed: {e}")
+        return None
+
+
+_pipeline_cache = {'ts': 0.0, 'data': None}
+
+
+def get_pipeline_tts(ttl: float = 300):
+    """{'engine', 'voice', 'language'} of the Assist pipeline that fronts
+    THIS app — the one whose conversation agent is the chauffeur_conversation
+    entity (its id carries the config-entry title, so match 'chauffeur' or
+    'argyle') — else HA's preferred pipeline. This is how the tts.speak
+    announcement path speaks in the SAME voice the satellites answer in.
+    Cached; serves the stale copy when the WebSocket is unavailable."""
+    now = time.time()
+    with _cache_lock:
+        if _pipeline_cache['data'] is not None and now - _pipeline_cache['ts'] < ttl:
+            return _pipeline_cache['data']
+    res = ws_command('assist_pipeline/pipeline/list')
+    pipelines = (res or {}).get('pipelines') or []
+    if not pipelines:
+        return _pipeline_cache['data']
+    pick = next((p for p in pipelines
+                 if any(w in (p.get('conversation_engine') or '').lower()
+                        for w in ('chauffeur', 'argyle'))), None)
+    if not pick:
+        pref = (res or {}).get('preferred_pipeline')
+        pick = next((p for p in pipelines if p.get('id') == pref), pipelines[0])
+    data = {'engine': pick.get('tts_engine'), 'voice': pick.get('tts_voice'),
+            'language': pick.get('tts_language')}
+    with _cache_lock:
+        _pipeline_cache['ts'] = now
+        _pipeline_cache['data'] = data
+    return data
+
+
 def resolve_area_id(name: str):
     """HA's own area lookup — area_id() matches registered names AND aliases,
     and aliases are not enumerable over REST, so this is the only way spoken

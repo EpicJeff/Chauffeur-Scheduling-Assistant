@@ -127,9 +127,21 @@ def pick_target(area: dict):
     return 'media_player', sorted(players, key=rank)[0]
 
 
-def _tts_entity():
+def _tts_config():
+    """(tts_entity_id, language, voice) for the media-player path.
+
+    The satellite path speaks with its pipeline's voice for free; this is
+    what keeps the fallback from sounding like a different house. The Argyle
+    pipeline's own engine/voice (ha_api.get_pipeline_tts) wins whenever the
+    engine is a real tts entity; a legacy engine name ('cloud') can't carry
+    its voice over tts.speak, so it degrades to the first tts entity with
+    that entity's default voice — same as no pipeline info at all."""
+    pipe = ha_api.get_pipeline_tts() or {}
+    engine = pipe.get('engine') or ''
+    if engine.startswith('tts.'):
+        return engine, pipe.get('language'), pipe.get('voice')
     ents = ha_api.get_entities('tts')
-    return ents[0]['entity_id'] if ents else None
+    return (ents[0]['entity_id'] if ents else None), None, None
 
 
 def announce(room: str, message: str) -> dict:
@@ -165,14 +177,17 @@ def announce(room: str, message: str) -> dict:
                                  {'entity_id': entity_id, 'message': message},
                                  timeout=30) is not None
     else:
-        tts = _tts_entity()
+        tts, language, voice = _tts_config()
         if not tts:
             return {'status': 'error',
                     'message': "No text-to-speech engine is set up in Home Assistant."}
-        ok = ha_api.call_service('tts', 'speak',
-                                 {'entity_id': tts,
-                                  'media_player_entity_id': entity_id,
-                                  'message': message}) is not None
+        data = {'entity_id': tts, 'media_player_entity_id': entity_id,
+                'message': message}
+        if language:
+            data['language'] = language
+        if voice:
+            data['options'] = {'voice': voice}
+        ok = ha_api.call_service('tts', 'speak', data) is not None
     if not ok:
         return {'status': 'error',
                 'message': f"The speaker in the {area.get('name')} didn't take the announcement."}
