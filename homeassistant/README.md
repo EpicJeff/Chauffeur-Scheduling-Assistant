@@ -168,6 +168,55 @@ round trip before the device even knows it was addressed.
 
 Either way, a bad flash is recoverable with the **Voice PE Imager**.
 
+### Server-side wake word without a fork
+
+Copying the whole `home-assistant-voice.yaml` and editing it is the obvious
+move and it is a trap. The Voice PE's components were vendored when the
+community forks were written and have since been **upstreamed into ESPHome
+core**, so an old copy fails one component at a time — `aic3204` not found,
+then `microphone.nabu_microphone` not found (now core `i2s_audio`: a single
+`i2s_mics` id in place of `asr_mic`/`comm_mic`, with the gain moved off the
+platform onto each consumer as `gain_factor`), then the media player id, then
+the sound files. Each fix reveals the next, and the finish line is a hand-built
+copy of upstream that will drift again.
+
+Keep the upstream package and **overlay** the differences. Package merging
+replaces scalars with the top-level value and concatenates lists, so the whole
+change is a few lines in the device config:
+
+```yaml
+substitutions:
+  name: kitchen-voice-assistant
+packages:
+  Nabu Casa.Home Assistant Voice PE: github://esphome/home-assistant-voice-pe/home-assistant-voice.yaml@dev
+esphome:
+  name: ${name}
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# ── server-side wake word ────────────────────────────────────────────────
+voice_assistant:
+  # Scalar: replaces upstream's `false`, so the pipeline runs a wake stage.
+  use_wake_word: true
+  # List: CONCATENATED onto upstream's, which only starts micro_wake_word and
+  # never opens a stream. These run after it.
+  on_client_connected:
+    - delay: 2s                                   # let the API settle
+    - lambda: id(va).set_use_wake_word(true);     # the flag does not survive a stop
+    - voice_assistant.start_continuous:
+```
+
+**Verify the merge rather than assuming it.** Hit **Validate**: it prints the
+fully merged config, so you can read `use_wake_word: true` and see your three
+actions appended to upstream's `on_client_connected`. If a list replaced
+instead of concatenating, you will see that too, before flashing anything.
+
+Upstream already hands `voice_assistant` both microphone channels, so start
+without touching gain. If the wake word is heard but unreliably, add
+`gain_factor: 4` to the channel-1 entry — which needs the full `microphone:`
+list restated, since that list would otherwise concatenate.
+
 ### Installing a modified YAML
 
 `chauffeur/home-assistant-voice.yaml` in this repo is a **copy for versioning**.

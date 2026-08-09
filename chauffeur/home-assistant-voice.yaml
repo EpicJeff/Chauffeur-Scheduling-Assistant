@@ -1,3 +1,20 @@
+# ⚠️ STALE FORK — kept as a record, not for building. See homeassistant/README.md
+# ("Server-side wake word without a fork").
+#
+# This is a copy of the Voice PE config from before its components were
+# upstreamed into ESPHome, and it no longer compiles against current core. The
+# failures come one at a time, each hiding the next: `aic3204` not found (the
+# components moved), then `microphone.nabu_microphone` not found (that platform
+# became core `i2s_audio`, one `i2s_mics` id instead of two, with the gain moved
+# off the platform onto each consumer as `gain_factor`), then the media player
+# id, then the sound-file syntax. Chasing them one by one rebuilds upstream by
+# hand and inherits every future drift.
+#
+# The three changes this fork existed to make — server-side wake word, enough
+# gain on the streamed audio, and a stream that arms itself at boot — are a
+# four-line OVERLAY on the upstream package instead. Package merging is what
+# makes that possible, and it is the maintainable version of this file.
+
 substitutions:
   # Bump this every time you change this file. It is logged at boot, so the
   # device itself tells you which build is actually running — otherwise a flash
