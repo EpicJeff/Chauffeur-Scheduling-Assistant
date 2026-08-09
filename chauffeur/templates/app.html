@@ -13,24 +13,66 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Chauffeur">
     <meta name="theme-color" content="#171717">
+    <link rel="stylesheet" href="static/theme.css">
+    <script>
+        // Resolve the theme BEFORE first paint, or the app flashes dark on
+        // the way to light. Three states: 'auto' follows the OS, 'light' and
+        // 'dark' pin it. Per-device (localStorage), not per-member — which
+        // theme you want depends on the room you're standing in, not on who
+        // you are.
+        (function () {
+            window.THEME_KEY = 'chauffeur_theme';
+            window.resolveTheme = function (pref) {
+                if (pref === 'light' || pref === 'dark') return pref;
+                return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            };
+            window.applyTheme = function (pref) {
+                const resolved = window.resolveTheme(pref);
+                const root = document.documentElement;
+                root.dataset.theme = resolved;
+                root.dataset.themePref = pref;
+                // Tailwind's darkMode:'class' hook, kept in sync for any
+                // dark: variant added later.
+                root.classList.toggle('dark', resolved === 'dark');
+                // The PWA status bar reads this, so it has to move with the
+                // theme or the notch stays black on a cream app.
+                const meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) {
+                    meta.setAttribute('content',
+                        getComputedStyle(root).getPropertyValue('--c-gray-900').trim()
+                            ? 'rgb(' + getComputedStyle(root).getPropertyValue('--c-gray-900').trim() + ')'
+                            : '#171717');
+                }
+                return resolved;
+            };
+            window.applyTheme(localStorage.getItem(window.THEME_KEY) || 'auto');
+            // Follow the OS live, but only while the preference is 'auto'.
+            window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+                if ((localStorage.getItem(window.THEME_KEY) || 'auto') === 'auto') window.applyTheme('auto');
+            });
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        gray: {
-                            950: '#0a0a0a',
-                            900: '#171717',
-                            800: '#262626',
-                            700: '#404040',
-                            600: '#525252',
-                        }
-                    }
-                }
-            }
-        }
+        // Every palette entry points at a channel triple from theme.css, so
+        // one [data-theme] flip restyles the app without touching a single
+        // utility class. `<alpha-value>` keeps opacity modifiers working
+        // (bg-amber-500/10, border-blue-500/50 and friends).
+        //
+        // white and black are deliberately NOT tokenized: `text-white` on a
+        // solid accent fill must stay white in both themes. Surface-level
+        // primary text uses text-gray-100 instead.
+        (function () {
+            const SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+            const HUES = ['slate', 'blue', 'indigo', 'violet', 'purple', 'pink', 'rose',
+                'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
+                'teal', 'cyan', 'sky'];
+            const ramp = (name) => Object.fromEntries(
+                SHADES.map(s => [s, `rgb(var(--c-${name}-${s}) / <alpha-value>)`]));
+            const colors = { gray: ramp('gray') };
+            HUES.forEach(h => { colors[h] = ramp(h); });
+            tailwind.config = { darkMode: 'class', theme: { extend: { colors } } };
+        })();
     </script>
     <style>
         .no-scrollbar::-webkit-scrollbar {
@@ -66,13 +108,13 @@
                 class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border-2 border-gray-700 bg-gray-800 text-gray-500">
                 ?</div>
             <div class="flex flex-col">
-                <h1 id="driver-name" class="text-lg font-bold text-white leading-tight">Chauffeur</h1>
+                <h1 id="driver-name" class="text-lg font-bold text-gray-100 leading-tight">Chauffeur</h1>
                 <span id="date-subtitle" class="text-xs text-blue-400 font-medium tracking-wide uppercase">Today</span>
             </div>
         </div>
         <div class="flex items-center gap-2">
             <button id="btn-push" onclick="enableNotifications()"
-                class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-white transition-colors relative hidden"
+                class="p-2 rounded-full bg-blue-800 text-blue-200 hover:text-gray-100 transition-colors relative hidden"
                 title="Enable Push Notifications">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -85,7 +127,7 @@
                     class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-blue-500 rounded-full w-2 h-2"></span>
             </button>
             <button id="btn-notif" onclick="toggleNotifications()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors relative hidden">
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors relative hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
@@ -95,15 +137,21 @@
                     class="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full hidden">0</span>
             </button>
             <button id="btn-sync" onclick="fetchSchedule(true)"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors">
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
                     </path>
                 </svg>
             </button>
+            <button id="btn-theme" onclick="cycleTheme()"
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors"
+                title="Theme">
+                <svg id="btn-theme-icon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2"
+                    viewBox="0 0 24 24"></svg>
+            </button>
             <button id="btn-switch-driver" onclick="clearDriver()"
-                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-white transition-colors hidden">
+                class="p-2 rounded-full bg-gray-800 text-gray-300 hover:text-gray-100 transition-colors hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1">
@@ -115,7 +163,7 @@
 
     <!-- Driver Selection Screen -->
     <div id="screen-select-driver" class="flex-1 flex flex-col p-6 overflow-y-auto">
-        <h2 class="text-2xl font-black mb-6 text-center text-white drop-shadow-sm">Who Are You?</h2>
+        <h2 class="text-2xl font-black mb-6 text-center text-gray-100 drop-shadow-sm">Who Are You?</h2>
         <div id="driver-list" class="flex flex-col gap-4">
             <p class="text-center text-gray-500 animate-pulse">Loading drivers...</p>
         </div>
@@ -134,7 +182,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path>
                 </svg>
             </button>
-            <div id="current-day-label" class="font-bold text-center text-white tracking-wide text-lg drop-shadow-md">
+            <div id="current-day-label" class="font-bold text-center text-gray-100 tracking-wide text-lg drop-shadow-md">
                 Loading...</div>
             <button onclick="nextDay()"
                 class="p-2 rounded-full bg-gray-800 text-gray-300 active:bg-gray-700 disabled:opacity-30 disabled:active:bg-gray-800 transition-colors"
@@ -165,7 +213,7 @@
         <!-- Messages (family chat) -->
         <div id="messages-container" class="flex-1 flex-col min-h-0 relative" style="display: none">
             <div class="flex items-center justify-between px-4 pt-4 pb-1 shrink-0">
-                <div class="text-lg font-bold text-white">Messages</div>
+                <div class="text-lg font-bold text-gray-100">Messages</div>
                 <button onclick="openNewChat()" title="New chat"
                     class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 active:bg-blue-700 text-white text-sm font-bold">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
@@ -188,14 +236,14 @@
                             </path>
                         </svg>
                     </button>
-                    <div id="thread-title" class="font-bold text-white text-lg truncate">Chat</div>
+                    <div id="thread-title" class="font-bold text-gray-100 text-lg truncate">Chat</div>
                 </div>
                 <div id="thread-messages" class="flex-1 overflow-y-auto p-4 flex flex-col gap-2"></div>
                 <div id="thread-attach-preview" class="px-3 pt-2 bg-gray-900 border-t border-gray-800" style="display:none">
                     <div class="relative inline-block">
                         <div id="thread-attach-slot"></div>
                         <button onclick="clearPendingAttachment()" type="button"
-                            class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gray-700 text-white text-xs font-bold flex items-center justify-center">✕</button>
+                            class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gray-700 text-gray-100 text-xs font-bold flex items-center justify-center">✕</button>
                     </div>
                 </div>
                 <form id="thread-form" onsubmit="submitThreadMessage(event)"
@@ -207,7 +255,7 @@
                         title="Add a photo"
                         class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 text-lg flex items-center justify-center shrink-0 active:bg-gray-700">📷</button>
                     <input id="thread-input" type="text" autocomplete="off" placeholder="Message..."
-                        class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500">
+                        class="flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded-full px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500">
                     <button type="submit"
                         class="bg-blue-600 active:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-full shrink-0">Send</button>
                 </form>
@@ -230,7 +278,7 @@
         </div>
 
         <!-- Bottom Tab Bar -->
-        <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.4)]"
+        <div class="flex bg-gray-900 border-t border-gray-800 shrink-0 z-10 shadow-nav"
             style="padding-bottom: env(safe-area-inset-bottom)">
             <button id="tab-myday" onclick="setView('myday')" style="display: none"
                 class="flex-1 flex-col items-center gap-0.5 pt-2.5 pb-2 text-gray-500 transition-colors">
@@ -274,7 +322,7 @@
                 </svg>
                 <span class="text-[11px] font-bold tracking-wide">Chores</span>
                 <span id="tab-chores-badge"
-                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-gray-900 text-[10px] font-bold items-center justify-center"
+                    class="absolute top-1 right-1/2 translate-x-5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-black text-[10px] font-bold items-center justify-center"
                     style="display: none">0</span>
             </button>
             <button id="tab-map" onclick="setView('map')"
@@ -299,11 +347,11 @@
     <!-- PIN Modal -->
     <div id="pin-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
         <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-xs">
-            <h3 id="pin-modal-title" class="text-xl font-bold text-white mb-1">Enter PIN</h3>
+            <h3 id="pin-modal-title" class="text-xl font-bold text-gray-100 mb-1">Enter PIN</h3>
             <p id="pin-modal-subtitle" class="text-sm text-gray-400 mb-4"></p>
             <input id="pin-modal-input" type="password" inputmode="numeric" pattern="[0-9]*"
                 autocomplete="off" maxlength="8"
-                class="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-blue-500">
+                class="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-gray-100 text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-blue-500">
             <p id="pin-modal-error" class="text-red-400 text-sm font-bold mt-2" style="display: none"></p>
             <div class="flex gap-2 mt-4">
                 <button id="pin-modal-cancel"
@@ -320,11 +368,11 @@
          pills. 1 person -> DM, 2+ -> group channel. -->
     <div id="new-chat-modal" class="fixed inset-0 bg-black/70 z-[60] hidden items-center justify-center p-6">
         <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-5 w-full max-w-sm flex flex-col max-h-[80vh]">
-            <h3 class="text-xl font-bold text-white mb-3">New chat</h3>
+            <h3 class="text-xl font-bold text-gray-100 mb-3">New chat</h3>
             <div id="new-chat-pills" class="flex flex-wrap gap-1.5 mb-2 empty:hidden"></div>
             <input id="new-chat-input" type="text" autocomplete="off" placeholder="Type a name..."
                 oninput="renderNewChatSuggestions()"
-                class="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2">
+                class="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2">
             <div id="new-chat-suggestions" class="flex-1 overflow-y-auto space-y-1 min-h-[80px]"></div>
             <div class="flex gap-2 mt-4 shrink-0">
                 <button onclick="closeNewChat()"
@@ -339,17 +387,17 @@
     <div id="notif-modal"
         class="fixed inset-0 bg-black/60 z-50 hidden opacity-0 transition-opacity duration-300 flex flex-col justify-end">
         <div id="notif-modal-content"
-            class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
+            class="bg-gray-900 border-t border-gray-700 w-full rounded-t-2xl shadow-sheet transform translate-y-full transition-transform duration-300 p-6 flex flex-col h-[70vh]">
             <div class="flex justify-between items-center mb-6 shrink-0">
                 <div class="flex justify-between items-center w-full pb-2 border-b border-gray-800">
-                    <h2 class="text-xl font-bold text-white">Notifications</h2>
+                    <h2 class="text-xl font-bold text-gray-100">Notifications</h2>
                     <button onclick="clearNotifications()"
                         class="text-sm font-bold text-red-400 bg-red-400/10 px-3 py-1 rounded-lg active:bg-red-400/20 transition-colors">Clear
                         All</button>
                 </div>
 
                 <button onclick="toggleNotifications()"
-                    class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
+                    class="text-gray-400 hover:text-gray-100 bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
                         </path>
@@ -368,9 +416,9 @@
     <div id="action-sheet"
         class="fixed inset-0 z-50 hidden flex-col justify-end bg-black/60 backdrop-blur-sm transition-opacity opacity-0">
         <div id="action-sheet-content"
-            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+            class="bg-gray-900 rounded-t-2xl p-6 w-full transform translate-y-full transition-transform duration-300 shadow-sheet">
             <div class="w-12 h-1.5 bg-gray-700 rounded-full mx-auto mb-6"></div>
-            <h3 class="text-xl font-bold mb-4 text-white" id="sheet-title">Open in Maps</h3>
+            <h3 class="text-xl font-bold mb-4 text-gray-100" id="sheet-title">Open in Maps</h3>
             <p class="text-sm text-gray-400 mb-6 font-medium" id="sheet-subtitle"></p>
             <div id="sheet-state-1" class="flex flex-col gap-3">
                 <button onclick="startDrive()" id="btn-start-drive"
@@ -380,12 +428,12 @@
                 </button>
                 <div id="mark-completed-separator" class="w-full h-px bg-gray-800 my-1"></div>
                 <button onclick="markCompleted()" id="btn-mark-completed"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold text-lg shadow-lg transition-colors">
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-400 font-bold text-lg shadow-lg transition-colors">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
                     Mark as Completed
                 </button>
                 <button onclick="closeActionSheet()"
-                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
+                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-gray-100 font-bold text-lg">
                     Cancel
                 </button>
             </div>
@@ -397,7 +445,7 @@
                     Google Maps
                 </button>
                 <button onclick="openMaps('apple')"
-                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-white font-bold text-lg shadow-lg">
+                    class="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-gray-700 active:bg-gray-600 text-gray-100 font-bold text-lg shadow-lg">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     Apple Maps
                 </button>
@@ -407,7 +455,7 @@
                     Waze
                 </button>
                 <button onclick="closeActionSheet()"
-                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-white font-bold text-lg">
+                    class="w-full py-4 mt-2 rounded-xl bg-transparent text-gray-400 active:text-gray-100 font-bold text-lg">
                     Cancel
                 </button>
             </div>
@@ -428,6 +476,45 @@
         let _timelineUserTouched = false;   // real interaction disables the restoration guard
         let routeContext = null;
         let currentView = localStorage.getItem('chauffeur_view') || 'drives';
+
+        // --- Theme (light / dark / auto) ---
+        // applyTheme + resolveTheme are defined in <head> so the first paint
+        // is already correct; everything here is just the visible control.
+        const THEME_ICONS = {
+            // sun
+            light: 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
+            // moon
+            dark: 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z',
+            // half-filled circle = follow the device
+            auto: 'M12 3a9 9 0 000 18V3z M12 3a9 9 0 010 18',
+        };
+
+        function themePref() {
+            return localStorage.getItem(THEME_KEY) || 'auto';
+        }
+
+        function updateThemeButton() {
+            const icon = document.getElementById('btn-theme-icon');
+            if (!icon) return;
+            const pref = themePref();
+            icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" d="${THEME_ICONS[pref]}"></path>`;
+            const btn = document.getElementById('btn-theme');
+            if (btn) btn.title = `Theme: ${pref}`;
+        }
+
+        function cycleTheme() {
+            const order = ['auto', 'light', 'dark'];
+            const next = order[(order.indexOf(themePref()) + 1) % order.length];
+            localStorage.setItem(THEME_KEY, next);
+            const resolved = applyTheme(next);
+            updateThemeButton();
+            // The icon alone doesn't say which of the three states you landed
+            // in (auto-resolving-to-dark and pinned-dark look identical), so
+            // name it.
+            showGlobalAlert(next === 'auto' ? `Theme: follows device (${resolved})` : `Theme: ${next}`);
+        }
+
+        updateThemeButton();
 
         function setView(view, focusMemberId = null) {
             if (view === currentView && !focusMemberId) return;
@@ -642,7 +729,7 @@
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
                         class="w-6 h-6 rounded-lg accent-green-500 shrink-0">
-                    <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-white'}">${mfEscape(item.title)}</span>
+                    <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
                     ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${item.time_of_day}</span>` : ''}
                 </label>`).join('');
             return `
@@ -666,7 +753,7 @@
                     <input type="checkbox" onchange="completeKidTask('${t.id}', this.checked)"
                         class="w-6 h-6 rounded-lg accent-indigo-500 shrink-0">
                     <span class="shrink-0">${t.emoji}</span>
-                    <span class="flex-1 text-[15px] font-bold text-white task-title">${mfEscape(t.title)}</span>
+                    <span class="flex-1 text-[15px] font-bold text-gray-100 task-title">${mfEscape(t.title)}</span>
                     <span class="text-xs font-bold ${t.overdue ? 'text-amber-400' : 'text-indigo-300'}">${mfEscape(t.label)}</span>
                 </label>`).join('');
             return `
@@ -938,7 +1025,7 @@
                     <span class="text-sm font-bold uppercase tracking-wider text-blue-400">${timeStr}</span>
                     ${statusChip}
                 </div>
-                <div class="text-white font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
+                <div class="text-gray-100 font-bold text-lg leading-tight flex items-center gap-2 flex-wrap">${typeBadge}${mfEscape(r.title)}</div>
                 ${r.location ? `<div class="text-gray-400 text-sm mt-1 truncate">${mfEscape(r.location)}</div>` : ''}
                 ${(r.prep && r.prep.length) ? `<div class="flex flex-wrap items-center gap-1.5 mt-2">
                     <span class="text-[10px] font-black uppercase text-amber-300">🎒 Bring</span>
@@ -953,7 +1040,7 @@
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'global-alert';
-                el.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 border border-gray-600 text-white text-sm font-bold px-4 py-3 rounded-xl shadow-2xl max-w-[90vw] text-center transition-opacity duration-300 opacity-0 pointer-events-none';
+                el.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 border border-gray-600 text-gray-100 text-sm font-bold px-4 py-3 rounded-xl shadow-2xl max-w-[90vw] text-center transition-opacity duration-300 opacity-0 pointer-events-none';
                 document.body.appendChild(el);
             }
             el.textContent = msg;
@@ -982,7 +1069,7 @@
         window.promptConfirm = function (title, message, trueText = 'OK', falseText = 'Cancel') {
             return new Promise(resolve => {
                 _pwaModal(`
-                    <div class="text-white font-bold text-lg mb-1">${mfEscape(title)}</div>
+                    <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
                     ${message ? `<div class="text-gray-400 text-sm mb-4 leading-snug whitespace-pre-line">${mfEscape(message)}</div>` : '<div class="mb-4"></div>'}
                     <div class="flex gap-2 justify-end">
                         <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">${mfEscape(falseText)}</button>
@@ -1000,10 +1087,10 @@
         window.promptInput = function (title, message, { placeholder = '', value = '', type = 'text', okText = 'OK' } = {}) {
             return new Promise(resolve => {
                 const overlay = _pwaModal(`
-                    <div class="text-white font-bold text-lg mb-1">${mfEscape(title)}</div>
+                    <div class="text-gray-100 font-bold text-lg mb-1">${mfEscape(title)}</div>
                     ${message ? `<div class="text-gray-400 text-sm mb-3 leading-snug">${mfEscape(message)}</div>` : ''}
                     <textarea data-field rows="3" placeholder="${mfEscape(placeholder)}"
-                        class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-white text-[15px] focus:outline-none focus:border-blue-500 resize-none"></textarea>
+                        class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-gray-100 text-[15px] focus:outline-none focus:border-blue-500 resize-none"></textarea>
                     <div class="flex gap-2 justify-end mt-4">
                         <button data-no class="px-4 py-2 rounded-xl bg-gray-800 border border-gray-700 text-gray-200 text-sm font-bold">Cancel</button>
                         <button data-yes class="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold">${mfEscape(okText)}</button>
@@ -1161,15 +1248,15 @@
                 targetList.push({ id: 'errand', label: '🚗 Drive errand' });
                 const opts = targetList.map(o =>
                     `<option value="${escProp(o.id)}">${escProp(o.label)}</option>`).join('');
-                const inputCls = 'bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-xs';
+                const inputCls = 'bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-gray-100 text-xs';
                 card.innerHTML = `
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${p.kind === 'task' ? 'bg-amber-900/60 text-amber-300' : 'bg-teal-900/60 text-teal-300'}">${p.kind === 'task' ? 'To-do' : 'Event'}</span>
-                        <span class="font-bold text-white text-sm flex-1 min-w-0 truncate">${escProp(p.title)}</span>
-                        <button data-role="edit" class="text-[11px] font-bold text-gray-500 active:text-white shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
+                        <span class="font-bold text-gray-100 text-sm flex-1 min-w-0 truncate">${escProp(p.title)}</span>
+                        <button data-role="edit" class="text-[11px] font-bold text-gray-500 active:text-gray-100 shrink-0">${p._editing ? '▾ hide' : '✎ edit'}</button>
                     </div>
                     <div class="text-xs text-gray-400 mt-1">${escProp(proposalWhen(p))}${p.location ? ' · 📍 ' + escProp(p.location) : ''}${p.member_name ? ' · 👤 ' + escProp(p.member_name) : ''}</div>
-                    <div class="text-[10px] text-gray-600 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
+                    <div class="text-[10px] text-gray-500 truncate mt-0.5">${p.source === 'photo' ? '📸' : '✉️'} ${escProp(p.source_subject || p.source_from || '')}</div>
                     ${p.sender_ignores ? `<div class="text-[10px] text-amber-400/80 mt-0.5">🤔 You've ignored the last ${p.sender_ignores} from this sender</div>` : ''}
                     <div data-role="edit-panel" class="grid grid-cols-2 gap-1.5 mt-2 ${p._editing ? '' : 'hidden'}">
                         <input data-role="f-title" type="text" placeholder="Title" value="${escProp(p._title || '')}" class="col-span-2 ${inputCls}">
@@ -1178,18 +1265,18 @@
                             <input data-role="f-start" type="time" value="${escProp(p._startTime || '')}" class="${inputCls} w-full min-w-0">
                             <input data-role="f-end" type="time" value="${escProp(p._endTime || '')}" class="${inputCls} w-full min-w-0">
                         </div>
-                        <p class="col-span-2 text-[10px] text-gray-600">Clear the start time for all-day.</p>
+                        <p class="col-span-2 text-[10px] text-gray-500">Clear the start time for all-day.</p>
                     </div>
                     <div data-role="errand-panel" class="flex gap-1.5 mt-2 ${p._target === 'errand' ? '' : 'hidden'}">
                         <input data-role="f-eloc" type="text" placeholder="Errand location (required)" value="${escProp(p._errandLocation || '')}" class="flex-1 min-w-0 ${inputCls}">
                         <input data-role="f-emins" type="number" min="5" step="5" value="${escProp(p._errandMins || 30)}" class="w-16 ${inputCls}">
                     </div>
                     <div class="flex gap-2 mt-2">
-                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-white text-xs" data-role="target">
+                        <select class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100 text-xs" data-role="target">
                             <option value="">Whose calendar?</option>${extraOpt}${opts}
                         </select>
                         <button data-role="approve" class="bg-green-600 active:bg-green-700 disabled:opacity-40 text-white font-bold text-xs px-3 rounded-lg shrink-0">✓ Approve</button>
-                        <button data-role="ignore" class="bg-gray-700 active:bg-gray-600 text-white font-bold text-xs px-3 rounded-lg shrink-0">✗</button>
+                        <button data-role="ignore" class="bg-gray-700 active:bg-gray-600 text-gray-100 font-bold text-xs px-3 rounded-lg shrink-0">✗</button>
                     </div>`;
                 const sel = card.querySelector('[data-role="target"]');
                 sel.value = p._target || '';
@@ -1656,11 +1743,11 @@
                 return `
                 <button onclick="openChannel('${c.id}')"
                     class="w-full flex items-center gap-3 p-3.5 rounded-2xl bg-gray-900 border border-gray-800 active:bg-gray-800 text-left">
-                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-white shrink-0 overflow-hidden"
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg border-4 bg-gray-800 text-gray-100 shrink-0 overflow-hidden"
                         style="border-color: ${d.color}">${avatarInner(d, d.avatar)}</div>
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
-                            <span class="font-bold text-white truncate">${mfEscape(d.name)}</span>
+                            <span class="font-bold text-gray-100 truncate">${mfEscape(d.name)}</span>
                             <span class="text-[11px] text-gray-500 shrink-0">${t}</span>
                         </div>
                         <div class="text-sm text-gray-400 truncate">${mfEscape(preview)}</div>
@@ -1765,11 +1852,11 @@
                     <div class="flex items-center gap-1.5 mt-0.5 ${mine ? 'justify-end' : ''}">
                         ${renderReactions(m)}
                         <button onclick="toggleQuickReact('${m.id}')" type="button"
-                            class="text-[13px] text-gray-600 active:text-gray-400 leading-none px-0.5">☺+</button>
+                            class="text-[13px] text-gray-500 active:text-gray-400 leading-none px-0.5">☺+</button>
                         ${(canEditMsg(m) || canDeleteMsg(m))
                             ? `<button onclick="toggleMsgActions('${m.id}')" type="button"
-                                   class="text-[13px] text-gray-600 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
-                        <span class="text-[10px] text-gray-600">${t}${m.edited_ts ? ' · edited' : ''}</span>
+                                   class="text-[13px] text-gray-500 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
+                        <span class="text-[10px] text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
                     </div>
                     <div id="qr-${m.id}" class="mt-1 ${mine ? 'text-right' : ''}" style="display:none">
                         ${['👍', '❤️', '😂', '👏', '🎉', '💪'].map(e =>
@@ -2495,7 +2582,7 @@
                 const m = pickerMember(id);
                 return `<span class="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/50 text-blue-200 text-sm font-semibold">
                     ${mfEscape(m.name)}
-                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-white text-[10px] leading-none font-bold">✕</button>
+                    <button onclick="toggleNewChatMember('${id}')" class="w-4 h-4 rounded-full bg-blue-500/40 text-blue-100 text-[10px] leading-none font-bold">✕</button>
                 </span>`;
             }).join('');
             document.getElementById('new-chat-start').disabled = !newChatSelected.length;
@@ -2510,9 +2597,9 @@
             list.innerHTML = items.map(m => `
                 <button onclick="toggleNewChatMember('${m.id}')"
                     class="w-full flex items-center gap-2.5 p-2 rounded-xl bg-gray-800 active:bg-gray-700 text-left">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-white shrink-0 overflow-hidden"
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border-2 bg-gray-900 text-gray-100 shrink-0 overflow-hidden"
                         style="border-color: ${m.color_code || '#6b7280'}">${avatarInner(m, m.avatar || (m.name || '?').charAt(0).toUpperCase())}</div>
-                    <span class="font-semibold text-white">${mfEscape(m.name)}</span>
+                    <span class="font-semibold text-gray-100">${mfEscape(m.name)}</span>
                     ${m.role === 'helper' ? '<span class="text-[10px] uppercase tracking-wide text-amber-400 font-bold ml-auto">Helper</span>' : ''}
                 </button>`).join('')
                 || '<p class="text-center text-gray-500 text-sm mt-3">No one else to add.</p>';
@@ -2671,7 +2758,7 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2">
                     <div class="min-w-0">
-                        <div class="text-white font-bold text-[16px] leading-tight truncate">${mfEscape(c.title)}</div>
+                        <div class="text-gray-100 font-bold text-[16px] leading-tight truncate">${mfEscape(c.title)}</div>
                         <div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>
                         ${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
                         ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}
@@ -2696,11 +2783,11 @@
                         <span class="text-gray-300 font-bold">My points</span>
                         ${mine && mine.status ? '<div class="mt-1">' + statusBadge(mine.status) + '</div>' : ''}
                     </div>
-                    <span class="text-3xl font-black text-white">${mine ? mine.balance : 0} ⭐</span>
+                    <span class="text-3xl font-black text-gray-100">${mine ? mine.balance : 0} ⭐</span>
                 </div>`);
             } else if (balances && balances.length) {
                 parts.push(`<div class="flex gap-2 flex-wrap">${balances.map(b => `
-                    <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 border border-gray-700 text-sm font-bold text-white">
+                    <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-900 border border-gray-700 text-sm font-bold text-gray-100">
                         <span class="w-2.5 h-2.5 rounded-full" style="background-color:${b.color_code || '#3b82f6'}"></span>
                         ${mfEscape(b.name)}: ${b.balance} ⭐
                     </span>`).join('')}</div>`);
@@ -2720,7 +2807,7 @@
                     redemptionsData.forEach(r => parts.push(`
                         <div class="bg-gray-900 border border-indigo-800/60 rounded-xl p-4 flex items-center justify-between gap-2">
                             <div class="min-w-0">
-                                <div class="text-white font-bold truncate">🎁 ${mfEscape(r.reward_title)}</div>
+                                <div class="text-gray-100 font-bold truncate">🎁 ${mfEscape(r.reward_title)}</div>
                                 <div class="text-xs text-gray-500 mt-0.5">${mfEscape(r.member_name || '?')} · ${r.cost} pts</div>
                             </div>
                             <div class="flex gap-2 shrink-0">
@@ -2754,9 +2841,9 @@
                     const btnHtml = pending
                         ? '<span class="text-[10px] font-black uppercase text-amber-300">Asked ⏳</span>'
                         : `<button onclick="redeemReward('${rw.id}')" ${afford ? '' : 'disabled'}
-                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${afford ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-600'}">Redeem</button>`;
+                            class="text-[11px] font-bold px-2.5 py-1.5 rounded-lg ${afford ? 'bg-indigo-600 text-white active:bg-indigo-700' : 'bg-gray-800 text-gray-500'}">Redeem</button>`;
                     return `<div class="bg-gray-900 border border-gray-800 rounded-xl p-3 flex flex-col gap-1.5">
-                        <div class="text-white font-bold text-sm leading-tight">${mfEscape(rw.title)}</div>
+                        <div class="text-gray-100 font-bold text-sm leading-tight">${mfEscape(rw.title)}</div>
                         <div class="flex items-center justify-between mt-auto">
                             <span class="text-xs font-black text-indigo-300">${rw.cost} ⭐</span>${btnHtml}
                         </div>
@@ -2786,7 +2873,7 @@
 
             const othersClaimed = choresData.filter(c => (c.state === 'claimed' || c.state === 'done') && c.claimed_by !== selectedMemberId);
             if (othersClaimed.length) {
-                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-600 pt-2">Taken</div>');
+                parts.push('<div class="text-xs font-black uppercase tracking-widest text-gray-500 pt-2">Taken</div>');
                 othersClaimed.forEach(c => parts.push(choreCard(c, '',
                     `${mfEscape(c.claimed_by_name || '?')} is on it`)));
             }
@@ -2850,7 +2937,7 @@
                     : '';
                 const chipIn = pool.funded ? '' :
                     `<input id="pool-amt-${rw.id}" type="number" min="1" max="${pool.remaining}" placeholder="pts"
-                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white">
+                        class="w-16 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100">
                      <button onclick="contributeToPool('${rw.id}')"
                         class="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white active:bg-emerald-700">Chip in</button>`;
                 actions = `<div class="flex items-center gap-2 flex-wrap">${mineHtml}${chipIn}</div>`;
@@ -2866,13 +2953,13 @@
             }
             return `<div class="bg-gray-900 border ${pool.funded ? 'border-emerald-600/60' : 'border-gray-800'} rounded-xl p-4 flex flex-col gap-2">
                 <div class="flex items-center justify-between gap-2">
-                    <div class="text-white font-bold text-[15px] leading-tight">🎯 ${mfEscape(rw.title)}</div>
+                    <div class="text-gray-100 font-bold text-[15px] leading-tight">🎯 ${mfEscape(rw.title)}</div>
                     <span class="text-xs font-black text-emerald-300 shrink-0">${pool.pledged}/${pool.cost} ⭐</span>
                 </div>
                 ${rw.description ? `<div class="text-sm text-gray-400">${mfEscape(rw.description)}</div>` : ''}
                 ${poolBarHtml(pool)}
                 <div class="flex items-center justify-between gap-2 flex-wrap">
-                    <div class="flex items-center gap-2 flex-wrap">${chips || '<span class="text-[11px] text-gray-600">No pledges yet</span>'}</div>
+                    <div class="flex items-center gap-2 flex-wrap">${chips || '<span class="text-[11px] text-gray-500">No pledges yet</span>'}</div>
                     ${caption}
                 </div>
                 ${pool.min_share ? `<div class="text-[11px] text-gray-500">Everyone chips in at least ${pool.min_share} ⭐</div>` : ''}
@@ -3073,7 +3160,7 @@
                         ${avatarInner(dm, dm.avatar || d.name.charAt(0).toUpperCase())}
                     </div>
                     <div>
-                        <div class="text-xl font-bold text-white">${d.name}</div>
+                        <div class="text-xl font-bold text-gray-100">${d.name}</div>
                         <div class="text-sm text-gray-400 font-medium">${d.group} driver</div>
                     </div>
                 </button>
@@ -3083,7 +3170,7 @@
                         ${avatarInner(m, m.avatar || (m.name || '?').charAt(0).toUpperCase())}
                     </div>
                     <div>
-                        <div class="text-xl font-bold text-white">${m.name}</div>
+                        <div class="text-xl font-bold text-gray-100">${m.name}</div>
                         <div class="text-sm text-gray-400 font-medium">passenger</div>
                     </div>
                 </button>
@@ -3154,7 +3241,7 @@
                         return `
                             <div class="bg-gray-800 border border-gray-700 p-4 rounded-xl flex items-center justify-between shadow-sm">
                                 <div>
-                                    <span class="font-bold text-white">${dName}</span>
+                                    <span class="font-bold text-gray-100">${dName}</span>
                                     <span class="ml-2 font-bold uppercase tracking-wider text-[10px] px-2 py-1 bg-gray-900 rounded ${colorClass}">${ev.action}</span>
                                     <p class="text-xs text-gray-400 mt-1">${ev.details || 'Event ID: ' + ev.event_id}</p>
                                 </div>
@@ -3745,7 +3832,7 @@
             const colorClassBg = colorTheme === 'blue' ? 'bg-blue-900' : 'bg-green-900';
             const colorClassText = colorTheme === 'blue' ? 'text-blue-300' : 'text-green-300';
             const timeColorClassText = colorTheme === 'blue' ? 'text-blue-400' : 'text-green-400';
-            const durationClassText = colorTheme === 'blue' ? 'text-blue-500' : 'text-green-500';
+            const durationClassText = colorTheme === 'blue' ? 'text-blue-400' : 'text-green-400';
 
             const timeLabel = colorTheme === 'blue' ? 'Leave at' : 'Arrive by';
 
@@ -3759,12 +3846,12 @@
                     </div>
                     <div class="ml-4 flex-1 ${pillBg} border rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
                         <div class="text-sm font-bold ${timeColorClassText} mb-1 uppercase tracking-wider">${isInProgress ? 'En Route' : timeLabel + ' ' + timeStr}</div>
-                        <div class="text-white font-medium text-lg leading-tight mb-2">${title}</div>
+                        <div class="text-gray-100 font-medium text-lg leading-tight mb-2">${title}</div>
                         ${subtitleHtml ? `<div class="flex flex-wrap gap-1 mb-2">${subtitleHtml}</div>` : ''}
                         <div class="flex items-center text-xs font-mono text-gray-400 bg-gray-950 inline-flex px-2 py-1 rounded">
                             <span class="${durationClassText}">${formatDuration(mins)}</span>
-                            ${delayMins > 3 ? `<span class="ml-2 text-yellow-500 font-bold">⚠ +${delayMins}m</span>` : ''}
-                            ${lateMins > 0 ? `<span class="ml-2 text-red-500 font-bold" title="Arriving ${lateMins}m late">⚠ Late</span>` : ''}
+                            ${delayMins > 3 ? `<span class="ml-2 text-yellow-400 font-bold">⚠ +${delayMins}m</span>` : ''}
+                            ${lateMins > 0 ? `<span class="ml-2 text-red-400 font-bold" title="Arriving ${lateMins}m late">⚠ Late</span>` : ''}
                         </div>
                     </div>
                 </div>
@@ -3983,7 +4070,7 @@
                     <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color: ${color}"></div>
                     <div class="p-4 pl-5">
                         <div class="text-sm font-bold mb-1 uppercase tracking-wider" style="color: ${color}">${timeStr}</div>
-                        <div class="text-white font-bold text-lg leading-tight mb-2">
+                        <div class="text-gray-100 font-bold text-lg leading-tight mb-2">
                             ${card.isErrand ? '<span class="text-[10px] tracking-widest uppercase bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded mr-2 align-middle border border-yellow-500/50">Errand</span>' : ''}
                             ${card.title}
                         </div>
@@ -4241,7 +4328,7 @@
 
                     // --- Event ---
                     let bgColor = isDriverOnly ? 'bg-gray-800/50 border-gray-700 border-dashed border' : 'bg-gray-800 border-gray-700 border';
-                    let titleClass = isDriverOnly ? 'text-gray-400' : 'text-white';
+                    let titleClass = isDriverOnly ? 'text-gray-400' : 'text-gray-100';
                     const badges = getPassengerBadges(ev);
 
                     let lateMins = 0;
@@ -4282,7 +4369,7 @@
                     const isEventPast = new Date(ev.end) < new Date();
                     html += `
                         <div class="flex items-start mb-6 relative z-10 group cursor-pointer ${isEventPast ? 'opacity-40' : ''}" onclick="openEventModal('${evDataStr.replace(/'/g, "\\'")}')">
-                            <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-white font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
+                            <div class="w-10 h-10 rounded-full bg-gray-700 border-4 border-gray-950 flex items-center justify-center shrink-0 shadow-md text-gray-100 font-bold text-xs" style="background-color: ${driverConfig.color_code || '#4a5568'}">
                                 ${formatTime(ev.start).split(':')[0]}
                             </div>
                             <div class="ml-4 flex-1 ${bgColor} rounded-xl p-4 shadow-sm active:bg-gray-800 transition-colors">
@@ -4704,9 +4791,9 @@
         <div id="event-modal-content"
             class="bg-gray-900 border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl transform translate-y-full sm:translate-y-0 sm:scale-95 transition-all duration-300 p-6">
             <div class="flex justify-between items-start mb-4">
-                <h3 id="em-title" class="text-2xl font-bold text-white pr-4">Event Title</h3>
+                <h3 id="em-title" class="text-2xl font-bold text-gray-100 pr-4">Event Title</h3>
                 <button onclick="closeEventModal()"
-                    class="text-gray-400 hover:text-white bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
+                    class="text-gray-400 hover:text-gray-100 bg-gray-800 rounded-full p-1.5"><svg class="w-5 h-5"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
                         </path>
@@ -4746,7 +4833,7 @@
                 Moments
             </button>
             <div id="em-claim-container" class="flex-col gap-2 mb-3" style="display: none"></div>
-            <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-500 font-bold shadow-md hidden">
+            <button id="em-complete-btn" class="w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-green-600/50 hover:bg-green-900/20 active:bg-green-600 text-green-400 font-bold shadow-md hidden">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M20 6L9 17l-5-5" /></svg>
                 Mark Errand Completed
             </button>
@@ -4762,7 +4849,7 @@
                 </svg>
                 Argyle
             </span>
-            <button onclick="toggleKioskChat()" class="text-white hover:text-gray-200 focus:outline-none transition-colors">
+            <button onclick="toggleKioskChat()" class="text-gray-100 hover:text-gray-200 focus:outline-none transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                 </svg>
@@ -4775,7 +4862,7 @@
                 </div>
                 <div class="p-3 bg-gray-800 border-t border-gray-700 shrink-0">
                     <form id="chat-form" onsubmit="submitChat(event)" class="flex gap-2">
-                        <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                        <input type="text" id="chat-input" autocomplete="off" placeholder="Message Argyle..." class="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                         <button type="submit" id="chat-submit-btn" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg font-bold text-sm transition-colors">Send</button>
                     </form>
                 </div>
