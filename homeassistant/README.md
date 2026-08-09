@@ -471,13 +471,37 @@ grep -rn "<area>" /config --include=*.yaml     # name from the ValueError
    rules, so a `<...>` in one fails exactly like this. Easy to miss because it
    does not look like a sentence file.
 
-Fix the reference (usually `<area>` → `{area}`), then **Developer tools →
-Actions → `conversation.reload`**.
+The fix is one of two, depending on what was meant:
 
-To confirm the diagnosis before hunting, switch **Prefer handling commands
+```yaml
+# it should have been a LIST — areas are one Home Assistant provides
+- "turn on the lights in {area}"
+
+# or it really is a rule, and the file has to define it
+expansion_rules:
+  area: "[the] {area}"
+```
+
+Then **Developer tools → Actions → `conversation.reload`**.
+
+**If grep finds nothing, bisect — the traceback names no file, so do not keep
+reading YAML.** hassil raises on the rule reference with no idea which file it
+came from, which is why this is worth five deterministic minutes instead:
+
+1. Rename `/config/custom_sentences` to `custom_sentences.bak`, call
+   `conversation.reload`, try a command.
+2. **Works** → the culprit is in that folder. Put the files back one at a time,
+   reloading after each, until it breaks again.
+3. **Still fails** → it is not a sentence file. It is a `conversation` trigger
+   in an automation or a blueprint, which the same compiler processes. Disable
+   automations with conversation triggers in batches the same way.
+
+To confirm the diagnosis before any of that, switch **Prefer handling commands
 locally** OFF: Chauffeur voice commands start working immediately, because that
 skips the broken built-in path entirely. Built-in commands (garage, lights) stop
-resolving while it is off, so this is a bisect, not a fix.
+resolving while it is off, so that is a bisect, not a fix — and leaving it off
+is the one thing you should not do, since it is what routes "open the garage"
+to Home Assistant instead of to Argyle.
 
 ## Behavior notes
 
