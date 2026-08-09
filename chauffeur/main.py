@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 import asyncio
 import time
 
@@ -820,6 +820,33 @@ def panel_profile(tabs: Optional[str] = None, widgets: Optional[str] = None):
     /home?panel=true still comes up configured."""
     from services import home_board
     return home_board.profile(tabs=tabs, widgets=widgets)
+
+@app.get("/api/panel/screensaver")
+def panel_screensaver_playlist():
+    """Fresh picture URLs for one screensaver activation — called when the
+    idle timer fires, not at page load, so a panel that has been up for weeks
+    still shows this week's photos."""
+    from services import home_board
+    return home_board.screensaver_playlist()
+
+@app.get("/api/panel/media-image/{rel_path:path}")
+def panel_media_image(rel_path: str):
+    """Serve one image from the HA media share for the screensaver. The
+    playlist only ever emits paths _media_share_images produced, but this is
+    a URL anyone can type, so containment is re-checked here from scratch."""
+    from services import home_board
+    root = os.path.realpath(home_board.MEDIA_SHARE_ROOT)
+    full = os.path.realpath(os.path.join(root, rel_path))
+    if not (full == root or full.startswith(root + os.sep)):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not (os.path.isfile(full) and full.lower().endswith(home_board._IMAGE_EXTS)):
+        raise HTTPException(status_code=404, detail="Not found")
+    import mimetypes
+    mime = mimetypes.guess_type(full)[0] or 'image/jpeg'
+    # Immutable-ish: the screensaver re-lists the folder every activation, so
+    # a day of browser caching costs nothing and spares the share re-reads.
+    return FileResponse(full, media_type=mime,
+                        headers={'Cache-Control': 'public, max-age=86400'})
 
 @app.get("/app")
 def driver_app(request: Request):

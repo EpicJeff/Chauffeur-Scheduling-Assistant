@@ -139,6 +139,22 @@ ENTRIES: List[dict] = [
        'How long the wall panel sits untouched on some other page before it '
        'goes back to the home board. Zero leaves it wherever it was left.',
        page='home', anchor='panel-setup'),
+    _e('panel_screensaver_idle_seconds', 'panel', 'Screensaver after idle',
+       'How long the panel sits untouched before it dims into the photo '
+       'slideshow. Zero turns the screensaver off.',
+       page='home', anchor='panel-setup'),
+    _e('panel_screensaver_source', 'panel', 'Screensaver pictures',
+       'Where the slideshow pictures come from: the family\'s own Moments '
+       'photos, image files in the Home Assistant media folder, or the panel '
+       'wallpaper slow-panned.',
+       page='home', anchor='panel-setup'),
+    _e('panel_screensaver_media_path', 'panel', 'Media folder',
+       'Subfolder of the HA media share to scan for pictures (when the '
+       'source is the media folder). Empty scans the whole share.',
+       page='home', anchor='panel-setup'),
+    _e('panel_screensaver_dwell_seconds', 'panel', 'Seconds per photo',
+       'How long each picture holds before crossfading to the next.',
+       page='home', anchor='panel-setup'),
 
     # --- meals & shopping
     _e('car_dining', 'meals', 'Eating in the car',

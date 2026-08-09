@@ -892,6 +892,39 @@
                             class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
                         <span class="text-sm text-gray-500">seconds</span>
                     </div>
+
+                    <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2 mt-6">
+                        Screensaver
+                    </div>
+                    <p class="text-xs text-gray-500 mb-3">
+                        After a longer idle, the panel dims into a slow photo slideshow with a
+                        clock. Pictures can come from your own Moments, from image files in the
+                        Home Assistant media folder, or the wallpaper above can slow-pan.
+                        Zero seconds turns it off.
+                    </p>
+                    <div class="flex items-center gap-2 mb-3">
+                        <input type="number" min="0" step="60" x-model.number="draft.panel_screensaver_idle_seconds"
+                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm text-gray-500">seconds idle before it starts</span>
+                    </div>
+                    <div class="flex items-center gap-2 mb-3">
+                        <select x-model="draft.panel_screensaver_source"
+                            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            <option value="photos">Family Moments photos</option>
+                            <option value="media">HA media folder</option>
+                            <option value="background">Wallpaper only</option>
+                        </select>
+                        <template x-if="draft.panel_screensaver_source === 'media'">
+                            <input type="text" x-model="draft.panel_screensaver_media_path"
+                                placeholder="subfolder of /media (empty = all)"
+                                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        </template>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input type="number" min="5" max="600" step="5" x-model.number="draft.panel_screensaver_dwell_seconds"
+                            class="w-28 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <span class="text-sm text-gray-500">seconds per photo</span>
+                    </div>
                 </div>
             </div>
 
@@ -944,7 +977,11 @@
                     panel_theme: 'dark', panel_background: '',
                     panel_theme_sunset_offset_minutes: 0,
                     panel_theme_sunrise_offset_minutes: 0,
-                    panel_page_backgrounds: {}
+                    panel_page_backgrounds: {},
+                    panel_screensaver_idle_seconds: 600,
+                    panel_screensaver_source: 'photos',
+                    panel_screensaver_media_path: '',
+                    panel_screensaver_dwell_seconds: 20
                 },
 
                 // Theme first, before anything paints: a board that flashes
@@ -1376,7 +1413,16 @@
                             panel_theme_sunrise_offset_minutes:
                                 s.panel_theme_sunrise_offset_minutes ?? 0,
                             panel_background: s.panel_background || '',
-                            panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
+                            panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) },
+                            // Same absent-vs-zero discipline as idle return:
+                            // stored settings predate the screensaver, so
+                            // absent means the default while 0 stays off.
+                            panel_screensaver_idle_seconds:
+                                s.panel_screensaver_idle_seconds === undefined
+                                    ? 600 : s.panel_screensaver_idle_seconds,
+                            panel_screensaver_source: s.panel_screensaver_source || 'photos',
+                            panel_screensaver_media_path: s.panel_screensaver_media_path || '',
+                            panel_screensaver_dwell_seconds: s.panel_screensaver_dwell_seconds || 20
                         };
                     } catch (e) { /* setup stays on defaults */ }
                 },
@@ -1480,7 +1526,15 @@
                                     Math.min(240, Math.max(-240,
                                         parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
-                                panel_page_backgrounds: this.draft.panel_page_backgrounds
+                                panel_page_backgrounds: this.draft.panel_page_backgrounds,
+                                panel_screensaver_idle_seconds:
+                                    Number(this.draft.panel_screensaver_idle_seconds) || 0,
+                                panel_screensaver_source: this.draft.panel_screensaver_source,
+                                panel_screensaver_media_path:
+                                    (this.draft.panel_screensaver_media_path || '').trim(),
+                                panel_screensaver_dwell_seconds:
+                                    Math.min(600, Math.max(5,
+                                        parseInt(this.draft.panel_screensaver_dwell_seconds, 10) || 20))
                             })
                         });
                         if (!r.ok) throw new Error(await r.text());

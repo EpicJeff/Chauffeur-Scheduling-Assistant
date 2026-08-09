@@ -1134,6 +1134,104 @@ def _background_url(settings: dict) -> Optional[str]:
     return _as_background((settings or {}).get('panel_background'))
 
 
+# --- Screensaver (idle photo slideshow) --------------------------------------
+
+# The HA media share the add-on maps (config.yaml `map: media:rw`). A module
+# constant so tests can point it at a temp directory.
+MEDIA_SHARE_ROOT = '/media'
+_IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+
+
+def screensaver_config(settings: dict = None) -> dict:
+    """The screensaver's knobs, resolved with the same absent-means-default
+    discipline as idle_seconds: stored settings dicts predate this arc, so
+    absent must mean the default, while an explicit 0 stays off."""
+    settings = settings if settings is not None else (storage.get_settings() or {})
+
+    def _int(key, default, lo=0, hi=24 * 3600):
+        raw = settings.get(key)
+        try:
+            v = default if raw is None else int(raw)
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(hi, v))
+
+    source = str(settings.get('panel_screensaver_source') or 'photos').lower()
+    if source not in ('photos', 'media', 'background'):
+        source = 'photos'
+    return {
+        'idle_seconds': _int('panel_screensaver_idle_seconds', 600),
+        'dwell_seconds': _int('panel_screensaver_dwell_seconds', 20, lo=5, hi=600),
+        'source': source,
+    }
+
+
+def _media_share_images(subpath: str) -> List[str]:
+    """Relative paths of image files under MEDIA_SHARE_ROOT/subpath, newest
+    first, capped. The subpath comes from settings (admin-controlled), but the
+    realpath containment check makes traversal a non-question rather than a
+    judgment call."""
+    import os
+    root = os.path.realpath(MEDIA_SHARE_ROOT)
+    base = os.path.realpath(os.path.join(root, (subpath or '').strip().strip('/\\')))
+    if not (base == root or base.startswith(root + os.sep)):
+        return []
+    if not os.path.isdir(base):
+        return []
+    found = []
+    for dirpath, _dirs, files in os.walk(base):
+        for f in files:
+            if f.lower().endswith(_IMAGE_EXTS) and not f.startswith('.'):
+                full = os.path.join(dirpath, f)
+                try:
+                    found.append((os.path.getmtime(full), os.path.relpath(full, root)))
+                except OSError:
+                    continue
+        if len(found) >= 500:
+            break
+    found.sort(reverse=True)
+    return [rel.replace(os.sep, '/') for _mt, rel in found[:300]]
+
+
+def screensaver_playlist(settings: dict = None) -> dict:
+    """Fresh picture URLs for one screensaver activation. Fetched at
+    activation time rather than shipped in the profile: a panel is loaded
+    once and left up for weeks, and the photos should not be frozen at
+    whatever existed on page load.
+
+    Fallback chain: an empty source falls back to the wallpaper, and an empty
+    wallpaper to [] — the client then shows its gradient + clock, which is
+    still a better idle face than a burned-in schedule."""
+    settings = settings if settings is not None else (storage.get_settings() or {})
+    cfg = screensaver_config(settings)
+    urls: List[str] = []
+    if cfg['source'] == 'photos':
+        # Moments photos (and video posters — a still is a still). since_ts=0:
+        # moments are exempt from chat retention, so the whole archive is the
+        # playlist, newest first.
+        for m in storage.get_recent_event_moments(0, limit=120):
+            att = m.get('attachment') or {}
+            url = att.get('url') or ''
+            if not url.startswith('/api/media/'):
+                continue  # legacy inline data_url photos: too heavy for a playlist
+            if (att.get('kind') or 'photo') == 'photo':
+                urls.append(url.lstrip('/'))
+            else:
+                # Poster convention from the chat renderer: media id + .jpg
+                media_id = url.rsplit('/', 1)[-1].split('.')[0]
+                if storage.media_file_path(f'{media_id}.jpg'):
+                    urls.append(f'api/media/{media_id}.jpg')
+    elif cfg['source'] == 'media':
+        urls = ['api/panel/media-image/' + rel
+                for rel in _media_share_images(settings.get('panel_screensaver_media_path') or '')]
+    if not urls:
+        bg = _background_url(settings)
+        if bg:
+            return {'source': 'background', 'urls': [bg]}
+        return {'source': 'none', 'urls': []}
+    return {'source': cfg['source'], 'urls': urls}
+
+
 def backgrounds(settings: dict = None) -> dict:
     """`{'default': url|None, '<nav slug>': url}` — every page's picture,
     resolved. The whole map travels in the panel profile so a page change does
@@ -1358,7 +1456,10 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
             'theme': theme,
             'next_flip': next_flip,
             'backgrounds': backgrounds(settings),
-            'idle_seconds': max(0, idle)}
+            'idle_seconds': max(0, idle),
+            # Knobs only — the playlist is fetched at activation so a panel
+            # that has been up for weeks still shows this week's photos.
+            'screensaver': screensaver_config(settings)}
 
 
 def build(requested: Optional[str] = None, kid_digest_fn: Callable = None,

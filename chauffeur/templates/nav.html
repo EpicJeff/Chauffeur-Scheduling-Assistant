@@ -537,6 +537,145 @@
             }, true);
         }
 
+        // Screensaver. After a longer idle than the return-home, the wall stops
+        // being a schedule and becomes a picture frame: a Ken Burns slideshow
+        // (Moments, the HA media share, or the wallpaper) with a clock. The
+        // playlist is fetched at ACTIVATION, not page load — a panel is up for
+        // weeks, and the photos should not be frozen at whatever existed when
+        // somebody last rebooted it.
+        if (isPanel) {
+            let ssRoot = null, ssLayers = [], ssFront = 0, ssUrls = [], ssIdx = 0;
+            let ssSlideTimer = null, ssClockTimer = null, ssIdleTimer = null;
+            let ssCfg = null;
+
+            const ssClock = () => {
+                const el = document.getElementById('panel-ss-clock');
+                if (!el) return;
+                const now = new Date();
+                el.querySelector('.ss-time').textContent =
+                    now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                el.querySelector('.ss-date').textContent =
+                    now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+            };
+
+            // One slide: paint the back layer, Ken Burns it, crossfade.
+            // Pan/zoom direction alternates from a small pool so consecutive
+            // photos never move the same way.
+            const SS_PANS = [
+                ['scale(1.18) translate(2.5%, 1.5%)', 'scale(1.06) translate(-1.5%, -1%)'],
+                ['scale(1.06) translate(-2%, 1%)', 'scale(1.18) translate(1.5%, -1.5%)'],
+                ['scale(1.15) translate(-2%, -2%)', 'scale(1.05) translate(1%, 1.5%)'],
+                ['scale(1.05) translate(1.5%, -1%)', 'scale(1.16) translate(-2%, 1.5%)'],
+            ];
+            const ssShow = (url) => {
+                const back = ssLayers[1 - ssFront];
+                const dwell = (ssCfg.dwell_seconds || 20);
+                const [from, to] = SS_PANS[ssIdx % SS_PANS.length];
+                back.style.transition = 'none';
+                back.style.transform = from;
+                back.style.backgroundImage = url ? `url("${url}")` : ssGradient();
+                // Two frames: one to commit the reset, one to start the move —
+                // a single rAF can coalesce into the transition and skip the pan.
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    back.style.transition =
+                        `opacity 1.4s ease, transform ${dwell + 2}s linear`;
+                    back.style.opacity = '1';
+                    back.style.transform = to;
+                    ssLayers[ssFront].style.opacity = '0';
+                    ssFront = 1 - ssFront;
+                }));
+            };
+            const ssGradient = () =>
+                'radial-gradient(1200px 800px at 20% 0%, #1e293b 0%, #0b1020 60%)';
+
+            const ssAdvance = () => {
+                if (!ssUrls.length) return;
+                ssIdx = (ssIdx + 1) % ssUrls.length;
+                const next = ssUrls[ssIdx];
+                // Decode off-screen first so the crossfade reveals a painted
+                // photo, not a half-loaded one.
+                const im = new Image();
+                im.onload = () => ssShow(next);
+                im.onerror = () => { /* skip it next round */ };
+                im.src = next;
+            };
+
+            const ssStop = () => {
+                if (!window._chfSsActive) return;
+                window._chfSsActive = false;
+                clearInterval(ssSlideTimer);
+                clearInterval(ssClockTimer);
+                if (ssRoot) ssRoot.remove();
+                ssRoot = null; ssLayers = [];
+                if (window._chfSsPendingHome) {
+                    window._chfSsPendingHome = false;
+                    const here = window.location.pathname.split('/').filter(Boolean).pop() || '';
+                    if (here !== 'home') { window.location.href = 'home' + window.location.search; return; }
+                }
+                ssArm();
+            };
+
+            const ssStart = async () => {
+                if (window._chfSsActive || document.hidden) { ssArm(); return; }
+                let list = { urls: [] };
+                try {
+                    const r = await fetch(apiBase + 'api/panel/screensaver');
+                    if (r.ok) list = await r.json();
+                } catch (e) { /* gradient + clock is still a fine idle face */ }
+                if (window._chfSsActive) return;
+                ssUrls = (list.urls || []).map(u =>
+                    (u.startsWith('http') || u.startsWith('/') || u.startsWith('data:')) ? u : apiBase + u);
+                // Shuffle client-side so every activation starts somewhere new
+                // but the server stays deterministic and cacheable.
+                for (let i = ssUrls.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [ssUrls[i], ssUrls[j]] = [ssUrls[j], ssUrls[i]];
+                }
+                window._chfSsActive = true;
+                ssRoot = document.createElement('div');
+                ssRoot.id = 'panel-screensaver';
+                ssRoot.innerHTML = `
+                    <div class="ss-layer"></div><div class="ss-layer"></div>
+                    <div id="panel-ss-scrim"></div>
+                    <div id="panel-ss-clock"><div class="ss-time"></div><div class="ss-date"></div></div>`;
+                document.body.appendChild(ssRoot);
+                ssLayers = [...ssRoot.querySelectorAll('.ss-layer')];
+                ssFront = 0;
+                ssIdx = -1;
+                ssClock();
+                ssClockTimer = setInterval(ssClock, 15000);
+                if (ssUrls.length) {
+                    ssAdvance();
+                    ssSlideTimer = setInterval(ssAdvance, (ssCfg.dwell_seconds || 20) * 1000);
+                } else {
+                    ssLayers[1].style.backgroundImage = ssGradient();
+                    ssLayers[1].style.opacity = '1';
+                }
+                // Wake on the pointerdown itself; the capture phase swallows
+                // that first tap so it wakes rather than presses something.
+                ssRoot.addEventListener('pointerdown', (e) => {
+                    e.preventDefault(); e.stopPropagation(); ssStop();
+                }, true);
+            };
+
+            const ssArm = () => {
+                clearTimeout(ssIdleTimer);
+                if (!ssCfg || !ssCfg.idle_seconds) return;
+                ssIdleTimer = setTimeout(ssStart, ssCfg.idle_seconds * 1000);
+            };
+
+            panelProfile().then(p => {
+                ssCfg = (p && p.screensaver) || null;
+                if (!ssCfg || !ssCfg.idle_seconds) return;
+                ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'].forEach(ev =>
+                    document.addEventListener(ev, () => { if (!window._chfSsActive) ssArm(); }, { passive: true }));
+                // A tab HA un-hides after hours away should not flash straight
+                // into the slideshow; give it a fresh idle period.
+                document.addEventListener('visibilitychange', () => { if (!document.hidden && !window._chfSsActive) ssArm(); });
+                ssArm();
+            });
+        }
+
         // Idle return. What makes the panel an appliance rather than a browser:
         // whatever somebody wandered off into, the wall goes back to being the
         // wall. Deliberately not applied on /home — there is nowhere to return
@@ -550,7 +689,13 @@
                         const secs = p && p.idle_seconds;
                         if (!secs) return;
                         let timer;
-                        const goHome = () => { window.location.href = 'home' + window.location.search; };
+                        const goHome = () => {
+                            // Mid-slideshow, going home would tear the photos
+                            // down for a page nobody is looking at. Note it,
+                            // and let wake-up do the navigating.
+                            if (window._chfSsActive) { window._chfSsPendingHome = true; return; }
+                            window.location.href = 'home' + window.location.search;
+                        };
                         const reset = () => {
                             clearTimeout(timer);
                             timer = setTimeout(goHome, secs * 1000);

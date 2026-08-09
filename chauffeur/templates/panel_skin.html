@@ -196,6 +196,65 @@
         background: var(--panel-scrim);
     }
 
+    /* --- Screensaver (idle photo slideshow) ---------------------------------
+       Injected by nav.html when the idle timer fires; sits over EVERYTHING
+       (chat orb, hearth, modals) because its whole job is replacing the page.
+       Layers are double-buffered: the incoming photo Ken-Burns on the back
+       layer while the front one fades out. */
+    #panel-screensaver {
+        position: fixed;
+        inset: 0;
+        /* Above the hearth/moment overlays (z 200-220): replacing the page
+           includes replacing whatever popup was up when the house went quiet. */
+        z-index: 300;
+        background: #000;
+        cursor: none;
+        touch-action: none;
+    }
+
+    #panel-screensaver .ss-layer {
+        position: absolute;
+        inset: 0;
+        background-size: cover;
+        background-position: center;
+        opacity: 0;
+        will-change: opacity, transform;
+    }
+
+    /* Legibility floor for the clock, not a mood filter: photos stay bright,
+       only the lower-left corner gets a foothold. */
+    #panel-ss-scrim {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to top right,
+                rgba(0, 0, 0, .55) 0%, rgba(0, 0, 0, 0) 40%);
+        pointer-events: none;
+    }
+
+    #panel-ss-clock {
+        position: absolute;
+        left: 4vmin;
+        bottom: 3.5vmin;
+        color: #fff;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, .6);
+        pointer-events: none;
+        font-family: Inter, system-ui, sans-serif;
+    }
+
+    #panel-ss-clock .ss-time {
+        font-size: 9vmin;
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
+    }
+
+    #panel-ss-clock .ss-date {
+        font-size: 3vmin;
+        font-weight: 600;
+        opacity: .85;
+        margin-top: 1vmin;
+    }
+
     /* ── The shared vocabulary, used directly by the home board. */
     .panel-text { color: var(--panel-fg); }
     .panel-dim { color: var(--panel-dim); }

@@ -751,6 +751,28 @@ class Settings(BaseModel):
     # look one up — because a household that has to find eleven image URLs
     # will set zero of them.
     panel_page_backgrounds: Dict[str, str] = Field(default_factory=dict)
+    # --- Screensaver (idle photo slideshow) ---
+    # After this long untouched, any panel page dims into a Ken Burns photo
+    # slideshow with a clock. Independent of panel_idle_return_seconds: the
+    # return-home makes the wall a consistent APPLIANCE, the screensaver makes
+    # an untouched wall WORTH LOOKING AT. 0 disables it.
+    panel_screensaver_idle_seconds: int = 600
+    # Where the pictures come from:
+    #   photos     — the family's own Moments (photo attachments in event
+    #                chats), served from the app's media store. The default:
+    #                the family's wall shows the family.
+    #   media      — image files under the HA /media share (subfolder below).
+    #                This is the bridge to everything else: HA, a NAS, or
+    #                Synology/Immich-style sync tools can drop photos there —
+    #                including ones synced FROM Google Photos, whose own API
+    #                no longer allows third-party library reads.
+    #   background — no playlist; the panel wallpaper itself, slow-panned.
+    panel_screensaver_source: str = 'photos'
+    # Subfolder of /media scanned when source is 'media' (e.g. 'screensaver').
+    # Empty scans /media itself. Traversal is rejected server-side.
+    panel_screensaver_media_path: str = ''
+    # Seconds each photo holds before crossfading to the next.
+    panel_screensaver_dwell_seconds: int = 20
 
 class TelemetryEvent(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
