@@ -478,28 +478,37 @@ give the two distinct aliases (`office TV` for the set, `office TV music` for
 the Music Assistant one).
 
 That is worth doing regardless, because two identically-named targets break
-voice control with or without a custom agent. But it is a workaround, and the
-thing underneath it is a real defect worth reporting upstream:
+voice control with or without a custom agent.
 
-**Home Assistant collapses "no such device" and "several devices, which one?"
-into the same swallowed error.** Both surface as `NO_VALID_TARGETS`, and
-`async_handle_intents` discards both identically. Yet they are opposite
+**Know exactly how much gets swallowed, because it is less than it looks.**
+There are only four error codes, and the fall-through splits them along a
+defensible line:
+
+| code | meaning | fall through? |
+|---|---|---|
+| `NO_INTENT_MATCH` | text matched no intent | **yes** — correct, let another agent try |
+| `NO_VALID_TARGETS` | intent matched, no valid target | **yes** — correct for "no such device", WRONG for "which one?" |
+| `FAILED_TO_HANDLE` | matched, tried, the call failed | no — reported to you |
+| `UNKNOWN` | outside intent processing | no — reported to you |
+
+So "I tried and the device did not respond" is NOT lost. A service call that
+fails or times out raises `IntentHandleError` → `FAILED_TO_HANDLE`, which the
+exclusion list deliberately passes straight through. The rule is
+"could not understand or target you" falls through, "understood and it broke"
+is reported — and that is the right rule.
+
+**Exactly one thing sits on the wrong side of it.** `NO_VALID_TARGETS` covers
+both "no such device" and "several devices with that name", which are opposite
 situations: one means the local agent cannot help, the other means it knows
-exactly what you asked for and needs one word back from you. Without a custom
-agent the second case reaches you as a useful "there is more than one device
-with that name". With one, that sentence is thrown away and the question is
-handed to an assistant that has never heard of the device — so a fixable
-ambiguity presents as an unrelated refusal.
+exactly what you asked and needs one word back. Home Assistant already knows
+which it is — `MatchFailedReason.DUPLICATE_NAME` is a distinct reason at the
+point of failure — and then flattens it into the shared code before
+`async_handle_intents` can act on the difference.
 
-The fall-through is deliberate: an LLM agent that declares `CONTROL` may well
-resolve what the strict matcher could not, so trying it is reasonable. It is
-wrong for an agent like ours precisely BECAUSE we do not declare `CONTROL` —
-the one agent guaranteed unable to help is the one it hands the question to.
-The narrow fix upstream is to keep swallowing "no match" while surfacing
-"ambiguous", or to skip the fall-through entirely for agents without `CONTROL`.
-
-Nothing in this integration can recover it: by the time our entity is called,
-the local response has been discarded and we are not told it ever existed.
+That makes the upstream fix a narrow one: surface `DUPLICATE_NAME` rather than
+collapsing it, so ambiguity is reported while genuine no-match keeps falling
+through. Nothing in this integration can recover it — by the time our entity is
+called the local response is gone and we are not told it existed.
 
 **A landmine to leave alone.** How much gets handled locally depends on a flag
 our entity does not set. `assist_pipeline` narrows the local path to a
