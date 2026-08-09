@@ -4203,10 +4203,18 @@ class RoutineCopyRequest(BaseModel):
 def copy_routines(req: RoutineCopyRequest):
     """Copy one member's routine onto another — the kids' routines are mostly
     the same, so set one up, copy it, edit the differences. MERGE semantics:
-    an item whose title the target already has (case-insensitive) is skipped,
-    so copying onto a half-built routine tops it up rather than doubling it,
-    and copying twice is harmless. Checks/streaks never copy — they are the
-    target kid's own history."""
+    an item is skipped when the target already has one with the same title
+    AND time of day, so copying onto a half-built routine tops it up rather
+    than doubling it, and copying twice is harmless.
+
+    The key is (title, time) rather than title alone because the same title
+    at two times is two real items — the family's "Brush teeth" runs once in
+    the morning and once at night, and title-only collapsed the pair. The
+    day-of-week mask is deliberately NOT in the key: differing masks are
+    usually the SAME item tweaked per kid, and keying on them would re-import
+    near-duplicates on every re-copy. (The residual trade: retime a copied
+    item on the target and a later re-copy re-adds the original time.)
+    Checks/streaks never copy — they are the target kid's own history."""
     from models.schemas import RoutineItem
     if req.from_member_id == req.to_member_id:
         raise HTTPException(status_code=400, detail="Pick two different people")
@@ -4216,11 +4224,13 @@ def copy_routines(req: RoutineCopyRequest):
     src = storage.get_routines(req.from_member_id)
     if not src:
         raise HTTPException(status_code=400, detail="Nothing to copy — that routine is empty")
-    have = {(r.get('title') or '').strip().casefold()
-            for r in storage.get_routines(req.to_member_id)}
+    def _key(r):
+        title = (r.get('title') or '').strip().casefold()
+        return (title, r.get('time_of_day') or '') if title else None
+    have = {_key(r) for r in storage.get_routines(req.to_member_id)} - {None}
     created = skipped = 0
     for r in src:
-        key = (r.get('title') or '').strip().casefold()
+        key = _key(r)
         if not key or key in have:
             skipped += 1
             continue

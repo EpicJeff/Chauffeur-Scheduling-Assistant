@@ -183,29 +183,34 @@ def scenario_copy_routine_between_kids():
     from fastapi import HTTPException
     _member("alex", "Alex", "child")
     _member("emma", "Emma", "child")
+    # The real family's shape: the SAME title twice, morning and night.
+    # Title-only dedup collapsed this pair and only one copied.
     _routine("a1", "alex", "Brush teeth", tod="07:30")
+    _routine("a4", "alex", "Brush teeth", tod="19:30")
     _routine("a2", "alex", "Make bed", days=[0, 1, 2, 3, 4])
     storage.update_routine("a1", {"emoji": "X"})   # hand-picked glyph rides along
 
     out = main.copy_routines(main.RoutineCopyRequest(
         from_member_id="alex", to_member_id="emma"))
-    check(out == {"created": 2, "skipped": 0}, f"first copy creates both: {out}")
-    emma = {r["title"]: r for r in storage.get_routines("emma")}
-    check(set(emma) == {"Brush teeth", "Make bed"}, f"titles copied: {set(emma)}")
-    check(emma["Brush teeth"]["time_of_day"] == "07:30"
-          and emma["Brush teeth"]["emoji"] == "X",
-          f"time and glyph survive the copy: {emma['Brush teeth']}")
-    check(emma["Make bed"]["days_of_week"] == [0, 1, 2, 3, 4],
-          f"day masks survive the copy: {emma['Make bed']}")
+    check(out == {"created": 3, "skipped": 0}, f"first copy creates all three: {out}")
+    emma = {(r["title"], r.get("time_of_day")): r for r in storage.get_routines("emma")}
+    check(set(emma) == {("Brush teeth", "07:30"), ("Brush teeth", "19:30"),
+                        ("Make bed", None)},
+          f"same title at two times is two items and BOTH copy: {set(emma)}")
+    check(emma[("Brush teeth", "07:30")]["emoji"] == "X",
+          f"the glyph survives the copy: {emma[('Brush teeth', '07:30')]}")
+    check(emma[("Make bed", None)]["days_of_week"] == [0, 1, 2, 3, 4],
+          f"day masks survive the copy: {emma[('Make bed', None)]}")
     check({r["id"] for r in storage.get_routines("emma")}.isdisjoint(
           {r["id"] for r in storage.get_routines("alex")}),
           "copies get their OWN ids — shared ids would share check history")
 
-    # Emma edits one, Alex gains one, re-copy: only the new item lands.
+    # Alex gains one, re-copy: only the new item lands — including neither
+    # of the two Brush teeth, which now match on (title, time).
     _routine("a3", "alex", "Feed the cat", tod="17:00")
     out = main.copy_routines(main.RoutineCopyRequest(
         from_member_id="alex", to_member_id="emma"))
-    check(out == {"created": 1, "skipped": 2},
+    check(out == {"created": 1, "skipped": 3},
           f"re-copy tops up without doubling: {out}")
 
     # Guard rails.
