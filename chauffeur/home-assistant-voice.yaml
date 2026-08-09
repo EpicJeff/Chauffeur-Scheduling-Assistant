@@ -1571,7 +1571,7 @@ voice_assistant:
   volume_multiplier: 1
   on_client_connected:
     - lambda: id(init_in_progress) = false;
-    - micro_wake_word.start:
+    - micro_wake_word.start_continuous:
     # Give the API server time to settle before asking it for a pipeline.
     # Without this the request goes out while Home Assistant is still bringing
     # the voice-assistant subscription up, it fails, and nothing retries — the
