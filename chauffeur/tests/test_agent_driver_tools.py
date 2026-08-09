@@ -118,12 +118,73 @@ def scenario_router_injects_driver_context():
     check("start_route" not in captured["tools"], "admin chat has no driver tools")
 
 
+def scenario_misheard_names_still_find_the_person():
+    """Speech-to-text has never met this family. It renders Celma as "Selma"
+    and Vovo as "Volvo", and the old matcher was substring-only — "selma" is
+    not inside "celma", so a voice command simply failed. Both tiers of the fix
+    are guarded here: the sound-folding that catches a swapped letter, and the
+    scored tier that catches a whole inserted one."""
+    from services.agent_tools_v2 import _match_person
+
+    roster = [{"name": n} for n in
+              ("Celma", "Vovo", "Jeff", "Grandpa", "Grandma", "Lily")]
+
+    for heard, expected in (("Selma", "Celma"), ("Volvo", "Vovo"),
+                            ("Lilly", "Lily"), ("Celma", "Celma")):
+        got, _ = _match_person(heard, roster)
+        check(got and got["name"] == expected,
+              f"{heard!r} should resolve to {expected}, got {got}")
+
+    # The pair that must NOT be guessed at. They are 0.857 similar, so a bare
+    # threshold hands over the wrong grandparent; only the margin check saves it.
+    for exact in ("Grandpa", "Grandma"):
+        got, _ = _match_person(exact, roster)
+        check(got and got["name"] == exact, f"{exact} resolves to itself, got {got}")
+    got, known = _match_person("granma or granpa", roster)
+    check(got is None and "Grandpa" in known and "Grandma" in known,
+          f"an ambiguous grandparent is refused and the roster named, got {got}")
+
+    # A miss reports who DOES exist — without that the model just retries the
+    # same misheard name.
+    got, known = _match_person("Beyonce", roster)
+    check(got is None and set(known) == {p["name"] for p in roster},
+          f"unknown name lists the roster, got {known}")
+
+
+def scenario_router_injects_the_family_roster():
+    """The real fix for a misheard name is upstream of any matcher: give the
+    model the list of people who exist and it corrects the name itself, for
+    every tool that takes one. The prompt carried no roster at all."""
+    seed({"mom": [("Soccer Practice", 9)]})
+    storage.add_driver({"id": "celma", "name": "Celma", "color_code": "#fff"})
+    from services import agent_router
+    captured = {}
+
+    def fake_gemma(prompt, tools, system_prompt):
+        captured["system"] = system_prompt
+        return {"message": "ok", "tool_calls": []}
+
+    orig = agent_router.call_gemma_with_fallback
+    agent_router.call_gemma_with_fallback = fake_gemma
+    try:
+        agent_router.process_agent_request("have Selma drive tonight", source="admin")
+    finally:
+        agent_router.call_gemma_with_fallback = orig
+
+    check("Celma" in captured["system"],
+          "the roster names every driver so the model can correct a mishearing")
+    check("speech-to-text" in captured["system"].lower(),
+          "and says WHY an unfamiliar name is probably one of them misheard")
+
+
 SCENARIOS = [
     scenario_get_my_route_filters_by_driver,
     scenario_start_route_marks_in_progress,
     scenario_complete_route_telemetry_and_legs,
     scenario_no_match_errors,
     scenario_router_injects_driver_context,
+    scenario_misheard_names_still_find_the_person,
+    scenario_router_injects_the_family_roster,
 ]
 
 if __name__ == "__main__":

@@ -130,6 +130,35 @@ CRITICAL INSTRUCTIONS FOR TRIP PLANNING:
                       "Resolve relative dates ('today', 'tonight', 'tomorrow', weekday names) against this "
                       "before calling tools, and pass tool dates as YYYY-MM-DD.\n")
 
+    # WHO IS IN THIS HOUSE. Without the roster the model has no way to know
+    # that a name it was handed is wrong: a voice request arrives via
+    # speech-to-text, which has never met this family and renders Celma as
+    # "Selma" and Vovo as "Volvo". It passed those straight into the tools,
+    # which looked for a driver that does not exist and failed. Given the list,
+    # the model corrects the name itself — and it fixes every tool that takes a
+    # person's name at once, not just the two that resolve one.
+    try:
+        from services.storage import get_all_drivers as _all_drivers, get_all_members
+        _roster = [d.get('name') for d in _all_drivers()
+                   if d.get('name') and not d.get('is_disabled')]
+        _others = [m.get('name') for m in get_all_members()
+                   if m.get('name') and not m.get('system') and m.get('name') not in _roster]
+        if _roster or _others:
+            system_prompt += "\nWHO IS IN THIS FAMILY"
+            if _roster:
+                system_prompt += f" — drivers: {', '.join(_roster)}"
+            if _others:
+                system_prompt += f"; others: {', '.join(_others)}"
+            system_prompt += (
+                ".\nThese are the ONLY people who exist. Spoken requests reach you through "
+                "speech-to-text, which does not know these names and mishears them — an "
+                "unfamiliar name in a request is far more likely to be one of these "
+                "misheard than a new person. Map every name to the closest one on this "
+                "list before calling a tool, and pass that spelling exactly. Ask which "
+                "person is meant only when two of them are genuinely close.\n")
+    except Exception as e:
+        logger.warning(f"Could not inject family roster: {e}")
+
     if not driver:
         if acting_member is not None:
             _nm = acting_member.get('name') or 'this family member'

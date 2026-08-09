@@ -147,17 +147,18 @@ def assign_driver_to_event_fuzzy(event_name: str, driver_name: str, target_date:
     if err:
         return {"status": "error", "message": err}
 
-    # Fuzzy match driver
-    target_driver = None
-    driver_name_lower = driver_name.lower().strip()
-    drivers = get_all_drivers()
-    for d in drivers:
-        if driver_name_lower in d.get("name", "").lower() or driver_name_lower == d.get("hashtag", "").lower().replace("#", ""):
-            target_driver = d
-            break
-            
+    # Speech-tolerant, because the name in a voice command has been through
+    # speech-to-text. The old match was `name in driver.name` plus a lookup of
+    # a "hashtag" key that does not exist on a Driver (the field is `hashtags`,
+    # a list), so it was substring-only in practice — and a substring never
+    # finds Celma from "Selma".
+    target_driver, known = _match_person(driver_name, get_all_drivers())
     if not target_driver:
-        return {"status": "error", "message": f"Could not find a driver matching '{driver_name}'."}
+        # Name the roster. Without it the model has nothing to correct against
+        # and simply retries the same misheard name.
+        return {"status": "error",
+                "message": f"Could not find a driver matching '{driver_name}'. "
+                           f"The drivers are: {', '.join(known)}."}
         
     # Set the override
     override_data = {
@@ -473,17 +474,84 @@ def _member_for_driver(driver_id: str):
     return next((m for m in get_all_members() if m.get('driver_id') == driver_id), None)
 
 
+def _fold_name(raw: str) -> str:
+    """A name reduced to roughly how it SOUNDS, for comparing against speech.
+
+    Most requests reach the agent through speech-to-text, and the names in this
+    house are not in Whisper's head: it hears Celma as "Selma" and Vovo as
+    "Volvo". Those are not typos and no amount of substring matching finds
+    them — "selma" is not inside "celma".
+
+    This is deliberately a handful of rules and not a metaphone: soft c -> s
+    (the Celma case), ph -> f, hard c/ck -> k, z -> s, and doubles collapsed.
+    Anything it misses is caught by the edit-distance tier in _match_person,
+    which is what covers a whole inserted syllable like the l in Volvo."""
+    import re
+    import unicodedata
+    s = unicodedata.normalize('NFKD', (raw or '').strip().lower())
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r'[^a-z]', '', s)
+    s = s.replace('ph', 'f').replace('ck', 'k')
+    s = re.sub(r'c(?=[eiy])', 's', s)        # Celma -> selma, Cindy -> sindy
+    s = s.replace('c', 'k').replace('z', 's')
+    return re.sub(r'(.)\1+', r'\1', s)       # Aaron -> aron
+
+
+def _match_person(query: str, people: list):
+    """Resolve one spoken or typed name against a roster.
+
+    Returns (person, candidate_names). A miss returns (None, every name we
+    know) so the caller can put the real roster in its error — the model then
+    retries with a name that exists instead of guessing again at the one it
+    misheard.
+
+    Tiers, each requiring a UNIQUE winner before it is trusted: exact, then an
+    explicit hashtag (the hand path — add "#selma" to Celma and the mishearing
+    is pinned for good), then substring/first name, then the sound-folded form,
+    and only last a close-spelling score. That final tier demands both a high
+    ratio AND a clear margin over the runner-up, because this family contains
+    Grandpa and Grandma: 0.857 similar to each other, and a lone threshold
+    would cheerfully hand a wrong grandparent the car keys."""
+    import difflib
+    q = (query or '').strip().lower().lstrip('#')
+    people = [p for p in (people or []) if (p.get('name') or '').strip()]
+    if not q or not people:
+        return None, [p.get('name') for p in people]
+
+    def nm(p):
+        return (p.get('name') or '').strip().lower()
+
+    def tags(p):
+        raw = p.get('hashtags') or p.get('hashtag') or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return {str(t).lstrip('#').strip().lower() for t in raw if t}
+
+    for candidates in (
+        [p for p in people if nm(p) == q],
+        [p for p in people if q in tags(p)],
+        [p for p in people if q in nm(p) or nm(p).split(' ')[0] == q],
+        [p for p in people if _fold_name(nm(p)) == _fold_name(q)],
+    ):
+        if len(candidates) == 1:
+            return candidates[0], []
+
+    fq = _fold_name(q)
+    scored = sorted(((difflib.SequenceMatcher(None, fq, _fold_name(nm(p))).ratio(), p)
+                     for p in people), key=lambda t: t[0], reverse=True)
+    if scored and scored[0][0] >= 0.8 and (
+            len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.06):
+        return scored[0][1], []
+    return None, [p.get('name') for p in people]
+
+
 def _find_member_fuzzy(name: str):
     if not name:
         return None
     from services.storage import get_all_members
-    target = name.strip().lower()
-    members = get_all_members()
-    exact = [m for m in members if (m.get('name') or '').strip().lower() == target]
-    if len(exact) == 1:
-        return exact[0]
-    sub = [m for m in members if target and target in (m.get('name') or '').strip().lower()]
-    return sub[0] if len(sub) == 1 else None
+    member, _ = _match_person(
+        name, [m for m in get_all_members() if not m.get('system')])
+    return member
 
 
 def _member_names() -> str:
