@@ -205,7 +205,35 @@ voice_assistant:
     - delay: 2s                                   # let the API settle
     - lambda: id(va).set_use_wake_word(true);     # the flag does not survive a stop
     - voice_assistant.start_continuous:
+
+  # Put the LED ring back to idle when a reply finishes.
+  #
+  # Upstream does this at the end of `on_end` — but behind
+  # `wait_until: not voice_assistant.is_running`, and in continuous mode that
+  # never completes, because continuous mode IS the assistant never stopping.
+  # So the phase is never reset and the ring spins forever. The device is still
+  # listening the whole time (say the wake word again and it answers); only the
+  # light is wrong, which is worse than it sounds on something whose entire job
+  # is to tell a room what it is doing from across the kitchen.
+  #
+  # on_tts_stream_end fires when the response audio has finished PLAYING, and
+  # is not gated on is_running. Upstream does not define it, so this adds the
+  # key rather than concatenating onto anything.
+  on_tts_stream_end:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+    - script.execute: control_leds
+  # Same for the failure path — upstream lights the error phase and relies on
+  # that same unreachable code in on_end to clear it. The delay lets the error
+  # actually be seen first.
+  on_error:
+    - delay: 2s
+    - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+    - script.execute: control_leds
 ```
+
+If Validate rejects `${voice_assist_idle_phase_id}`, the package's substitutions
+are not reaching the overlay — put the literal `1` in instead (upstream defines
+idle as phase 1).
 
 **Verify the merge rather than assuming it.** Hit **Validate**: it prints the
 fully merged config, so you can read `use_wake_word: true` and see your three
