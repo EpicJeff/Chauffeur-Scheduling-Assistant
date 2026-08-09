@@ -48,7 +48,10 @@
 
         onNow(next, now) {
             if (!next) return false;
-            if (next.live) return true;
+            // The clock, not the live flag: the flag is a claim about a
+            // DRIVE, and the card's subject is the EVENT. Past the end time
+            // the event is over even while the car is still on the road —
+            // that story belongs to presence, not to this card.
             const t = now || new Date();
             return new Date(next.start) <= t && t <= new Date(next.end);
         },
