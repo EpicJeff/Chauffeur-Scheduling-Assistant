@@ -465,7 +465,13 @@ is the usual way to end up with a dangling one. Two places to look:
 grep -rn "<area>" /config --include=*.yaml     # name from the ValueError
 ```
 
-1. `/config/custom_sentences/<lang>/*.yaml`.
+1. `/config/custom_sentences/<lang>/*.yaml`. **Music Assistant's is a known
+   offender**: its `MassPlayMediaOnMediaPlayer` sentences use `<area>` while
+   its per-block `expansion_rules` define only `play`, `on` and
+   `player_devices` — `area` is expected to come from Home Assistant's own
+   sentences, and when that stops resolving the file takes every voice command
+   in the house down with it. Anything installed by an integration is worth
+   suspecting before your own files.
 2. **Automations with a `conversation` trigger** — the `command:` strings are
    compiled by the same code, and sentence triggers do NOT support expansion
    rules, so a `<...>` in one fails exactly like this. Easy to miss because it
