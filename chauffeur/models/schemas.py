@@ -722,9 +722,21 @@ class Settings(BaseModel):
     # surface, three days is "what is happening now". Clamped 1-14, the
     # same range the calendar page's own agenda offers.
     panel_agenda_days: int = 5
-    # light | dark | auto. `auto` follows the device, which under Home
-    # Assistant means following the HA theme the panel is embedded in.
+    # light | dark | auto | sun. `auto` follows the DEVICE — which, embedded in
+    # a Home Assistant dashboard, means following HA, because Chromium
+    # propagates the embedding page's `color-scheme` into our frame. Opened
+    # directly (the PWA over the tunnel, a browser shortcut) there is no
+    # embedder, so `auto` falls back to the tablet's OS preference and a tablet
+    # nobody ever told about dark mode reports light forever. `sun` answers the
+    # same question server-side from HA's `sun.sun`, which is where the
+    # household's own theme automation gets its answer too.
     panel_theme: str = 'dark'
+    # Minutes to shift each `sun` switch by. TWO numbers, not one: switching to
+    # dark 30 minutes AFTER sunset and back to light 30 minutes AFTER sunrise
+    # are different amounts of sky. Matching darkness at both ends is +30 at
+    # sunset and -30 at sunrise, which a single shared offset cannot say.
+    panel_theme_sunset_offset_minutes: int = 0
+    panel_theme_sunrise_offset_minutes: int = 0
     # The photograph the board floats on. A flat slab reads as a dashboard; a
     # full-bleed image with a scrim over it reads as a display, which is the
     # whole difference between this and a web page on a wall. Accepts a URL, or

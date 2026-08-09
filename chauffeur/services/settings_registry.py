@@ -123,8 +123,17 @@ ENTRIES: List[dict] = [
        'panel background.',
        page='home', anchor='panel-setup'),
     _e('panel_theme', 'panel', 'Panel theme',
-       'Light, dark, or follow the device. Auto matches Home Assistant when '
-       'the panel is embedded in it.',
+       'Light, dark, follow the device, or follow the sun. Auto matches Home '
+       'Assistant while the panel is embedded in a dashboard, but falls back '
+       'to the tablet outside it; Sun asks Home Assistant where the sun is, so '
+       'it works the same on the wall and over the tunnel.',
+       page='home', anchor='panel-setup'),
+    _e('panel_theme_sunset_offset_minutes', 'panel', 'Sunset switch offset',
+       'Minutes after sunset the panel goes dark. Negative for before.',
+       page='home', anchor='panel-setup'),
+    _e('panel_theme_sunrise_offset_minutes', 'panel', 'Sunrise switch offset',
+       'Minutes after sunrise the panel goes light. Usually the negative of '
+       'the sunset offset — the same darkness of sky comes BEFORE sunrise.',
        page='home', anchor='panel-setup'),
     _e('panel_idle_return_seconds', 'panel', 'Return home when idle',
        'How long the wall panel sits untouched on some other page before it '

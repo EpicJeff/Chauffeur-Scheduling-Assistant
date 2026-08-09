@@ -408,6 +408,28 @@
             } catch (e) { /* private mode: the cache is a nicety */ }
         }
 
+        // A wall panel is loaded once and left up for weeks. Under "follow the
+        // sun" the server sends the moment the answer stops being true, and
+        // this is what makes a panel nobody has touched since Tuesday still go
+        // dark tonight. Deliberately re-ASKS instead of flipping the attribute
+        // itself: a tablet that slept through the boundary, or a household who
+        // changed the offset this afternoon, both come back correct.
+        let _flipTimer = null;
+        function scheduleThemeFlip(iso) {
+            const at = iso ? Date.parse(iso) : NaN;
+            clearTimeout(_flipTimer);
+            if (!at) return;   // not in sun mode, or HA had no answer
+            // setTimeout's delay is a 32-bit int — anything past ~24.9 days
+            // fires INSTANTLY, which would be a poll loop rather than a timer.
+            // The 6h cap also quietly recovers a panel whose clock drifted or
+            // whose tab was frozen: worst case it is late by one wake-up, not
+            // wrong until somebody reloads it. +2s so we land past the
+            // boundary rather than a millisecond short of it and re-arm for
+            // the same instant.
+            const wait = Math.min(Math.max(at - Date.now(), 1000) + 2000, 6 * 3600 * 1000);
+            _flipTimer = setTimeout(() => { _profile = null; panelProfile(); }, wait);
+        }
+
         // One request, shared by the shelf and the idle timer — they both want
         // the same answer and asking twice on every page load is a request per
         // navigation for nothing.
@@ -424,6 +446,7 @@
                             try { localStorage.setItem('chauffeurPanelTheme', p.theme); }
                             catch (e) { /* private mode: cache is a nicety */ }
                         }
+                        if (p) scheduleThemeFlip(p.next_flip);
                         if (p) applyBackground(p.backgrounds);
                         return p;
                     })

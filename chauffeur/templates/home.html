@@ -842,15 +842,43 @@
                         Theme
                     </div>
                     <p class="text-xs text-gray-500 mb-3">
-                        Auto follows the device, which under Home Assistant means following
-                        the dashboard the panel is embedded in.
+                        Auto follows the device — which inside a Home Assistant dashboard means
+                        following HA, but outside one (the app over your tunnel, a browser pointed
+                        straight at the panel) it can only see the tablet, and a tablet that was
+                        never told about dark mode says light at every hour. Sun asks Home
+                        Assistant where the sun actually is, so it reads the same on the wall and
+                        away from the house.
                     </p>
                     <select x-model="draft.panel_theme"
-                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white mb-6">
+                        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white mb-4">
                         <option value="dark">Dark</option>
                         <option value="light">Light</option>
-                        <option value="auto">Auto</option>
+                        <option value="auto">Auto (follow the device)</option>
+                        <option value="sun">Sun (follow sunrise &amp; sunset)</option>
                     </select>
+
+                    <div x-show="draft.panel_theme === 'sun'" class="mb-6">
+                        <p class="text-xs text-gray-500 mb-3">
+                            Shift either switch to taste. These are two numbers rather than one
+                            because they are not the same amount of sky: going dark 30 minutes
+                            <em>after</em> sunset matches going light 30 minutes
+                            <em>before</em> sunrise, so that pair is +30 and −30.
+                        </p>
+                        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                            <span class="text-sm text-gray-400 w-20">Sunset</span>
+                            <input type="number" step="5"
+                                x-model.number="draft.panel_theme_sunset_offset_minutes"
+                                class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            <span class="text-sm text-gray-500">minutes → dark</span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mt-2">
+                            <span class="text-sm text-gray-400 w-20">Sunrise</span>
+                            <input type="number" step="5"
+                                x-model.number="draft.panel_theme_sunrise_offset_minutes"
+                                class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            <span class="text-sm text-gray-500">minutes → light</span>
+                        </div>
+                    </div>
 
                     <div class="text-xs font-black uppercase tracking-widest text-blue-200 mb-2">
                         Return home when idle
@@ -914,6 +942,8 @@
                     panel_tile_spans: {}, panel_grid_row_height: 240, panel_grid_columns: 12,
                     panel_agenda_days: 5,
                     panel_theme: 'dark', panel_background: '',
+                    panel_theme_sunset_offset_minutes: 0,
+                    panel_theme_sunrise_offset_minutes: 0,
                     panel_page_backgrounds: {}
                 },
 
@@ -1337,6 +1367,14 @@
                             panel_grid_columns: s.panel_grid_columns || 12,
                             panel_agenda_days: s.panel_agenda_days || 5,
                             panel_theme: s.panel_theme || 'dark',
+                            // `|| 0` would be right for these anyway, but they
+                            // are offsets: a stored -30 is falsy-adjacent
+                            // enough to be worth spelling out that only
+                            // absence means zero.
+                            panel_theme_sunset_offset_minutes:
+                                s.panel_theme_sunset_offset_minutes ?? 0,
+                            panel_theme_sunrise_offset_minutes:
+                                s.panel_theme_sunrise_offset_minutes ?? 0,
                             panel_background: s.panel_background || '',
                             panel_page_backgrounds: { ...(s.panel_page_backgrounds || {}) }
                         };
@@ -1432,6 +1470,15 @@
                                     Math.min(14, Math.max(1,
                                         parseInt(this.draft.panel_agenda_days, 10) || 5)),
                                 panel_theme: this.draft.panel_theme,
+                                // Clamped to ±4h. A typo'd 300 is a panel that
+                                // flips in the middle of the afternoon and
+                                // reads as broken rather than as mis-set.
+                                panel_theme_sunset_offset_minutes:
+                                    Math.min(240, Math.max(-240,
+                                        parseInt(this.draft.panel_theme_sunset_offset_minutes, 10) || 0)),
+                                panel_theme_sunrise_offset_minutes:
+                                    Math.min(240, Math.max(-240,
+                                        parseInt(this.draft.panel_theme_sunrise_offset_minutes, 10) || 0)),
                                 panel_background: this.draft.panel_background,
                                 panel_page_backgrounds: this.draft.panel_page_backgrounds
                             })

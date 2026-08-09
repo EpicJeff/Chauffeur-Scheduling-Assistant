@@ -1040,6 +1040,152 @@ def scenario_a_page_is_configured_in_one_place():
         check(control in row, f"the row lost its {control} control in the merge")
 
 
+# ── "Follow the sun" (panel_theme: sun)
+#
+# This mode exists because `auto` — a CSS media query — silently reads "light"
+# whenever nothing is there to answer it, which is every way of opening the
+# panel except inside a Home Assistant dashboard. So the arithmetic below is
+# the whole feature, and it is arithmetic nobody can eyeball on a wall panel:
+# a wrong answer just looks like a panel that is light at 11pm.
+
+_UTC = datetime.timezone.utc
+
+
+def _sun_state(rising, setting, state='above_horizon'):
+    """A `sun.sun` as HA serves it: ISO strings with an offset."""
+    return {'entity_id': 'sun.sun', 'state': state,
+            'attributes': {'next_rising': rising.isoformat(),
+                           'next_setting': setting.isoformat()}}
+
+
+def _with_sun(payload, fn):
+    from services import ha_api
+    real = ha_api.get_state
+    ha_api.get_state = lambda entity_id: payload if entity_id == 'sun.sun' else None
+    try:
+        return fn()
+    finally:
+        ha_api.get_state = real
+
+
+def scenario_sun_reads_the_next_change_to_decide_what_is_true_now():
+    """Midday: the sun sets before it rises again, so the panel is light."""
+    now = datetime.datetime(2026, 8, 9, 16, 0, tzinfo=_UTC)
+    payload = _sun_state(rising=datetime.datetime(2026, 8, 10, 10, 30, tzinfo=_UTC),
+                         setting=datetime.datetime(2026, 8, 10, 0, 15, tzinfo=_UTC))
+    got = _with_sun(payload, lambda: home_board.sun_theme({}, now=now))
+    check(got['theme'] == 'light', f"midday should be light, got {got}")
+    check(got['next_flip'].startswith('2026-08-10T00:15'),
+          f"the next flip should be tonight's sunset, got {got['next_flip']}")
+
+    # Small hours: the next change is to light, so right now it is dark.
+    got = _with_sun(payload, lambda: home_board.sun_theme(
+        {}, now=datetime.datetime(2026, 8, 10, 3, 0, tzinfo=_UTC)))
+    check(got['theme'] == 'dark', f"3am should be dark, got {got}")
+    check(got['next_flip'].startswith('2026-08-10T10:30'),
+          f"the next flip should be sunrise, got {got['next_flip']}")
+
+
+def scenario_a_positive_sunset_offset_still_fires_tonight():
+    """The one the naive version gets wrong. Five minutes AFTER sunset with a
+    +30 offset, `next_setting` has already rolled over to tomorrow — so adding
+    the offset to it says "goes dark in 24 hours" when the real switch is 25
+    minutes away, and the panel stays light through the whole evening."""
+    now = datetime.datetime(2026, 8, 10, 0, 20, tzinfo=_UTC)     # sunset was 00:15
+    payload = _sun_state(rising=datetime.datetime(2026, 8, 10, 10, 30, tzinfo=_UTC),
+                         setting=datetime.datetime(2026, 8, 11, 0, 13, tzinfo=_UTC))
+    got = _with_sun(payload, lambda: home_board.sun_theme(
+        {'panel_theme_sunset_offset_minutes': 30}, now=now))
+    check(got['theme'] == 'light', f"still 25 min of grace left, got {got}")
+    check(got['next_flip'].startswith('2026-08-10T00:43'),
+          f"tonight's switch, not tomorrow's: {got['next_flip']}")
+
+    # And once it passes, it is dark — not light again until sunrise +offset.
+    got = _with_sun(payload, lambda: home_board.sun_theme(
+        {'panel_theme_sunset_offset_minutes': 30},
+        now=datetime.datetime(2026, 8, 10, 0, 50, tzinfo=_UTC)))
+    check(got['theme'] == 'dark', f"past the offset it should be dark, got {got}")
+
+
+def scenario_a_negative_sunrise_offset_fires_before_sunrise():
+    """The household's own argument for two offsets: matching the sunset's +30
+    means going light 30 minutes BEFORE sunrise, so the offset drags a
+    still-future `next_rising` into the past and it must be honoured now."""
+    now = datetime.datetime(2026, 8, 10, 10, 15, tzinfo=_UTC)    # sunrise is 10:30
+    payload = _sun_state(rising=datetime.datetime(2026, 8, 10, 10, 30, tzinfo=_UTC),
+                         setting=datetime.datetime(2026, 8, 11, 0, 13, tzinfo=_UTC))
+    got = _with_sun(payload, lambda: home_board.sun_theme(
+        {'panel_theme_sunrise_offset_minutes': -30}, now=now))
+    check(got['theme'] == 'light',
+          f"10:00 was the switch, 10:15 should already be light: {got}")
+    check(got['next_flip'].startswith('2026-08-11T00:13'),
+          f"next change is tonight's sunset: {got['next_flip']}")
+
+
+def scenario_sun_falls_back_to_dark_when_home_assistant_says_nothing():
+    """A panel that has lost HA at 2am must not decide to light the kitchen."""
+    got = _with_sun(None, lambda: home_board.sun_theme({}))
+    check(got == {'theme': 'dark', 'next_flip': None},
+          f"no HA should mean dark with no timer, got {got}")
+
+    # Garbage timestamps fall back the same way as absent ones — but the
+    # entity's own state is still a real answer when it got that far.
+    payload = {'state': 'below_horizon', 'attributes': {'next_rising': 'soon'}}
+    got = _with_sun(payload, lambda: home_board.sun_theme({}))
+    check(got['theme'] == 'dark' and got['next_flip'] is None,
+          f"unparseable times should fall back to the state, got {got}")
+    payload = {'state': 'above_horizon', 'attributes': {}}
+    check(_with_sun(payload, lambda: home_board.sun_theme({}))['theme'] == 'light',
+          "above_horizon with no attributes should still read light")
+
+
+def scenario_the_panel_profile_never_ships_the_word_sun():
+    """Everything downstream — ha_theme's cached attribute, every
+    [data-panel-theme="light"] rule in the skin — predates this mode and must
+    never have to learn it. The profile resolves to a literal."""
+    payload = _sun_state(rising=datetime.datetime(2036, 8, 10, 10, 30, tzinfo=_UTC),
+                         setting=datetime.datetime(2036, 8, 10, 0, 15, tzinfo=_UTC))
+    orig = storage.get_settings
+    try:
+        storage.get_settings = lambda: {'panel_theme': 'sun'}
+        got = _with_sun(payload, lambda: home_board.profile())
+        check(got['theme'] in ('light', 'dark'),
+              f"the profile leaked a mode the client cannot render: {got['theme']}")
+        check(got['next_flip'], "sun mode shipped no flip time, so a panel left "
+                                "up for a week never changes")
+
+        # An unknown value is still dark, and a hand-picked one passes through.
+        storage.get_settings = lambda: {'panel_theme': 'nonsense'}
+        check(home_board.profile()['theme'] == 'dark',
+              "unknown themes must fall back to dark")
+        storage.get_settings = lambda: {'panel_theme': 'auto'}
+        got = home_board.profile()
+        check(got['theme'] == 'auto' and got['next_flip'] is None,
+              f"auto must survive untouched and schedule nothing, got {got}")
+    finally:
+        storage.get_settings = orig
+
+
+def scenario_the_panel_reasks_at_the_flip_instead_of_flipping_itself():
+    """A tablet that slept through the boundary, or a household that changed
+    the offset this afternoon, both have to come back correct — so the timer
+    re-fetches rather than toggling the attribute on a number it cached hours
+    ago. And the delay has to be capped: setTimeout's 32-bit delay fires
+    INSTANTLY past ~24.9 days, which would be a poll loop, not a timer."""
+    import os
+    nav = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), 'templates', 'nav.html'), encoding='utf-8').read()
+    check('scheduleThemeFlip(p.next_flip)' in nav,
+          "the profile no longer arms the theme timer")
+    body = nav[nav.index('function scheduleThemeFlip'):]
+    body = body[:body.index('function panelProfile')]
+    check('_profile = null' in body and 'panelProfile()' in body,
+          "the flip timer no longer re-asks the server")
+    check('6 * 3600 * 1000' in body, "the setTimeout delay is no longer capped")
+    check('clearTimeout(_flipTimer)' in body,
+          "navigating between pages would stack a timer per page load")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":

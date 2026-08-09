@@ -1223,6 +1223,107 @@ def resolve_tabs(requested: Optional[str] = None, settings: dict = None) -> List
     return picked or list(DEFAULT_TABS)
 
 
+# ── "Follow the sun", and why it is not just `auto` with a better name.
+#
+# `auto` is a CSS media query, and a media query is only honest when something
+# is there to answer it. Embedded in a Home Assistant dashboard there is: HA's
+# dark theme sets `color-scheme` on the embedding document and Chromium
+# propagates that into our frame, so `auto` tracks the household's HA theme
+# automation for free. Opened directly — the PWA over the tunnel, a browser
+# pointed at the add-on, a shortcut on a phone — there is no embedder, so the
+# query falls back to the device's OS preference, and a wall tablet nobody
+# ever told about dark mode reports light at midnight and every other hour.
+# That is not the household choosing light; it is nobody answering, and the
+# media query cannot tell those two apart.
+#
+# `sun` resolves the same question on the SERVER instead, and that is the
+# whole point: the browser is the thing that cannot reach Home Assistant from
+# outside the house, while the add-on always can. HA knows where the house is,
+# and `sun.sun` is already the trigger behind most households' theme
+# automation — so mirroring it lands the panel on the same answer HA reached,
+# without needing HA's own theme state (which lives behind a websocket command
+# this REST client has no way to ask for).
+_SUN_ENTITY = 'sun.sun'
+_DAY = datetime.timedelta(days=1)
+
+
+def _parse_ha_time(raw) -> Optional[datetime.datetime]:
+    """HA timestamps are ISO with an offset. Anything else is not our problem
+    to guess at — an unparseable sun time falls back like an absent one."""
+    if not raw:
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=datetime.timezone.utc)
+
+
+def _next_after(t: datetime.datetime, now: datetime.datetime) -> datetime.datetime:
+    """The next occurrence of a daily event, given any one instance of it.
+
+    `next_rising` is already in the future, but an offset moves it in both
+    directions and both are real: -30 minutes drags it into the PAST when
+    sunrise is ten minutes away, and +30 pushes tonight's switch back into the
+    FUTURE five minutes after sunset, when `next_setting` has already rolled
+    over to tomorrow and would otherwise say the panel goes dark in 24 hours.
+    So step by whole days either way. Sunrise drifts a couple of minutes a day,
+    which is well inside what anyone notices happening to a wall panel.
+    """
+    while t <= now:
+        t += _DAY
+    while t - _DAY > now:
+        t -= _DAY
+    return t
+
+
+def sun_theme(settings: dict = None, now: datetime.datetime = None) -> dict:
+    """Resolve `sun` to a literal light/dark, plus when it next changes.
+
+    Returns the literal so that every consumer downstream — the cached
+    attribute in ha_theme.html, every `[data-panel-theme="light"]` rule in the
+    skin — keeps working with no idea this mode exists. `next_flip` is what
+    stops a panel that has been up for three weeks from being right only on
+    the day somebody loaded it.
+    """
+    settings = settings if settings is not None else (storage.get_settings() or {})
+
+    def _offset(key):
+        try:
+            return datetime.timedelta(minutes=int(settings.get(key) or 0))
+        except (TypeError, ValueError):
+            return datetime.timedelta()
+
+    from services import ha_api
+    st = ha_api.get_state(_SUN_ENTITY) or {}
+    attrs = st.get('attributes') or {}
+    rising = _parse_ha_time(attrs.get('next_rising'))
+    setting = _parse_ha_time(attrs.get('next_setting'))
+
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
+
+    if not (rising and setting):
+        # No HA, no sun entity, or attributes in a shape we do not recognise.
+        # The entity's own state still answers it if it got that far; failing
+        # that, dark — a panel that has lost Home Assistant at 2am should not
+        # decide to light up the kitchen.
+        state = str(st.get('state') or '').lower()
+        if state in ('above_horizon', 'below_horizon'):
+            return {'theme': 'light' if state == 'above_horizon' else 'dark',
+                    'next_flip': None}
+        return {'theme': 'dark', 'next_flip': None}
+
+    to_light = _next_after(rising + _offset('panel_theme_sunrise_offset_minutes'), now)
+    to_dark = _next_after(setting + _offset('panel_theme_sunset_offset_minutes'), now)
+    # Whatever happens NEXT says what is true NOW: if the next change is to
+    # light, then right now it is dark.
+    if to_light <= to_dark:
+        return {'theme': 'dark', 'next_flip': to_light.isoformat()}
+    return {'theme': 'light', 'next_flip': to_dark.isoformat()}
+
+
 def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
     """Everything a panel needs to know about itself, in one call — so a
     display bolted to a wall can be pointed at a bare URL and still come up
@@ -1240,12 +1341,22 @@ def profile(tabs: Optional[str] = None, widgets: Optional[str] = None) -> dict:
     except (TypeError, ValueError):
         idle = 180
     theme = str(settings.get('panel_theme') or 'dark').lower()
+    if theme not in ('light', 'dark', 'auto', 'sun'):
+        theme = 'dark'
+    # `sun` never reaches the client as itself — it is resolved here, so the
+    # panel is handed the same literal light/dark that a household who picked
+    # one by hand would get, and nothing downstream has to learn a new word.
+    next_flip = None
+    if theme == 'sun':
+        resolved = sun_theme(settings)
+        theme, next_flip = resolved['theme'], resolved['next_flip']
     return {'tabs': resolve_tabs(tabs, settings),
             'widgets': resolve_widgets(widgets, settings),
             'spans': settings.get('panel_tile_spans') or {},
             'row_height': grid_row_height(settings),
             'columns': grid_columns(settings),
-            'theme': theme if theme in ('light', 'dark', 'auto') else 'dark',
+            'theme': theme,
+            'next_flip': next_flip,
             'backgrounds': backgrounds(settings),
             'idle_seconds': max(0, idle)}
 
