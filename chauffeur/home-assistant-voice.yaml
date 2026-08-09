@@ -1354,6 +1354,11 @@ script:
           condition:
               switch.is_off: master_mute_switch
           then:
+            # Re-assert the wake stage on every re-arm, for the same reason it
+            # is asserted at connect: the flag does not survive a stop, and a
+            # continuous stream without it silently becomes a speech-to-text
+            # stream that no wake engine ever sees.
+            - lambda: id(va).set_use_wake_word(true);
             - voice_assistant.start_continuous:
           else:
             - voice_assistant.stop:
@@ -1567,6 +1572,22 @@ voice_assistant:
   on_client_connected:
     - lambda: id(init_in_progress) = false;
     - micro_wake_word.start:
+    # Give the API server time to settle before asking it for a pipeline.
+    # Without this the request goes out while Home Assistant is still bringing
+    # the voice-assistant subscription up, it fails, and nothing retries — the
+    # device then sits there streaming nothing until some LATER event happens
+    # to restart it. That is the "I have to say a device wake word first, and
+    # then Hey Argyle works" symptom: the on-device detection was not opening
+    # the mic, it was providing the restart this never got at boot. Copied
+    # from the canonical server-side config (esphome m5stack-atom-echo.yaml).
+    - delay: 2s
+    # Assert the wake stage explicitly at the moment streaming starts. The
+    # YAML `use_wake_word: true` is only the INITIAL value and the runtime flag
+    # gets cleared (any voice_assistant.stop does it), and a continuous stream
+    # started with it false asks Home Assistant to begin at speech-to-text —
+    # so the pipeline never runs a wake stage and openWakeWord is never handed
+    # any audio at all, which is exactly what its log showed.
+    - lambda: id(va).set_use_wake_word(true);
     - voice_assistant.start_continuous:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
@@ -1586,6 +1607,19 @@ voice_assistant:
           - delay: 1s
           - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
           - script.execute: control_leds
+    # An error can leave nothing streaming, and on its own this handler only
+    # resets the LED — so one bad moment (Home Assistant restarting, a pipeline
+    # that errored) took the device out until it was power-cycled. Re-arm if
+    # nothing is running. Guarded on is_running so a run that merely errored
+    # mid-conversation is not restarted twice, and delayed so a persistent
+    # failure retries at 2s intervals instead of spinning.
+    - delay: 2s
+    - if:
+        condition:
+          not:
+            voice_assistant.is_running:
+        then:
+          - script.execute: handle_voice_assistant_end
   on_listening:
     - if:
         condition:
