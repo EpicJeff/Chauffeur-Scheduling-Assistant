@@ -145,6 +145,19 @@ Three things bite people here:
   stream is too quiet for voice-activity detection to latch onto — see the
   audio settings at the end of the overlay above.
 
+  Know what that setting actually buys, because it is easy to expect too much
+  of it. From `assist_pipeline/vad.py`, the three options are trailing-silence
+  windows of **aggressive 0.25s / default 0.7s / relaxed 1.25s**, and they
+  apply only AFTER speech has started — they govern "have they finished?", not
+  "are they ever going to begin?". Silence before you start speaking does not
+  end the run at all; the only cap there is the segmenter's absolute
+  `timeout_seconds: 15.0`.
+  
+  So: relaxed buys you a longer pause *mid-sentence*. There is no setting that
+  grants a long think before you start, and 15 seconds is the ceiling either
+  way. For "I need a moment to remember what I wanted", the button is the
+  right instrument — it starts a command with no wake word and no race.
+
 Telling the first two apart takes one glance at the **openWakeWord add-on log**.
 This, repeating, is cause 1:
 
