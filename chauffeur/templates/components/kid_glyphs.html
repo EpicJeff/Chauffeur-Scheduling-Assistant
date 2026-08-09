@@ -1,0 +1,41 @@
+<script>
+    // Shared title→emoji glyph map (kid-shell arc). The Buddy-style kid UI
+    // leads every task card with a big glyph; commissioned art isn't on the
+    // menu, and emoji at 60px is the honest equivalent. Resolution order:
+    //   1. the item's hand-picked `emoji` field (routines/chores editors)
+    //   2. first keyword hit on the title
+    //   3. the caller's fallback (kid-task kind emoji, or ✅)
+    // Included by app.html; kiosk pages can include it too (TripLogic
+    // pattern) so the same title always draws the same glyph everywhere.
+    const KID_GLYPH_RULES = [
+        // Specific multi-word intents before the generic words they contain.
+        [/wash.*hand/, '🧼'], [/make.*bed|bed.*make/, '🛏️'], [/clean.*room|tidy|pick.*up.*toy|toys.*away/, '🧸'],
+        [/water.*(plant|flower|garden)|plant/, '🪴'], [/take.*out.*(trash|garbage)|trash|garbage|recycl/, '🗑️'],
+        [/walk.*(dog|pup)|dog/, '🐕'], [/cat|kitten|litter/, '🐈'], [/fish|aquarium/, '🐠'], [/chicken|coop/, '🐔'],
+        [/teeth|tooth|brush.*teeth|floss/, '🪥'], [/hair/, '🪮'], [/shower|bath/, '🛁'],
+        [/dress|clothes|outfit|pajama|pjs/, '👕'], [/shoe|sneaker/, '👟'], [/coat|jacket/, '🧥'],
+        [/breakfast/, '🥣'], [/lunch/, '🥪'], [/dinner|supper/, '🍽️'], [/snack/, '🍎'],
+        [/dish|sink/, '🧽'], [/laundry|fold|clothes.*away/, '🧺'], [/sweep|vacuum|broom/, '🧹'],
+        [/table.*(set|clear)|set.*table|clear.*table/, '🍽️'], [/mail/, '📬'],
+        [/homework/, '📓'], [/read|book|library/, '📚'], [/study|test|quiz|exam|spelling/, '📝'],
+        [/project|science fair/, '📐'], [/backpack|pack.*bag|bag.*pack/, '🎒'],
+        [/piano|keyboard/, '🎹'], [/guitar|ukulele/, '🎸'], [/viola|violin|cello/, '🎻'],
+        [/drum/, '🥁'], [/sing|choir|music|band/, '🎵'],
+        [/soccer|football/, '⚽'], [/basketball/, '🏀'], [/baseball|softball|tball|t-ball/, '⚾'],
+        [/swim|pool/, '🏊'], [/dance|ballet/, '🩰'], [/bike|cycle/, '🚲'], [/run|jog|track/, '🏃'],
+        [/karate|taekwondo|martial/, '🥋'], [/gym|exercise|workout|stretch/, '💪'],
+        [/medicine|vitamin|meds|inhaler/, '💊'], [/water|drink|hydrate/, '💧'],
+        [/screen|tablet|device|charge/, '🔌'], [/lights.*out|bedtime|sleep/, '😴'],
+        [/pray|prayer/, '🙏'], [/journal|diary/, '📔'], [/practice/, '🎯'],
+        [/car|drive/, '🚗'], [/bus/, '🚌'],
+    ];
+
+    function kidGlyph(item, fallback) {
+        if (item && item.emoji) return item.emoji;
+        const t = ((item && item.title) || '').toLowerCase();
+        for (const [re, g] of KID_GLYPH_RULES) {
+            if (re.test(t)) return g;
+        }
+        return fallback || '✅';
+    }
+</script>

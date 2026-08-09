@@ -211,6 +211,7 @@ class Chore(BaseModel):
     # claimed for redo). Recurring chores reopen after reopens_on.
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     title: str
+    emoji: Optional[str] = None  # hand-picked glyph; None -> kid_glyphs keyword guess
     description: Optional[str] = ""
     points: int = 10
     recurrence: str = 'once'  # once | daily | weekly | monthly
@@ -248,6 +249,7 @@ class RoutineItem(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     member_id: str
     title: str
+    emoji: Optional[str] = None  # hand-picked glyph; None -> kid_glyphs keyword guess
     time_of_day: Optional[str] = None      # "HH:MM" -> plotted on My Day
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
     created_at: float = Field(default_factory=time.time)

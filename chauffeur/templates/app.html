@@ -130,6 +130,7 @@
 </head>
 
 <body class="bg-gray-950 text-gray-100 font-sans h-dvh flex flex-col overflow-hidden">
+    {% include 'components/kid_glyphs.html' %}
 
     <!-- Header -->
     <header
@@ -760,6 +761,7 @@
                     <input type="checkbox" ${item.checked ? 'checked' : ''} ${interactive ? '' : 'disabled'}
                         onchange="toggleRoutine('${item.id}', this.checked)"
                         class="w-7 h-7 rounded-lg accent-green-500 shrink-0">
+                    <span class="text-xl shrink-0">${kidGlyph(item)}</span>
                     <span class="flex-1 text-[15px] font-bold ${item.checked ? 'text-gray-500 line-through' : 'text-gray-100'}">${mfEscape(item.title)}</span>
                     ${item.time_of_day ? `<span class="text-xs font-bold text-blue-400">${item.time_of_day}</span>` : ''}
                 </label>`).join('');
@@ -2789,7 +2791,7 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <div class="flex items-center justify-between gap-2">
                     <div class="min-w-0">
-                        <div class="text-gray-100 font-bold text-[16px] leading-tight truncate">${mfEscape(c.title)}</div>
+                        <div class="text-gray-100 font-bold text-[16px] leading-tight truncate">${kidGlyph(c)} ${mfEscape(c.title)}</div>
                         <div class="text-xs text-gray-500 mt-0.5">+${c.points} pts ${CHORE_RECUR_LABEL[c.recurrence] || ''}${subtitle ? ' · ' + subtitle : ''}</div>
                         ${c.description ? `<div class="text-sm text-gray-400 mt-1">${mfEscape(c.description)}</div>` : ''}
                         ${c.rejected_reason && c.state === 'claimed' ? `<div class="text-sm text-red-400 font-bold mt-1">↩ ${mfEscape(c.rejected_reason)}</div>` : ''}

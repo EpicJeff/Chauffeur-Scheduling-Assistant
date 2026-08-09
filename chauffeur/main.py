@@ -3868,10 +3868,17 @@ def _notify_chore_event(kind, chore, actor_member=None, extra=''):
 
 class ChoreCreateRequest(BaseModel):
     title: str
+    emoji: Optional[str] = None
     description: Optional[str] = ""
     points: int = 10
     recurrence: str = 'once'
     eligible_member_ids: list = []
+
+def _clean_emoji(v):
+    # A glyph, not a caption: cap at 8 chars (covers ZWJ sequences), blank -> None
+    # so render paths fall back to the kid_glyphs keyword guess.
+    v = (v or '').strip()
+    return v[:8] or None
 
 def _validate_chore_fields(req):
     if not (req.title or '').strip():
@@ -3897,7 +3904,8 @@ def list_chores():
 def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
     from models.schemas import Chore
     _validate_chore_fields(req)
-    chore = Chore(title=req.title.strip(), description=req.description or '',
+    chore = Chore(title=req.title.strip(), emoji=_clean_emoji(req.emoji),
+                  description=req.description or '',
                   points=int(req.points), recurrence=req.recurrence,
                   eligible_member_ids=req.eligible_member_ids or []).model_dump()
     storage.add_chore(chore)
@@ -3908,7 +3916,8 @@ def create_chore(req: ChoreCreateRequest, background_tasks: BackgroundTasks):
 def edit_chore(chore_id: str, req: ChoreCreateRequest):
     _validate_chore_fields(req)
     if not storage.update_chore(chore_id, {
-            'title': req.title.strip(), 'description': req.description or '',
+            'title': req.title.strip(), 'emoji': _clean_emoji(req.emoji),
+            'description': req.description or '',
             'points': int(req.points), 'recurrence': req.recurrence,
             'eligible_member_ids': req.eligible_member_ids or []}):
         raise HTTPException(status_code=404, detail="Chore not found")
@@ -4096,6 +4105,7 @@ def member_points(member_id: str, limit: int = 25):
 class RoutineRequest(BaseModel):
     member_id: str
     title: str
+    emoji: Optional[str] = None
     time_of_day: Optional[str] = None
     days_of_week: list = []
 
@@ -4123,6 +4133,7 @@ def create_routine(req: RoutineRequest):
     if not storage.get_member(req.member_id):
         raise HTTPException(status_code=404, detail="Member not found")
     item = RoutineItem(member_id=req.member_id, title=req.title.strip(),
+                       emoji=_clean_emoji(req.emoji),
                        time_of_day=req.time_of_day or None,
                        days_of_week=sorted(set(req.days_of_week or []))).model_dump()
     storage.add_routine(item)
@@ -4133,6 +4144,7 @@ def edit_routine(routine_id: str, req: RoutineRequest):
     _validate_routine(req)
     if not storage.update_routine(routine_id, {
             'member_id': req.member_id, 'title': req.title.strip(),
+            'emoji': _clean_emoji(req.emoji),
             'time_of_day': req.time_of_day or None,
             'days_of_week': sorted(set(req.days_of_week or []))}):
         raise HTTPException(status_code=404, detail="Routine not found")
