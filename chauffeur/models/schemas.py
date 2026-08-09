@@ -250,6 +250,11 @@ class RoutineItem(BaseModel):
     member_id: str
     title: str
     emoji: Optional[str] = None  # hand-picked glyph; None -> kid_glyphs keyword guess
+    # Which source item a routine-copy created this from. Lineage, not
+    # content, is what makes re-copying safe around edits: retime or rename
+    # the copy and it still says "I am Alex's a1", so a re-copy skips it
+    # instead of re-importing the original.
+    copied_from: Optional[str] = None
     time_of_day: Optional[str] = None      # "HH:MM" -> plotted on My Day
     days_of_week: List[int] = Field(default_factory=list)  # 0=Mon..6=Sun; empty = every day
     created_at: float = Field(default_factory=time.time)

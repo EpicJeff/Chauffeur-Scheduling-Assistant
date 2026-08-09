@@ -205,13 +205,35 @@ def scenario_copy_routine_between_kids():
           {r["id"] for r in storage.get_routines("alex")}),
           "copies get their OWN ids — shared ids would share check history")
 
-    # Alex gains one, re-copy: only the new item lands — including neither
-    # of the two Brush teeth, which now match on (title, time).
+    # THE BALANCE, resolved by lineage: Emma retimes one copy and renames
+    # another. Content matching would re-import both originals on re-copy;
+    # copied_from still says what they are, so nothing comes back.
+    emma_am = next(r for r in storage.get_routines("emma")
+                   if r["title"] == "Brush teeth" and r["time_of_day"] == "07:30")
+    check(emma_am.get("copied_from") == "a1",
+          f"a copy records which item it came from: {emma_am}")
+    storage.update_routine(emma_am["id"], {"time_of_day": "07:45"})
+    emma_bed = next(r for r in storage.get_routines("emma") if r["title"] == "Make bed")
+    storage.update_routine(emma_bed["id"], {"title": "Tidy bed"})
+
+    # Alex gains one; re-copy lands ONLY the new item.
     _routine("a3", "alex", "Feed the cat", tod="17:00")
     out = main.copy_routines(main.RoutineCopyRequest(
         from_member_id="alex", to_member_id="emma"))
     check(out == {"created": 1, "skipped": 3},
-          f"re-copy tops up without doubling: {out}")
+          f"edited copies are still recognised — only the new item lands: {out}")
+    titles = sorted((r["title"], r.get("time_of_day")) for r in storage.get_routines("emma"))
+    check(("Brush teeth", "07:30") not in titles and ("Make bed", None) not in titles,
+          f"the retimed and renamed copies did NOT come back as originals: {titles}")
+
+    # Deleting a copy and re-copying brings it back — re-copy is an explicit
+    # "make it like theirs again".
+    cat = next(r for r in storage.get_routines("emma") if r["title"] == "Feed the cat")
+    storage.delete_routine(cat["id"])
+    out = main.copy_routines(main.RoutineCopyRequest(
+        from_member_id="alex", to_member_id="emma"))
+    check(out == {"created": 1, "skipped": 3},
+          f"a deleted copy returns on an explicit re-copy: {out}")
 
     # Guard rails.
     for bad, code in ((("alex", "alex"), 400), (("ghost", "emma"), 404)):

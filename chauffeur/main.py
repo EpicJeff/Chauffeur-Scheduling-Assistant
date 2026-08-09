@@ -4207,14 +4207,17 @@ def copy_routines(req: RoutineCopyRequest):
     AND time of day, so copying onto a half-built routine tops it up rather
     than doubling it, and copying twice is harmless.
 
-    The key is (title, time) rather than title alone because the same title
-    at two times is two real items — the family's "Brush teeth" runs once in
-    the morning and once at night, and title-only collapsed the pair. The
-    day-of-week mask is deliberately NOT in the key: differing masks are
-    usually the SAME item tweaked per kid, and keying on them would re-import
-    near-duplicates on every re-copy. (The residual trade: retime a copied
-    item on the target and a later re-copy re-adds the original time.)
-    Checks/streaks never copy — they are the target kid's own history."""
+    Two skip tests, and LINEAGE goes first: every copy records which source
+    item it came from (`copied_from`), so a copy the target has since
+    retimed or renamed still says "I am that item" and a re-copy leaves it
+    alone — content matching alone re-imported the original the moment the
+    copy was edited, which was the balance the family kept running into.
+    The (title, time-of-day) content key remains as the second test, for
+    items that match hand-made ones; the day mask stays out of it (differing
+    masks are per-kid tweaks of the same item). Deleting a copied item and
+    re-copying DOES bring it back — re-copy is an explicit "make it like
+    theirs again". Checks/streaks never copy — they are the target kid's
+    own history."""
     from models.schemas import RoutineItem
     if req.from_member_id == req.to_member_id:
         raise HTTPException(status_code=400, detail="Pick two different people")
@@ -4227,11 +4230,13 @@ def copy_routines(req: RoutineCopyRequest):
     def _key(r):
         title = (r.get('title') or '').strip().casefold()
         return (title, r.get('time_of_day') or '') if title else None
-    have = {_key(r) for r in storage.get_routines(req.to_member_id)} - {None}
+    target = storage.get_routines(req.to_member_id)
+    have = {_key(r) for r in target} - {None}
+    lineage = {r.get('copied_from') for r in target if r.get('copied_from')}
     created = skipped = 0
     for r in src:
         key = _key(r)
-        if not key or key in have:
+        if not key or r.get('id') in lineage or key in have:
             skipped += 1
             continue
         have.add(key)
@@ -4239,7 +4244,8 @@ def copy_routines(req: RoutineCopyRequest):
             member_id=req.to_member_id, title=r['title'],
             emoji=r.get('emoji') or None,
             time_of_day=r.get('time_of_day') or None,
-            days_of_week=sorted(set(r.get('days_of_week') or []))).model_dump())
+            days_of_week=sorted(set(r.get('days_of_week') or [])),
+            copied_from=r.get('id')).model_dump())
         created += 1
     return {"created": created, "skipped": skipped}
 
