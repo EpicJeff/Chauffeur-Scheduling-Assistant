@@ -182,6 +182,28 @@ never detects, that is cause 2.
 Also weigh: this streams room audio to HA continuously, and adds a network
 round trip before the device even knows it was addressed.
 
+**And you cannot pause after the wake word.** This one is structural, it is not
+a setting, and it is the strongest argument for route A:
+
+When detection happens on the server, the wake word's own audio is in the same
+stream the command is transcribed from — deliberately. `assist_pipeline`
+forwards the audio pending at detection into speech-to-text with the comment
+*"we need to make sure pending audio is forwarded to speech-to-text so the user
+does not have to pause before speaking the voice command"*, which is right for
+"Hey Argyle, turn on the lights" said in one breath.
+
+The cost lands on the other way of talking. `VoiceCommandSegmenter` needs only
+`speech_seconds: 0.3` to decide a command has STARTED, and the tail of the wake
+word supplies it. Your thinking pause is then TRAILING silence, so it ends the
+command after `silence_seconds` — 0.7s by default, 1.25s on relaxed. Two to
+three seconds with latency, and no way to widen it.
+
+The segmenter's generous `timeout_seconds: 15.0` only applies while
+`in_command` is still false, which is what happens when speech-to-text opens on
+SILENCE. That is the on-device case: microWakeWord detects locally and streams
+only what comes after, so the fifteen seconds are real. Route A therefore lets
+you say the wake word and then think; route B never will.
+
 Either way, a bad flash is recoverable with the **Voice PE Imager**.
 
 ### Server-side wake word without a fork
