@@ -265,6 +265,12 @@ def _errand_leave(start: datetime.datetime, er: dict) -> dict:
             'travel_mins': mins, 'from_home': False}
 
 
+# How long a tapped-started drive leg can hold its event on the board past
+# the event's end. Long enough for a lesson running over; short enough that a
+# leg nobody marked complete cannot claim "Happening now" all afternoon.
+_LIVE_GRACE = datetime.timedelta(minutes=20)
+
+
 def todays_runs(target: datetime.date = None, sched: dict = None,
                 now: datetime.datetime = None) -> List[dict]:
     """Every assigned drive and scheduled errand on one day, sorted by time,
@@ -327,7 +333,14 @@ def todays_runs(target: datetime.date = None, sched: dict = None,
             # to press, and a board that calls it "next up" is arguing with the
             # clock two feet above it.
             'underway': bool(start <= now <= end),
-            'over': bool(not live and (done or end < now)),
+            # The manual flag cuts BOTH ways, and the second bite arrived by
+            # photograph at 4:07: "HAPPENING NOW — Guitar", for a 3:00-3:30
+            # lesson whose drive leg nobody marked complete. A started leg may
+            # hold an event open past its end — things genuinely run late —
+            # but only for a bounded grace; beyond it, the flag is a forgotten
+            # tap and the clock wins here exactly as it does above.
+            'over': bool(not (live and now <= end + _LIVE_GRACE)
+                         and (done or end < now)),
         })
 
     for er in (sched.get('scheduled_errands') or []):

@@ -257,6 +257,54 @@ def scenario_a_thing_that_has_started_is_not_next():
          storage.get_completed_drives, storage.get_in_progress_drives) = orig
 
 
+def scenario_a_forgotten_start_tap_cannot_pin_happening_now_to_the_wall():
+    """Photographed from the wall at 4:07 PM: **"HAPPENING NOW · under way —
+    Guitar"**, for a 3:00-3:30 lesson. Jeff tapped Start Drive at 2:35 and
+    nobody ever marked the leg complete, so `live` held `over` false forever
+    and the board argued with the clock two feet above it.
+
+    The manual flag may hold an event open past its end — lessons genuinely
+    run over — but only within _LIVE_GRACE; beyond it the flag is a forgotten
+    tap and the clock wins, exactly as it already does for `underway`."""
+    orig = (storage.get_cached_schedule, storage.get_all_drivers,
+            storage.get_completed_drives, storage.get_in_progress_drives)
+    try:
+        storage.get_cached_schedule = lambda: _sched(
+            ({'id': 'guitar', 'title': 'Guitar', 'start': _at(15).isoformat(),
+              'end': _at(15, 30).isoformat()}, 'drv1'),
+            ({'id': 'dinner', 'title': 'Team Dinner', 'start': _at(18).isoformat(),
+              'end': _at(19).isoformat()}, 'drv1'))
+        storage.get_all_drivers = lambda: [{'id': 'drv1', 'name': 'Jeff',
+                                            'color_code': '#fff'}]
+        storage.get_completed_drives = lambda: []
+        # The stale leg: started, never completed.
+        storage.get_in_progress_drives = lambda: ['init_guitar']
+
+        # Within the grace, a started leg holds the event on the board —
+        # a lesson five minutes over is genuinely still happening.
+        during_grace = _at(15, 40)
+        runs = home_board.todays_runs(now=during_grace)
+        guitar = next(r for r in runs if r['id'] == 'guitar')
+        check(not guitar['over'],
+              "five minutes past the end, a started leg keeps it on the board")
+        hero = home_board._hero(during_grace, runs)
+        check(hero['next']['id'] == 'guitar',
+              "and it is still the hero, running late")
+
+        # 4:07, the moment in the photograph: 37 minutes past the end.
+        now = _at(16, 7)
+        runs = home_board.todays_runs(now=now)
+        guitar = next(r for r in runs if r['id'] == 'guitar')
+        check(guitar['over'],
+              f"37 minutes past its end, a forgotten tap is not 'under way': {guitar['live']}, over={guitar['over']}")
+        hero = home_board._hero(now, runs)
+        check(hero['next']['id'] == 'dinner',
+              f"the board moves on to the real next thing, got {hero['next']['id']}")
+    finally:
+        (storage.get_cached_schedule, storage.get_all_drivers,
+         storage.get_completed_drives, storage.get_in_progress_drives) = orig
+
+
 def scenario_a_drive_under_way_outranks_a_later_one():
     """Somebody walking past needs to see the drive that is happening, even
     though its start time is behind them."""
@@ -276,10 +324,19 @@ def scenario_a_drive_under_way_outranks_a_later_one():
         check(hero['next']['id'] == 'now', "the in-progress drive is the hero")
         check(hero['next']['live'], "and it is marked live")
 
-        # A live drive is never "over", however far past its end time it runs.
+        # A live drive survives its end time — but only within the grace.
+        # "However far past its end it runs" was the rule here, and the 4:07
+        # photograph disproved it: legs get tapped started and never
+        # completed, and a forgotten tap held "Happening now" on the wall for
+        # 37 minutes. Nobody taps complete (why `over` reads the clock);
+        # nobody un-taps started either.
+        within = home_board.todays_runs(now=_at(17, 45))
+        check(not next(r for r in within if r['id'] == 'now')['over'],
+              "a live drive a quarter hour past its end is running late, not done")
         late = home_board.todays_runs(now=_at(23))
-        check(not next(r for r in late if r['id'] == 'now')['over'],
-              "a drive still under way at 11pm is not behind us")
+        check(next(r for r in late if r['id'] == 'now')['over'],
+              "by 11pm a started-and-never-completed leg is a forgotten tap, "
+              "not a drive still under way")
     finally:
         (storage.get_cached_schedule, storage.get_all_drivers,
          storage.get_completed_drives, storage.get_in_progress_drives) = (orig_s, orig_d, orig_c, orig_p)
