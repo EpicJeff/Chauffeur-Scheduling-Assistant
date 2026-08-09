@@ -50,44 +50,80 @@ entirely on the satellite**, and the two engines are not interchangeable:
 | Custom words | train a `.tflite`, drop it in `/share/openwakeword/` | model must be **compiled into the firmware** |
 | Used by | ATOM Echo, ESP32-S3-BOX-3, `wyoming-satellite` on a Pi | **Voice Preview Edition**, S3-BOX-3, Companion app |
 
-> **Voice Preview Edition does NOT do openWakeWord.** It runs microWakeWord
-> on-device and there is no "process the wake word in Home Assistant" setting
-> to switch it over — the wake-word select only lists models baked into the
-> firmware it is running (Okay Nabu / Hey Jarvis / Hey Mycroft). An earlier
-> version of this file said to flip that setting; the setting does not exist,
-> and no amount of `/share/openwakeword/` will make Voice PE see a custom word.
-> Getting one onto a Voice PE means building and flashing firmware. There is no
-> path around that.
+> **On a Voice PE there is no SETTING for this — only a firmware build.** The
+> shipped config is on-device only, and that is not a UI restriction, it is the
+> firmware: `home-assistant-voice.yaml` declares `micro_wake_word:` with the
+> stock models and sets `voice_assistant: use_wake_word: false`, which is
+> exactly the flag that would hand wake-word detection to Home Assistant. So the
+> wake-word select lists only what is compiled in (Okay Nabu / Hey Jarvis /
+> Hey Mycroft), and nothing in `/share/openwakeword/` can appear there.
+> An earlier version of this file said to switch the device to "process wake
+> words in Home Assistant"; no such control exists on stock firmware.
+>
+> Once you are building firmware anyway, **both** engines are open to you — see
+> the two routes below. Neither is reachable without flashing.
 
-### On a Voice Preview Edition — custom firmware
+### On a Voice Preview Edition — route A: microWakeWord (stays on-device)
 
-1. Get a **microWakeWord** model for the phrase. Training your own is a
-   different pipeline from the openWakeWord notebook below; the community
+1. Get a **microWakeWord** model for the phrase. Training one is a different
+   pipeline from the openWakeWord notebook below; the community
    [Tater-Wake-Words](https://github.com/Tater-Wake-Words) collection is where
-   most people start, and a ready-made model saves the training run entirely.
+   most people start, and a ready-made model skips the training run entirely.
 2. In **ESPHome Builder**, *take control* of the device (this is what makes the
    YAML yours to edit — and hands you its updates from then on: Nabu Casa's
-   OTA releases stop applying, which is the real cost of this route).
-3. Add a `micro_wake_word:` block listing your model alongside the stock ones,
-   then **Install** — OTA once the device is adopted, no cable.
+   OTA releases stop applying, which is the real cost of either route).
+3. Add your model to the `micro_wake_word:` `models:` list alongside the stock
+   ones, then **Install** — OTA once adopted, no cable.
 4. Reconfigure the integration so the new word shows in the wake-word select.
 
-If the flash goes wrong the device is recoverable with the **Voice PE Imager**,
-so this is reversible — it is just not a setting.
+Keeps audio on the device, no constant streaming, lowest latency.
 
-### On a streaming satellite — openWakeWord
+### On a Voice Preview Edition — route B: stream to openWakeWord
 
-For an ATOM Echo, an S3-BOX-3, or `wyoming-satellite` on a Raspberry Pi, the
-server-side route works and is much less work (free, ~1 hour, no recordings of
-your own voice):
+Flip the device to stream continuously and let the server decide, which is how
+an ATOM Echo has always worked. Community forks do exactly this
+([mike-nott/open-voice-pe](https://github.com/mike-nott/open-voice-pe) is one);
+the substance is dropping `micro_wake_word:` and setting `use_wake_word: true`
+so the pipeline's wake stage runs in HA. Any openWakeWord model then works with
+no reflash — which is the real appeal if you expect to change the word.
+
+Two things bite people here, both reported repeatedly:
+
+- **The command gets cut off after about a second** — logs show `STT by VAD end`
+  right after detection. Fix: ESPHome integration → device settings → set
+  **finished speaking detection** to **relaxed**.
+- **It will not compile** (e.g. `no matching function for call to
+  'AudioSinkTransferBuffer::transfer_data_to_sink()'`). The forks track a moving
+  ESPHome audio API and lag its releases; you need a fork updated for your
+  ESPHome version, or to pin ESPHome to the one it was built against.
+
+Also weigh: this streams room audio to HA continuously, and adds a network
+round trip before the device even knows it was addressed.
+
+Either way, a bad flash is recoverable with the **Voice PE Imager**.
+
+### The openWakeWord side (route B, and any streaming satellite)
+
+This half is the same whether the satellite is a re-flashed Voice PE, an ATOM
+Echo, an S3-BOX-3, or `wyoming-satellite` on a Pi. Training is free, ~1 hour,
+and needs no recordings of your own voice.
 
 1. Open the [openWakeWord training notebook](https://www.home-assistant.io/voice_control/create_wake_word/)
    from the HA docs and train on `hey argyle` — it synthesizes thousands of TTS
    samples. Download `hey_argyle.tflite`.
-2. Install the **openWakeWord** add-on and put the file in
-   `/share/openwakeword/`.
-3. On the satellite, set wake word processing to run **in Home Assistant** and
-   select `hey argyle`.
+2. **Settings → Add-ons → openWakeWord → Install**, then **Start**.
+3. Put the `.tflite` in `/share/openwakeword/` and **restart the add-on** — it
+   enumerates models at startup, so a file added while it is running is invisible.
+4. **Settings → Devices & services** → the openWakeWord Wyoming service should
+   be discovered → **Configure → Submit**.
+5. In your assistant (**Settings → Voice assistants**), open the **three-dot
+   menu → Add streaming wake word**, pick **openwakeword**, then your word.
+
+**Bisect before blaming the firmware.** Step 5's dropdown is served by the
+add-on and has nothing to do with any device: if `hey argyle` is not listed
+there, the problem is openWakeWord (steps 2–4 — usually the missing restart, or
+the model in the wrong folder), and no amount of firmware work will help. If it
+IS listed, openWakeWord is fine and the fault is on the device side.
 
 ### Or skip the wake word
 
