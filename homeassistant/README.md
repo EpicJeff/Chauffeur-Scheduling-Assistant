@@ -301,6 +301,14 @@ voice_assistant:
   # volume_multiplier: 2.0
 ```
 
+**Two symptoms that mean "the stream is too quiet" rather than "speech-to-text
+is bad at English":** having to enunciate unnaturally for a command to land,
+and the SAME kind of phrase transcribing differently between runs — `column
+one` on one attempt, `left 2` on the next. Whisper guessing differently on
+comparable input is what a marginal signal looks like from outside, and
+aliasing cannot fix it, because you cannot alias every spelling of every guess.
+That is the point at which those three settings stop being optional.
+
 If Validate rejects `${voice_assist_idle_phase_id}`, the package's substitutions
 are not reaching the overlay — put the literal `1` in instead (upstream defines
 idle as phase 1).
