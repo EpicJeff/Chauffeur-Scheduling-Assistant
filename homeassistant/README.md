@@ -452,6 +452,19 @@ If that does not work, "prefer handling commands locally" can never work
 either, and the fault is exposure or naming rather than anything to do with
 Chauffeur. This removes the whole pipeline from the question in one step.
 
+**FIRST, CHECK WHICH CHAT YOU ARE IN.** Chauffeur's own chat surfaces -- the
+control-center bar, the wall panel's Argyle bar, the PWA -- post straight to
+`/api/chat`. They never touch Home Assistant. There is no pipeline, no
+`prefer_local_intents`, no built-in intents: Argyle is the entire stack, so
+"turn off the porch light" can only ever be refused there, and no exposure or
+alias work will change it. Only **Assist** (the dialog, or a voice satellite
+running an Assist pipeline) has the local-intent path in front of Argyle.
+
+The two look nearly identical once you are staring at a refusal, and the
+refusal reads the same either way. Before debugging routing, reproduce it in
+**Assist with the Chauffeur pipeline selected** -- if it works there and fails
+in Chauffeur's own chat, nothing is broken.
+
 **IF IT WORKS TYPED AND FAILS SPOKEN, IT IS THE TRANSCRIPT, NOT THE ROUTING.**
 Type the sentence into Assist with the Chauffeur pipeline selected. If it is
 handled locally there, then prefer-local, the fall-through and the `CONTROL`
