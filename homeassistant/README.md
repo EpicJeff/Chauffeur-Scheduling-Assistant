@@ -465,13 +465,22 @@ is the usual way to end up with a dangling one. Two places to look:
 grep -rn "<area>" /config --include=*.yaml     # name from the ValueError
 ```
 
-1. `/config/custom_sentences/<lang>/*.yaml`. **Music Assistant's is a known
-   offender**: its `MassPlayMediaOnMediaPlayer` sentences use `<area>` while
-   its per-block `expansion_rules` define only `play`, `on` and
-   `player_devices` — `area` is expected to come from Home Assistant's own
-   sentences, and when that stops resolving the file takes every voice command
-   in the house down with it. Anything installed by an integration is worth
-   suspecting before your own files.
+1. `/config/custom_sentences/<lang>/*.yaml`. **Music Assistant's are a known
+   offender, and there is more than one of them** (`MassPlayMediaAssist`,
+   `MassPlayMediaOnMediaPlayer`, …). Each defines every rule it uses —
+   `play`, `on`, `artist`, `track`, `player_devices` — except `area`, which it
+   expects to come from Home Assistant's own sentences. When that stops
+   resolving, one integration's sentence files take every voice command in the
+   house down with them. Fix them all in one pass:
+
+   ```bash
+   grep -rl "<area>" /config/custom_sentences/          # see the damage
+   sed -i 's/<area>/{area}/g' /config/custom_sentences/en/*.yaml
+   ```
+
+   Anything installed by an INTEGRATION is worth suspecting before your own
+   files — and worth re-checking after that integration updates, since an
+   update restores its own copies and the fault with them.
 2. **Automations with a `conversation` trigger** — the `command:` strings are
    compiled by the same code, and sentence triggers do NOT support expansion
    rules, so a `<...>` in one fails exactly like this. Easy to miss because it
