@@ -3709,6 +3709,48 @@ def ha_media_players(ma_only: bool = True):
             out = ma_players
     return sorted(out, key=lambda e: (e['name'] or '').lower())
 
+# --- Room announcements (services/announce.py): speak INTO a room over HA.
+# The hand path for the announce_to_room agent tool — the map page's announce
+# bar posts here. Results come back in the agent-tool shape (status + spoken
+# message) rather than HTTP errors, because "I don't know that room, rooms I
+# know: …" is the useful thing to show whichever surface asked.
+
+class AnnounceRequest(BaseModel):
+    room: str
+    message: str
+    recipient_member_id: Optional[str] = None
+
+@app.get("/api/announce/rooms")
+def announce_rooms():
+    """Rooms that can be announced into: HA areas holding a satellite or media
+    player (or carrying a pin), each with its resolved target and the full
+    candidate list so a parent can pin a specific speaker."""
+    from services import announce as announce_svc, ha_api
+    pins = storage.get_settings().get('announce_targets') or {}
+    names = {s.get('entity_id'): (s.get('attributes') or {}).get('friendly_name') or s.get('entity_id')
+             for s in ha_api.get_states(ttl=10)}
+    out = []
+    for area in ha_api.get_area_map():
+        candidates = [e for e in (area.get('entities') or [])
+                      if e.startswith(('assist_satellite.', 'media_player.'))]
+        if not candidates and area.get('id') not in pins:
+            continue
+        target = announce_svc.pick_target(area)
+        out.append({'id': area.get('id'), 'name': area.get('name'),
+                    'candidates': [{'entity_id': e, 'name': names.get(e, e)} for e in candidates],
+                    'pinned': pins.get(area.get('id')),
+                    'target': target[1] if target else None,
+                    'kind': target[0] if target else None})
+    return out
+
+@app.post("/api/announce")
+def post_announce(req: AnnounceRequest):
+    from services import announce as announce_svc
+    recipient = storage.get_member(req.recipient_member_id) if req.recipient_member_id else None
+    # Sender stays Argyle: the map page lives on shared screens, and a shared
+    # screen doesn't know whose finger tapped it.
+    return announce_svc.announce_and_echo(req.room, req.message, recipient=recipient)
+
 _HA_IMAGE_PREFIXES = ('/api/media_player_proxy/', '/api/image_proxy/', '/api/image/')
 
 @app.get("/api/ha/image64/{encoded}")

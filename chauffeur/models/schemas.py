@@ -630,6 +630,10 @@ class Settings(BaseModel):
     # "ws://192.168.1.50:8927". Empty = auto-discover (official add-on
     # hostname, then the HA host on port 8927).
     ma_server_url: str = ""
+    # Room announcements: HA area id -> the entity announce() must use there,
+    # overriding the satellite-first/playing-first pick. Only rooms the family
+    # has pinned appear; everything else resolves automatically.
+    announce_targets: Dict[str, str] = Field(default_factory=dict)
     family_philosophy: str = ""
     enable_standard_rules: bool = True
     enable_ai_rules: bool = True

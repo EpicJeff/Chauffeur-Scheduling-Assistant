@@ -1,0 +1,207 @@
+"""Room announcements — Argyle's voice pushed INTO a room.
+
+"Hey Argyle, Lily is in the pool house. Tell her it's time for dinner."
+
+The conversation-agent channel is inbound-only: HA calls us when somebody
+speaks to a satellite, and the reply is spoken on the device that asked.
+Reaching a DIFFERENT room is a service call — `assist_satellite.announce`
+speaks through the target satellite's own pipeline (so it is Argyle's voice
+there too), and rooms with only a Music Assistant speaker fall back to
+`tts.speak`, which ducks whatever is playing and resumes it.
+
+Room resolution leans on HA's area registry via the template API
+(ha_api.get_area_map / resolve_area_id) and then fuzzily, because every
+request arrives through speech-to-text and "pool house", "poolhouse" and
+"pool hose" are the same room. The matching deliberately skews toward
+finding SOME room: a wrong-room announcement is recoverable ("not there —
+the garage"), a refused one just fails the dinner call.
+
+An announcement is air. announce_and_echo leaves a written copy in the
+recipient's DMs (dual delivery, the kid-arc rule) so headphones or a loud
+pool pump don't silently eat the message.
+"""
+import difflib
+import re
+
+from services import ha_api
+
+
+def _fold(s: str) -> str:
+    """A room name reduced to how it sounds: lowercase, letters and digits
+    only. 'Pool House' == 'poolhouse' == 'pool-house'."""
+    return re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+
+def match_area(spoken: str):
+    """The area a spoken room name means, or None.
+
+    Tiers, cheapest and most certain first:
+      1. folded name equality ('the Pool House' said as 'poolhouse'),
+      2. HA's own area_id() lookup — the only path that sees ALIASES,
+         which the family curates in HA and we cannot enumerate over REST,
+      3. containment either way ('the pool house please' ⊃ 'poolhouse'),
+      4. edit distance for STT mangles ('pool hose'), cutoff 0.6 — chosen
+         loose on purpose; see the module docstring for why we skew toward
+         matching.
+    """
+    areas = ha_api.get_area_map()
+    sp = _fold(spoken)
+    if not areas or not sp:
+        return None
+
+    for a in areas:
+        if _fold(a.get('name')) == sp:
+            return a
+
+    aid = ha_api.resolve_area_id(spoken)
+    if aid:
+        for a in areas:
+            if a.get('id') == aid:
+                return a
+
+    best = None
+    for a in areas:
+        f = _fold(a.get('name'))
+        if f and (f in sp or sp in f):
+            if best is None or len(f) > len(_fold(best.get('name'))):
+                best = a
+    if best:
+        return best
+
+    by_fold = {_fold(a.get('name')): a for a in areas if _fold(a.get('name'))}
+    hit = difflib.get_close_matches(sp, list(by_fold), n=1, cutoff=0.6)
+    return by_fold[hit[0]] if hit else None
+
+
+def _states_by_id():
+    return {s.get('entity_id'): s for s in ha_api.get_states(ttl=10)}
+
+
+def _usable(states: dict, entity_id: str) -> bool:
+    st = (states.get(entity_id) or {}).get('state')
+    return st is not None and st not in ('unavailable', 'unknown')
+
+
+def pick_target(area: dict):
+    """('satellite'|'media_player', entity_id) for an area, or None.
+
+    A room can hold several players, and blasting all of them invites the
+    one unavailable Chromecast to fail the whole call. One target, chosen:
+
+      1. The family's pin (settings.announce_targets[area_id]) — membership
+         in the HA area is NOT required, because the pin exists precisely
+         for speakers the registry has wrong or missing.
+      2. A voice satellite: it is the room's Argyle, made for announce.
+      3. The media player already PLAYING — it is audibly on, somebody is
+         near it, and tts.speak ducks and resumes it.
+      4. Best remaining player: on/idle beats off, Music Assistant players
+         beat bare cast targets (announce-with-resume works there), name
+         order for determinism.
+    """
+    states = _states_by_id()
+
+    from services import storage
+    pinned = (storage.get_settings().get('announce_targets') or {}).get(area.get('id'))
+    if pinned and _usable(states, pinned):
+        kind = 'satellite' if pinned.startswith('assist_satellite.') else 'media_player'
+        return kind, pinned
+
+    entities = area.get('entities') or []
+    sats = sorted(e for e in entities
+                  if e.startswith('assist_satellite.') and _usable(states, e))
+    if sats:
+        return 'satellite', sats[0]
+
+    players = [e for e in entities
+               if e.startswith('media_player.') and _usable(states, e)]
+    if not players:
+        return None
+
+    def rank(eid):
+        s = states.get(eid) or {}
+        st = s.get('state')
+        playing = 2 if st == 'playing' else (1 if st in ('paused', 'idle', 'on', 'buffering') else 0)
+        is_ma = 1 if 'mass_player_type' in (s.get('attributes') or {}) else 0
+        return (-playing, -is_ma, eid)
+
+    return 'media_player', sorted(players, key=rank)[0]
+
+
+def _tts_entity():
+    ents = ha_api.get_entities('tts')
+    return ents[0]['entity_id'] if ents else None
+
+
+def announce(room: str, message: str) -> dict:
+    """Resolve the room, pick the speaker, say the words. Returns
+    {'status', 'message', ...} in the agent-tool shape; success carries
+    area_id/area/entity_id/kind for callers and the UI."""
+    message = (message or '').strip()
+    if not message:
+        return {'status': 'error', 'message': "There's nothing to say."}
+
+    areas = ha_api.get_area_map()
+    if not areas:
+        return {'status': 'error',
+                'message': "I can't reach Home Assistant's room registry right now."}
+
+    area = match_area(room)
+    if not area:
+        names = ', '.join(a.get('name') for a in areas if a.get('name'))
+        return {'status': 'error',
+                'message': f"I don't know a room called '{room}'. Rooms I know: {names}."}
+
+    target = pick_target(area)
+    if not target:
+        return {'status': 'error',
+                'message': f"There's no speaker I can reach in the {area.get('name')}."}
+
+    kind, entity_id = target
+    if kind == 'satellite':
+        # HA holds this call open until the satellite finishes speaking, so
+        # the default 8s client timeout would report a played announcement
+        # as failed. 30s covers any sentence a person would actually say.
+        ok = ha_api.call_service('assist_satellite', 'announce',
+                                 {'entity_id': entity_id, 'message': message},
+                                 timeout=30) is not None
+    else:
+        tts = _tts_entity()
+        if not tts:
+            return {'status': 'error',
+                    'message': "No text-to-speech engine is set up in Home Assistant."}
+        ok = ha_api.call_service('tts', 'speak',
+                                 {'entity_id': tts,
+                                  'media_player_entity_id': entity_id,
+                                  'message': message}) is not None
+    if not ok:
+        return {'status': 'error',
+                'message': f"The speaker in the {area.get('name')} didn't take the announcement."}
+
+    return {'status': 'success', 'area_id': area.get('id'), 'area': area.get('name'),
+            'entity_id': entity_id, 'kind': kind,
+            'message': f"Announced in the {area.get('name')}: “{message}”"}
+
+
+def announce_and_echo(room: str, message: str, sender: dict = None,
+                      recipient: dict = None) -> dict:
+    """announce(), plus the written copy: when the message was FOR somebody,
+    a DM lands in their thread so the words survive the air. Sender defaults
+    to Argyle — the wall panel and the voice pipeline often don't know who is
+    asking, and the assistant is already a valid DM peer."""
+    res = announce(room, message)
+    if res.get('status') != 'success' or not recipient or recipient.get('system'):
+        return res
+    try:
+        from services import storage
+        from services.agent_tools_v2 import _post_chat_message
+        sender = sender or storage.ensure_argyle_member()
+        if recipient.get('id') and recipient['id'] != sender.get('id'):
+            dm = storage.get_or_create_dm(sender['id'], recipient['id'])
+            _post_chat_message(dm, sender,
+                               f"📢 (said in the {res.get('area')}): {message}")
+            res['echoed'] = True
+    except Exception as e:
+        # The spoken half already happened; a failed echo must not turn the
+        # tool result into an error the agent would retry (and re-announce).
+        print(f"[announce] DM echo failed: {e}")
+    return res

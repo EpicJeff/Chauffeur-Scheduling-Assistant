@@ -310,6 +310,7 @@ sending or claiming, and never pass from_member/member_name for them.
                              # return a message that IS the complete spoken
                              # answer (same reasoning as get_point_balances).
                              "send_family_message", "send_direct_message",
+                             "announce_to_room",
                              "get_family_messages", "list_chores",
                              "claim_chore", "get_routine_status",
                              "post_weekly_digest", "get_drive_digest",
@@ -514,6 +515,14 @@ sending or claiming, and never pass from_member/member_name for them.
                                               args.get("message_text", ""),
                                               sender_driver_id=driver_id if driver else None,
                                               from_member=args.get("from_member"))
+                    if res.get("message"): agent_message = res["message"]
+                elif func_name == "announce_to_room":
+                    from services.agent_tools_v2 import announce_to_room
+                    res = announce_to_room(args.get("room", ""),
+                                           args.get("message", ""),
+                                           recipient_name=args.get("recipient_name"),
+                                           sender_driver_id=driver_id if driver else None,
+                                           from_member=args.get("from_member"))
                     if res.get("message"): agent_message = res["message"]
                 elif func_name == "get_family_messages":
                     from services.agent_tools_v2 import get_family_messages

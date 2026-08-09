@@ -645,6 +645,20 @@ def send_direct_message(recipient_name: str, message_text: str,
             "message": f"Sent to {recipient.get('name')} from {sender.get('name')}: “{text}”"}
 
 
+def announce_to_room(room: str, message: str, recipient_name: str = None,
+                     sender_driver_id: str = None, from_member: str = None) -> Dict[str, Any]:
+    """Speak in a room over HA (services/announce.py owns the how). Unlike the
+    message tools the SENDER is optional — an announcement is the house
+    talking, and refusing to call dinner because the wall panel doesn't know
+    who tapped it would be the wrong trade. When a sender is resolvable the
+    DM echo is attributed to them; otherwise Argyle signs it."""
+    from services import announce as announce_svc
+    sender, _ = _resolve_actor(sender_driver_id, from_member)
+    recipient = _find_member_fuzzy(recipient_name) if recipient_name else None
+    return announce_svc.announce_and_echo(room, message,
+                                          sender=sender, recipient=recipient)
+
+
 def get_family_messages(limit: int = 10, requester_driver_id: str = None) -> Dict[str, Any]:
     import datetime
     from services import storage
@@ -2450,6 +2464,20 @@ def get_available_tools() -> List[Dict]:
                     "from_member": {"type": "string", "description": "Who the message is from. Omit in driver chat."}
                 },
                 "required": ["recipient_name", "message_text"]
+            }
+        },
+        {
+            "name": "announce_to_room",
+            "description": "Speaks a message OUT LOUD on the speaker in a named room of the house ('Lily is in the pool house, tell her it's time for dinner' -> room 'pool house'). Uses the room's voice satellite or media player via Home Assistant. Name the person it's for in recipient_name so they also get a written copy by DM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "room": {"type": "string", "description": "The room as spoken ('pool house', 'garage'). Matched fuzzily against Home Assistant's areas and their aliases."},
+                    "message": {"type": "string", "description": "The words to say out loud in that room."},
+                    "recipient_name": {"type": "string", "description": "Which family member the message is for, if one was named (fuzzy matched). They get a DM copy too."},
+                    "from_member": {"type": "string", "description": "Who is sending it, if they said. Omit in driver chat — the sender is already known."}
+                },
+                "required": ["room", "message"]
             }
         },
         {

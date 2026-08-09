@@ -278,6 +278,10 @@ ENTRIES: List[dict] = [
     _e('ha_base_url', 'integrations', 'Home Assistant URL', 'Where Home Assistant lives.'),
     _e('ha_token', 'integrations', 'Home Assistant token', 'A long-lived access token.'),
     _e('ma_server_url', 'integrations', 'Music Assistant URL', 'Where Music Assistant lives.'),
+    _e('announce_targets', 'integrations', 'Room announcement speakers',
+       'Pin which speaker Argyle announces through in a room; unpinned rooms '
+       'pick the voice satellite, then whichever player is already on.',
+       page='map', anchor='announce'),
 
     # --- AI
     _e('llm_provider', 'ai', 'Model provider', 'Gemini or a local Ollama.'),

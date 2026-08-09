@@ -16,9 +16,40 @@
 <body class="bg-gray-900 text-white h-screen flex flex-col overflow-hidden">
     {% include 'nav.html' %}
 
-    <header class="panel-page px-6 pt-6 pb-3 lg:px-10 lg:pt-8 shrink-0">
+    <header class="panel-page px-6 pt-6 pb-3 lg:px-10 lg:pt-8 shrink-0 flex items-center justify-between gap-3">
         <h2 class="panel-page-title">Map</h2>
+        <!-- The hand path for the announce_to_room agent tool (rule: nothing
+             ships agent-only). Hidden until /api/announce/rooms says HA has
+             at least one room with a speaker — a button that can only fail
+             does not belong on the page. -->
+        <button id="announce-toggle" class="hidden rounded-xl px-3 py-2 text-sm font-bold border transition-colors hover:bg-gray-800"
+            style="border-color: var(--panel-line)">📢 Announce</button>
     </header>
+
+    <!-- Announce into a room: Argyle speaks on that room's satellite or
+         media player. anchor: announce (settings_registry: announce_targets
+         — the per-room speaker pin lives behind the ⚙️). -->
+    <div id="announce" class="hidden px-6 lg:px-10 pb-3 shrink-0">
+        <div class="rounded-2xl border p-3 flex flex-wrap gap-2 items-center"
+             style="border-color: var(--panel-line)">
+            <select id="announce-room" class="bg-gray-800 rounded-lg px-2 py-2 text-sm"></select>
+            <select id="announce-for" class="bg-gray-800 rounded-lg px-2 py-2 text-sm">
+                <option value="">No DM copy</option>
+            </select>
+            <input id="announce-text" placeholder="Say something in that room…"
+                class="flex-1 min-w-40 bg-gray-800 rounded-lg px-3 py-2 text-sm">
+            <button id="announce-send"
+                class="bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm font-bold">Say it</button>
+            <button id="announce-pin-toggle" title="Choose this room's speaker"
+                class="rounded-lg px-2 py-2 text-sm border hover:bg-gray-800"
+                style="border-color: var(--panel-line)">⚙️</button>
+            <div id="announce-pin" class="hidden w-full flex items-center gap-2 text-sm">
+                <span style="color: var(--panel-dim, #9ca3af)">Speaker for this room:</span>
+                <select id="announce-pin-select" class="bg-gray-800 rounded-lg px-2 py-1 text-sm"></select>
+            </div>
+            <div id="announce-status" class="hidden w-full text-sm" style="color: var(--panel-dim, #9ca3af)"></div>
+        </div>
+    </div>
 
     <!-- Inset and rounded, like the trip page's map. Edge-to-edge made the map
          look like the window rather than something ON the page, and it ran
@@ -35,9 +66,89 @@
          Music tab remains the family's music surface. -->
 
     <script>
+        // Room announcements — the by-hand twin of the announce_to_room agent
+        // tool. Sender is always Argyle here: this page lives on shared
+        // screens, and a shared screen doesn't know whose finger tapped it.
+        const Announce = {
+            rooms: [], members: [],
+            el(id) { return document.getElementById(id); },
+            async load() {
+                try {
+                    const [rooms, members] = await Promise.all([
+                        fetch(apiBase + 'api/announce/rooms').then(r => r.json()),
+                        fetch(apiBase + 'api/members').then(r => r.json()),
+                    ]);
+                    this.rooms = rooms || [];
+                    this.members = members || [];
+                } catch (e) { this.rooms = []; }
+                if (!this.rooms.length) return;   // no speakers: no button
+                this.el('announce-toggle').classList.remove('hidden');
+                this.el('announce-room').innerHTML = this.rooms.map(r =>
+                    `<option value="${r.id}">${r.name}</option>`).join('');
+                this.el('announce-for').innerHTML = '<option value="">No DM copy</option>' +
+                    this.members.map(m => `<option value="${m.id}">For ${m.name}</option>`).join('');
+                this.el('announce-toggle').onclick = () => {
+                    this.el('announce').classList.toggle('hidden');
+                    this.el('announce-text').focus();
+                };
+                this.el('announce-room').onchange = () => this.fillPin();
+                this.el('announce-pin-toggle').onclick = () => this.el('announce-pin').classList.toggle('hidden');
+                this.el('announce-pin-select').onchange = () => this.savePin();
+                this.el('announce-send').onclick = () => this.send();
+                this.el('announce-text').addEventListener('keydown', e => {
+                    if (e.key === 'Enter') this.send();
+                });
+                this.fillPin();
+            },
+            room() { return this.rooms.find(r => r.id === this.el('announce-room').value); },
+            fillPin() {
+                const r = this.room();
+                if (!r) return;
+                this.el('announce-pin-select').innerHTML =
+                    '<option value="">Automatic</option>' + (r.candidates || []).map(c =>
+                        `<option value="${c.entity_id}" ${c.entity_id === r.pinned ? 'selected' : ''}>${c.name}</option>`).join('');
+            },
+            async savePin() {
+                const r = this.room();
+                if (!r) return;
+                r.pinned = this.el('announce-pin-select').value || null;
+                // The whole map travels: a partial-save of one room's pin
+                // would drop every other room's.
+                const announceTargets = {};
+                this.rooms.forEach(x => { if (x.pinned) announceTargets[x.id] = x.pinned; });
+                await fetch(apiBase + 'api/settings', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ announce_targets: announceTargets }),
+                });
+                this.status(r.pinned ? 'Pinned.' : 'Back to automatic.');
+            },
+            async send() {
+                const r = this.room(), text = this.el('announce-text').value.trim();
+                if (!r || !text) return;
+                this.status('Saying it…');
+                try {
+                    const res = await fetch(apiBase + 'api/announce', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            room: r.name, message: text,
+                            recipient_member_id: this.el('announce-for').value || null,
+                        }),
+                    }).then(x => x.json());
+                    this.status(res.message || 'Done.');
+                    if (res.status === 'success') this.el('announce-text').value = '';
+                } catch (e) { this.status('That didn\'t go through.'); }
+            },
+            status(msg) {
+                const s = this.el('announce-status');
+                s.textContent = msg;
+                s.classList.remove('hidden');
+            },
+        };
+
         document.addEventListener('DOMContentLoaded', () => {
             initFamilyMap();
             startFamilyMapPolling();
+            Announce.load();
         });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') refreshFamilyMap();

@@ -52,7 +52,7 @@ def mode() -> str:
     return 'external' if base else 'unconfigured'
 
 
-def _request(method, path, json_body=None, params=None):
+def _request(method, path, json_body=None, params=None, timeout=None):
     base, token = _base_and_token()
     if not base:
         return None
@@ -61,7 +61,7 @@ def _request(method, path, json_body=None, params=None):
             method, f"{base}{path}",
             headers={'Authorization': f'Bearer {token}',
                      'Content-Type': 'application/json'},
-            json=json_body, params=params, timeout=_TIMEOUT)
+            json=json_body, params=params, timeout=timeout or _TIMEOUT)
         if resp.status_code >= 400:
             print(f"[ha_api] {method} {path} -> {resp.status_code}: {resp.text[:200]}")
             return None
@@ -177,13 +177,64 @@ def fire_event(event_type: str, data: dict = None):
 
 
 def call_service(domain: str, service: str, data: dict = None,
-                 return_response: bool = False):
+                 return_response: bool = False, timeout: float = None):
     """POST /api/services/{domain}/{service}. With return_response=True the
     result is HA's {'changed_states': [...], 'service_response': {...}} wrapper
-    (supported for response-capable services on any recent HA)."""
+    (supported for response-capable services on any recent HA). `timeout`
+    overrides the module default for services HA holds open while they run
+    (assist_satellite.announce blocks until the satellite finishes speaking)."""
     params = {'return_response': 'true'} if return_response else None
     return _request('POST', f'/services/{domain}/{service}',
-                    json_body=data or {}, params=params)
+                    json_body=data or {}, params=params, timeout=timeout)
+
+
+def render_template(template: str):
+    """POST /api/template — render a Jinja template on the HA side. The
+    registry functions (areas, area_name, area_entities, area_id) are only
+    reachable this way over REST; the registries themselves are WebSocket-only
+    and this app deliberately speaks REST alone. Callers must end the template
+    with `| to_json` — the endpoint returns the rendered TEXT, and _request
+    parses it as JSON. Returns None when HA is unreachable or the render
+    errors (HA answers 400)."""
+    return _request('POST', '/template', json_body={'template': template})
+
+
+_area_cache = {'ts': 0.0, 'data': None}
+
+
+def get_area_map(ttl: float = 60) -> list:
+    """[{'id', 'name', 'entities': [entity_ids]}] for every HA area, via the
+    template API. area_entities() resolves device-inherited membership — most
+    entities carry no area_id of their own and get it from their device —
+    which is exactly the logic not worth reimplementing client-side. Cached
+    like get_states; serves the stale copy when HA is unreachable."""
+    now = time.time()
+    with _cache_lock:
+        if _area_cache['data'] is not None and now - _area_cache['ts'] < ttl:
+            return _area_cache['data']
+    tpl = ("[{% for a in areas() %}"
+           "{{ {'id': a, 'name': area_name(a),"
+           " 'entities': area_entities(a) | list} | to_json }}"
+           "{{ ',' if not loop.last else '' }}"
+           "{% endfor %}]")
+    data = render_template(tpl)
+    with _cache_lock:
+        if not isinstance(data, list):
+            return _area_cache['data'] or []
+        _area_cache['ts'] = now
+        _area_cache['data'] = data
+        return data
+
+
+def resolve_area_id(name: str):
+    """HA's own area lookup — area_id() matches registered names AND aliases,
+    and aliases are not enumerable over REST, so this is the only way spoken
+    nicknames ('the pool') resolve without duplicating them in our settings.
+    Returns the area id string or None."""
+    cleaned = ''.join(c for c in (name or '') if c not in '{}"\'\\')
+    if not cleaned.strip():
+        return None
+    return render_template('{{ area_id("' + cleaned.strip() + '") | to_json }}')
 
 
 def get_weather_forecast(entity_id: str = None, kind: str = 'daily') -> list:
