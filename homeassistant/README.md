@@ -452,6 +452,31 @@ If that does not work, "prefer handling commands locally" can never work
 either, and the fault is exposure or naming rather than anything to do with
 Chauffeur. This removes the whole pipeline from the question in one step.
 
+**A DUPLICATE NAME LOOKS EXACTLY LIKE A BROKEN SETTING.** If the built-in agent
+answers "there is more than one device with that name", prefer-local is working
+perfectly and you will still watch every such command land on Argyle — which
+then says, reasonably, that it cannot control appliances. `default_agent`
+recognises the sentence, fails to resolve the entity, and treats that as NOT
+HANDLED:
+
+```python
+if (response.response_type is ERROR
+        and response.error_code not in (FAILED_TO_HANDLE, UNKNOWN)):
+    # We ignore no matching errors
+    return None
+```
+
+`None` means "fall through to the conversation agent". So an ambiguous name is
+never reported as ambiguity — it is silently converted into a question for your
+LLM, about a device it has never heard of.
+
+**Music Assistant makes this the default state of the house**: it mirrors every
+player as a second `media_player` entity, so a TV or speaker exposed twice is
+ambiguous for every command aimed at it. Fix it in **Settings → Voice
+assistants → Expose** — unexpose the copy you do not want voice to reach, or
+give the two distinct aliases (`office TV` for the set, `office TV music` for
+the Music Assistant one). Nothing about the pipeline needs touching.
+
 **A landmine to leave alone.** How much gets handled locally depends on a flag
 our entity does not set. `assist_pipeline` narrows the local path to a
 two-intent allowlist — `INTENT_GET_STATE` and `INTENT_MEDIA_SEARCH_AND_PLAY` —
