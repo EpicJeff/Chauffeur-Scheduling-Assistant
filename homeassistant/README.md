@@ -470,6 +470,24 @@ fix it where the mismatch is — add an **alias** on the entity for how the
 sentence is actually said (`front porch column one`). Aliases exist for this;
 renaming the entity to suit the microphone is the worse trade.
 
+This is never one entity. If you own `Column 1` you own `Column 2`, and a
+`2nd Floor` and a `Tom & Jerry Lamp` somewhere else, each of which will fail
+its first spoken command and no other. [`add_voice_aliases.py`](add_voice_aliases.py)
+does the sweep — it reads the entity registry over the WebSocket API, works out
+how each name would be SPOKEN (digits and ordinals to words, `&` to "and") and
+adds that as an alias:
+
+```bash
+export HA_TOKEN=...                                    # profile -> Security
+python add_voice_aliases.py --url http://homeassistant.local:8123 --exposed-only
+python add_voice_aliases.py --url ... --exposed-only --apply
+```
+
+Dry run by default, prints every change first, and MERGES with existing aliases
+rather than replacing them. It leaves numbers above 99 alone on purpose: "2024"
+could be spoken four different ways and a wrong alias is worse than none, since
+it silently matches a sentence you did not mean.
+
 **A DUPLICATE NAME LOOKS EXACTLY LIKE A BROKEN SETTING.** If the built-in agent
 answers "there is more than one device with that name", prefer-local is working
 perfectly and you will still watch every such command land on Argyle — which
