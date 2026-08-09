@@ -128,9 +128,22 @@ Three things bite people here:
   right after detection. Fix: ESPHome integration → device settings → set
   **finished speaking detection** to **relaxed**.
 
-Telling the first two apart takes one glance at the **openWakeWord add-on log**:
-if it never logs a client, the device is not streaming (cause 1); if it logs one
-and stays quiet while you talk, it is hearing you too faintly (cause 2).
+Telling the first two apart takes one glance at the **openWakeWord add-on log**.
+This, repeating, is cause 1:
+
+```
+Client connected: 280397385913641
+Sent info to client: 280397385913641
+Client disconnected: 280397385913641
+```
+
+Connect → `Sent info` → disconnect is the Wyoming `describe`/`info` handshake:
+Home Assistant asking the service which models it has. **That is also what fills
+the wake-word dropdown** — so the word being listed proves only that this
+handshake works, which is exactly why openWakeWord looks like the suspect when
+it is healthy. No audio is being sent. A satellite that is actually streaming
+holds the connection open and logs detections; if it holds the connection and
+never detects, that is cause 2.
 - **It will not compile** (e.g. `no matching function for call to
   'AudioSinkTransferBuffer::transfer_data_to_sink()'`). The forks track a moving
   ESPHome audio API and lag its releases; you need a fork updated for your
