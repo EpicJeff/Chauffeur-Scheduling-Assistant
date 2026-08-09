@@ -185,7 +185,9 @@ copy of upstream that will drift again.
 
 Keep the upstream package and **overlay** the differences. Package merging
 replaces scalars with the top-level value and concatenates lists, so the whole
-change is a few lines in the device config:
+change is a few lines in the device config. The complete, working version lives
+in [`voice-pe-overlay.yaml`](voice-pe-overlay.yaml) — copy it into ESPHome
+Builder and change the two names. Abridged:
 
 ```yaml
 substitutions:
