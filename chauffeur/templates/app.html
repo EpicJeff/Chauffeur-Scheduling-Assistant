@@ -2060,22 +2060,22 @@
                     <div class="flex items-center gap-1.5 mt-0.5 ${mine ? 'justify-end' : ''}">
                         ${renderReactions(m)}
                         <button onclick="toggleQuickReact('${m.id}')" type="button"
-                            class="text-xs text-gray-500 active:text-gray-400 leading-none px-0.5">☺+</button>
+                            class="w-10 h-10 -my-2 flex items-center justify-center rounded-full text-lg leading-none text-gray-500 active:text-gray-300 active:bg-gray-800">☺+</button>
                         ${(canEditMsg(m) || canDeleteMsg(m))
                             ? `<button onclick="toggleMsgActions('${m.id}')" type="button"
-                                   class="text-xs text-gray-500 active:text-gray-400 leading-none px-0.5">⋯</button>` : ''}
+                                   class="w-10 h-10 -my-2 flex items-center justify-center rounded-full text-lg leading-none text-gray-500 active:text-gray-300 active:bg-gray-800">⋯</button>` : ''}
                         <span class="text-xs text-gray-500">${t}${m.edited_ts ? ' · edited' : ''}</span>
                     </div>
-                    <div id="qr-${m.id}" class="mt-1 ${mine ? 'text-right' : ''}" style="display:none">
+                    <div id="qr-${m.id}" class="mt-1.5 flex gap-1.5 flex-wrap ${mine ? 'justify-end' : ''}" style="display:none">
                         ${['👍', '❤️', '😂', '👏', '🎉', '💪'].map(e =>
                             `<button onclick="reactTo('${m.id}','${e}')" type="button"
-                                class="text-xl px-1.5 py-0.5 rounded-full bg-gray-800 border border-gray-700 active:bg-gray-700">${e}</button>`).join('')}
+                                class="text-2xl leading-none px-2 py-2 rounded-full bg-gray-800 border border-gray-700 active:bg-gray-700">${e}</button>`).join('')}
                     </div>
                     <div id="ma-${m.id}" class="mt-1 flex gap-1.5 ${mine ? 'justify-end' : ''}" style="display:none">
                         ${canEditMsg(m) ? `<button onclick="editMessage('${m.id}')" type="button"
-                            class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
+                            class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-gray-700 text-gray-200 active:bg-gray-700">Edit</button>` : ''}
                         ${canDeleteMsg(m) ? `<button onclick="deleteMessage('${m.id}')" type="button"
-                            class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
+                            class="text-sm font-bold px-4 py-2.5 rounded-full bg-gray-800 border border-red-900/60 text-red-400 active:bg-red-900/40">Delete</button>` : ''}
                     </div>
                 </div>`;
             }).join('') || '<div class="text-center text-gray-500 text-sm mt-4">No messages yet — say hi!</div>';
@@ -2091,7 +2091,7 @@
             return Object.keys(r).filter(e => (r[e] || []).length).map(e => {
                 const mine = (r[e] || []).includes(selectedMemberId);
                 return `<button onclick="reactTo('${m.id}','${e}')" type="button"
-                    class="text-xs leading-none px-1.5 py-0.5 rounded-full border ${mine ? 'bg-blue-900/60 border-blue-500' : 'bg-gray-800 border-gray-700'}">${e}${r[e].length > 1 ? `<span class="text-xs text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</button>`;
+                    class="text-[15px] leading-none px-2 py-1.5 -my-1 rounded-full border ${mine ? 'bg-blue-900/60 border-blue-500' : 'bg-gray-800 border-gray-700'}">${e}${r[e].length > 1 ? `<span class="text-xs text-gray-400 ml-0.5">${r[e].length}</span>` : ''}</button>`;
             }).join('');
         }
 
