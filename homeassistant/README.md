@@ -472,10 +472,34 @@ LLM, about a device it has never heard of.
 
 **Music Assistant makes this the default state of the house**: it mirrors every
 player as a second `media_player` entity, so a TV or speaker exposed twice is
-ambiguous for every command aimed at it. Fix it in **Settings → Voice
+ambiguous for every command aimed at it. Deduplicate in **Settings → Voice
 assistants → Expose** — unexpose the copy you do not want voice to reach, or
 give the two distinct aliases (`office TV` for the set, `office TV music` for
-the Music Assistant one). Nothing about the pipeline needs touching.
+the Music Assistant one).
+
+That is worth doing regardless, because two identically-named targets break
+voice control with or without a custom agent. But it is a workaround, and the
+thing underneath it is a real defect worth reporting upstream:
+
+**Home Assistant collapses "no such device" and "several devices, which one?"
+into the same swallowed error.** Both surface as `NO_VALID_TARGETS`, and
+`async_handle_intents` discards both identically. Yet they are opposite
+situations: one means the local agent cannot help, the other means it knows
+exactly what you asked for and needs one word back from you. Without a custom
+agent the second case reaches you as a useful "there is more than one device
+with that name". With one, that sentence is thrown away and the question is
+handed to an assistant that has never heard of the device — so a fixable
+ambiguity presents as an unrelated refusal.
+
+The fall-through is deliberate: an LLM agent that declares `CONTROL` may well
+resolve what the strict matcher could not, so trying it is reasonable. It is
+wrong for an agent like ours precisely BECAUSE we do not declare `CONTROL` —
+the one agent guaranteed unable to help is the one it hands the question to.
+The narrow fix upstream is to keep swallowing "no match" while surfacing
+"ambiguous", or to skip the fall-through entirely for agents without `CONTROL`.
+
+Nothing in this integration can recover it: by the time our entity is called,
+the local response has been discarded and we are not told it ever existed.
 
 **A landmine to leave alone.** How much gets handled locally depends on a flag
 our entity does not set. `assist_pipeline` narrows the local path to a
