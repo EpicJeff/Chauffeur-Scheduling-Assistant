@@ -201,6 +201,104 @@ def scenario_settings_have_a_hand_path():
         check(key in HOME, f"{key} has no field in the panel-setup drawer")
 
 
+# --- jsdom: the overlay actually appears, and a tap actually wakes it -------
+# Same harness idea as test_board_render: the real rendered page in jsdom with
+# a stubbed fetch. Skips (not fails) without node/jsdom. Image loading never
+# fires events in jsdom, so the playlist is EMPTY here on purpose — the
+# gradient+clock branch paints synchronously and is assertable.
+
+_SS_HARNESS = r"""
+const fs = require('fs');
+const { JSDOM } = require('jsdom');
+process.on('unhandledRejection', () => {});
+
+const html = fs.readFileSync(process.argv[2], 'utf8')
+  .replace(/<script src="[^"]*"[^>]*><\/script>/g, '')
+  .replace(/<link href="https:[^"]*"[^>]*>/g, '');
+
+const routes = {
+  'api/panel/screensaver': { source: 'none', urls: [] },
+  'api/panel/profile': { theme: 'dark', tabs: [], widgets: [], backgrounds: {},
+    idle_seconds: 180,
+    screensaver: { idle_seconds: 0.05, dwell_seconds: 5, source: 'photos' } },
+  'api/home_board/catalog': { widgets: [], widget_defaults: [], tabs: [], tab_defaults: [] },
+  'api/home_board': { hero: { remaining: 0, later: [], all_done: true, kids: [] }, tiles: [] },
+  'api/settings': {},
+};
+
+const dom = new JSDOM(html, {
+  runScripts: 'dangerously', pretendToBeVisual: true,
+  url: 'http://localhost/home?panel=true',
+  beforeParse(w) {
+    w.fetch = (u) => {
+      const key = Object.keys(routes).find(k => String(u).includes(k));
+      return Promise.resolve({ ok: !!key, text: () => Promise.resolve(''),
+        json: () => Promise.resolve(key ? routes[key] : {}) });
+    };
+    w.showGlobalAlert = () => {};
+    w.matchMedia = () => ({ matches: false, addEventListener() {} });
+    w.EventSource = function () { return { addEventListener() {}, close() {} }; };
+  }
+});
+const w = dom.window;
+
+setTimeout(() => {
+  const doc = w.document;
+  const before = doc.getElementById('panel-screensaver');
+  const out = { appeared: !!before };
+  if (before) {
+    out.clock = (doc.querySelector('#panel-ss-clock .ss-time') || {}).textContent || '';
+    out.gradientPainted = [...before.querySelectorAll('.ss-layer')]
+      .some(l => l.style.opacity === '1' && l.style.backgroundImage.includes('gradient'));
+    before.dispatchEvent(new w.Event('pointerdown', { bubbles: true, cancelable: true }));
+    out.goneAfterTap = !doc.getElementById('panel-screensaver');
+  }
+  console.log(JSON.stringify(out));
+  w.close();
+  process.exit(0);
+}, 600);
+"""
+
+
+def scenario_jsdom_overlay_appears_and_a_tap_wakes_it():
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    import types
+    node = shutil.which('node')
+    if not node:
+        print("  skip  node unavailable — the overlay was not exercised")
+        return
+    scratch = tempfile.mkdtemp(prefix='chf_ss_jsdom_')
+    have = subprocess.run([node, '-e', "require.resolve('jsdom')"],
+                          capture_output=True, text=True, cwd=scratch)
+    if have.returncode != 0:
+        print("  skip  jsdom not resolvable — the overlay was not exercised")
+        return
+    import main
+    req = types.SimpleNamespace(url=types.SimpleNamespace(path='/home'),
+                                query_params={'panel': 'true'})
+    page = os.path.join(scratch, 'home.html')
+    with open(page, 'w', encoding='utf-8') as f:
+        f.write(main.templates.env.get_template('home.html').render(request=req))
+    probe = os.path.join(scratch, 'harness.js')
+    with open(probe, 'w', encoding='utf-8') as f:
+        f.write(_SS_HARNESS)
+    proc = subprocess.run([node, probe, page], capture_output=True, text=True,
+                          cwd=scratch, timeout=120)
+    check(proc.returncode == 0, f"the panel page threw:\n{proc.stderr[:1200]}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check(out.get('appeared'),
+          "the screensaver never appeared after the idle timeout")
+    check(out.get('clock'),
+          "the clock is empty — the idle face has no time on it")
+    check(out.get('gradientPainted'),
+          "an empty playlist should paint the gradient, not a black slab")
+    check(out.get('goneAfterTap'),
+          "a tap did not dismiss the screensaver")
+
+
 SCENARIOS = [v for k, v in sorted(globals().items()) if k.startswith("scenario_")]
 
 if __name__ == "__main__":
