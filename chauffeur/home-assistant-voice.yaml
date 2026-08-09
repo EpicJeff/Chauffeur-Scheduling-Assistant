@@ -1382,9 +1382,20 @@ microphone:
     bits_per_sample: 32bit
     i2s_mode: secondary
     i2s_audio_id: i2s_input
+    # The XMOS chip gives two channels and they are NOT interchangeable.
+    # Stock firmware detects the wake word on comm_mic (channel_1, amplified
+    # 4x by amplify_shift: 2) and only streams asr_mic once something has
+    # already woken the device — asr_mic is deliberately unamplified because
+    # by then it only has to be CLEAN, not loud.
+    #
+    # This config moved wake detection to the server, so the single stream
+    # voice_assistant sends now has to do BOTH jobs. Left at 0 it was being
+    # asked to wake the device on the quiet channel, and openWakeWord never
+    # crossed its threshold — the wake word simply never fired. Matching the
+    # wake channel's gain is what makes server-side detection possible here.
     channel_0:
       id: asr_mic
-      amplify_shift: 0
+      amplify_shift: 2
     channel_1:
       id: comm_mic
       amplify_shift: 2
